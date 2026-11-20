@@ -12,8 +12,7 @@ import { resolvePluginDetailFacts } from '../detail/PluginDetailHeader';
 import {
   createPluginSettingsViews,
   filterInstalledPlugins,
-  groupDiscoverEntriesByShelf,
-  projectBrowseShelves,
+  projectBrowseSections,
   projectDevelopmentPluginPresentation,
   projectInstalledPluginLifecycleCapabilities,
   projectAccountInstalledPlugins,
@@ -1822,174 +1821,44 @@ describe('development sources the daemon could not load', () => {
   });
 });
 
-describe('Browse shelves', () => {
-  function listing(
-    id: string,
-    sourceKind: 'curated' | 'community-npm' | 'user',
-    sourceId = `source:${sourceKind}`,
-  ) {
-    return { id, sourceId, sourceKind } as Parameters<
-      typeof groupDiscoverEntriesByShelf
-    >[0][number];
-  }
-
-  it('shelves results by provenance, curated first and unreviewed community last, keeping the query order inside a shelf', () => {
-    const shelves = groupDiscoverEntriesByShelf([
-      listing('npm.a', 'community-npm'),
-      listing('curated.b', 'curated'),
-      listing('mine.c', 'user'),
-      listing('curated.a', 'curated'),
-      listing('npm.b', 'community-npm'),
-    ]);
-
-    expect(
-      shelves.map((shelf) => [
-        shelf.id,
-        shelf.entries.map((entry) => entry.id),
-      ]),
-    ).toEqual([
-      ['curated', ['curated.b', 'curated.a']],
-      ['user', ['mine.c']],
-      ['community-npm', ['npm.a', 'npm.b']],
-    ]);
-  });
-
-  it('never renders an empty shelf', () => {
-    expect(
-      groupDiscoverEntriesByShelf([listing('npm.a', 'community-npm')]).map(
-        (shelf) => shelf.id,
-      ),
-    ).toEqual(['community-npm']);
-    expect(groupDiscoverEntriesByShelf([])).toEqual([]);
-  });
-});
-
-describe('Browse categories and shelf focus', () => {
-  function listing(
-    id: string,
-    sourceKind: 'curated' | 'community-npm' | 'user',
-    categories: string[],
-  ) {
-    return {
-      id,
-      sourceId: `source:${sourceKind}`,
-      sourceKind,
-      categories,
-    } as unknown as Parameters<typeof projectBrowseShelves>[0][number];
+describe('Browse sections', () => {
+  function listing(id: string, categories: string[], sourceId = 'source:curated', sourceTitle = 'Happier picks') {
+    return { id, sourceId, sourceTitle, categories } as unknown as Parameters<typeof projectBrowseSections>[0][number];
   }
   const entries = [
-    listing('c1', 'curated', ['code']),
-    listing('c2', 'curated', ['agents']),
-    listing('c3', 'curated', ['code']),
-    listing('c4', 'curated', ['files']),
-    listing('n1', 'community-npm', ['code', 'utilities']),
+    listing('c1', ['monitoring']),
+    listing('c2', ['deploy', 'monitoring']),
+    listing('v1', [], 'source:claude', 'Claude plugins'),
+    listing('c3', ['monitoring']),
+    listing('c4', ['monitoring']),
+    listing('n1', ['deploy']),
   ];
 
-  it('offers the categories the results carry, in first-seen order, and none when the catalog has none', () => {
-    expect(
-      projectBrowseShelves(entries, { category: null, focusedShelfId: null })
-        .categories,
-    ).toEqual(['code', 'agents', 'files', 'utilities']);
-    expect(
-      projectBrowseShelves([listing('x', 'curated', [])], {
-        category: null,
-        focusedShelfId: null,
-      }).categories,
-    ).toEqual([]);
-  });
-
-  it('keeps shelves compact and says how many more each holds', () => {
-    const view = projectBrowseShelves(entries, {
-      category: null,
-      focusedShelfId: null,
-    });
-    expect(
-      view.shelves.map((shelf) => [
-        shelf.id,
-        shelf.entries.map((e) => e.id),
-        shelf.hiddenCount,
-      ]),
-    ).toEqual([
-      ['curated', ['c1', 'c2', 'c3'], 1],
-      ['community-npm', ['n1'], 0],
+  it('sections results by their first category, first-seen order, with uncategorized results under their source after them', () => {
+    const view = projectBrowseSections(entries, { focusedSectionId: null });
+    expect(view.sections.map((section) => [section.id, section.title, section.entries.map((e) => e.id), section.hiddenCount])).toEqual([
+      ['category:monitoring', 'Monitoring', ['c1', 'c3', 'c4'], 0],
+      ['category:deploy', 'Deploy', ['c2', 'n1'], 0],
+      ['source:source:claude', 'Claude plugins', ['v1'], 0],
     ]);
   });
 
-  it('shows one whole shelf when it is focused ("See all")', () => {
-    const view = projectBrowseShelves(entries, {
-      category: null,
-      focusedShelfId: 'curated',
-    });
-    expect(
-      view.shelves.map((shelf) => [
-        shelf.id,
-        shelf.entries.length,
-        shelf.hiddenCount,
-      ]),
-    ).toEqual([['curated', 4, 0]]);
+  it('keeps each section to one row of cards and says how many more it holds', () => {
+    const many = [...entries, listing('c5', ['monitoring'])];
+    const view = projectBrowseSections(many, { focusedSectionId: null });
+    expect(view.sections[0]).toMatchObject({ id: 'category:monitoring', hiddenCount: 1 });
+    expect(view.sections[0]!.entries.map((e) => e.id)).toEqual(['c1', 'c3', 'c4']);
   });
 
-  it('narrows every shelf to the chosen category while keeping the full category list', () => {
-    const view = projectBrowseShelves(entries, {
-      category: 'code',
-      focusedShelfId: null,
-    });
-    expect(view.categories).toEqual(['code', 'agents', 'files', 'utilities']);
-    expect(
-      view.shelves.map((shelf) => [shelf.id, shelf.entries.map((e) => e.id)]),
-    ).toEqual([
-      ['curated', ['c1', 'c3']],
-      ['community-npm', ['n1']],
-    ]);
-  });
-});
-
-describe('Browse after the results change under a chosen chip or shelf', () => {
-  function listing(
-    id: string,
-    sourceKind: 'curated' | 'community-npm' | 'user',
-    categories: string[],
-  ) {
-    return {
-      id,
-      sourceId: `source:${sourceKind}`,
-      sourceKind,
-      categories,
-    } as unknown as Parameters<typeof projectBrowseShelves>[0][number];
-  }
-
-  it('drops a category and a focused shelf the new results no longer carry, so cards always show', () => {
-    const view = projectBrowseShelves(
-      [
-        listing('n1', 'community-npm', []),
-        listing('n2', 'community-npm', ['tools']),
-      ],
-      {
-        category: 'agents',
-        focusedShelfId: 'curated',
-      },
-    );
-    expect(view.category).toBeNull();
-    expect(view.focusedShelfId).toBeNull();
-    expect(
-      view.shelves.map((shelf) => [shelf.id, shelf.entries.map((e) => e.id)]),
-    ).toEqual([['community-npm', ['n1', 'n2']]]);
-  });
-
-  it('drops a focused shelf that has no results in the chosen category', () => {
-    const view = projectBrowseShelves(
-      [
-        listing('c1', 'curated', ['code']),
-        listing('n1', 'community-npm', ['agents']),
-      ],
-      {
-        category: 'agents',
-        focusedShelfId: 'curated',
-      },
-    );
-    expect(view.category).toBe('agents');
-    expect(view.focusedShelfId).toBeNull();
-    expect(view.shelves.map((shelf) => shelf.id)).toEqual(['community-npm']);
+  it('shows one whole section when it is focused ("All"), and forgets a focus the new results cannot honour', () => {
+    const many = [...entries, listing('c5', ['monitoring'])];
+    const focused = projectBrowseSections(many, { focusedSectionId: 'category:monitoring' });
+    expect(focused.sections.map((section) => [section.id, section.entries.length, section.hiddenCount]))
+      .toEqual([['category:monitoring', 4, 0]]);
+    const stale = projectBrowseSections([listing('n1', ['deploy'])], { focusedSectionId: 'category:monitoring' });
+    expect(stale.focusedSectionId).toBeNull();
+    expect(stale.sections.map((section) => section.id)).toEqual(['category:deploy']);
+    expect(projectBrowseSections([], { focusedSectionId: null }).sections).toEqual([]);
   });
 });
 

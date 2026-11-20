@@ -48,24 +48,21 @@ describe('DiscoverListingsSection', () => {
         expect(onAction).not.toHaveBeenCalled();
     });
 
-    it('keeps shelves compact with See all, and narrows them by category chip', async () => {
+    it('sections cards by category, one row each, with All to show a whole section', async () => {
         const curated = (id: string, categories: string[]) => ({
             ...entry, id, sourceId: 'curated', sourceKind: 'curated' as const, reviewStatus: 'approved' as const, warning: undefined, categories,
         });
-        const entries = [curated('a.one', ['code']), curated('a.two', ['agents']), curated('a.three', ['code']), curated('a.four', ['code'])];
+        const entries = [curated('a.one', ['code']), curated('a.two', ['agents']), curated('a.three', ['code']), curated('a.four', ['code']), curated('a.five', ['code'])];
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         // Browse always renders inside the Plugins page, where sections carry their actions.
         const screen = await renderMeasured(<ListPresentationProvider value="page"><DiscoverListingsSection entries={entries} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
             onAction={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>);
         const cards = () => entries.filter((e) => screen.findByTestId(`settings.plugins.marketplace.entry.curated.${e.id}`) !== null).map((e) => e.id);
-        expect(cards()).toEqual(['a.one', 'a.two', 'a.three']);
-
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:curated:action');
         expect(cards()).toEqual(['a.one', 'a.two', 'a.three', 'a.four']);
 
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.category:agents');
-        expect(cards()).toEqual(['a.two']);
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:category:code:action');
+        expect(cards()).toEqual(['a.one', 'a.three', 'a.four', 'a.five']);
     });
 
     it('keeps benefit and source visible and opens installed listings without installation', async () => {
@@ -111,7 +108,7 @@ describe('DiscoverListingsSection', () => {
         expect(onAction).toHaveBeenCalledWith({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId });
     });
 
-    it('does not snap back to a stale chip or "See all" when the results change and change back', async () => {
+    it('does not snap back to a stale "All" when the results change and change back', async () => {
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const curated = (id: string, categories: string[]) => ({
             ...entry, id, sourceId: 'curated', sourceKind: 'curated' as const, reviewStatus: 'approved' as const, warning: undefined, categories,
@@ -124,15 +121,14 @@ describe('DiscoverListingsSection', () => {
                 onAction={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>
         );
         const screen = await renderMeasured(render(curatedResults));
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.category:agents');
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:curated:action');
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:category:agents:action');
 
         await act(async () => { screen.update(render(communityResults)); });
         expect(screen.findByTestId('settings.plugins.marketplace.entry.community.n.one')).not.toBeNull();
 
         await act(async () => { screen.update(render(curatedResults)); });
-        // The shelf is compact again with its "See all"; the old focus and chip are gone.
-        expect(screen.findByTestId('settings.plugins.marketplace.discover:group:curated:action')).not.toBeNull();
+        // The section is compact again with its "All"; the old focus is gone.
+        expect(screen.findByTestId('settings.plugins.marketplace.discover:group:category:agents:action')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.entry.curated.a.four')).toBeNull();
     });
 });

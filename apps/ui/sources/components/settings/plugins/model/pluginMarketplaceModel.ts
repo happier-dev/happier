@@ -676,70 +676,63 @@ export function catalogReviewStatusLabel(entry: PluginMarketplaceCatalogEntry): 
     return t('settingsPlugins.discover.reviewStatus.unreviewed');
 }
 
-/** A Browse shelf: the results of one provenance, which carries real trust meaning. */
-export type DiscoverShelf = Readonly<{
-    id: PluginMarketplaceCatalogEntry['sourceKind'];
+/** A compact Browse section shows one row of cards; "All" focuses the section and shows every card. */
+export const BROWSE_SECTION_PREVIEW_COUNT = 3;
+
+/**
+ * A Browse section (lab ideas-1118-platform scene 1 B): the results of one category, or, for results whose catalog
+ * names none, the results of one source. Source stays the toolbar filter and the first word of each card's facts.
+ */
+export type BrowseSection = Readonly<{
+    id: string;
+    title: string;
     entries: readonly PluginMarketplaceCatalogEntry[];
+    hiddenCount: number;
 }>;
 
-/**
- * Reviewed listings lead, the user's own sources follow, and unreviewed community packages come
- * last; inside a shelf the query's own order is kept, and a provenance with no results has no shelf.
- */
-const DISCOVER_SHELF_ORDER = ['curated', 'user', 'community-npm'] as const satisfies readonly DiscoverShelf['id'][];
-
-export function groupDiscoverEntriesByShelf(entries: readonly PluginMarketplaceCatalogEntry[]): readonly DiscoverShelf[] {
-    return DISCOVER_SHELF_ORDER
-        .map((id) => ({ id, entries: entries.filter((entry) => entry.sourceKind === id) }))
-        .filter((shelf) => shelf.entries.length > 0);
+function browseCategoryTitle(category: string): string {
+    return category.charAt(0).toLocaleUpperCase() + category.slice(1);
 }
 
-/** A compact shelf shows one row of cards; "See all" focuses the shelf and shows every card. */
-export const BROWSE_SHELF_PREVIEW_COUNT = 3;
-
-export type BrowseShelfView = DiscoverShelf & Readonly<{ hiddenCount: number }>;
-
 /**
- * What Browse shows for the loaded results: the categories they carry (the chips, first-seen
- * order; none when the catalog has none), and the shelves narrowed to the chosen category — each
- * compact unless it is the focused one, which shows all of its cards alone.
+ * Browse's sections for the loaded results: one per category in first-seen order (a listing sits in its first
+ * category), then one per source for listings without a category. Each is compact unless it is the focused one,
+ * which shows all of its cards alone; inside a section the query's own order is kept.
  */
-export function projectBrowseShelves(
+export function projectBrowseSections(
     entries: readonly PluginMarketplaceCatalogEntry[],
-    params: Readonly<{ category: string | null; focusedShelfId: DiscoverShelf['id'] | null }>,
+    params: Readonly<{ focusedSectionId: string | null }>,
 ): Readonly<{
-    categories: readonly string[];
-    shelves: readonly BrowseShelfView[];
-    /** The chosen category if the results still carry it, else `null` (All). */
-    category: string | null;
-    /** The focused shelf if it still has results in `category`, else `null` (every shelf, compact). */
-    focusedShelfId: DiscoverShelf['id'] | null;
+    sections: readonly BrowseSection[];
+    /** The focused section if the results still carry it, else `null` (every section, compact). */
+    focusedSectionId: string | null;
 }> {
-    const categories: string[] = [];
+    const categories = new Map<string, { title: string; entries: PluginMarketplaceCatalogEntry[] }>();
+    const sources = new Map<string, { title: string; entries: PluginMarketplaceCatalogEntry[] }>();
     for (const entry of entries) {
-        for (const category of entry.categories) {
-            if (!categories.includes(category)) categories.push(category);
-        }
+        const category = entry.categories[0];
+        const [groups, id, title] = category !== undefined
+            ? [categories, `category:${category}`, browseCategoryTitle(category)]
+            : [sources, `source:${entry.sourceId}`, entry.sourceTitle];
+        const group = groups.get(id);
+        if (group) group.entries.push(entry);
+        else groups.set(id, { title, entries: [entry] });
     }
-    // A chip or a focus the current results cannot honour would render no cards at all, so both
-    // fall back to the whole result set rather than an empty grid.
-    const category = params.category !== null && categories.includes(params.category) ? params.category : null;
-    const matching = category === null ? entries : entries.filter((entry) => entry.categories.includes(category));
-    const grouped = groupDiscoverEntriesByShelf(matching);
-    const focusedShelfId = params.focusedShelfId !== null && grouped.some((shelf) => shelf.id === params.focusedShelfId)
-        ? params.focusedShelfId
+    const all = [...categories, ...sources].map(([id, group]) => ({ id, ...group }));
+    // A focus the current results cannot honour would render no cards, so it falls back to every section.
+    const focusedSectionId = params.focusedSectionId !== null && all.some((section) => section.id === params.focusedSectionId)
+        ? params.focusedSectionId
         : null;
-    const shelves = grouped
-        .filter((shelf) => focusedShelfId === null || shelf.id === focusedShelfId)
-        .map((shelf): BrowseShelfView => {
-            if (focusedShelfId !== null) return { ...shelf, hiddenCount: 0 };
-            return {
-                id: shelf.id,
-                entries: shelf.entries.slice(0, BROWSE_SHELF_PREVIEW_COUNT),
-                hiddenCount: Math.max(0, shelf.entries.length - BROWSE_SHELF_PREVIEW_COUNT),
-            };
-        });
-    return { categories, shelves, category, focusedShelfId };
+    const sections = all
+        .filter((section) => focusedSectionId === null || section.id === focusedSectionId)
+        .map((section): BrowseSection => focusedSectionId !== null
+            ? { ...section, hiddenCount: 0 }
+            : {
+                ...section,
+                entries: section.entries.slice(0, BROWSE_SECTION_PREVIEW_COUNT),
+                hiddenCount: Math.max(0, section.entries.length - BROWSE_SECTION_PREVIEW_COUNT),
+            });
+    return { sections, focusedSectionId };
 }
 
 /**

@@ -122,6 +122,16 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             targetMachine={state.administrationTargetLabel?.machine ?? null}
             onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
             onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
+            // Beside the collection and on a phone there is no header chip in reach: the target is a row here,
+            // the same Machine selection the page chip owns (lab ideas-1118-platform scene 2).
+            target={pane || phone ? (
+                <MachineAdministrationTargetSelector
+                    presentation="chip"
+                    selection={state.administrationTargetSelection}
+                    testIDPrefix="settings.plugins.listing.installOn"
+                    groupTitle={t('settingsPlugins.surfaces.installOnTitle')}
+                />
+            ) : null}
         />
     ) : null;
     // Once installed the listing reads as the installed plugin: what it still needs, then who can use it and the
@@ -272,11 +282,20 @@ function ListingInstall(props: Readonly<{
     onInstall: () => void;
     /** Present when the plugin can go to several of the person's Machines at once. */
     onInstallOnMachines?: () => void;
+    /** The Machine control, as a row with its compact value, where the page header's chip is not in reach. */
+    target?: React.ReactNode;
 }>) {
     const styles = stylesheet;
     const { entry } = props;
     if (!entry.installable) return null;
     return (
+        <>
+        {props.target ? (
+            <ItemGroup>
+                <Item testID="settings.plugins.listing.installOn" title={t('settingsPlugins.surfaces.installOnTitle')}
+                    rightElement={props.target} showChevron={false} mode="info" />
+            </ItemGroup>
+        ) : null}
         <View style={styles.install}>
             <Text style={styles.installNote}>
                 {props.targetMachine
@@ -300,6 +319,7 @@ function ListingInstall(props: Readonly<{
                     onPress={props.onInstall} />
             </View>
         </View>
+        </>
     );
 }
 

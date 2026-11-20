@@ -5,7 +5,7 @@ import { formatAgentNameListFolded } from '@/components/capabilities/identity/ag
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute, resolvePluginsSurfaceHost } from './model/pluginsSurfaceRoutes';
 import { Status, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { PluginProjectionDiagnostic } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -15,7 +15,6 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
@@ -30,7 +29,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
-import { t, type TranslationKeyNoParams } from '@/text';
+import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { PluginMark } from './PluginMark';
@@ -61,7 +60,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { InstalledPluginActionId, PluginRoutineOperationSettlement } from './model/usePluginSettingsScreenState';
 import {
     catalogReviewStatusLabel,
-    projectBrowseShelves,
+    projectBrowseSections,
     projectDevelopmentPluginPresentation,
     projectInstalledPluginLifecycleCapabilities,
     projectInstalledPluginPresentation,
@@ -69,7 +68,6 @@ import {
     isPluginIncludedWithHappier,
     partitionInstalledPlugins,
     type DevelopmentPluginEntry,
-    type DiscoverShelf,
     type InstalledPluginEntry,
     type PendingPluginChangeListing,
     type PluginMarketplaceActionRequest,
@@ -1164,25 +1162,11 @@ export function DiscoverStatusSummary(props: Readonly<{
     );
 }
 
-const SHELF_COPY = {
-    curated: {
-        title: 'settingsPlugins.surfaces.shelfCurated',
-        description: 'settingsPlugins.surfaces.shelfCuratedDescription',
-    },
-    user: {
-        title: 'settingsPlugins.surfaces.shelfUser',
-        description: 'settingsPlugins.surfaces.shelfUserDescription',
-    },
-    'community-npm': {
-        title: 'settingsPlugins.surfaces.shelfCommunity',
-        description: 'settingsPlugins.surfaces.shelfCommunityDescription',
-    },
-} as const satisfies Record<DiscoverShelf['id'], Readonly<{ title: TranslationKeyNoParams; description: TranslationKeyNoParams }>>;
-
 /**
- * Browse: the loaded results as shelves (curated, your sources, community), each compact until the reader asks
- * for all of it, filtered by a category chip, as the same page-sized Collection as Installed — one grid, one list.
- * Each listing says its review state and offers Install (or Open, once installed); its body opens the listing.
+ * Browse: the loaded results in category sections (lab ideas-1118-platform scene 1 B), each one row of cards until the
+ * reader asks for all of it, as the same page-sized Collection as Installed — one grid, one list. Source stays the
+ * toolbar filter and the first word of each card's facts. Each card installs with "+" or says Installed; its body
+ * opens the listing.
  */
 export function DiscoverListingsSection(props: Readonly<{
     entries: readonly PluginMarketplaceCatalogEntry[];
@@ -1213,30 +1197,22 @@ export function DiscoverListingsSection(props: Readonly<{
     const styles = sectionStylesheet;
     const maxWidthStyle = useLayoutMaxWidthStyle();
     const presentation = props.presentation ?? 'grid';
-    // Presentation only: which slice of the loaded results the page shows. The query and its results stay with
-    // the Discover owner.
-    const [category, setCategory] = React.useState<string | null>(null);
-    const [focusedShelfId, setFocusedShelfId] = React.useState<DiscoverShelf['id'] | null>(null);
-    const view = projectBrowseShelves(props.entries, { category, focusedShelfId });
-    // A chip or focus the new results dropped is forgotten, so it cannot return unasked later.
+    // Presentation only: which section the page shows whole. The query and its results stay with the Discover owner.
+    const [focusedSectionId, setFocusedSectionId] = React.useState<string | null>(null);
+    const view = projectBrowseSections(props.entries, { focusedSectionId });
+    // A focus the new results dropped is forgotten, so it cannot return unasked later.
     React.useEffect(() => {
-        if (category !== view.category) setCategory(view.category);
-        if (focusedShelfId !== view.focusedShelfId) setFocusedShelfId(view.focusedShelfId);
-    }, [category, focusedShelfId, view.category, view.focusedShelfId]);
-    const shelves = view.shelves;
-    const activeCategory = view.category ?? DISCOVER_ALL_CATEGORIES_ID;
+        if (focusedSectionId !== view.focusedSectionId) setFocusedSectionId(view.focusedSectionId);
+    }, [focusedSectionId, view.focusedSectionId]);
+    const sections = view.sections;
     const items = React.useMemo(
-        () => shelves.flatMap((shelf) => shelf.entries.map((entry): DiscoverListingItem => ({ entry, shelfId: shelf.id }))),
-        [shelves],
+        () => sections.flatMap((section) => section.entries.map((entry): DiscoverListingItem => ({ entry, sectionId: section.id }))),
+        [sections],
     );
     const groups = React.useMemo(() => ({
-        axis: shelves.map((shelf) => ({
-            key: shelf.id,
-            title: t(SHELF_COPY[shelf.id].title),
-            description: t(SHELF_COPY[shelf.id].description),
-        })),
-        groupOf: (item: DiscoverListingItem) => item.shelfId,
-    }), [shelves]);
+        axis: sections.map((section) => ({ key: section.id, title: section.title })),
+        groupOf: (item: DiscoverListingItem) => item.sectionId,
+    }), [sections]);
     const { onOpenListing, onCloseListing } = props;
     const onOpenChange = React.useCallback((key: string | null) => {
         if (key === null) {
@@ -1258,38 +1234,17 @@ export function DiscoverListingsSection(props: Readonly<{
         readDiscoverListingKey(item),
         discoverListingControl(item.entry, props),
     ] as const)), [items, props]);
-    // "See all" on a shelf the page shortened, "All results" on the one it focused.
-    const groupAction = React.useCallback((shelfId: string) => {
-        if (view.focusedShelfId === shelfId) {
-            return { label: t('settingsPlugins.surfaces.allResults'), onPress: () => setFocusedShelfId(null) };
+    // "All" on a section the page shortened, "All results" on the one it focused.
+    const groupAction = React.useCallback((sectionId: string) => {
+        if (view.focusedSectionId === sectionId) {
+            return { label: t('settingsPlugins.surfaces.allResults'), onPress: () => setFocusedSectionId(null) };
         }
-        const shelf = shelves.find((candidate) => candidate.id === shelfId);
-        return shelf && shelf.hiddenCount > 0
-            ? { label: t('settingsPlugins.surfaces.seeAll'), onPress: () => setFocusedShelfId(shelf.id) }
+        const section = sections.find((candidate) => candidate.id === sectionId);
+        return section && section.hiddenCount > 0
+            ? { label: t('settingsPlugins.surfaces.seeAll'), onPress: () => setFocusedSectionId(section.id) }
             : null;
-    }, [shelves, view.focusedShelfId]);
-    const header = (
-        <>
-            {props.header}
-            {view.categories.length > 0 ? (
-                <View style={[styles.chips, maxWidthStyle]}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                        <SegmentedTabBar
-                            tabs={[
-                                { id: DISCOVER_ALL_CATEGORIES_ID, label: t('settingsPlugins.discoverSourceAll') },
-                                ...view.categories.map((id) => ({ id, label: id })),
-                            ]}
-                            activeTabId={activeCategory}
-                            onSelectTab={(id) => setCategory(id === DISCOVER_ALL_CATEGORIES_ID ? null : id)}
-                            testIDPrefix="settings.plugins.marketplace.category"
-                            accessibilityLabel={t('settingsPlugins.surfaces.categoriesLabel')}
-                            segmentSizing="content"
-                        />
-                    </ScrollView>
-                </View>
-            ) : null}
-        </>
-    );
+    }, [sections, view.focusedSectionId]);
+    const header = props.header;
     const footer = (
         <>
             {props.canLoadMore ? (
@@ -1319,10 +1274,8 @@ export function DiscoverListingsSection(props: Readonly<{
     );
 }
 
-/** The "All" category chip: no category filter. Not a category id, so it cannot collide with one. */
-const DISCOVER_ALL_CATEGORIES_ID = '__all__';
 
-type DiscoverListingItem = Readonly<{ entry: PluginMarketplaceCatalogEntry; shelfId: DiscoverShelf['id'] }>;
+type DiscoverListingItem = Readonly<{ entry: PluginMarketplaceCatalogEntry; sectionId: string }>;
 
 const readDiscoverListingKey = (item: DiscoverListingItem) => `${item.entry.sourceId}:${item.entry.id}`;
 
@@ -1458,12 +1411,6 @@ const sectionStylesheet = StyleSheet.create((theme) => ({
     statusQualifier: {
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
-    },
-    chips: {
-        width: '100%',
-        alignSelf: 'center',
-        paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
-        paddingTop: theme.space.s8,
     },
     loadMore: {
         width: '100%',
