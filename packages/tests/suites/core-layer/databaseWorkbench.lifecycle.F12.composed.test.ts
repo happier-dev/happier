@@ -35,18 +35,17 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     await readControl();
     console.info('F12-known-good-enabled-workbench passed', fixture.runtime);
     const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1, machineId: fixture.machine.target.machineId, scope: 'machine' };
-    const disabled = await fixture.owner.execute('plugins.disable', lifecycleInput,
-      { presentUserConfirmation: { actionId: 'plugins.disable' } });
+    const disabled = await fixture.owner.executeReviewed('plugins.disable', lifecycleInput);
     expect(disabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
     const refused = await fixture.executeDatabase(DATABASE_ROWS_READ_ACTION_ID_V1, input);
-    expect(refused).toMatchObject({ ok: false, errorCode: 'plugin_disabled' });
+    // Disabling the Workbench removes its Action from Machine dispatch.
+    expect(refused).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
     expect(await fixture.postgres.sql('happier',
       "SELECT count(*) FROM pg_stat_activity WHERE datname = 'dbw_selected'"))
       .toBe('0');
     // Feature lifecycle must never remove or alter target data.
     expect(await fixture.postgres.sql('dbw_selected', 'SELECT target FROM sentinel WHERE id = 1')).toBe('dbw_selected');
-    const enabled = await fixture.owner.execute('plugins.enable', lifecycleInput,
-      { presentUserConfirmation: { actionId: 'plugins.enable' } });
+    const enabled = await fixture.owner.executeReviewed('plugins.enable', lifecycleInput);
     expect(enabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
     await readControl();
   } finally {
