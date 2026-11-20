@@ -1167,8 +1167,9 @@ only those exact software revisions; unavailable revisions are not replaced by
 the latest declaration. Ordinary options browsing omits this detail payload.
 The existing input-field demand store carries the selected declarations, so
 clients do not create another recipe loader or catalog. These are declared
-inputs and optional `removeSteps`, not native support or presence observations;
-without removal steps there is no inferred inverse operation. The same read
+inputs and optional `removeSteps`, not native support or presence observations.
+For a recipe with established initial presence, the Machine's removal plan
+reports unsupported when the recipe declares no removal steps. The same read
 may carry the selected Machine's published platform/architecture to the
 canonical toolchain-choice owner, without probing the Machine or substituting
 the caller's operating system.

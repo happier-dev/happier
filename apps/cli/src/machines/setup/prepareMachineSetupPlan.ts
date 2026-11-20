@@ -15,7 +15,7 @@ import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
 import { resolveMachineSetupRecipeProgramV1 } from './prepareMachineSetupPreparation';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
-import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
+import { canInspectMachineSetupRemovalRecipeV1, prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
 import { readProtectedMachineFirewall } from './readProtectedMachineFirewall';
 import type { MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
@@ -128,8 +128,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { stepId: step.id, status: 'unavailable', reason: needsAdministrator ? 'needs_admin_to_check' : 'required_fact_unavailable', facts: {} };
   } };
   let recipes: readonly PluginProjectedMachineRecipeEntryV1[] | undefined;
-  if (selected.length || change?.detached.some(entry => entry.initialPresence === 'absent'
-    && (entry.selected || !isMachineSetupRecipeExcludedV1(entry.item.selection.ref, exclusions)))) {
+  if (selected.length || change?.detached.some(entry => canInspectMachineSetupRemovalRecipeV1(entry, exclusions))) {
     try { recipes = await params.readRecipes?.(); }
     catch { if (selected.length) return fail('machine_recipe_unavailable'); }
     if (!recipes && selected.length) return fail('machine_recipe_unavailable');

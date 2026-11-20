@@ -7,7 +7,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import { createMachineSetupPlanAction } from './machineSetupAction';
 
 describe('Machine setup declared removal through the public Plan Action', () => {
-  it.each(['native-absent', 'unknown', 'retired-source-field'] as const)('plans declared removal only from native absence, without installing or mutating desired state (%s)', async scenario => {
+  it.each(['native-absent', 'unknown', 'retired-source-field', 'pre-existing-with-removal', 'pre-existing-without-removal'] as const)('plans declared removal only from native absence, without installing or mutating desired state (%s)', async scenario => {
     const pluginId = 'com.example.removal-tools';
     const ref = { pluginId, recipeId: 'owned-tool', revision: '1' };
     const item = { kind: 'softwareRecipe' as const, selection: { ref, inputs: {} } };
@@ -15,15 +15,19 @@ describe('Machine setup declared removal through the public Plan Action', () => 
     const direct = { kind: 'direct' as const, setup: {} };
     const sources = [{ kind: 'accountPreset' as const, presetId: 'tools', presetRevision: 1,
       setup: { items: [item] }, ...(scenario === 'retired-source-field' ? { alreadyPresentAtFirstApply: { [itemKey]: false } } : {}) }, direct];
-    const sourceFacts = scenario === 'native-absent' ? { 'account:tools': { firstPresence: { [itemKey]: 'absent' } } } : undefined;
+    const previousPresence = scenario === 'native-absent' ? 'absent'
+      : scenario.startsWith('pre-existing-') ? 'present' : undefined;
+    const sourceFacts = previousPresence ? { 'account:tools': { firstPresence: { [itemKey]: previousPresence } } } : undefined;
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{ files: {}, manifest: {
       schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Tools', runtime: { apiVersion: 1 },
       contributes: { machineRecipes: [{ id: ref.recipeId, revision: ref.revision, title: 'Owned tool', software: true,
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
         steps: [{ id: 'install-owned', kind: 'command', executable: 'install', args: ['--', '/example/source', '/example/owned'],
           check: { executable: 'test', args: ['-e', '/example/owned'], unsatisfiedExitCodes: [1] } }],
-        removeSteps: [{ id: 'remove-owned', kind: 'command', executable: 'rm', args: ['--', '/example/owned'],
-          check: { executable: 'test', args: ['!', '-e', '/example/owned'], unsatisfiedExitCodes: [1] } }],
+        ...(scenario === 'pre-existing-without-removal' ? {} : {
+          removeSteps: [{ id: 'remove-owned', kind: 'command', executable: 'rm', args: ['--', '/example/owned'],
+            check: { executable: 'test', args: ['!', '-e', '/example/owned'], unsatisfiedExitCodes: [1] } }],
+        }),
       }] },
     } }] });
     const nativeExecutables: string[] = [];
@@ -46,7 +50,14 @@ describe('Machine setup declared removal through the public Plan Action', () => 
         },
       }) });
       const result = await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'guest', sources: [direct],
-        mode: 'effects', removeItemKeys: [itemKey] }, { surface: 'cli', authority: 'present_user' });
+        mode: 'effects', removeItemKeys: previousPresence === 'present' ? [] : [itemKey] }, { surface: 'cli', authority: 'present_user' });
+      if (previousPresence === 'present') {
+        expect(result).toMatchObject({ ok: true, result: { removalOffers: [{ itemKey, status: 'notEligible', selected: false,
+          reason: scenario === 'pre-existing-without-removal' ? 'unsupported' : 'preExisting' }], removalPlans: [] } });
+        expect(nativeExecutables).toEqual([]);
+        expect(writes).toBe(0);
+        return;
+      }
       if (scenario !== 'native-absent') {
         expect(result).toMatchObject({ ok: false, errorCode: 'remove_unsupported' });
         expect(nativeExecutables).toEqual([]);

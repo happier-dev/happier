@@ -7,6 +7,12 @@ import type { MachineSetupRemovalOfferV1, MachineSetupRemovalPlanV1 } from '@hap
 import { findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 
+export function canInspectMachineSetupRemovalRecipeV1(detached: MachineSetupDetachedItemV1,
+  exclusions: readonly MachineSetupExclusionV1[] = []): boolean {
+  return detached.initialPresence !== 'unknown'
+    && (detached.selected || !isMachineSetupRecipeExcludedV1(detached.item.selection.ref, exclusions));
+}
+
 /** The source-change owner reads first-presence from the Machine's sibling source facts. */
 export async function prepareMachineSetupRemovalsV1(input: Readonly<{
   machineId: string; desiredRevision: number;
@@ -25,31 +31,30 @@ export async function prepareMachineSetupRemovalsV1(input: Readonly<{
   ]), entry.definition]));
   for (const detached of input.detached) {
     input.signal?.throwIfAborted();
-    const excludedUnselected = !detached.selected
-      && isMachineSetupRecipeExcludedV1(detached.item.selection.ref, input.exclusions ?? []);
-    const reason: Extract<MachineSetupRemovalOfferV1, { status: 'notEligible' }>['reason'] = detached.initialPresence === 'present' ? 'preExisting'
-      : detached.initialPresence === 'unknown' ? 'unknownOrigin' : excludedUnselected ? 'needsCheck' : 'unsupported';
+    const { ref, inputs } = detached.item.selection;
+    const inspectRecipe = canInspectMachineSetupRemovalRecipeV1(detached, input.exclusions);
+    const recipe = inspectRecipe ? recipes.get(JSON.stringify([ref.pluginId, ref.recipeId, ref.revision])) : undefined;
+    const reason: Extract<MachineSetupRemovalOfferV1, { status: 'notEligible' }>['reason'] = recipe && !recipe.removeSteps?.length ? 'unsupported'
+      : detached.initialPresence === 'present' ? 'preExisting'
+      : detached.initialPresence === 'unknown' ? 'unknownOrigin' : inspectRecipe ? 'unsupported' : 'needsCheck';
     let eligible = false;
     let plan: MachineSetupRemovalPlanV1['plan'] | undefined;
-    if (detached.initialPresence === 'absent' && !excludedUnselected) {
-      const { ref, inputs } = detached.item.selection;
-      const recipe = recipes.get(JSON.stringify([ref.pluginId, ref.recipeId, ref.revision]));
-      if (recipe && (detached.item.kind !== 'softwareRecipe' || recipe.software === true)
-        && isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)
-        && machineRecipeInputConstraintsSatisfiedV1(recipe, inputs)) {
-        plan = await prepareMachineRecipeProgramV1({ machineId: input.machineId,
-          desiredRevision: input.desiredRevision, selection: detached.item.selection,
-          recipe, program: 'removeSteps', backend: input.backend,
-          ...(input.readTargetFacts ? { readTargetFacts: input.readTargetFacts } : {}),
-          ...(input.signal ? { signal: input.signal } : {}),
-        });
-        if (plan) {
-          const blocked = findMachineSetupBlockingObservationV1(plan);
-          // The admitted root interpreter checks administrator-only facts before
-          // mutation. An unprivileged preview cannot decide those facts for it.
-          eligible = !blocked || blocked.status === 'unavailable' && blocked.reason === 'needs_admin_to_check'
-            && machineSetupPlansRequireAdministratorV1([plan]);
-        }
+    if (detached.initialPresence === 'absent' && recipe?.removeSteps?.length
+      && (detached.item.kind !== 'softwareRecipe' || recipe.software === true)
+      && isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)
+      && machineRecipeInputConstraintsSatisfiedV1(recipe, inputs)) {
+      plan = await prepareMachineRecipeProgramV1({ machineId: input.machineId,
+        desiredRevision: input.desiredRevision, selection: detached.item.selection,
+        recipe, program: 'removeSteps', backend: input.backend,
+        ...(input.readTargetFacts ? { readTargetFacts: input.readTargetFacts } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      if (plan) {
+        const blocked = findMachineSetupBlockingObservationV1(plan);
+        // The admitted root interpreter checks administrator-only facts before
+        // mutation. An unprivileged preview cannot decide those facts for it.
+        eligible = !blocked || blocked.status === 'unavailable' && blocked.reason === 'needs_admin_to_check'
+          && machineSetupPlansRequireAdministratorV1([plan]);
       }
     }
     input.signal?.throwIfAborted();
