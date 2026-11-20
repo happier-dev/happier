@@ -31,6 +31,7 @@ import { useIsMachineListSettled, useServerScopedMachine } from '@/sync/store/ho
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Switch } from '@/components/ui/forms/Switch';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
