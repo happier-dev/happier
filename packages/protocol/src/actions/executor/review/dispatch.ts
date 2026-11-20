@@ -511,17 +511,20 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         if (narrationRequested && !reviewInput.comparisonId) {
           return { ok: false, errorCode: 'review_narration_comparison_required', error: 'review_narration_comparison_required' };
         }
-        if (narrationRequested && (!narrator || !narratorOptions.some((option) =>
-          option.value === tryNormalizeExecutionBackendOptionValue(narrator.engineId)
-          && option.disabled !== true && option.capabilities.structuredNarration))) {
-          return { ok: false, errorCode: 'review_narrator_unavailable', error: 'review_narrator_unavailable' };
-        }
         const originalSelection = engineSelections[0]?.selection;
         const originalModelId = originalSelection?.teamCredentialModel?.modelId ?? originalSelection?.modelId
           ?? (typeof data.modelId === 'string' ? data.modelId : undefined);
         const continueSingleReview = narrationRequested && engineIds.length === 1 && !narrationPolicy.requiresSeparateNarrator
           && narrator !== undefined && normalizeExecutionBackendOptionValue(narrator.engineId) === normalizeExecutionBackendOptionValue(engineIds[0]!)
           && (narrator.modelId === undefined || narrator.modelId === originalModelId);
+        const availableNarratorOptions = continueSingleReview
+          ? [selectedReviewEngineItems.get(engineSelections[0]!.reviewerId)!]
+          : narratorOptions;
+        if (narrationRequested && (!narrator || !availableNarratorOptions.some((option) =>
+          option.value === tryNormalizeExecutionBackendOptionValue(narrator.engineId)
+          && option.disabled !== true && option.capabilities.structuredNarration))) {
+          return { ok: false, errorCode: 'review_narrator_unavailable', error: 'review_narrator_unavailable' };
+        }
 
         const reviewIdBytes = randomBytes(16);
         reviewIdBytes[6] = (reviewIdBytes[6]! & 0x0f) | 0x40;

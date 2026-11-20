@@ -511,16 +511,22 @@ describe('createActionExecutor (review.start)', () => {
       { value: 'codex' }, { value: 'claude' }, { value: 'coderabbit' },
     ] } });
   });
-  it('retains one capable reviewer for its findings-first narration turn', async () => {
+  it.each([true, false])('retains the selected capable reviewer for narration without a default profile (default present: %s)', async defaultPresent => {
     const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'review-1', callId: 'call-1', sidechainId: 'call-1' }));
     const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({}));
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'selected-narrator', installSource: 'archive' } as const;
     const executor = createActionExecutor({ executionRunStart, executionRunAction,
-      reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
-    expect(await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review.',
+      reviewEnginesList: async () => ({ items: defaultPresent ? narrationInventory.items : [], selectionItems: [
+        { value: 'codex', label: 'Selected narrator', profileId: 'selected-narrator', retentionPolicy: 'resumable',
+          capabilities: { structuredNarration: true } },
+      ] }) } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', reviewers: [
+      { kind: 'engine', engineId: 'codex', profileId: 'selected-narrator', profileSourceCustody },
+    ], instructions: 'Review.',
       outputs: ['walkthrough'], comparisonId }, { surface: 'ui' })).toMatchObject({
       ok: true, result: { narration: { runId: 'review-1', state: 'collecting' } },
     });
-    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'long_lived',
+    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'long_lived', profileId: 'selected-narrator', profileSourceCustody,
       intentInput: { outputs: ['walkthrough'], comparisonId, narrator: { engineId: 'codex' } } });
     expect(executionRunAction).not.toHaveBeenCalled();
   });
