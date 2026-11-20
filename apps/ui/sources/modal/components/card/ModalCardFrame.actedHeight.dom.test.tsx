@@ -110,3 +110,25 @@ it('keeps the height a person pressed in on the web, so a shorter next step does
     container.remove();
   }
 });
+
+it('opens each new screen at the top of its body, not at the previous screen’s scroll (PAGE-ACCEPT-176 R7-D2)', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  const frame = (screenKey: string) => (
+    <ModalCardFrame scrollHost="bounded" screenKey={screenKey} dimensions={{ maxHeightRatio: 0.9 }} title="Deploy an app">
+      <View testID={`step-${screenKey}`} />
+    </ModalCardFrame>
+  );
+  try {
+    await act(async () => root.render(frame('where')));
+    const body = document.querySelector<HTMLElement>('[data-testid="modal-card-body-viewport"]')!;
+    // The person scrolled the previous step down to reach its Continue.
+    body.scrollTop = 420;
+    await act(async () => root.render(frame('deploy:details')));
+    expect(body.scrollTop).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});

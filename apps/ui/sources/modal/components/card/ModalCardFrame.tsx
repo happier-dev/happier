@@ -225,6 +225,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         setShownScreen(props.screenKey);
         setShownHeight(0);
     }
+    // A new screen opens at the top of its body: the previous step's scroll would hide the new step's summary, which
+    // sits first (PAGE-ACCEPT-176 R7-D2: Vercel's details opened past its Source / Runs on rows).
+    React.useLayoutEffect(() => {
+        bodyScrollRef.current?.scrollTo({ y: 0, animated: false });
+    }, [props.screenKey]);
     const [frameHeight, setFrameHeight] = React.useState(0);
     const dragLayout = dismiss ? drag.onLayout : null;
     const onFrameLayout = React.useCallback((event: LayoutChangeEvent) => {

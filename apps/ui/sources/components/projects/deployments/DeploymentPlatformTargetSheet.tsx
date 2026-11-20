@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from '@/platform/randomUUID';
@@ -561,6 +562,9 @@ export function DeploymentPlatformTargetEditor(
   const noticeKey = onPrepared && create && createIntentReady && target && account
     ? JSON.stringify([target.key, account, createSourceMethod ?? null, providerEnvironment ?? null]) : null;
   const [createNotice, setCreateNotice] = React.useState<Readonly<{ key: string; notice: string | null }> | null>(null);
+  const selectSoleConnection = useEventCallback((next: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => {
+    if (next?.kind === 'account') setAccount(next.account);
+  });
   const readCreateNotice = useEventCallback((key: string, isCurrent: () => boolean) => {
     if (!target || !account) return;
     void actions.inspectPlatformTarget(target.inspectActionId, buildPlatformTargetDraft({ target,
@@ -655,7 +659,9 @@ export function DeploymentPlatformTargetEditor(
           <>
             <ItemGroup {...(embedded ? {
               title: t('projects.deployments.platformLink.onPlatformTitle', { platform: target.title }),
-              description: t('projects.deployments.platformLink.onPlatformBody'),
+              // Create new says its consequence once, as the section's sentence, not as a bold row among the account rows
+              // (PAGE-ACCEPT-176 R7-D2).
+              description: t(create ? 'projects.deployments.platformLink.createConsequences' : 'projects.deployments.platformLink.onPlatformBody'),
               // The section's Check stands only once it can run (an account and its choices made); a disabled
               // header action that cannot succeed yet is not drawn (DESIGN-ACCEPT C1 follow-up).
               ...(primary && (!primary.disabled || primary.loading) ? { action: <SectionActionButton {...primary} /> } : {}),
@@ -690,7 +696,7 @@ export function DeploymentPlatformTargetEditor(
                   resetFrom();
                 }}
               /> : null}
-              {create && !reviewingCreate ? <Item title={t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
+              {create && !reviewingCreate && !embedded ? <Item title={t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
               {props.onPrepared ? null : <DropdownMenu
                 testID="project-deployments.platform.choice"
                 open={platformMenuOpen}
@@ -730,6 +736,8 @@ export function DeploymentPlatformTargetEditor(
                   setCursors({});
                   resetFrom();
                 }}
+                // The only eligible connection is chosen for the person, as Add domain does (PAGE-ACCEPT-176 R7-D2).
+                onSelectSingleEligible={selectSoleConnection}
               />}
               {!create && sourceMethod && !needsConnect ? <DeploymentSourceMethodChoice
                 methods={target.sourceMethods}
