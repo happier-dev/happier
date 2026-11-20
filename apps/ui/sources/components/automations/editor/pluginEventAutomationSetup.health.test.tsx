@@ -6,6 +6,7 @@ import { act } from 'react';
 import { TextInput } from 'react-native';
 import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { PluginAvailabilityActionHttpPathsV1, type PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability';
 import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
@@ -370,12 +371,12 @@ it.each([
 });
 
 function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_health_setup', native = false,
-    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }) {
+    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }, authoredManifest: unknown = PLUGIN_MANIFEST) {
     // Source publication admits authored bytes before they can become eligible Events.
-    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    const admitted = ingestPluginManifestV2(authoredManifest);
     expect(admitted.ok, admitted.ok ? undefined : JSON.stringify(admitted.diagnostics)).toBe(true);
     if (!admitted.ok) throw new Error('Health manifest admission failed');
-    const pluginId = PLUGIN_MANIFEST.id;
+    const { id: pluginId, displayName, version } = admitted.manifest;
     const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
     const sourceCustody = { kind: 'development', registeredRootId: 'machine-services-source' } as const;
     const origin = { serverIdentityId, sourceRef: { machineId, pluginId, sourceCustody } };
@@ -384,6 +385,7 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
     const declaration = admitted.manifest.contributes.events?.find(row => row.id === contribution.eventId);
     if (!action || declaration?.kind !== 'event' || !declaration.automation) throw new Error('Missing health setup declaration');
     const setupRenderer = declaration.automation.source.setupSurface?.renderer;
+    const inputHints = normalizePluginActionInputHintsV2(action.inputHints);
     const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
         event: { id: `${pluginId}/${declaration.id}`, identity: { pluginId, localId: declaration.id },
             occurrenceId, sourceCustody,
@@ -391,7 +393,7 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
             localizedPresentation: { title: declaration.title }, description: null,
             payloadSchema: declaration.payloadSchema, automation: declaration.automation },
         setupAction: { id: `${pluginId}/${action.id}`, identity: { pluginId, localId: action.id },
-            occurrenceId, title: action.title, description: null, inputSchema: action.inputSchema, inputHints: action.inputHints ?? null },
+            occurrenceId, title: action.title, description: null, inputSchema: action.inputSchema, inputHints: inputHints ?? null },
         observationBinding: { executionOrigin: origin, materializationRef: { machineId, pluginId, materializationId: 'machine-services-observer' } },
         ...(native && setupRenderer ? { setupSurface: {
             contribution: { pluginId, localId: declaration.id }, occurrenceId, projectionGeneration: 1,
@@ -404,15 +406,15 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
         } } : {}),
     });
     const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
-        installedPackagesById: { [pluginId]: { id: pluginId, displayName: PLUGIN_MANIFEST.displayName,
-            version: PLUGIN_MANIFEST.version, enabled: true, source: { kind: 'path', locator: '/sources/machine-services' },
+        installedPackagesById: { [pluginId]: { id: pluginId, displayName,
+            version, enabled: true, source: { kind: 'path', locator: `/sources/${pluginId}` },
             occurrenceId, sourceCustody, executionOrigin: origin } },
         actionsById: { [event.setupAction.id]: { id: action.id, pluginId, occurrenceId, title: action.title,
-            execution: action.execution, scopes: action.scopes, surfaces: action.surfaces, inputHints: action.inputHints,
+            execution: action.execution, scopes: action.scopes, surfaces: action.surfaces, inputHints,
             dangerLevel: action.dangerLevel, available: true, placementBindings: [], priority: 0 } },
     });
     const inputs = publishDaemonMergedProjectionInputs({ projection, automationEligibleEvents: [event] });
-    const source = { origin, occurrenceId, version: PLUGIN_MANIFEST.version, serverId };
+    const source = { origin, occurrenceId, version, serverId };
     const fresh: FreshPluginMachineExecutionOriginV1 = { origin, source,
         machineTarget: { kind: 'resolved', target: { serverIdentityId, machineId }, serverId,
             profile: { id: serverId, name: 'Health setup', serverUrl: 'https://health.test', serverIdentityId,
@@ -827,6 +829,224 @@ it.each([
         await mounted?.dispose();
         clearDaemonMergedProjectionCacheForTests();
         await connection.dispose();
+    }
+});
+
+it.each([
+    { kind: 'uptime-kuma', field: 'Monitor ID', key: 'monitorId', original: '177', edited: '178',
+        config: { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: 1 } },
+    { kind: 'gatus', field: 'Endpoint name', key: 'endpointName', original: 'health', edited: 'health-edited',
+        config: { endpointGroup: 'Production', webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBB', observingSince: 1 } },
+    { kind: 'http', field: 'Endpoint', key: 'endpoint', original: 'https://before.test/health', edited: 'https://after.test/health',
+        config: { expectStatus: 200 } },
+    { kind: 'sentry' },
+    { kind: 'posthog' },
+] as const)('persists a saved $kind edit after the setup Action settles', async fixture => {
+    const { kind } = fixture;
+    const provider = kind === 'sentry' || kind === 'posthog' ? kind : null;
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const { createWorkflowAutomationHttpBoundary, createWorkflowAutomationTriggerDetailFixture } = await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
+    const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+    const { AutomationTriggerIdSchema } = await import('@happier-dev/protocol/automations/automationTriggerIdentity');
+    const { listWorkflowTriggerPage } = await import('@/sync/domains/workflows/workflowTriggerActions');
+    const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { AccountTriggersSection } = await import('@/components/workflows/triggers/AccountTriggersSection');
+    const { TriggerRow } = await import('@/components/workflows/triggers/TriggerRow');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const { Item } = await import('@/components/ui/lists/Item');
+    const { TextLinkButton } = await import('@/components/ui/buttons/TextLinkButton');
+    const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+    const { Modal } = await import('@/modal');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+
+    const accountId = `monitor-save-${kind}`;
+    const serverIdentityId = `srv_monitor_save_${kind.replace('-', '_')}`;
+    const home = createHomeHubArtifactHttpBoundary(accountId);
+    const automations = createWorkflowAutomationHttpBoundary();
+    const disposeLoader = await installRealActionExecutorModuleLoader();
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://${accountId}.test`, serverIdentityId, accountId,
+        request: async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            return await automations.handle(url, init) ?? home.request(input, init);
+        } });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected the restored monitor Account');
+    const { TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1 } =
+        await import('../../../../../../packages/triage-sources/src/observations/issueSource');
+    const providerManifest = provider && (provider === 'sentry'
+        ? (await import('../../../../../../packages/plugins/sentry/src/manifest')).PLUGIN_MANIFEST
+        : (await import('../../../../../../packages/plugins/posthog/src/manifest')).PLUGIN_MANIFEST);
+    const { machineId, pluginId, projection, event, fresh, inputs } = healthSetupFixture(connection.serverId, serverIdentityId, !provider,
+        provider ? { eventId: TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, actionId: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 }
+            : { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
+        providerManifest ?? PLUGIN_MANIFEST);
+    const automationId = '412bddd2-014a-4ebf-8854-a3954566cb7f';
+    const triggerId = AutomationTriggerIdSchema.parse('262544ff-0dc8-4240-9462-89784070f592');
+    const subject = { kind: 'machineService' as const, machineId, serviceId: 'production' };
+    const sourceInstanceId = provider ? '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05' : createHealthCheckSourceInstanceIdV1(subject);
+    const { TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema } = await import('@happier-dev/triage-protocol/v1');
+    const providerConfig = provider && await (async () => {
+        const { createTriageSourceV1Fixture } = await import('@happier-dev/triage-protocol/testing/v1');
+        const retained = createTriageSourceV1Fixture().configuredInstance;
+        const purpose = provider === 'sentry'
+            ? (await import('../../../../../../packages/plugins/sentry/src/sentryContracts')).SENTRY_CONNECTED_ACCOUNT_PURPOSE
+            : (await import('../../../../../../packages/plugins/posthog/src/posthogContracts')).POSTHOG_CONNECTED_ACCOUNT_PURPOSE;
+        return TriageIssueEventSourceConfigV1Schema.parse({ v: 1, instance: {
+            ...retained, instance: { sourceInstanceId, source: TRIAGE_ISSUE_WATCH_SOURCES_V1[provider] },
+            binding: { purpose, account: { service: { pluginId, localId: purpose }, accountId } },
+        }, checkPeriodMs: 120_000, investigation: { mode: 'inbox' } });
+    })();
+    const sourceConfig = providerConfig ?? ('field' in fixture ? HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject, checks: [{
+        checkId: 'saved', kind: { pluginId, localId: kind }, binding: { kind: 'healthCheck' },
+        config: { ...fixture.config, [fixture.key]: fixture.original }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1,
+    }], alerts: { channels: [], phases: ['open', 'recovered'] }, investigation: { mode: 'inbox' } }) : null);
+    if (!sourceConfig) throw new Error('Expected saved Event configuration');
+    automations.rows.set(automationId, AutomationDefinitionDetailSchema.parse({
+        id: automationId, name: 'Production check', description: null, enabled: true, templateVersion: 1,
+        workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null, lastRunAt: null,
+        createdAt: 1, updatedAt: 1, assignments: [], observationOnly: { kind: 'observationOnly', templateVersion: 1 },
+        triggers: [createWorkflowAutomationTriggerDetailFixture(automationId, { kind: 'new', triggerId,
+            trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity, sourceInstanceId,
+                sourceContractVersion: 1, sourceConfig, displayLabel: 'Saved health checks', filter: null,
+                maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
+                    watcherMaterializationRef: { machineId, pluginId, materializationId: 'machine-services-observer' } } } })],
+    }));
+    const origins = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
+        members: [{ machineId, serverId: connection.serverId, serverIdentityId, projection: inputs.pluginUiProjection,
+            phase: 'current', interactionEnabled: true }] });
+    const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
+        id => id === pluginId ? origins : null);
+    const pendingSetup = createDeferred<void>();
+    const presented = createDeferred<PluginUiTestkit>();
+    const contributedForm = createDeferred<SetupForm>();
+    const setupInputs: unknown[] = [];
+    rpc.respond = request => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+            return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
+            return { ok: true, inputSchema: event.setupAction.inputSchema };
+        if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return undefined;
+        const rawInput = Reflect.get(Object(request.payload), 'input');
+        const input = providerConfig ? TriageIssueEventSetupInputV1Schema.parse(rawInput) : HealthCheckSetupInputV1ProtocolSchema.parse(rawInput);
+        setupInputs.push(input);
+        let resultConfig: unknown = input;
+        if (providerConfig) {
+            const seconds = TriageIssueEventSetupInputV1Schema.parse(input).checkPeriodSeconds;
+            if (seconds === undefined) throw new Error('Expected a polling period at the provider boundary');
+            resultConfig = TriageIssueEventSourceConfigV1Schema.parse({ ...providerConfig, checkPeriodMs: seconds * 1_000 });
+        }
+        return pendingSetup.promise.then(() => ({ ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
+            sourceConfig: resultConfig, displayLabel: event.event.title, observationOnly: { kind: 'observationOnly' } } }));
+    };
+    // Mount the actual contributed renderer at the native-modal boundary. The editor still
+    // owns the modal launch, the host binding, Action dispatch, and outer trigger submission.
+    const originalShow = Modal.show;
+    let nativeSurface: PluginUiTestkit | undefined;
+    const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
+        if (config.component === ActionInputFormModal && typeof config.props === 'object' && config.props !== null && 'form' in config.props) {
+            contributedForm.resolve(config.props.form as SetupForm);
+            return 'monitor-edit-contributed';
+        }
+        const launchInput = Reflect.get(Object(config.props), 'launchInput');
+        const onSettle: unknown = Reflect.get(Object(config.props), 'onSettle');
+        if (typeof onSettle !== 'function') return originalShow(config);
+        const surfaceContext = createSurfaceContextFixture({ mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' },
+            target: { kind: 'app' }, accountEncryptionMode: 'plain' });
+        let settled = false;
+        const handlers = createPluginEventAutomationSetupSurfaceBinding({ isSettled: () => settled,
+            settle: value => { settled = true; onSettle(value); } }).createMountedHostApiHandlers?.({ isCurrent: lifetime.isCurrent });
+        const settle = handlers?.handlers.settleEphemeralInput;
+        if (!settle) throw new Error('Expected the native source settlement handler');
+        void createPluginUiTestkit({ surface: renderSurface, adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+            identity: { instanceId: 'monitor-edit-native', mountNonce: 'monitor-edit-mount' },
+            authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, launchInput, surfaceContext,
+            handlers: { executeAction: previewHealthSetup, settleEphemeralInput: async ({ settlement }) => {
+                expect(await settle(PluginUiHostApiRequestEnvelopeV1Schema.parse({
+                    version: 1, requestId: 'monitor-edit-settle', surface: { pluginId, contributionId: event.event.identity.localId,
+                        surfaceId: 'monitor-edit-native', platform: surfaceContext.platform, channel: 'development' },
+                    method: 'settleEphemeralInput', payload: settlement,
+                }))).toBeNull();
+            } },
+        }).then(mounted => { nativeSurface = mounted; presented.resolve(mounted); }, presented.reject);
+        return 'monitor-edit-native';
+    });
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    const button = (id: string) => screen?.findAllByType(RoundButton).find(row => row.props.testID === id);
+    const submit = () => pressTestInstanceAsync(screen?.findAllByType(TextLinkButton).find(row =>
+        row.props.testID === 'workflows-column-trigger-popover-submit'));
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
+        observeMachinePresenceForTest(lifetime.scope, [machineId]);
+        screen = await renderScreen(<AccountTriggersSection />);
+        const row = () => screen?.findAllByType(TriggerRow).find(candidate => candidate.props.testID === `workflows-column:trigger:${automationId}`);
+        await waitForHomeGovernance(() => expect(row()).toBeDefined());
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        try { await pressTestInstanceAsync(row()); }
+        finally { restorePopoverGlobals(); }
+        await pressTestInstanceAsync(screen.findAllByType(Item).find(candidate =>
+            candidate.props.testID === 'workflows-column-trigger-popover-configure-event'));
+        await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.sourceStatus).toBe('configured'));
+        await pressTestInstanceAsync(screen.findAllByType(HappierPressable).find(candidate => candidate.props.testID === 'automation-event-configure-source'));
+        const editedConfig = 'field' in fixture ? { checks: [{ config: { [fixture.key]: fixture.edited } }] } : { checkPeriodMs: 180_000 };
+        if ('field' in fixture) {
+            const mounted = await presented.promise;
+            const control = document.querySelector(`input[aria-label="${fixture.field}"]`);
+            if (!(control instanceof HTMLInputElement)) throw new Error(`Expected editable ${fixture.field}`);
+            expect(control.value).toBe(fixture.original);
+            const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (!setValue) throw new Error('Expected browser input setter');
+            await act(async () => { setValue.call(control, fixture.edited); control.dispatchEvent(new Event('input', { bubbles: true })); });
+            await act(async () => { await mounted.press(await mounted.getByRole('button', { name: 'Save changes' })); });
+            await waitForHomeGovernance(() => expect(setupInputs).toMatchObject([editedConfig]));
+        } else {
+            const form = await contributedForm.promise;
+            expect(form.getInput()).toMatchObject({ sourceInstanceId, checkPeriodSeconds: 120 });
+            form.replaceInput({ ...form.getInput(), checkPeriodSeconds: 180 });
+            await act(async () => { expect(await form.submit()).toMatchObject({ kind: 'settled', outcome: { ok: true } }); });
+            await waitForHomeGovernance(() => expect(setupInputs).toMatchObject([{ sourceInstanceId, checkPeriodSeconds: 180 }]));
+        }
+        const innerDone = button('automation-plugin-event-done');
+        expect(innerDone).toBeDefined();
+        if (!innerDone?.props.disabled) {
+            await pressTestInstanceAsync(button('automation-plugin-event-done'));
+            await submit();
+        }
+        await act(async () => pendingSetup.resolve());
+        if (button('automation-plugin-event-done')) {
+            await waitForHomeGovernance(() => expect(button('automation-plugin-event-done')?.props.disabled).toBe(false));
+            await pressTestInstanceAsync(button('automation-plugin-event-done'));
+            if (kind === 'uptime-kuma') {
+                automations.respondWith(method => method === 'PUT'
+                    ? Response.json({ error: 'automation_template_version_conflict' }, { status: 409 }) : undefined);
+                await submit();
+                await waitForHomeGovernance(() => expect(screen!.findByTestId('workflows-column-trigger-popover-failure')).not.toBeNull());
+                const refused = await listWorkflowTriggerPage({ automationId, triggerId });
+                expect(refused.sets).toMatchObject([{ revision: 1, triggers: [{ id: triggerId, revision: 0 }] }]);
+                expect(refused.triggerDefinition).toMatchObject({ triggerId, definition: { sourceConfig } });
+                automations.respondWith(undefined);
+            }
+            await submit();
+        }
+        const persisted = await listWorkflowTriggerPage({ automationId, triggerId });
+        expect(persisted.sets).toMatchObject([{ revision: 2, triggers: [{ id: triggerId, revision: 1 }] }]);
+        expect(persisted.triggerDefinition).toMatchObject({ triggerId, definition: {
+            sourceConfig: editedConfig,
+        } });
+    } finally {
+        pendingSetup.resolve();
+        modal.mockRestore();
+        await nativeSurface?.dispose();
+        await screen?.unmount();
+        disposeProjection();
+        clearDaemonMergedProjectionCacheForTests();
+        await connection.dispose();
+        disposeLoader();
     }
 });
 

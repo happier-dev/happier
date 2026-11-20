@@ -204,6 +204,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                 const detail = AutomationDefinitionDetailSchema.parse({ ...current, name: input.name, description: input.description,
                     enabled: input.enabled, workflowDefinitionId: input.workflowDefinitionId ?? null,
                     scopeSessionId: input.scopeSessionId ?? null, templateVersion: current.templateVersion + 1,
+                    ...(current.observationOnly ? { observationOnly: { ...current.observationOnly, templateVersion: current.templateVersion + 1 } } : {}),
                     executionRecipe: input.executionRecipe,
                     ...(input.executionRecipe?.v === 2 && input.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: input.executionRecipe.managedTarget } : {}),
@@ -212,6 +213,9 @@ export function createWorkflowAutomationHttpBoundary(): {
                         const saved = current.triggers.find(trigger => trigger.id === row.triggerId);
                         if (row.kind === 'new') return createWorkflowAutomationTriggerDetailFixture(id, row);
                         if (!saved) throw new Error('Automation fixture missing retained trigger');
+                        if (row.trigger?.kind === 'pluginEvent') return createWorkflowAutomationTriggerDetailFixture(id, {
+                            kind: 'new', triggerId: row.triggerId, trigger: { ...row.trigger, enabled: row.enabled ?? saved.enabled },
+                        }, saved.revision + 1);
                         return AutomationTriggerDetailSchema.parse({ ...saved, ...(row.trigger ?? {}),
                             ...(row.enabled === undefined ? {} : { enabled: row.enabled }),
                             revision: saved.revision + (row.trigger || row.enabled !== undefined ? 1 : 0) });

@@ -999,8 +999,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     ]);
 
     const createDraft = React.useMemo<PluginEventAutomationCreateDraft | null>(() => {
+        // The retained source is still available for reopening the form, but
+        // cannot complete an edit while its replacement is settling or refused.
         if (
-            !configuredSetup
+            sourceStatus !== 'configured'
+            || !configuredSetup
             || !filter.valid
             || !maximumObservationAgeMs.valid
         ) {
@@ -1029,6 +1032,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             resolveFreshWatcherOrigin: resolveExecutionOrigin,
         });
     }, [
+        sourceStatus,
         configuredSetup,
         eligibleEvents,
         filter.valid,

@@ -2,7 +2,7 @@ import { createElement as h, useEffect, useState, type ReactElement } from 'reac
 import {
     HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, HealthCheckKindCatalogV1ProtocolSchema, createHealthCheckSourceInstanceIdV1,
     HealthCheckHttpConfigV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema,
-    type HealthCheckSetupPreviewResultV1,
+    HealthCheckDnsConfigV1ProtocolSchema, type HealthCheckSetupPreviewResultV1,
     HealthCheckSetupInputV1ProtocolSchema, HealthCheckTcpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1,
     type HealthCheckKindV1, type HealthCheckKindCatalogV1, type HealthCheckSetupDraftV1, type HealthCheckSetupInputV1, type HealthCheckSubjectV1,
 } from '@happier-dev/plugin-sdk';
@@ -58,13 +58,32 @@ type Draft = Readonly<{
 const EMPTY: Draft = { kind: 'http', endpoint: '', expectStatus: '200', keyword: '', host: '', port: '', hostname: '',
     recordType: 'A', expectedAnswer: '', graceMs: MINUTE, periodMs: MINUTE, consecutiveFailuresBeforeAlerting: 1 };
 
-function readSavedMonitorDraft(check: Check | undefined): Draft | null {
-    if (!check || !isMonitorCheck(check)) return null;
+function readSavedCheckDraft(check: Check | undefined): Draft | null {
+    if (!check) return null;
     const cadence = {
         periodMs: check.periodMs,
         consecutiveFailuresBeforeAlerting: check.consecutiveFailuresBeforeAlerting,
         ...(check.binding.kind === 'domain' ? { domainCondition: check.binding.condition } : {}),
     };
+    if (check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 && check.binding.kind === 'healthCheck') {
+        if (check.kind.localId === 'http' || check.kind.localId === 'certificate') {
+            const config = HealthCheckHttpConfigV1ProtocolSchema.safeParse(check.config);
+            return config.success && 'endpoint' in config.data
+                ? { ...EMPTY, ...cadence, kind: check.kind.localId, endpoint: config.data.endpoint,
+                    expectStatus: String(config.data.expectStatus), keyword: config.data.keyword ?? '' }
+                : null;
+        }
+        if (check.kind.localId === 'tcp') {
+            const config = HealthCheckTcpConfigV1ProtocolSchema.safeParse(check.config);
+            return config.success ? { ...EMPTY, ...cadence, kind: 'tcp', host: config.data.host, port: String(config.data.port) } : null;
+        }
+        if (check.kind.localId === 'dns') {
+            const config = HealthCheckDnsConfigV1ProtocolSchema.safeParse(check.config);
+            return config.success ? { ...EMPTY, ...cadence, kind: 'dns', hostname: config.data.hostname,
+                recordType: config.data.recordType, expectedAnswer: config.data.expectedAnswer ?? '' } : null;
+        }
+    }
+    if (!isMonitorCheck(check)) return null;
     if (check.kind.localId === 'uptime-kuma') {
         const config = monitorDefinitions['uptime-kuma'].configSchema.safeParse(check.config);
         return config.success ? { ...EMPTY, ...cadence, kind: 'uptime-kuma', monitorId: config.data.monitorId } : null;
@@ -193,7 +212,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
     const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
     const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? existing[0];
-    const restoredDraft = selectedCheckId !== null || props.existing.length > 0 ? readSavedMonitorDraft(selectedCheck) : null;
+    const restoredDraft = readSavedCheckDraft(selectedCheck);
     const draft = editedDraft ?? restoredDraft ?? EMPTY;
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
@@ -255,9 +274,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         && isValidPluginJsonSchemaValue(draft.contributedValidator, configFor(draft)));
     const monitorKind = !draft.contributedKind && isMonitorKind(draft.kind) ? draft.kind : null;
     const monitorValid = !monitorKind || monitorDefinitions[monitorKind].configSchema.safeParse(configFor(draft)).success;
-    const editedMonitor = editedDraft !== null && monitorKind === restoredDraft?.kind ? selectedCheck : undefined;
-    const savedChecks = editedMonitor ? existing.map(check => check === editedMonitor ? {
+    const editedCheck = editedDraft !== null && !draft.contributedKind && draft.kind === restoredDraft?.kind
+        ? selectedCheck : undefined;
+    const savedEditValid = !editedCheck || (monitorValid && loopback?.refused !== true);
+    const savedChecks = editedCheck ? existing.map(check => check === editedCheck ? {
         ...check, config: configFor(draft, check.config),
+        periodMs: monitorKind ? check.periodMs : draft.periodMs,
         consecutiveFailuresBeforeAlerting: draft.consecutiveFailuresBeforeAlerting,
     } : check) : existing;
     const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: savedChecks,
@@ -405,10 +427,10 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
         existing.length > 0 || props.subject.kind === 'environment' ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
-            disabled: alerts === undefined || !savedCandidate.success || (editedMonitor !== undefined && !monitorValid) || saving,
+            disabled: alerts === undefined || !savedCandidate.success || !savedEditValid || saving,
             busy: saving, testID: 'health-setup-save',
             onPress: async () => {
-                if (!savedCandidate.success) return;
+                if (!savedCandidate.success || !savedEditValid) return;
                 setSaving(true);
                 try {
                     await host.settleEphemeralInput({ kind: 'completed', input: savedCandidate.data }, { signal: props.signal });
