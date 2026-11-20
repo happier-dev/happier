@@ -60,7 +60,7 @@ it('offers exact Setup recovery while keeping operation details reachable', asyn
   const recovery = { onRetryFailedSetup };
   const screen = await renderScreen(<TeamSetupPageView
     {...recovery}
-    header={null} teamName="Acme" selection={createMachineAdministrationTargetSelectionFixture()}
+    header={null} serverId="home" teamName="Acme" selection={createMachineAdministrationTargetSelectionFixture()}
     machineId="machine-a" machineLabel="Mac" homeDir={null}
     run={{ kind: 'stopped', operationId: 'setup-operation', failure: {
       ok: false, errorCode: 'native_effect_failed', error: 'Registry rate limited',

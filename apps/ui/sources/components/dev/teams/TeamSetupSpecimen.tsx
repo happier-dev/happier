@@ -158,6 +158,7 @@ function SetupFrame(props: Readonly<{ done?: boolean }>) {
     <ItemList pageColumn="wide">
       <TeamSetupPageView
         header={<TeamSetupHeader context={{ team: TEAM, address: ADDRESS, homeName: HOME_NAME }} lead />}
+        serverId={HOME_ID}
         teamName={TEAM.name}
         selection={SELECTION}
         machineId={MACHINE_ID}

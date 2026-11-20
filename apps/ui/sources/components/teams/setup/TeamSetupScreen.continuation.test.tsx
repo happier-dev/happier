@@ -41,6 +41,7 @@ const api = teamProjectSourceFixture({
 function view(overrides: Partial<ViewProps>): React.ReactElement {
   const props: ViewProps = {
     header: null,
+    serverId: 'home',
     teamName: 'Acme',
     selection: createMachineAdministrationTargetSelectionFixture(),
     machineId: 'devbox',
@@ -159,6 +160,8 @@ it('ends a finished setup on another-machine instead of a disabled Set up button
   const onSetUpAnother = vi.fn();
   const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1' }, canRun: false, onSetUpAnother }));
   expect(screen.findByTestId('team-setup-run')).toBeNull();
+  // Repositories are opened by then; finding clones belongs to the review before a run.
+  expect(screen.findByTestId('team-setup-find-clones')).toBeNull();
   await screen.pressByTestIdAsync('team-setup-another-run');
   expect(onSetUpAnother).toHaveBeenCalledOnce();
 });

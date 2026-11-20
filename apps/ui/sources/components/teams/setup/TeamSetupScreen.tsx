@@ -443,6 +443,7 @@ function TeamSetupPlanPage(
         scope: context.scope,
       } : undefined}
       conditions={props.conditions}
+      serverId={context.scope.serverId}
       teamName={teamName}
       selection={selection}
       machineId={machineId}
@@ -487,6 +488,8 @@ export function TeamSetupPageView(
   props: Readonly<{
     header: React.ReactNode;
     conditions?: React.ReactNode;
+    /** The Team's Home: checkouts of its Sources are looked up there. */
+    serverId: string;
     teamName: string;
     selection: MachineAdministrationTargetSelectionV1;
     machineId: string | null;
@@ -613,7 +616,7 @@ export function TeamSetupPageView(
     <>
     {props.header}
     {props.conditions}
-    <PageAsideColumns compact={compact} compactAside="first" aside={aside}>
+    <PageAsideColumns compact={compact} compactAside={run.kind === 'done' ? 'last' : 'first'} aside={aside}>
       {props.sources.loading && repositories.length === 0 ? (
         <SurfaceStateCard testID="team-setup-sources-loading" kind="loading" size="line" title={t('projects.sources.loading')} />
       ) : props.sources.failure ? (
@@ -758,17 +761,17 @@ export function TeamSetupPageView(
                 })
               : t('teams.join.setupPage.repositoriesDescriptionNoMachine')
           }
-          action={
+          action={run.kind === 'done' ? undefined : (
             <RoundButton
               testID="team-setup-find-clones"
               size="small"
               display="secondary"
               title={t('teams.join.setupPage.findClones')}
               loading={props.clones.searching}
-              disabled={!props.clones.onFind || running || run.kind === 'done'}
+              disabled={!props.clones.onFind || running}
               onPress={() => props.clones.onFind?.()}
             />
-          }
+          )}
         >
           {repositories.map((source) => (
             <TeamSetupRepositoryRow
@@ -778,7 +781,7 @@ export function TeamSetupPageView(
               homeDir={props.homeDir}
               included={!props.excluded.has(source.id)}
               adoptedPath={props.clones.adopted.get(source.id) ?? null}
-              serverId={props.selection.selectedTarget?.serverId ?? null}
+              serverId={props.serverId}
               teamName={teamName}
               onStartSession={props.onStartSession}
               batch={props.batch}
@@ -859,7 +862,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     included: boolean;
     /** A clone the member already has, found by Find existing clones; it is attached as it is. */
     adoptedPath: string | null;
-    serverId: string | null;
+    serverId: string;
     teamName: string;
     onStartSession?: (project: OpenedProject) => void;
     batch: TeamSetupBatch | null;
@@ -872,8 +875,8 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   const opened = progress?.ready ? readOpenedProject(props.batch, props.source.id) : null;
   // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
   const { serverId, machineId, source } = props;
-  const checkout = useWorkspaceRefsSelector(React.useCallback((refs) => serverId
-    ? findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision }) : null,
+  const checkout = useWorkspaceRefsSelector(React.useCallback((refs) =>
+    findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision }),
   [machineId, serverId, source.id, source.revision]));
   const destination = props.adoptedPath ? null : props.machineId
     ? suggestProjectOpenDestination({
