@@ -145,11 +145,16 @@ async function installTracker() {
             register(id, handler, options) {
               api.actions.register(
                 id,
-                (input, context) =>
-                  handler(input, {
-                    ...context,
-                    services: { ...context.services, targetedContributions },
-                  }),
+                // Preserve the executable parsers attached by definePlugin
+                // while substituting only the admitted contribution service.
+                new Proxy(handler, {
+                  apply(registered, _receiver, [input, context]: Parameters<typeof handler>) {
+                    return registered(input, {
+                      ...context,
+                      services: { ...context.services, targetedContributions },
+                    });
+                  },
+                }),
                 options,
               );
             },
