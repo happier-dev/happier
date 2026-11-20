@@ -244,7 +244,7 @@ function GitFrame(props: Readonly<{ state: FrameState; phone: boolean }>) {
                 machineName="MacBook Pro"
                 machineReachable={!state.offline}
                 machineLastSeenAt={state.offline ? today(10, 30) : null}
-                recovery={{ fetch: NOOP, retry: NOOP, refresh: NOOP, showConflicts: NOOP, publish: NOOP, pullWith: NOOP, pullThenPush: NOOP, openTerminal: NOOP, undoCommit: NOOP }}
+                recovery={{ fetch: NOOP, retry: NOOP, refresh: NOOP, showConflicts: NOOP, publish: NOOP, pullWith: NOOP, pullThenPush: NOOP, openTerminal: NOOP, connectRepository: NOOP, undoCommit: NOOP }}
                 authenticationCommand={state.operation?.provider === 'GitHub' ? 'gh auth login' : null}
                 haptics={false}
             />
@@ -400,6 +400,10 @@ const FRAMES: ReadonlyArray<{ id: string; title: string; state: FrameState }> = 
     {
         id: 'S5', title: 'S5 · can’t sign in to origin',
         state: { ...AFTER_COMMIT, landedSha: null, operation: { phase: 'needs_input', action: 'push', id: 'a', at: AT, message: '', machine: 'MacBook Pro', provider: 'GitHub', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED', nextActions: [{ kind: 'authenticate' }] } } },
+    },
+    {
+        id: 'S5R', title: 'S5R · no repository to push to',
+        state: { ...AFTER_COMMIT, landedSha: null, operation: { phase: 'needs_input', action: 'push', id: 'nr', at: AT, message: '', provider: 'GitHub', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED', nextActions: [{ kind: 'connect_repository' }] } } },
     },
     {
         id: 'S6', title: 'S6 · machine offline',

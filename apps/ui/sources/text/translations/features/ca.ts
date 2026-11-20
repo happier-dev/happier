@@ -5782,6 +5782,9 @@ const filesPaneTranslations = { ca: {
         rootErrorTitle: ({ machine }) => `No s’han pogut llistar els fitxers a ${machine}`,
         rootErrorTitleUnnamed: 'No s’han pogut llistar els fitxers',
         workspaceUnavailableReason: 'Happier no pot accedir a aquests fitxers des d’aquí.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} està aturat`,
+        managedStoppedReason: "Inicia’l per veure’n els fitxers.",
+        managedStartingTitle: ({ workspace }) => `Iniciant ${workspace}…`,
         page: {
             view: "Veure",
             preview: "Previsualització",
@@ -14653,6 +14656,8 @@ const ca: typeof en = {
             rejectedBody: 'Obtén-los per veure què ha canviat. Els teus commits es queden en aquesta màquina fins que tornis a pujar.',
             authTitle: ({ machine, provider }) => `${provider} no ha acceptat l'inici de sessió des de ${machine}`,
             authBody: ({ machine }) => `Git a ${machine} no té credencials vàlides per a aquest remot. Inicia sessió allà i torna-ho a provar.`,
+            noRepositoryTitle: 'Aquest projecte no té cap repositori on enviar',
+            noRepositoryBody: 'Connecta’n un i els teus commits s’hi enviaran.',
             offlineTitle: ({ machine }) => `${machine} està fora de línia`,
             offlineBody: 'Ara no s\'hi pot executar res. La teva feina és a salvo en aquella màquina.',
             conflictTitle: 'S\'ha aturat per canvis en conflicte',
@@ -14672,6 +14677,7 @@ const ca: typeof en = {
             fetch: 'Obtén',
             checkAgain: 'Torna a comprovar',
             showConflicts: 'Mostra els conflictes',
+            connectRepository: 'Connecta un repositori',
         },
         timeline: {
             title: 'Cronologia',

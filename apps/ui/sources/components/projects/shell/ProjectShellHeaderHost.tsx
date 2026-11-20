@@ -30,6 +30,10 @@ import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProje
 import { t } from '@/text';
 import { resolveMachineDisplayNameParts, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useProjectMachineDisplays } from '../useProjectMachineDisplays';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import { describeManagedCheckoutPlace } from './projectCheckoutPlace';
 
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '../useOpenProject';
@@ -92,18 +96,13 @@ export function useProjectShellCheckout(
   const openProject = useOpenProject();
   const machines = useActiveMachineFacts();
   const refs = useWorkspaceRefs();
+  // An attached workspace reads its branch from the workspace itself, through its controller (remote workspaces U1).
   const scope = React.useMemo(
-    () => ({
-      serverId: props.workspaceRef.serverId,
-      machineId: props.workspaceRef.machineId,
-      rootPath: props.activeRootPath,
-    }),
-    [
-      props.activeRootPath,
-      props.workspaceRef.machineId,
-      props.workspaceRef.serverId,
-    ],
+    () => workspaceScopeFromProject(props.workspaceRef, props.activeRootPath),
+    [props.activeRootPath, props.workspaceRef],
   );
+  const managedRef = isManagedWorkspaceRefV2(props.workspaceRef) ? props.workspaceRef : null;
+  const managedName = useManagedMachineName(managedRef ? props.workspaceRef.serverId : null, managedRef?.managedId ?? null);
   // Changes owns its measured read. Its header observes the same branch, worktrees and full counts.
   const changesPresented = props.selection?.kind === 'builtin' && props.selection.page === 'changes';
   const { snapshot } = useWorkspaceScmSnapshotController(scope, { refreshOnMount: props.selection?.kind !== 'plugin' && !changesPresented, detail: 'summary' });
@@ -225,11 +224,13 @@ export function useProjectShellCheckout(
     ],
   );
 
+  const place = managedRef
+    ? describeManagedCheckoutPlace({ controllerMachineId: managedRef.controller.machineId,
+        machineNameParts: (id) => (names.settled.has(id) ? names.parts.get(id) ?? null : null), managedName })
+    : { machineName: machineName(props.workspaceRef.machineId), machineNameParts, machineIcon: 'desktop' as const };
   return {
     checkout: {
-      machineName: machineName(props.workspaceRef.machineId),
-      machineNameParts,
-      machineIcon: 'desktop',
+      ...place,
       branch,
       choices,
       onSelect,

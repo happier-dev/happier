@@ -5678,6 +5678,9 @@ const filesPaneTranslations = { 'zh-Hant': {
         rootErrorTitle: ({ machine }) => `無法列出 ${machine} 上的檔案`,
         rootErrorTitleUnnamed: '無法列出檔案',
         workspaceUnavailableReason: 'Happier 無法從這裡存取這些檔案。',
+        managedStoppedTitle: ({ workspace }) => `${workspace} 已停止`,
+        managedStoppedReason: '啟動後即可查看其檔案。',
+        managedStartingTitle: ({ workspace }) => `正在啟動 ${workspace}…`,
         page: {
             view: "檢視",
             preview: "預覽",
@@ -14540,6 +14543,8 @@ const zhHant: typeof en = {
             rejectedBody: '擷取它們以查看變化。你的提交會留在這台機器上，直到你再次推送。',
             authTitle: ({ machine, provider }) => `${provider} 未接受來自 ${machine} 的登入`,
             authBody: ({ machine }) => `${machine} 上的 Git 沒有此遠端的有效憑證。請在那裡登入後重試。`,
+            noRepositoryTitle: '此專案沒有可推送的儲存庫',
+            noRepositoryBody: '連接一個儲存庫後，你的提交會推送到那裡。',
             offlineTitle: ({ machine }) => `${machine} 已離線`,
             offlineBody: '那裡目前無法執行任何動作。你的工作在那台機器上很安全。',
             conflictTitle: '因變更衝突而停止',
@@ -14559,6 +14564,7 @@ const zhHant: typeof en = {
             fetch: '擷取',
             checkAgain: '再次檢查',
             showConflicts: '顯示衝突',
+            connectRepository: '連接儲存庫',
         },
         timeline: {
             title: '時間軸',

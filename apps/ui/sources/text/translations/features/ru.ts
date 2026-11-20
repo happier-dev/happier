@@ -5806,6 +5806,9 @@ const filesPaneTranslations = { ru: {
         rootErrorTitle: ({ machine }) => `Не удалось получить список файлов на ${machine}`,
         rootErrorTitleUnnamed: 'Не удалось получить список файлов',
         workspaceUnavailableReason: 'Happier не может получить доступ к этим файлам отсюда.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} остановлен`,
+        managedStoppedReason: 'Запустите его, чтобы увидеть файлы.',
+        managedStartingTitle: ({ workspace }) => `Запуск ${workspace}…`,
         page: {
             view: "Просмотр",
             preview: "Предпросмотр",
@@ -14679,6 +14682,8 @@ const ru: typeof en = {
             rejectedBody: 'Получите их, чтобы увидеть изменения. Ваши коммиты останутся на этой машине до следующей отправки.',
             authTitle: ({ machine, provider }) => `${provider} не принял вход с ${machine}`,
             authBody: ({ machine }) => `У Git на ${machine} нет действующих учётных данных для этого удалённого репозитория. Войдите там и повторите.`,
+            noRepositoryTitle: 'У этого проекта нет репозитория для отправки',
+            noRepositoryBody: 'Подключите его, и коммиты будут отправляться туда.',
             offlineTitle: ({ machine }) => `${machine} не в сети`,
             offlineBody: 'Сейчас там ничего нельзя запустить. Ваша работа в сохранности на той машине.',
             conflictTitle: 'Остановлено из-за конфликтующих изменений',
@@ -14698,6 +14703,7 @@ const ru: typeof en = {
             fetch: 'Получить',
             checkAgain: 'Проверить снова',
             showConflicts: 'Показать конфликты',
+            connectRepository: 'Подключить репозиторий',
         },
         timeline: {
             title: 'Хронология',

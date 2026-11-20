@@ -64,6 +64,9 @@ export type FilesPaneTranslations = Readonly<{
     rootErrorTitle: (params: Readonly<{ machine: string }>) => string;
     rootErrorTitleUnnamed: string;
     workspaceUnavailableReason: string;
+    managedStoppedTitle: (params: Readonly<{ workspace: string }>) => string;
+    managedStoppedReason: string;
+    managedStartingTitle: (params: Readonly<{ workspace: string }>) => string;
     page: Readonly<{
         view: string;
         preview: string;
@@ -282,6 +285,9 @@ export const filesPaneTranslationsEnglish = { en: {
         rootErrorTitle: ({ machine }) => `Couldn’t list files on ${machine}`,
         rootErrorTitleUnnamed: 'Couldn’t list files',
         workspaceUnavailableReason: 'Happier can’t reach these files from here.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} is stopped`,
+        managedStoppedReason: 'Start it to see its files.',
+        managedStartingTitle: ({ workspace }) => `Starting ${workspace}…`,
         page: {
             view: "View",
             preview: "Preview",

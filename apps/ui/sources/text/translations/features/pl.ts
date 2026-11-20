@@ -5805,6 +5805,9 @@ const filesPaneTranslations = { pl: {
         rootErrorTitle: ({ machine }) => `Nie udało się wyświetlić plików na ${machine}`,
         rootErrorTitleUnnamed: 'Nie udało się wyświetlić plików',
         workspaceUnavailableReason: 'Happier nie może stąd uzyskać dostępu do tych plików.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} jest zatrzymany`,
+        managedStoppedReason: 'Uruchom go, aby zobaczyć jego pliki.',
+        managedStartingTitle: ({ workspace }) => `Uruchamianie ${workspace}…`,
         page: {
             view: "Widok",
             preview: "Podgląd",
@@ -14679,6 +14682,8 @@ const pl: typeof en = {
             rejectedBody: 'Pobierz je, aby zobaczyć, co się zmieniło. Twoje commity zostają na tej maszynie do kolejnego wypchnięcia.',
             authTitle: ({ machine, provider }) => `${provider} nie zaakceptował logowania z ${machine}`,
             authBody: ({ machine }) => `Git na ${machine} nie ma prawidłowych danych logowania do tego zdalnego repozytorium. Zaloguj się tam i spróbuj ponownie.`,
+            noRepositoryTitle: 'Ten projekt nie ma repozytorium do wypchnięcia',
+            noRepositoryBody: 'Połącz je, a commity będą tam wypychane.',
             offlineTitle: ({ machine }) => `${machine} jest offline`,
             offlineBody: 'Nic nie może tam teraz działać. Twoja praca jest bezpieczna na tej maszynie.',
             conflictTitle: 'Zatrzymano z powodu sprzecznych zmian',
@@ -14698,6 +14703,7 @@ const pl: typeof en = {
             fetch: 'Pobierz',
             checkAgain: 'Sprawdź ponownie',
             showConflicts: 'Pokaż konflikty',
+            connectRepository: 'Połącz repozytorium',
         },
         timeline: {
             title: 'Oś czasu',

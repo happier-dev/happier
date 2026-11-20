@@ -18856,6 +18856,7 @@ settingsSession: {
         thisMachine: "Na tej maszynie",
         otherMachines: "Inne maszyny",
         openElsewhere: "Otwórz tę gałąź na innej maszynie",
+        via: ({ machine }: { machine: string }) => `przez ${machine}`,
         settingUp: "Konfigurowanie",
         working: "agent pracuje",
         needsYou: "wymaga Twojej uwagi",

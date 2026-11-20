@@ -5738,6 +5738,9 @@ const filesPaneTranslations = { ja: {
         rootErrorTitle: ({ machine }) => `${machine} のファイルを一覧できませんでした`,
         rootErrorTitleUnnamed: 'ファイルを一覧できませんでした',
         workspaceUnavailableReason: 'Happier はここからこれらのファイルにアクセスできません。',
+        managedStoppedTitle: ({ workspace }) => `${workspace} は停止しています`,
+        managedStoppedReason: '起動するとファイルが表示されます。',
+        managedStartingTitle: ({ workspace }) => `${workspace} を起動しています…`,
         page: {
             view: "表示",
             preview: "プレビュー",
@@ -14600,6 +14603,8 @@ const ja: typeof en = {
             rejectedBody: 'フェッチして変更を確認してください。あなたのコミットは再度プッシュするまでこのマシンに残ります。',
             authTitle: ({ machine, provider }) => `${provider} が ${machine} からのサインインを受け付けませんでした`,
             authBody: ({ machine }) => `${machine} の Git にはこのリモートの有効な認証情報がありません。そこでサインインしてから再試行してください。`,
+            noRepositoryTitle: 'このプロジェクトにはプッシュ先のリポジトリがありません',
+            noRepositoryBody: 'リポジトリを接続すると、コミットはそこにプッシュされます。',
             offlineTitle: ({ machine }) => `${machine} はオフラインです`,
             offlineBody: '現在そこでは何も実行できません。作業はそのマシンに安全に残っています。',
             conflictTitle: '競合する変更で停止しました',
@@ -14619,6 +14624,7 @@ const ja: typeof en = {
             fetch: 'フェッチ',
             checkAgain: '再確認',
             showConflicts: '競合を表示',
+            connectRepository: 'リポジトリを接続',
         },
         timeline: {
             title: 'タイムライン',

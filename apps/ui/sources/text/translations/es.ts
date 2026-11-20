@@ -19031,6 +19031,7 @@ settingsSession: {
         thisMachine: "En esta máquina",
         otherMachines: "Otras máquinas",
         openElsewhere: "Abrir esta rama en otra máquina",
+        via: ({ machine }: { machine: string }) => `vía ${machine}`,
         settingUp: "Configurando",
         working: "agente trabajando",
         needsYou: "te necesita",

@@ -49,6 +49,8 @@ export type GitOutcomeRecovery = Readonly<{
     pullThenPush?: (policy: Readonly<{ reconcile: 'rebase' | 'merge' }>) => void;
     /** The branch is a feature branch (not the repository's default): rebase is the highlighted reconcile. */
     preferRebase?: boolean;
+    /** Give a Project without a repository source one, through the existing Project Sources editor. */
+    connectRepository?: () => void;
     /** Undo exactly the commit displayed by this result; the daemon rejects a changed HEAD. */
     undoCommit?: (expectedHeadOid: string) => void | Promise<unknown>;
 }>;
@@ -219,6 +221,9 @@ function recoveryFor(operation: AttentionOperation, recovery: GitOutcomeRecovery
             case 'choose_reconcile':
                 if (recovery.fetch) return { label: t('sessionGitPane.flow.recover.fetch'), onPress: recovery.fetch };
                 break;
+            case 'connect_repository':
+                if (recovery.connectRepository) return { label: t('sessionGitPane.flow.recover.connectRepository'), onPress: recovery.connectRepository };
+                break;
             case 'configure_upstream':
                 if (recovery.publish) return { label: t('sessionGitPane.flow.action.publish'), onPress: recovery.publish };
                 break;
@@ -267,6 +272,7 @@ function AttentionNotice(props: Readonly<{
     let action = choices ? choices[0] : recoveryFor(operation, recovery);
     let secondaryAction: NoticeAction | null = choices ? choices[1] : null;
     if (deferredPushReconcile && !reconcileOpen) action = { label: t('sessionGitPane.fidelity.pullThenPush'), onPress: () => setReconcileOpen(true) };
+    const needsRepository = operation.outcome.nextActions.some((next) => next.kind === 'connect_repository');
     if (operation.phase === 'effect_applied_with_warning') {
         // The write happened; something after it did not. Say what landed first.
         title = operation.action === 'commit' ? t('sessionGitPane.flow.failed.refreshTitle') : successCopy(operation, props.facts).title;
@@ -294,6 +300,11 @@ function AttentionNotice(props: Readonly<{
         description = choices
             ? (operation.action === 'push' ? t('sessionGitPane.flow.choices.divergedPushBody') : t('sessionGitPane.flow.choices.divergedPullBody'))
             : t('sessionGitPane.flow.failed.rejectedBody');
+    } else if (needsRepository) {
+        // Nothing to sign in to yet: the Project has no repository to push to, and connecting one is the way on.
+        tone = 'neutral';
+        title = t('sessionGitPane.flow.failed.noRepositoryTitle');
+        description = t('sessionGitPane.flow.failed.noRepositoryBody');
     } else if (errorCode === 'REMOTE_AUTH_REQUIRED') {
         tone = 'danger';
         title = t('sessionGitPane.flow.failed.authTitle', { provider: operation.provider ?? target, machine });
@@ -315,7 +326,7 @@ function AttentionNotice(props: Readonly<{
                 tone={tone}
                 title={title}
                 description={description}
-                icon={!props.machineReachable ? <Icon name="wifi-slash" size={16} color={theme.colors.state.neutral.foreground} /> : errorCode === 'REMOTE_AUTH_REQUIRED' ? <Icon name="lock" size={16} color={theme.colors.state.danger.foreground} /> : undefined}
+                icon={!props.machineReachable ? <Icon name="wifi-slash" size={16} color={theme.colors.state.neutral.foreground} /> : errorCode === 'REMOTE_AUTH_REQUIRED' && !needsRepository ? <Icon name="lock" size={16} color={theme.colors.state.danger.foreground} /> : undefined}
                 action={action ? { ...action, display: 'default' } : null}
                 secondaryAction={secondaryAction ? { ...secondaryAction, display: 'inverted' } : null}
                 announce="alert"

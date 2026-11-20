@@ -18945,6 +18945,7 @@ settingsSession: {
         thisMachine: "このマシン",
         otherMachines: "他のマシン",
         openElsewhere: "このブランチを別のマシンで開く",
+        via: ({ machine }: { machine: string }) => `${machine} 経由`,
         settingUp: "セットアップ中",
         working: "エージェントが作業中",
         needsYou: "対応が必要",

@@ -18651,6 +18651,7 @@ settingsSession: {
         thisMachine: "在此机器上",
         otherMachines: "其他机器",
         openElsewhere: "在另一台机器上打开此分支",
+        via: ({ machine }: { machine: string }) => `经由 ${machine}`,
         settingUp: "正在设置",
         working: "代理正在工作",
         needsYou: "需要你处理",

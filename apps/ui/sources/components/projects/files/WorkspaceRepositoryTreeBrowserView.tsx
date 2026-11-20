@@ -19,8 +19,10 @@ import { workspaceFileSearchCache } from '@/sync/domains/workspaces/files/worksp
 import { useWorkspaceFileQuery } from '@/sync/domains/workspaces/files/useWorkspaceFileQuery';
 import { UNIVERSAL_SEARCH_PAGE_SIZE } from '@/components/appShell/search/universalSearchResult';
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { storage, useActiveServerAccountScope, useLocalSetting, useServerScopedMachine, useWorkspaceRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -156,7 +158,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     // re-run them every render — the primitive props they used to depend on could not.
     const workspaceScope = React.useMemo(
         () => props.scope,
-        [props.scope.serverId, props.scope.machineId, props.scope.rootPath],
+        [props.scope.serverId, props.scope.machineId, props.scope.rootPath, props.scope.workspace],
     );
     const { visibilityMode, setVisibilityMode, gitIgnoreAvailable, setGitIgnoreAvailable, revealedPaths, revealPath, latestRequest,
         changedOnly: storedChangedOnly, setChangedOnly: setShowChangedOnly, detailsMode, setDetailsMode,
@@ -214,7 +216,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         irohApplicationSupported: machine?.kind === 'ephemeral_session_runner'
             ? runnerFiniteTransferRpcDeclared : isMachineDaemonIrohTransferApplicationSupported(machine?.daemonState),
     });
-    const transferActionsAvailable = props.transferEffectsEnabled !== false && machineRpcTargetAvailable && transferPreselection.kind !== 'unavailable';
+    const transferActionsAvailable = !workspaceScope.workspace && props.transferEffectsEnabled !== false && machineRpcTargetAvailable && transferPreselection.kind !== 'unavailable';
 
     const workspaceExpandedPaths = useWorkspaceRepositoryTreeExpandedPaths(workspaceScope);
 
@@ -390,7 +392,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             };
             let res: Awaited<ReturnType<typeof workspaceWriteFile>>;
             try {
-                res = await whileCreating(lifetime.signal, workspaceWriteFile(workspaceScope, path, '', null, { signal: lifetime.signal }));
+                res = await whileCreating(lifetime.signal, workspaceWriteFile(workspaceFileSystemTargetFromScope(workspaceScope), path, '', null, { signal: lifetime.signal }));
             } catch (error) {
                 if (lifetime.isCurrent()) Modal.alert(t('common.error'), error instanceof Error ? error.message : t('files.createFileFailed'));
                 return;
@@ -446,7 +448,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 setExpandedPaths(nextExpanded.includes(directoryPath) ? nextExpanded : [...nextExpanded, directoryPath]);
                 refresh();
             };
-            const res = await whileCreating(lifetime.signal, workspaceCreateDirectory(workspaceScope, directoryPath));
+            const res = await whileCreating(lifetime.signal, workspaceCreateDirectory(workspaceFileSystemTargetFromScope(workspaceScope), directoryPath));
             if (!lifetime.isCurrent()) return;
             if (!res.success) {
                 if (res.errorCode === 'approval_required' && res.approvalArtifactId) {
@@ -474,7 +476,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     }, [captureCreateLifetime, requestCreatePath, whileCreating, actionApproval.requestApproval, allowCreateActions, refresh, setExpandedPaths, workspaceScope, revealPath]);
 
     const transfers = useWorkspaceFileTransfers({
-        workspaceScope,
+        workspaceScope: workspaceScope.workspace ? null : workspaceScope,
         onResolveUploadConflicts: showUploadConflictResolutionDialog,
         onAfterUploadSuccess: refresh,
     });
@@ -486,7 +488,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         onExpandedPathsChange: setExpandedPaths,
         onRequestRefresh: refresh,
         onActionApproval: actionApproval.requestApproval,
-        onRequestDownload: handleRequestDownload,
+        onRequestDownload: workspaceScope.workspace ? undefined : handleRequestDownload,
     });
 
     const startWebUploads = React.useCallback(async (files: readonly File[], destinationDir: string) => {
@@ -673,7 +675,10 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     // This pane has no header of its own, so its + menu ends the toolbar (the session pane's header carries it).
     // Only a real name goes into "Couldn't list files on {machine}": a Machine still loading has a placeholder title,
     // never a name (owner 11-15, MOBILE-FIX-1115 H4: "Couldn't list files on Loading…").
-    const machineName = props.machineName ?? readDisplayedMachineName(machine);
+    // An attached workspace's files live in the workspace, so states name it rather than its controller (remote workspaces F7).
+    const managedWorkspaceName = useManagedMachineName(workspaceScope.workspace ? workspaceScope.serverId : null,
+        workspaceScope.workspace?.managedId ?? null);
+    const machineName = props.machineName ?? (workspaceScope.workspace ? managedWorkspaceName : readDisplayedMachineName(machine));
     const createMenuSelectRef = React.useRef(onSelectCreateMenuItem);
     createMenuSelectRef.current = onSelectCreateMenuItem;
     const selectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => createMenuSelectRef.current(itemId), []);

@@ -119,6 +119,17 @@ describe('GitOutcomeLine (Git lab C/S/SX)', () => {
         expect(allText(screen)).toContain('gh auth login');
     });
 
+    it('offers Connect a repository, not a sign-in, when a Project has no repository to push to', async () => {
+        const connectRepository = vi.fn();
+        const openTerminal = vi.fn();
+        const screen = await render({ operation: { phase: 'needs_input', action: 'push', id: 'no-source', at: 1, message: '', provider: 'GitHub', outcome: { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED', nextActions: [{ kind: 'connect_repository' }] } }, recovery: { connectRepository, openTerminal } });
+        expect(allText(screen)).toContain('sessionGitPane.flow.failed.noRepositoryTitle');
+        expect(allText(screen)).not.toContain('sessionGitPane.flow.failed.authTitle');
+        await screen.pressByTestIdAsync('session-git-outcome-needs_input.action');
+        expect(connectRepository).toHaveBeenCalledOnce();
+        expect(openTerminal).not.toHaveBeenCalled();
+    });
+
     it('shows progress for a write without its own control (a branch switch)', async () => {
         const screen = await render({ operation: { phase: 'running', action: 'branch_switch', id: 'b1', at: 1 } });
         expect(allText(screen)).toContain('sessionGitPane.flow.running.branchSwitch');

@@ -22429,6 +22429,7 @@ const enProjects = {
       thisMachine: "On this machine",
       otherMachines: "Other machines",
       openElsewhere: "Open this branch on another machine",
+      via: ({ machine }: { machine: string }) => `via ${machine}`,
       settingUp: "Setting up",
       working: "agent working",
       needsYou: "needs you",

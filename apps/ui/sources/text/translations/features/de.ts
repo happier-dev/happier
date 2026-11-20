@@ -5793,6 +5793,9 @@ const filesPaneTranslations = { de: {
         rootErrorTitle: ({ machine }) => `Dateien auf ${machine} konnten nicht aufgelistet werden`,
         rootErrorTitleUnnamed: 'Dateien konnten nicht aufgelistet werden',
         workspaceUnavailableReason: 'Happier kann diese Dateien von hier aus nicht erreichen.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} ist gestoppt`,
+        managedStoppedReason: 'Starte es, um seine Dateien zu sehen.',
+        managedStartingTitle: ({ workspace }) => `${workspace} wird gestartet…`,
         page: {
             view: "Ansicht",
             preview: "Vorschau",
@@ -14657,6 +14660,8 @@ const de: typeof en = {
             rejectedBody: 'Rufe sie ab, um zu sehen, was sich geändert hat. Deine Commits bleiben auf diesem Gerät, bis du erneut pushst.',
             authTitle: ({ machine, provider }) => `${provider} hat die Anmeldung von ${machine} nicht akzeptiert`,
             authBody: ({ machine }) => `Git auf ${machine} hat keine gültigen Zugangsdaten für dieses Remote. Melde dich dort an und versuche es erneut.`,
+            noRepositoryTitle: 'Dieses Projekt hat kein Repository zum Pushen',
+            noRepositoryBody: 'Verbinde eines, dann werden deine Commits dorthin gepusht.',
             offlineTitle: ({ machine }) => `${machine} ist offline`,
             offlineBody: 'Dort kann gerade nichts laufen. Deine Arbeit ist auf diesem Gerät sicher.',
             conflictTitle: 'Wegen widersprüchlicher Änderungen angehalten',
@@ -14676,6 +14681,7 @@ const de: typeof en = {
             fetch: 'Abrufen',
             checkAgain: 'Erneut prüfen',
             showConflicts: 'Konflikte zeigen',
+            connectRepository: 'Repository verbinden',
         },
         timeline: {
             title: 'Zeitleiste',

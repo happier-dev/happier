@@ -5789,6 +5789,9 @@ const filesPaneTranslations = { it: {
         rootErrorTitle: ({ machine }) => `Impossibile elencare i file su ${machine}`,
         rootErrorTitleUnnamed: 'Impossibile elencare i file',
         workspaceUnavailableReason: 'Happier non riesce a raggiungere questi file da qui.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} è fermo`,
+        managedStoppedReason: 'Avvialo per vedere i suoi file.',
+        managedStartingTitle: ({ workspace }) => `Avvio di ${workspace}…`,
         page: {
             view: "Vista",
             preview: "Anteprima",
@@ -14660,6 +14663,8 @@ const it: typeof en = {
             rejectedBody: 'Recuperali per vedere cosa è cambiato. I tuoi commit restano su questa macchina fino al prossimo invio.',
             authTitle: ({ machine, provider }) => `${provider} non ha accettato l’accesso da ${machine}`,
             authBody: ({ machine }) => `Git su ${machine} non ha credenziali valide per questo remoto. Accedi lì e riprova.`,
+            noRepositoryTitle: 'Questo progetto non ha un repository su cui fare push',
+            noRepositoryBody: 'Collegane uno e i tuoi commit verranno inviati lì.',
             offlineTitle: ({ machine }) => `${machine} è offline`,
             offlineBody: 'Lì non può essere eseguito nulla ora. Il tuo lavoro è al sicuro su quella macchina.',
             conflictTitle: 'Interrotto per modifiche in conflitto',
@@ -14679,6 +14684,7 @@ const it: typeof en = {
             fetch: 'Recupera',
             checkAgain: 'Controlla di nuovo',
             showConflicts: 'Mostra conflitti',
+            connectRepository: 'Collega un repository',
         },
         timeline: {
             title: 'Cronologia',

@@ -18985,6 +18985,7 @@ settingsSession: {
         thisMachine: "На этой машине",
         otherMachines: "Другие машины",
         openElsewhere: "Открыть эту ветку на другой машине",
+        via: ({ machine }: { machine: string }) => `через ${machine}`,
         settingUp: "Настройка",
         working: "агент работает",
         needsYou: "нужны вы",

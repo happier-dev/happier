@@ -5798,6 +5798,9 @@ const filesPaneTranslations = { fr: {
         rootErrorTitle: ({ machine }) => `Impossible de lister les fichiers sur ${machine}`,
         rootErrorTitleUnnamed: 'Impossible de lister les fichiers',
         workspaceUnavailableReason: 'Happier ne peut pas accéder à ces fichiers d’ici.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} est arrêté`,
+        managedStoppedReason: 'Démarrez-le pour voir ses fichiers.',
+        managedStartingTitle: ({ workspace }) => `Démarrage de ${workspace}…`,
         page: {
             view: "Afficher",
             preview: "Aperçu",
@@ -14672,6 +14675,8 @@ const fr: typeof en = {
             rejectedBody: 'Récupère-les pour voir ce qui a changé. Tes commits restent sur cette machine jusqu’au prochain envoi.',
             authTitle: ({ machine, provider }) => `${provider} a refusé la connexion depuis ${machine}`,
             authBody: ({ machine }) => `Git sur ${machine} n’a pas d’identifiants valides pour ce dépôt distant. Connecte-toi là-bas, puis réessaie.`,
+            noRepositoryTitle: 'Ce projet n’a pas de dépôt où pousser',
+            noRepositoryBody: 'Connectez-en un et vos commits y seront poussés.',
             offlineTitle: ({ machine }) => `${machine} est hors ligne`,
             offlineBody: 'Rien ne peut s’y exécuter pour l’instant. Ton travail est en sécurité sur cette machine.',
             conflictTitle: 'Arrêté sur des modifications en conflit',
@@ -14691,6 +14696,7 @@ const fr: typeof en = {
             fetch: 'Récupérer',
             checkAgain: 'Vérifier à nouveau',
             showConflicts: 'Voir les conflits',
+            connectRepository: 'Connecter un dépôt',
         },
         timeline: {
             title: 'Chronologie',

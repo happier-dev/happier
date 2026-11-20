@@ -19145,6 +19145,7 @@ settingsSession: {
             thisMachine: "Auf diesem Rechner",
             otherMachines: "Andere Rechner",
             openElsewhere: "Diesen Branch auf einem anderen Rechner öffnen",
+            via: ({ machine }: { machine: string }) => `über ${machine}`,
             settingUp: "Wird eingerichtet",
             working: "Agent arbeitet",
             needsYou: "braucht dich",

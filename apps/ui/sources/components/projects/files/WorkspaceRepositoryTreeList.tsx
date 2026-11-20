@@ -735,6 +735,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 <RepositoryTreeRootErrorState
                     error={rootError}
                     machineName={props.machineName}
+                    workspaceScope={props.scope}
                     onRetry={() => {
                         void retryRoot();
                     }}

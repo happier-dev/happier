@@ -5678,6 +5678,9 @@ const filesPaneTranslations = { 'zh-Hans': {
         rootErrorTitle: ({ machine }) => `无法列出 ${machine} 上的文件`,
         rootErrorTitleUnnamed: '无法列出文件',
         workspaceUnavailableReason: 'Happier 无法从这里访问这些文件。',
+        managedStoppedTitle: ({ workspace }) => `${workspace} 已停止`,
+        managedStoppedReason: '启动后即可查看其文件。',
+        managedStartingTitle: ({ workspace }) => `正在启动 ${workspace}…`,
         page: {
             view: "查看",
             preview: "预览",
@@ -14540,6 +14543,8 @@ const zhHans: typeof en = {
             rejectedBody: '获取它们以查看变化。你的提交会留在这台机器上，直到你再次推送。',
             authTitle: ({ machine, provider }) => `${provider} 未接受来自 ${machine} 的登录`,
             authBody: ({ machine }) => `${machine} 上的 Git 没有此远程仓库的有效凭据。请在那里登录后重试。`,
+            noRepositoryTitle: '此项目没有可推送的仓库',
+            noRepositoryBody: '连接一个仓库后，你的提交会推送到那里。',
             offlineTitle: ({ machine }) => `${machine} 已离线`,
             offlineBody: '那里现在无法运行任何操作。你的工作在那台机器上是安全的。',
             conflictTitle: '因更改冲突而停止',
@@ -14559,6 +14564,7 @@ const zhHans: typeof en = {
             fetch: '获取',
             checkAgain: '再次检查',
             showConflicts: '显示冲突',
+            connectRepository: '连接仓库',
         },
         timeline: {
             title: '时间线',

@@ -42,7 +42,8 @@ function toLazyEntries(directoryPath: string, entries: readonly RepositoryDirect
 
 function toLazyLoadResult(directoryPath: string, result: ListRepositoryDirectoryEntriesResult): LazyDirectoryTreeLoadResult {
     if (!result.ok) {
-        return result;
+        // A stopped attached workspace keeps its typed refusal so the root state can name it and offer Start (remote workspaces F7).
+        return result.errorCode === 'managed_power_required' ? { ok: false, error: result.errorCode } : result;
     }
     return {
         ok: true,
@@ -72,7 +73,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     repoRootPath?: string | null;
     reconciliationPaused?: boolean;
 }>) {
-    const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath]);
+    const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath, input.scope.workspace]);
     const workspaceCacheKey = React.useMemo(() => tryBuildWorkspaceCacheKey(scope) ?? '', [scope]);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
     const effectiveReloadToken = React.useMemo(() => (

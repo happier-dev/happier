@@ -5776,6 +5776,9 @@ const filesPaneTranslations = { pt: {
         rootErrorTitle: ({ machine }) => `Não foi possível listar os arquivos em ${machine}`,
         rootErrorTitleUnnamed: 'Não foi possível listar os arquivos',
         workspaceUnavailableReason: 'O Happier não consegue acessar estes arquivos daqui.',
+        managedStoppedTitle: ({ workspace }) => `${workspace} está parado`,
+        managedStoppedReason: 'Inicie-o para ver os arquivos.',
+        managedStartingTitle: ({ workspace }) => `Iniciando ${workspace}…`,
         page: {
             view: "Ver",
             preview: "Pré-visualização",
@@ -14647,6 +14650,8 @@ const pt: typeof en = {
             rejectedBody: 'Busque-os para ver o que mudou. Seus commits ficam nesta máquina até você enviar de novo.',
             authTitle: ({ machine, provider }) => `${provider} não aceitou o login de ${machine}`,
             authBody: ({ machine }) => `O Git em ${machine} não tem credenciais válidas para este remoto. Entre lá e tente de novo.`,
+            noRepositoryTitle: 'Este projeto não tem um repositório para enviar',
+            noRepositoryBody: 'Conecte um e seus commits serão enviados para lá.',
             offlineTitle: ({ machine }) => `${machine} está offline`,
             offlineBody: 'Nada pode ser executado lá agora. Seu trabalho está seguro naquela máquina.',
             conflictTitle: 'Parado por alterações em conflito',
@@ -14666,6 +14671,7 @@ const pt: typeof en = {
             fetch: 'Buscar',
             checkAgain: 'Verificar de novo',
             showConflicts: 'Mostrar conflitos',
+            connectRepository: 'Conectar um repositório',
         },
         timeline: {
             title: 'Linha do tempo',

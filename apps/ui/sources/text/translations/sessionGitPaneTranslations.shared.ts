@@ -126,6 +126,8 @@ export const en = {
             rejectedBody: 'Fetch them to see what changed. Your commits stay on this machine until you push again.',
             authTitle: ({ machine, provider }: { machine: string; provider: string }) => `${provider} didn’t accept the sign-in from ${machine}`,
             authBody: ({ machine }: { machine: string }) => `Git on ${machine} has no working credentials for this remote. Sign in there, then try again.`,
+            noRepositoryTitle: 'This Project has no repository to push to',
+            noRepositoryBody: 'Connect one and your commits push there.',
             offlineTitle: ({ machine }: { machine: string }) => `${machine} is offline`,
             offlineBody: 'Nothing can run there right now. Your work is safe on that machine.',
             conflictTitle: 'Stopped on conflicting changes',
@@ -145,6 +147,7 @@ export const en = {
             fetch: 'Fetch',
             checkAgain: 'Check again',
             showConflicts: 'Show conflicts',
+            connectRepository: 'Connect a repository',
         },
         timeline: {
             title: 'Timeline',
