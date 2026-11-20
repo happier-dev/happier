@@ -150,6 +150,27 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
     });
 
+    it('carries signed template instantiation with the effective grant role and keeps foreign refusals', async () => {
+        const f = await fixture();
+        const other = await fixture();
+        const manager = await account();
+        const user = await account();
+        const outsider = await account();
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        await grant(f.owner.id, f.machine.id, user.id, 'view');
+        const admit = (actorAccountId: string, machineId = f.machine.id, actionId = 'deployments.templates.instantiate') =>
+            inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, { actorAccountId, machineId, actionId }));
+        // The host's definition admission consumes this signed role once; Use
+        // is carried and refused there before any effect.
+        expect(await admit(manager.id)).toMatchObject({ kind: 'admitted', actorAccountId: manager.id,
+            custodianAccountId: f.owner.id, machineId: f.machine.id, role: 'manage' });
+        expect(await admit(user.id)).toMatchObject({ kind: 'admitted', actorAccountId: user.id, role: 'use' });
+        expect(await admit(outsider.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await admit(manager.id, other.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await admit(manager.id, f.machine.id, 'unknown.qualified.action'))
+            .toEqual({ kind: 'denied', code: 'unsupported_operation' });
+    });
+
     it('acquires encrypted recipient material once for a batch while refusing missing envelopes', async () => {
         const first = await fixture('e2ee');
         const second = await fixture('e2ee');

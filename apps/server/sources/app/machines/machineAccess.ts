@@ -16,6 +16,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isProjectWorkerCopyInspectActionIdV1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
 import { isMachineAgentInventoryReadActionIdV1, RuntimeActionIdV1Schema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor/browser';
@@ -637,7 +638,10 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         // Agent inventory roots also use signed Action ingress, with no private RPC binding.
         if (!method && !access.owned && !requesterActionIngress && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
             && !isMachineAgentInventoryReadActionIdV1(input.actionId)
-            && !isStoredDeploymentExecutionActionIdV1(input.actionId)) {
+            && !isStoredDeploymentExecutionActionIdV1(input.actionId)
+            // Template instantiation carries the effective grant role; the host's
+            // definition admission consumes it once and requires Manage.
+            && deploymentPreparationOperationForActionV1(input.actionId) !== 'template') {
             return { kind: 'denied', code: 'unsupported_operation' };
         }
     }
