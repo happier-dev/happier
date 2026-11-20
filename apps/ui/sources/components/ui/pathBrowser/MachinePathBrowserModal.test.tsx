@@ -530,6 +530,58 @@ describe('MachinePathBrowserModal', () => {
         expect(onClose).toHaveBeenCalled();
     });
 
+    it('prepares access to a workspace first, then picks a folder in its guest (lab browse-prep → tree)', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const workspace = { serverId: scope.serverId, managedId: 'attached',
+            controller: { machineId: 'machine-1', installationId: 'installation' }, rootPath: '/home/coder' } as const;
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async input => input.directoryPath === '/home/coder'
+            ? { ok: true, entries: [{ name: 'api', path: '/home/coder/api', type: 'directory' }], truncated: false }
+            : await defaultDirectoryEntries(input));
+        let settle: (value: { kind: 'ready'; workspace: typeof workspace }) => void = () => {};
+        const run = vi.fn(() => new Promise<{ kind: 'ready'; workspace: typeof workspace }>(resolve => { settle = resolve; }));
+        const onResolve = vi.fn();
+        const onPrepared = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" serverId={scope.serverId}
+            prepare={{ name: 'api-dev', serverId: scope.serverId, run }} onPrepared={onPrepared}
+            selectionMode="directory" onResolve={onResolve} onClose={vi.fn()} />);
+        await waitForTestId(screen, 'path-browser-prepare');
+        expect(screen.getTextContent()).toContain('files.pane.serverFolderPreparing');
+        expect(listMachineFileBrowserDirectoryEntriesMock).not.toHaveBeenCalled();
+        await act(async () => settle({ kind: 'ready', workspace }));
+        await waitForTestId(screen, getPathBrowserRowTestId('/home/coder/api'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/home/coder/api'));
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(onPrepared).toHaveBeenCalledWith({ v: 2, kind: 'managed', ...workspace });
+        expect(onResolve).toHaveBeenCalledWith('/home/coder/api', 'machine-1');
+    });
+
+    it('keeps a failed preparation in place with its reason and retries it on request (lab browse-prepFail)', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const run = vi.fn(async () => ({ kind: 'failed' as const, code: 'provider_unavailable', message: 'coder.example didn’t answer' }));
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" serverId={scope.serverId}
+            prepare={{ name: 'api-dev', serverId: scope.serverId, run }} selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+        await waitForTestId(screen, 'path-browser-prepare-retry');
+        expect(screen.getTextContent()).toContain('files.pane.serverFolderPrepareFailed');
+        await screen.pressByTestIdAsync('path-browser-prepare-retry');
+        await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    });
+
+    it('says an unsupported server cannot be browsed this way and offers setting it up as a machine (lab browse-windows)', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const onSetUpAsMachine = vi.fn();
+        const onClose = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" serverId={scope.serverId}
+            prepare={{ name: 'win-build', serverId: scope.serverId, onSetUpAsMachine,
+                run: async () => ({ kind: 'unsupported_platform' as const }) }}
+            selectionMode="directory" onResolve={vi.fn()} onClose={onClose} />);
+        await waitForTestId(screen, 'path-browser-unsupported-platform-action');
+        await screen.pressByTestIdAsync('path-browser-unsupported-platform-action');
+        expect(onClose).toHaveBeenCalled();
+        expect(onSetUpAsMachine).toHaveBeenCalledOnce();
+        expect(listMachineFileBrowserDirectoryEntriesMock).not.toHaveBeenCalled();
+    });
+
     it('picks a folder in the attached workspace before a Project reference exists', async () => {
         const scope = await setFolderActionPolicy('allowed');
         const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'attached',

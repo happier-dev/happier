@@ -13,6 +13,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import type { ProjectsListModel } from './useProjectsListModel';
 import { describeProjectSourceRow } from './sources/projectSourceAddress';
 import type { ProjectsTreeProject } from './projectsTreeRows';
+import { useRemoteWorkspaceAddItem, type ProjectsAddMenuRemote } from './useRemoteWorkspaceAddItem';
 
 /** Saved Sources the "+" offers, already split: yours, then each Team's (lab p-projects RULES 9). */
 export type ProjectsAddMenuSources = Readonly<{
@@ -36,6 +37,8 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
     /** New app from a starter (plan 60 §5.1): leads the menu, above the ways to bring code you have. */
     onNewApp?: (() => void) | null;
     sources?: ProjectsAddMenuSources | null;
+    /** Folders in attached workspaces ("A folder on a server…", remote workspaces F1), under the machine folder entry. */
+    remote?: ProjectsAddMenuRemote | null;
     /**
      * Folders only a Session brought, not yet in the list (owner 11-08): read when the menu opens, newest first;
      * Add puts one in the list.
@@ -47,6 +50,8 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
 }>) {
     const [open, setOpen] = React.useState(false);
     const { machines, onAdd, onClone, onNewApp, sources, fromSessions } = props;
+    const remote = useRemoteWorkspaceAddItem({ remote: props.remote, menuOpen: open, testID: props.testID });
+    const remoteItem = remote.item;
     const sourceById = React.useMemo(() => new Map([
         ...(sources?.yours ?? []),
         ...(sources?.teams ?? []).flatMap((team) => team.sources),
@@ -59,7 +64,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             title: names.get(machine.id)!,
         }));
     }, [machines, props.testID]);
-    const full = Boolean(onClone || onNewApp || sources || fromSessions);
+    const full = Boolean(onClone || onNewApp || sources || fromSessions || remoteItem);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => {
         if (!full) return machineItems;
         // With no Machine that can act, the folder flow stays and says what it needs first; it leads to adding one.
@@ -97,6 +102,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             ...(onNewApp ? [{ id: 'newApp', testID: `${props.testID}:new-app`, title: t('newApp.menuTitle'),
                 subtitle: t('newApp.menuSubtitle'), icon: <Icon name="sparkle" size={16} />, category: '' }] : []),
             { ...folder, category: '' },
+            ...(remoteItem ? [{ ...remoteItem, category: '' }] : []),
             ...(onClone ? [{ id: 'clone', testID: `${props.testID}:clone`, title: t('projects.identity.addClone'), icon: <Icon name="download" size={16} />, category: '' }] : []),
             ...(sessionItems.length > 0 ? [{ id: 'sessions', testID: `${props.testID}:sessions`, title: t('projects.identity.fromYourSessions'),
                 icon: <Icon name="chat-circle" size={16} />, category: '',
@@ -105,10 +111,17 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             ...teamSources,
             ...(sources ? [{ id: 'manage', testID: `${props.testID}:manage`, title: t('projects.identity.manageSources'), icon: <Icon name="books" size={16} />, category: lastSourceGroup }] : []),
         ];
-    }, [fromSessions, full, machineItems, machines, onClone, onNewApp, open, props.testID, sources]);
+    }, [fromSessions, full, machineItems, machines, onClone, onNewApp, open, props.testID, remoteItem, sources]);
     const router = useRouter();
+    const selectRemote = remote.select;
     const select = React.useCallback((itemId: string) => {
+        // A remote row that loads or chooses an account keeps the menu open (its `keepMenuOpen`).
+        if (itemId.startsWith('remote:') && !itemId.startsWith('remote:workspace:') && itemId !== 'remote:connect') {
+            selectRemote(itemId);
+            return;
+        }
         setOpen(false);
+        if (selectRemote(itemId)) return;
         // A desktop opens on this computer's own setup; elsewhere, every way to add a machine.
         if (itemId === 'addMachine') { router.push(buildMachineAddHref(isDesktopHost() ? { path: 'thisComputer' } : {})); return; }
         if (itemId.startsWith('machine:')) { void onAdd(itemId.slice('machine:'.length)); return; }
@@ -120,7 +133,7 @@ export const ProjectsAddMenu = React.memo(function ProjectsAddMenu(props: Readon
             const source = sourceById.get(itemId.slice('source:'.length));
             if (source?.repository) sources?.onOpen(source);
         }
-    }, [fromSessions, onAdd, onClone, onNewApp, router, sourceById, sources]);
+    }, [fromSessions, onAdd, onClone, onNewApp, router, selectRemote, sourceById, sources]);
     if (!full && machines.length === 0) return null;
     const soleMachine = !full && machines.length === 1 ? machines[0]! : null;
     const renderTrigger = (toggle: () => void) => {

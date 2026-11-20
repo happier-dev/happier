@@ -5680,6 +5680,13 @@ const filesPaneTranslations = { 'zh-Hant': {
         workspaceUnavailableReason: 'Happier 無法從這裡存取這些檔案。',
         managedStoppedTitle: ({ workspace }) => `${workspace} 已停止`,
         managedStoppedReason: '啟動後即可查看其檔案。',
+        managedStoppedChangesReason: '啟動後即可查看其變更。',
+        serverFolderTitle: '伺服器上的資料夾',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `首次使用時，Happier 會把一個小幫手複製到 ${workspace} 的 ~/.happier。不使用時那裡不會執行任何東西。`,
+        serverFolderPreparing: '正在準備工作區存取',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失敗：${reason}`,
+        serverFolderUnsupportedTitle: '尚不支援此伺服器',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier 只能以這種方式開啟 Linux 和 macOS 伺服器上的資料夾。請改為將 ${workspace} 設定為機器：Happier 將在那裡獨立執行。`,
         managedStartingTitle: ({ workspace }) => `正在啟動 ${workspace}…`,
         page: {
             view: "檢視",

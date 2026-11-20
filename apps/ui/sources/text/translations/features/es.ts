@@ -5679,6 +5679,13 @@ const filesPaneTranslations = { es: {
         workspaceUnavailableReason: 'Happier no puede acceder a estos archivos desde aquí.',
         managedStoppedTitle: ({ workspace }) => `${workspace} está detenido`,
         managedStoppedReason: 'Inícialo para ver sus archivos.',
+        managedStoppedChangesReason: 'Inícialo para ver sus cambios.',
+        serverFolderTitle: 'Una carpeta en un servidor',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `La primera vez, Happier copia un pequeño asistente en ~/.happier en ${workspace}. No se ejecuta nada allí mientras no lo uses.`,
+        serverFolderPreparing: 'Preparando el acceso al espacio de trabajo',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Error: ${reason}`,
+        serverFolderUnsupportedTitle: 'Este servidor aún no es compatible',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier solo puede abrir carpetas en servidores Linux y macOS de esta forma. Configura ${workspace} como máquina: así Happier se ejecuta allí por su cuenta.`,
         managedStartingTitle: ({ workspace }) => `Iniciando ${workspace}…`,
         page: {
             view: "Ver",

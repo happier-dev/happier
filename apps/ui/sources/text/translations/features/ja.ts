@@ -5740,6 +5740,13 @@ const filesPaneTranslations = { ja: {
         workspaceUnavailableReason: 'Happier はここからこれらのファイルにアクセスできません。',
         managedStoppedTitle: ({ workspace }) => `${workspace} は停止しています`,
         managedStoppedReason: '起動するとファイルが表示されます。',
+        managedStoppedChangesReason: '起動すると変更が表示されます。',
+        serverFolderTitle: 'サーバー上のフォルダー',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `初回のみ、Happier は ${workspace} の ~/.happier に小さなヘルパーをコピーします。使っていない間は何も実行されません。`,
+        serverFolderPreparing: 'ワークスペースへのアクセスを準備中',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失敗: ${reason}`,
+        serverFolderUnsupportedTitle: 'このサーバーはまだサポートされていません',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `この方法で Happier がフォルダーを開けるのは Linux と macOS のサーバーだけです。代わりに ${workspace} をマシンとして設定すると、Happier がそこで単独で動作します。`,
         managedStartingTitle: ({ workspace }) => `${workspace} を起動しています…`,
         page: {
             view: "表示",

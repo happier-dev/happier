@@ -7,6 +7,7 @@ import { createManagedCredentialSelectionV1, type ManagedControllerV1 } from '@h
 
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { attachRemoteWorkspace, readAttachableRemoteWorkspaces,
@@ -47,7 +48,8 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     const controller = controllerScope.controller;
     const machineId = controller?.machineId;
     const installationId = controller?.installationId;
-    const controllerName = controllerScope.machine?.metadata?.name;
+    // The controller as the Machine list names it, never its id ("via nl3").
+    const controllerName = readDisplayedMachineName(controllerScope.machine);
     const catalog = useManagedProvisioners(input.serverId, onApprovalPending, controller, { enabled: input.open && !!controller });
     const { binding, current, homeId, provisioners, isCurrentFor } = catalog;
     const candidates = React.useMemo<readonly Candidate[]>(() => {
@@ -104,6 +106,8 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     }
     if (!controller && controllerScope.machineList === 'settled') return { kind: 'choose_account', accounts: [] };
     if (!binding || !current) return { kind: 'loading' };
+    // An empty account list is an answer only once the provisioner catalog has settled, never while it loads.
+    if (!candidate && catalog.loading) return { kind: 'loading' };
     if (!candidate) return { kind: 'choose_account', accounts: candidates.map(({ account }) => account) };
     if (!selection) return { kind: 'loading' };
     const { result } = selection;

@@ -5680,6 +5680,13 @@ const filesPaneTranslations = { 'zh-Hans': {
         workspaceUnavailableReason: 'Happier 无法从这里访问这些文件。',
         managedStoppedTitle: ({ workspace }) => `${workspace} 已停止`,
         managedStoppedReason: '启动后即可查看其文件。',
+        managedStoppedChangesReason: '启动后即可查看其更改。',
+        serverFolderTitle: '服务器上的文件夹',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `首次使用时，Happier 会把一个小助手复制到 ${workspace} 的 ~/.happier。不使用时那里不会运行任何东西。`,
+        serverFolderPreparing: '正在准备工作区访问',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失败：${reason}`,
+        serverFolderUnsupportedTitle: '暂不支持此服务器',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier 只能通过这种方式打开 Linux 和 macOS 服务器上的文件夹。请改为将 ${workspace} 设置为机器：Happier 将在那里独立运行。`,
         managedStartingTitle: ({ workspace }) => `正在启动 ${workspace}…`,
         page: {
             view: "查看",

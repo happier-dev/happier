@@ -1,7 +1,7 @@
 import { isMachineProvisionerWorkspaceAttachmentV1, projectMachineProvisionerSelectionV1,
     type MachineProvisionerContributionV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
-import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { awaitActionApprovalResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -46,7 +46,9 @@ export async function readAttachableRemoteWorkspaces(input: AttachableRemoteWork
         })) };
 }
 
-export type AttachRemoteWorkspaceOutcome = Readonly<{ kind: 'attached'; managedId: string; controller: ManagedControllerV1 }>
+export type AttachRemoteWorkspaceOutcome = Readonly<{ kind: 'attached'; managedId: string; controller: ManagedControllerV1;
+    /** The guest's home from the attached record's platform probe, where a folder choice starts. */
+    home?: string }>
     | Readonly<{ kind: 'unsupported_platform' }> | RemoteWorkspaceFailure;
 
 export type AttachRemoteWorkspaceChoice = Readonly<{
@@ -104,5 +106,10 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         },
     });
     if (outcome.kind === 'failed' && outcome.code !== 'aborted') input.onProgress?.({ kind: 'failed', code: outcome.code });
-    return outcome;
+    if (outcome.kind !== 'attached') return outcome;
+    // The attached record carries the guest platform probe; its home is where the person picks a folder.
+    const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId: outcome.managedId },
+        { signal: input.signal }).catch(() => null);
+    const home = read?.kind === 'succeeded' ? unwrapManagedMachineReadV1(read.value).workspaceAttachment?.home : undefined;
+    return home ? { ...outcome, home } : outcome;
 }

@@ -5784,6 +5784,13 @@ const filesPaneTranslations = { ca: {
         workspaceUnavailableReason: 'Happier no pot accedir a aquests fitxers des d’aquí.',
         managedStoppedTitle: ({ workspace }) => `${workspace} està aturat`,
         managedStoppedReason: "Inicia’l per veure’n els fitxers.",
+        managedStoppedChangesReason: 'Inicia’l per veure’n els canvis.',
+        serverFolderTitle: 'Una carpeta en un servidor',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `La primera vegada, Happier copia un petit ajudant a ~/.happier a ${workspace}. No s’hi executa res mentre no l’utilitzes.`,
+        serverFolderPreparing: 'Preparant l’accés a l’espai de treball',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Ha fallat: ${reason}`,
+        serverFolderUnsupportedTitle: 'Aquest servidor encara no és compatible',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier només pot obrir carpetes en servidors Linux i macOS d’aquesta manera. Configura ${workspace} com a màquina: llavors Happier s’hi executa pel seu compte.`,
         managedStartingTitle: ({ workspace }) => `Iniciant ${workspace}…`,
         page: {
             view: "Veure",

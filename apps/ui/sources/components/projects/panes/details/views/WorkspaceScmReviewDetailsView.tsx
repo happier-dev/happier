@@ -419,7 +419,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     active={presented} renderBar={() => renderBar()} onShowInGit={props.onShowInGit} />}
                 filesState={comparison.kind === 'workingTree' && !comparison.comparisonId
                     ? (loading || (liveFiles && indexPageSize === null)) && !snapshot ? (reachability.unreachable ? <CheckoutUnreachableState reachability={reachability} testID="scm-review-unreachable" /> : <PaneLoadingFallback />)
-                        : error && !snapshot ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} onRetry={() => { void refresh(); }} />
+                        : error && !snapshot ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} workspaceScope={scope} onRetry={() => { void refresh(); }} />
                             : snapshot?.repo.isRepo === false ? <NotSourceControlRepositoryState /> : null
                     : !capture.comparison ? capture.loading ? <PaneLoadingFallback />
                         : <SourceControlUnavailableState details={capture.error ?? t('scmComparison.unsupportedReason')} onRetry={capture.retry} /> : null}

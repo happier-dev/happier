@@ -183,6 +183,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
             <SourceControlUnavailableState
                 details={error.message}
                 errorCode={error.errorCode}
+                workspaceScope={scope}
                 onRetry={() => {
                     void refresh();
                 }}

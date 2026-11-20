@@ -77,6 +77,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                         testID="projects-none-open:add"
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
+                        remote={model.addRemote}
                         onClone={cloneRepository}
                         onNewApp={openNewApp}
                         sources={addSources}

@@ -20,6 +20,7 @@ import { buildProjectsListGroups } from './projectsListGrouping';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { useOpenProject } from './useOpenProject';
 import { seedAndOpenProjectDraft } from './activation/projectOpenDraftSeed';
+import type { ManagedWorkspacePreparationRequest } from '@/components/ui/pathBrowser/ManagedWorkspacePreparation';
 import { useNavigateToProjectOpen } from './activation/projectOpenPresentation';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { ProjectVisibilitySetOutputV1Schema } from '@happier-dev/protocol/projects/projectVisibilityV1';
@@ -269,6 +270,35 @@ export function useProjectsListModel() {
         await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId: selected.machineId, source: { kind: 'folder', path: selectedRootPath },
             materialization: { kind: 'attach' } }, navigate: navigateToOpen });
     }, [activeServer.serverId, machinesById, navigateToOpen]);
+
+    /**
+     * A folder in an attached workspace (remote workspaces F1): the chooser prepares access, the person picks the
+     * folder in the guest, and the Open page saves the Project there.
+     */
+    const addProjectFromRemoteWorkspace = React.useCallback(async (input: Readonly<{
+        name: string;
+        controllerMachineId: string;
+        prepare: ManagedWorkspacePreparationRequest['run'];
+        onSetUpAsMachine?: () => void;
+    }>) => {
+        const serverId = String(activeServer.serverId ?? '').trim();
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!serverId || !lifetime?.isCurrent() || lifetime.scope.serverId !== serverId) return;
+        const picked = await openMachinePathBrowserModal({
+            title: t('files.pane.serverFolderTitle'),
+            controllerMachineId: input.controllerMachineId,
+            prepare: { name: input.name, serverId, run: input.prepare, onSetUpAsMachine: input.onSetUpAsMachine },
+        });
+        if (!picked || !lifetime.isCurrent()) return;
+        const { managedId, controller } = picked.workspace;
+        await seedAndOpenProjectDraft({ lifetime, selection: { serverId, machineId: controller.machineId,
+            source: { kind: 'folder', path: picked.path },
+            materialization: { kind: 'attach', targetManaged: { managedId, controller } } }, navigate: navigateToOpen });
+    }, [activeServer.serverId, navigateToOpen]);
+    const addRemote = React.useMemo(() => {
+        const serverId = String(activeServer.serverId ?? '').trim();
+        return serverId ? { serverId, onAdd: addProjectFromRemoteWorkspace } : null;
+    }, [activeServer.serverId, addProjectFromRemoteWorkspace]);
 
     const pinnedIdSet = React.useMemo(() => {
         return new Set(Array.isArray(pinnedWorkspaceRefIdsV1) ? pinnedWorkspaceRefIdsV1 : []);
@@ -522,6 +552,8 @@ export function useProjectsListModel() {
         dismissProjectHideUndo: () => setProjectHideUndo(null),
         hiddenProjectCount: groups.hiddenProjectGroups.length,
         addProjectToMachine,
+        addProjectFromRemoteWorkspace,
+        addRemote,
         togglePinned,
         renameProject,
         resetProjectName,

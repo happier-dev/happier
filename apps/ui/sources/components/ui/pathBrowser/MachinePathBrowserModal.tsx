@@ -10,8 +10,6 @@ import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/fi
 import { useFilesystemTreeKeyboard } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { useLazyDirectoryTree } from '@/hooks/ui/filesystem/useLazyDirectoryTree';
 import type { LazyDirectoryTreeLoadResult } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
@@ -38,6 +36,8 @@ import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } f
 
 import { PATH_BROWSER_CONFIRM_TEST_ID, PATH_BROWSER_CREATE_FOLDER_TEST_ID, PATH_BROWSER_MODAL_TEST_ID, PATH_BROWSER_ROOT_ERROR_TEST_ID } from './pathBrowserTestIds';
 import { MachinePathBrowserListRow } from './MachinePathBrowserListRow';
+import { PathBrowserModalFooter } from './PathBrowserModalFooter';
+import { ManagedWorkspacePreparation, type ManagedWorkspacePreparationRequest, type PreparedManagedWorkspace } from './ManagedWorkspacePreparation';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -54,6 +54,10 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     callerContext?: ActionExecutorContext;
     machineId: string;
     workspace?: ManagedWorkspaceLocatorV2;
+    /** A workspace with no access yet: the chooser prepares it first, then browses what it settles to. */
+    prepare?: ManagedWorkspacePreparationRequest;
+    /** The prepared workspace, returned with the picked folder. */
+    onPrepared?: (workspace: ManagedWorkspaceLocatorV2) => void;
     serverId?: string | null;
     title?: string;
     initialPath?: string | null;
@@ -105,18 +109,6 @@ const styles = StyleSheet.create((theme) => ({
     body: {
         flex: 1,
         minHeight: 0,
-    },
-    footer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space.s10,
-    },
-    selectionText: {
-        flex: 1,
-        ...Typography.variant('body'),
-        color: theme.colors.text.secondary,
-
     },
     headerActionButton: {
         padding: theme.space.s2,
@@ -971,10 +963,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;
         return (
-            <View style={styles.footer}>
-                <Text numberOfLines={1} style={styles.selectionText}>
-                    {selectedPathLabel ?? ''}
-                </Text>
+            <PathBrowserModalFooter label={selectedPathLabel}>
                 <RoundButton title={t('common.cancel')} size="normal" display="inverted" onPress={() => invokeBrowserCommand('close')} />
                 <RoundButton
                     testID={PATH_BROWSER_CONFIRM_TEST_ID}
@@ -983,13 +972,11 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     onPress={() => invokeBrowserCommand('confirm')}
                     disabled={confirmDisabled}
                 />
-            </View>
+            </PathBrowserModalFooter>
         );
     }, [
         interaction,
         selectedPathLabel,
-        styles.footer,
-        styles.selectionText,
         useCardChrome,
         invokeBrowserCommand,
         confirmDisabled,
@@ -1183,7 +1170,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {
     // The Machine being browsed; it changes only for a caller that takes the Machine back.
     const [selectedMachineId, setMachineId] = React.useState(props.machineId);
-    const machineId = props.workspace?.controller.machineId ?? selectedMachineId;
+    const [prepared, setPrepared] = React.useState<ManagedWorkspaceLocatorV2 | null>(null);
+    const onPrepared = props.onPrepared;
+    const handlePrepared = React.useCallback((workspace: PreparedManagedWorkspace) => {
+        const locator: ManagedWorkspaceLocatorV2 = { v: 2, kind: 'managed', ...workspace };
+        onPrepared?.(locator);
+        setPrepared(locator);
+    }, [onPrepared]);
+    const workspace = props.workspace ?? prepared ?? undefined;
+    const machineId = workspace?.controller.machineId ?? selectedMachineId;
     const handlePickPath = React.useCallback((path: string) => {
         props.onResolve(path, machineId);
         props.onClose();
@@ -1194,6 +1189,10 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
         props.onClose();
     }, [props.onClose, props.onResolve]);
 
+    if (props.prepare && !workspace) {
+        return <ManagedWorkspacePreparation request={props.prepare} title={props.title ?? t('files.pane.serverFolderTitle')}
+            setChrome={props.setChrome} onPrepared={handlePrepared} onCancel={handleRequestClose} />;
+    }
     return (
         <MachinePathBrowserView
             // Another Machine is another tree: its listing, selection and search start over.
@@ -1201,9 +1200,9 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             currentUiContextCommandScope={props.currentUiContextCommandScope}
             callerContext={props.callerContext}
             machineId={machineId}
-            workspace={props.workspace}
-            onMachineChange={!props.workspace && props.allowMachineChange ? setMachineId : undefined}
-            serverId={props.workspace?.serverId ?? props.serverId}
+            workspace={workspace}
+            onMachineChange={!workspace && props.allowMachineChange ? setMachineId : undefined}
+            serverId={workspace?.serverId ?? props.serverId}
             title={props.title}
             initialPath={props.initialPath}
             includeFiles={props.includeFiles}

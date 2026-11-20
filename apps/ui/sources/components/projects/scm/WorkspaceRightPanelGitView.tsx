@@ -406,6 +406,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                 testID="workspace-rightpanel-git-unavailable"
                 details={error.message}
                 errorCode={error.errorCode}
+                workspaceScope={scope}
                 onRetry={() => {
                     void refresh();
                 }}

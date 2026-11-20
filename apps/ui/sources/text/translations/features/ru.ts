@@ -5808,6 +5808,13 @@ const filesPaneTranslations = { ru: {
         workspaceUnavailableReason: 'Happier не может получить доступ к этим файлам отсюда.',
         managedStoppedTitle: ({ workspace }) => `${workspace} остановлен`,
         managedStoppedReason: 'Запустите его, чтобы увидеть файлы.',
+        managedStoppedChangesReason: 'Запустите его, чтобы увидеть изменения.',
+        serverFolderTitle: 'Папка на сервере',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `В первый раз Happier копирует небольшой помощник в ~/.happier на ${workspace}. Пока вы им не пользуетесь, там ничего не работает.`,
+        serverFolderPreparing: 'Подготовка доступа к рабочему пространству',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Ошибка: ${reason}`,
+        serverFolderUnsupportedTitle: 'Этот сервер пока не поддерживается',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Так Happier может открывать папки только на серверах Linux и macOS. Настройте ${workspace} как машину: тогда Happier будет работать там сам.`,
         managedStartingTitle: ({ workspace }) => `Запуск ${workspace}…`,
         page: {
             view: "Просмотр",

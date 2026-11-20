@@ -66,6 +66,13 @@ export type FilesPaneTranslations = Readonly<{
     workspaceUnavailableReason: string;
     managedStoppedTitle: (params: Readonly<{ workspace: string }>) => string;
     managedStoppedReason: string;
+    managedStoppedChangesReason: string;
+    serverFolderTitle: string;
+    serverFolderHelperNote: (params: Readonly<{ workspace: string }>) => string;
+    serverFolderPreparing: string;
+    serverFolderPrepareFailed: (params: Readonly<{ reason: string }>) => string;
+    serverFolderUnsupportedTitle: string;
+    serverFolderUnsupportedBody: (params: Readonly<{ workspace: string }>) => string;
     managedStartingTitle: (params: Readonly<{ workspace: string }>) => string;
     page: Readonly<{
         view: string;
@@ -287,6 +294,13 @@ export const filesPaneTranslationsEnglish = { en: {
         workspaceUnavailableReason: 'Happier can’t reach these files from here.',
         managedStoppedTitle: ({ workspace }) => `${workspace} is stopped`,
         managedStoppedReason: 'Start it to see its files.',
+        managedStoppedChangesReason: 'Start it to see its changes.',
+        serverFolderTitle: 'A folder on a server',
+        serverFolderHelperNote: ({ workspace }: { workspace: string }) => `The first time, Happier copies a small helper into ~/.happier on ${workspace}. Nothing runs there while you aren’t using it.`,
+        serverFolderPreparing: 'Preparing workspace access',
+        serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Failed: ${reason}`,
+        serverFolderUnsupportedTitle: 'This server isn’t supported yet',
+        serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier can only open folders on Linux and macOS servers this way. Set ${workspace} up as a machine instead: Happier then runs there on its own.`,
         managedStartingTitle: ({ workspace }) => `Starting ${workspace}…`,
         page: {
             view: "View",

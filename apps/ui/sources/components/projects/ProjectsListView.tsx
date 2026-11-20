@@ -88,6 +88,7 @@ export const ProjectsListView = React.memo(() => {
             testID="projects-list:add"
             machines={model.addFirstMachines}
             onAdd={model.addProjectToMachine}
+            remote={model.addRemote}
             onClone={model.cloneRepository}
             onNewApp={openNewApp}
             sources={model.addSources}

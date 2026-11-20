@@ -5,6 +5,9 @@ import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
 import { CheckoutUnreachableState, useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 function sanitizeDetails(details: string | null): string | null {
     if (!details) return null;
@@ -54,6 +57,8 @@ export function SourceControlUnavailableState(props: {
      * stay distinguishable — a text locator cannot tell them apart.
      */
     testID?: string;
+    /** The checkout this snapshot reads: a stopped attached workspace offers Start, as Files does. */
+    workspaceScope?: WorkspaceScopeBase | null;
 }): React.ReactElement {
     // Under a checkout whose machine isn't answering, source control waits with it: one state, said by the page.
     const reachability = useCheckoutReachability(useAnnouncedCheckoutMachine());
@@ -62,8 +67,17 @@ export function SourceControlUnavailableState(props: {
     const bodyKey = resolveBodyKey(errorCode, trimmedDetails);
     const details = sanitizeDetails(props.details ?? null);
 
+    const workspace = props.workspaceScope?.workspace;
+    const workspaceName = useManagedMachineName(workspace ? props.workspaceScope!.serverId : null, workspace?.managedId ?? null);
+
     if (reachability.unreachable) {
         return <CheckoutUnreachableState reachability={reachability} testID={`${props.testID ?? 'source-control-unavailable'}-unreachable`} />;
+    }
+    // A stopped workspace is not a source-control failure: the same stopped state and Start as Files (lab project-stopped).
+    if (errorCode === MANAGED_POWER_REQUIRED) {
+        return <ManagedWorkspaceStoppedState testID={`${props.testID ?? 'source-control-unavailable'}-stopped`}
+            workspaceName={workspaceName} reason={t('files.pane.managedStoppedChangesReason')}
+            workspaceScope={props.workspaceScope ?? null} onStarted={props.onRetry} />;
     }
     return (
         <SurfaceStateCard

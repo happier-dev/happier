@@ -236,6 +236,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
                         testID="projects-column:add"
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
+                        remote={model.addRemote}
                         onClone={cloneRepository}
                         onNewApp={openNewApp}
                         sources={addSources}
