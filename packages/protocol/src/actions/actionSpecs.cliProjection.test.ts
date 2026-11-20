@@ -8,8 +8,10 @@ import {
   ActionSpecSchema,
   getActionSpec,
   listActionCliCommandDeclarations,
+  listVoiceToolActionSpecs,
   type ActionSpec,
 } from './actionSpecs.js';
+import { WORKFLOW_RUN_VIEW_ACTION_IDS } from './scopeActionIdsV1.js';
 
 const CallerSchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
@@ -58,6 +60,16 @@ function baseSpec(overrides: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe('ActionSpec.cli declaration', () => {
+  it.each(Object.entries(WORKFLOW_RUN_VIEW_ACTION_IDS))('discovers the mounted Workflow Runs %s on CLI and Voice', (operation, id) => {
+    const command = listActionCliCommandDeclarations().find(entry => entry.spec.id === id && entry.binding.visibility === 'canonical');
+    expect(command?.binding.path).toEqual(['workflow', 'run', 'view', operation]);
+    expect(command?.spec.executionPlacement).toBe('client');
+
+    const voice = listVoiceToolActionSpecs().find(spec => spec.id === id);
+    expect(voice?.bindings?.voiceClientToolName).toBe(`workflow_run_view_${operation}`);
+    expect(voice?.executionPlacement).toBe('client');
+  });
+
   it('projects mounted Usage controls and source browsing through their existing Action owners', () => {
     const commands = listActionCliCommandDeclarations();
     for (const [id, path] of [

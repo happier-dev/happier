@@ -7303,7 +7303,11 @@ matching Run keys, coverage and the selected Space. Set changes search and
 supplied condition fields. Reset clears search and restores the selected
 Space’s filters. All three use the same answering-client selection as the
 Library and report unavailable when the addressed client has no focused Runs
-view.
+view. Discover the mounted client with `happier workflow run view get --json`.
+Use `happier workflow run view set` or `happier workflow run view reset` with
+`--client-id` to address it. Voice exposes `workflow_run_view_get`,
+`workflow_run_view_set` and `workflow_run_view_reset` through the same mounted
+controller.
 
 `settings.list/get/set/invoke` discover U4 setting declarations by anchor. Explicit
 declaration bindings name the canonical Account or device preference key or an
