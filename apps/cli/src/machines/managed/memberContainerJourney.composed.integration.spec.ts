@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -233,11 +233,11 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
                     controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId });
             expect(commandLines.some(command => command.includes('self __install-payload') && command.includes('--payload-root'))).toBe(true);
             successful.push({ guestId: guest.machineId, nativeId, owner, action: currentAction! });
-            if (scenario === 'exact' && !unprepared) await verifyCapAndDelete();
+            if (scenario === 'exact' && !unprepared) await verifyCapAndDelete(input);
         }
     }
     expect(await db.machineGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
-    async function verifyCapAndDelete() {
+    async function verifyCapAndDelete(cappedInput: ManagedAcquireInputV1) {
         expect(payloadTransfers).toBeGreaterThan(0);
         const response = await fetch(`${home.baseUrl}/v1/machines`, { headers: { Authorization: `Bearer ${requester.token}` } });
         expect(response.status).toBe(200);
@@ -247,9 +247,6 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
         for (const guest of successful.slice(1)) expect(visible).toContain(guest.guestId);
         const memberCredentials = decodeStoredCredentials(encodeStoredCredentials({ token: requester.token, encryption: requester.encryption }));
         if (!memberCredentials) throw new Error('The member requires its real credential');
-        const cappedInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
-            selection: { kind: 'preset', homeId: home.serverId, id: exactId, revision: 0 }, controller,
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const cappedRequestId = randomUUID();
         const cappedTarget = { kind: 'machine' as const, machineId: home.machineId };
         const capped = await dispatchOriginalAccountAction({ actionId: 'machines.managed.acquire', input: cappedInput,
