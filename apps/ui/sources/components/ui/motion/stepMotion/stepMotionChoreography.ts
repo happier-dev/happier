@@ -46,13 +46,20 @@ export function progressAt(from: number, to: number, elapsed: number): number {
 }
 
 export function visualAt(grammar: Exclude<StepGrammar, 'fade'>, p: number) {
-    if (grammar === 'home' || grammar === 'opening') {
-        const leaveFront = grammar === 'home' ? cubic(segment(p, 0, stepMotionTiming.homeClear)) : 1;
-        const home = grammar === 'home';
-        const pace = climbPace(segment(p, home ? stepMotionTiming.homeClimbStart : 0, 1));
+    if (grammar === 'opening') {
+        const { openingS, openingSoftStartS } = stepMotionTiming;
+        const elapsed = segment(p, 0, 1) * openingS;
+        const travel = elapsed < openingSoftStartS
+            ? elapsed ** 2 / (2 * openingSoftStartS)
+            : elapsed - openingSoftStartS / 2;
+        const arriveFront = travel / (openingS - openingSoftStartS / 2);
+        return { leave: 0, arrive: arriveFront, pressed: 0, focal: 0, leaveFront: 1, arriveFront };
+    }
+    if (grammar === 'home') {
+        const leaveFront = cubic(segment(p, 0, stepMotionTiming.homeClear));
+        const pace = climbPace(segment(p, stepMotionTiming.homeClimbStart, 1));
         // Home's early climb travels below the window while the outgoing digits clear.
-        const arriveFront = home ? segment(pace, homeClimbAtClear, 1)
-            : pace * smooth(segment(p, 0, 0.3 / stepMotionTiming.openingS));
+        const arriveFront = segment(pace, homeClimbAtClear, 1);
         return {
             leave: 1 - leaveFront,
             arrive: arriveFront,

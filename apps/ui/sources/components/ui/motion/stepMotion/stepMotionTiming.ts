@@ -5,7 +5,8 @@ export const stepMotionTiming = {
     homeS: 3.4,
     homeClimbStart: 0.16,
     homeClear: 0.29,
-    openingS: 3.4 * 1.3,
+    openingS: 1.32, // The first-open climb begins at 1.85 s and swaps at 3.17 s.
+    openingSoftStartS: 0.3,
     band: 150,
     ragged: 0.35,
     alpha: 0.55,

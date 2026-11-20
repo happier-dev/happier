@@ -1,9 +1,19 @@
 import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 import { describe, expect, it } from 'vitest';
-import { createOpeningTimeline } from './openingTimeline';
+import { visualAt } from '@/components/ui/motion/stepMotion/stepMotionChoreography';
+import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
+import { createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
 
 describe('first-open scene timing', () => {
+    it('finishes building the real window on the lab swap beat', () => {
+        const end = openingClimbSeconds + stepMotionTiming.openingS;
+        expect(end).toBeCloseTo(openingSceneSeconds, 4);
+        const climb = (seconds: number) => visualAt('opening', seconds / stepMotionTiming.openingS).arriveFront;
+        expect(climb(0.15)).toBeLessThan(climb(0.3) / 2);
+        expect(climb(stepMotionTiming.openingS)).toBe(1);
+    });
+
     it('starts clear, holds the assembled mark, and turns while the planet descends', () => {
         const sample = createOpeningTimeline({ width: 1440, height: 900, phone: false, theme: 'dark' });
         expect(sample(0)).toEqual([]);
