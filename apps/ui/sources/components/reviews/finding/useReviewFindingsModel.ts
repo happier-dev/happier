@@ -386,6 +386,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             currentBodyMarkdown: typeof row.comment.body === 'string' ? row.comment.body : undefined,
             taskOrigin: taskOriginOf([row.comment]),
             decision: readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]),
+            decisionEditable: canAct,
             decidable: true, reviewers,
             attribution: reviewers.length > 1 ? { label: formatReviewerSet(reviewers.map(reviewer => reviewer.label)),
                 backendIds: reviewers.map(reviewer => reviewer.backendId).filter(Boolean) } : null,
@@ -401,6 +402,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             currentBodyMarkdown: undefined,
             taskOrigin: taskOriginOf(row.sources.flatMap(source => source.comment ? [source.comment] : [])),
             decision: rowDecision(row, pending),
+            decisionEditable: canAct,
             decidable: row.sources.some(source => source.comment !== null),
             reviewers: rowMembers.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
             attribution: reviewerCount > 1 ? {
@@ -420,7 +422,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             } satisfies ReviewFindingAskContext : null,
             appearance: null,
         };
-    }), [accountLifetime, draftRunId, memberByRunId, pending, record, reviewerCount, rows, sealedRows, serverId, threadEntriesByRowId]);
+    }), [accountLifetime, canAct, draftRunId, memberByRunId, pending, record, reviewerCount, rows, sealedRows, serverId, threadEntriesByRowId]);
 
     const createTask = React.useCallback(async (rowIds: readonly string[]): Promise<boolean> => {
         if (!canActRef.current) return false;

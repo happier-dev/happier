@@ -98,8 +98,10 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     density: ReviewFindingRowDensity;
     findBlockPrefix?: string;
     divided: boolean;
-    /** `null` hides the decision (a read-only transcript). */
+    /** `null` hides an unavailable decision; editability is separate from its persisted value. */
     decision: ReviewFindingDecision | 'undecided' | null;
+    /** Read-only recipients retain the decision without its editing controls. */
+    decisionEditable?: boolean;
     /** The decision can't be recorded yet (its comment is loading or missing). */
     decisionDisabled: boolean;
     /** Why a decision can't be recorded, shown under the control. */
@@ -129,7 +131,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     const ask = React.useCallback((message: string) => onAsk(rowId, message), [onAsk, rowId]);
     const decide = React.useCallback((next: ReviewFindingDecision) => onDecide(rowId, next), [onDecide, rowId]);
 
-    const decisionControl = props.decision !== null ? (
+    const decisionControl = props.decision !== null && props.decisionEditable !== false ? (
         <View style={props.density === 'card' ? styles.decisionAside : styles.decisionOpened}>
             <ReviewFindingDecisionControl
                 testIDPrefix={`review-finding-triage:${rowId}`}
@@ -199,7 +201,9 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
                             </View>
                         ) : null}
                     </View>
-                    {decisionControl}
+                    {decisionControl ?? (props.decision !== null ? <Text style={styles.decisionAside} variant="meta">
+                        {reviewFindingDecisionLabel(props.decision)}
+                    </Text> : null)}
                 </View>
                 <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} findBlockPrefix={props.findBlockPrefix} />
                 {props.decision !== null && props.decisionNote ? <StructuredFindText blockId={`${props.findBlockPrefix}:decision-note`} text={props.decisionNote} style={styles.note} /> : null}
@@ -326,7 +330,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                     </View>
                 </Pressable>
                 {expanded && !narrow ? props.decisionControl : null}
-                {!expanded && decisionWord !== null ? (
+                {(!expanded || !props.decisionControl) && decisionWord !== null ? (
                     <Text testID={`review-finding-decision:${rowId}`} style={props.decision === 'undecided' ? styles.decisionPending : styles.decisionWord}>{decisionWord}</Text>
                 ) : null}
             </View>

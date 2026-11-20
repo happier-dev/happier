@@ -11,12 +11,35 @@ import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTri
 import { useReviewFindingsModel } from './useReviewFindingsModel';
 import type { ReviewFindingsMember } from './useReviewFindingsModel';
 import { ReviewFindingBody } from './ReviewFindingBody';
-import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { ReviewFindingRow, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 afterEach(standardCleanup);
+
+it.each(['page', 'card'] as const)('keeps a View recipient’s persisted decision readable without offering decision writes in %s', async density => {
+    const root = buildReviewCommentFixture({ id: 'view-root', reviewId: 'view-review', findingIdentity: 'c'.repeat(64),
+        state: 'dismissed', reviewTriageStatus: 'accept',
+        finding: { id: 'view-finding', title: 'Retained decision', summary: 'Still readable', severity: 'high', category: 'correctness' } });
+    const writes: string[] = [];
+    function Finding() {
+        const model = useReviewFindingsModel({ members: [], reviewerCount: 0,
+            record: { round: { reviewId: root.reviewId!, roundOrdinal: 1, state: 'completed', reviewerIds: [] }, comments: [root] },
+            scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct: false, pending: {},
+            onDecideComment: async () => { writes.push(root.id); return true; } });
+        return <>{model.rows.map(row => <ReviewFindingRow key={row.rowId} {...row} density={density} divided={false}
+            decisionDisabled={!row.decidable} decisionNote={null} onDecide={model.onDecide} pendingQuestion={null}
+            expanded onToggleExpanded={() => {}} onAsk={model.onAsk} />)}</>;
+    }
+    const screen = await renderScreen(<Finding />);
+    try {
+        expect(JSON.stringify(screen.tree.toJSON())).toContain(reviewFindingDecisionLabel('reject'));
+        expect(screen.findAll(node => typeof node.props.onPress === 'function'
+            && String(node.props.testID ?? '').startsWith('review-finding-triage:'))).toHaveLength(0);
+        expect(writes).toEqual([]);
+    } finally { await screen.unmount(); }
+});
 
 it('withdraws a dismissed durable finding from Implement when a later bulk transition retains its older acceptance', async () => {
     // Captured shape: QA-REVIEWS-1/nov19-resume15-counted-native-comments.json, root 26d/rev5.

@@ -374,7 +374,7 @@ export function ReviewDetailHost(props: Readonly<{
                   seenBefore={openFinding === row.rowId ? { history: seenBefore, onRetry: () => void seenBefore.refresh(),
                     href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
                   attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
-                  decision={canEdit ? row.decision : null} decisionDisabled={!row.decidable} decisionNote={null}
+                  decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
                   onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={null}
                   expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
                   onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}

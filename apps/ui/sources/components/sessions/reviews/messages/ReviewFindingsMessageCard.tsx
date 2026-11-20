@@ -420,7 +420,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                     density={isPage ? 'page' : 'card'}
                                     findBlockPrefix={isPage ? undefined : `structured-review-finding:${row.rowId}`}
                                     divided={index > 0}
-                                    decision={canAct ? row.decision : null}
+                                    decision={row.decision}
+                                    decisionEditable={row.decisionEditable}
                                     decisionDisabled={!row.decidable}
                                     decisionNote={commentsComplete && !row.decidable ? t('runPage.review.notSaved') : null}
                                     onDecide={model.onDecide}
