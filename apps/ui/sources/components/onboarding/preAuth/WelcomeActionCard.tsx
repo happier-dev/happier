@@ -79,7 +79,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const pending = !escape && admission.pendingActionId === actionId;
     const row = props.presentation === 'row';
     const web = Platform.OS === 'web';
-    const subtitleId = web && props.subtitle && !row && props.presentation !== 'pill' ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
+    const descriptionId = React.useId();
+    const subtitleId = web && props.subtitle && !row && props.presentation !== 'pill' ? descriptionId : undefined;
     const foreground = primary ? theme.colors.button.primary.tint : props.presentation === 'link' ? theme.colors.text.secondary : theme.colors.text.primary;
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();

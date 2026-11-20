@@ -21,6 +21,7 @@ export type { WelcomeEntryViewModel } from './welcomeEntryViewModel';
 
 export type WelcomeEntryViewInteraction = Readonly<{
     admission: WelcomeActionAdmission;
+    getActionId: (index: number) => string | undefined;
     onAction: (index: number) => Promise<void> | void;
     onRetry: (testID: string) => void;
     onSelfHosting: () => void;
@@ -49,15 +50,18 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
 }>) {
     useUnistyles();
     const styles = stylesheet;
-    const renderAction = ({ index, display }: WelcomeEntryViewModel['doors'][number]) => (
-        <WelcomeActionCard key={index} {...display} actionId={`welcome-action-${index}`}
-            disabled={!interaction} onPress={interaction ? () => interaction.onAction(index) : noAction} />
-    );
-    const renderWay = ({ index, display }: WelcomeEntryViewModel['quietWays'][number]) => (
-        <WelcomeWayButton key={index} testID={display.testID} actionId={`welcome-action-${index}`} title={display.title}
+    const actionIdAt = (index: number) => interaction?.getActionId(index) ?? `welcome-action-${index}`;
+    const renderAction = ({ index, display }: WelcomeEntryViewModel['doors'][number]) => {
+        const actionId = actionIdAt(index);
+        return <WelcomeActionCard key={actionId} {...display} actionId={actionId}
+            disabled={!interaction} onPress={interaction ? () => interaction.onAction(index) : noAction} />;
+    };
+    const renderWay = ({ index, display }: WelcomeEntryViewModel['quietWays'][number]) => {
+        const actionId = actionIdAt(index);
+        return <WelcomeWayButton key={actionId} testID={display.testID} actionId={actionId} title={display.title}
             subtitle={display.subtitle} iconName={display.iconName} disabled={!interaction}
-            onPress={interaction ? () => interaction.onAction(index) : noAction} />
-    );
+            onPress={interaction ? () => interaction.onAction(index) : noAction} />;
+    };
     const waysLeading = interaction?.waysLeading;
     // A computer's shell takes the self-hosting door to its top-right corner; a phone keeps it under the column.
     const selfHostingInCorner = useShellCornerDoor(interaction && model.selfHosting ? {

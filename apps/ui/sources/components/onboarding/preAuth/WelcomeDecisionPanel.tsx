@@ -217,6 +217,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     };
     return <WelcomeEntryView model={viewModel} compact={compactViewport} interaction={{
         admission: actionAdmission,
+        getActionId: (index) => model.actions[index]?.id,
         onAction,
         onRetry,
         onSelfHosting: props.onChangeRelay,

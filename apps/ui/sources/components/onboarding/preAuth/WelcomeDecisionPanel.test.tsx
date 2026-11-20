@@ -668,6 +668,29 @@ describe('WelcomeDecisionPanel', () => {
         });
     });
 
+    it('keeps the focused Login control on restore when the Home discovers account creation', async () => {
+        const onOpenRestore = vi.fn();
+        const onContinueWithHomeAuthentication = vi.fn();
+        const render = (authEntryOptions: AuthEntryOptions) => <WelcomeDecisionPanel
+            authEntryOptions={authEntryOptions}
+            onOpenRestore={onOpenRestore}
+            onContinueWithHomeAuthentication={onContinueWithHomeAuthentication}
+            onChangeRelay={vi.fn()}
+        />;
+        const options = { ...baseOptions, requestedHomeTarget: null };
+        const screen = await renderScreen(render({ ...options, serverAvailability: 'loading', authenticationActions: [] }));
+        const focusedLogin = screen.findByTestId('welcome-scan-existing-home');
+        expect(focusedLogin).not.toBeNull();
+
+        await screen.update(render(options));
+        expect(screen.findByTestId('welcome-primary-start')).not.toBeNull();
+        // A retained host control can still receive the release/keyboard activation after discovery.
+        expect(focusedLogin?.props.testID).toBe('welcome-scan-existing-home');
+        await act(async () => { await focusedLogin?.props.onPress(); });
+        expect(onOpenRestore).toHaveBeenCalledOnce();
+        expect(onContinueWithHomeAuthentication).not.toHaveBeenCalled();
+    });
+
     it('keeps the Home GitHub way on Login and opens the service selector for external providers', async () => {
         const options: Partial<AuthEntryOptions> = {
             authenticationActions: [...baseOptions.authenticationActions!, { method: { id: 'github', enabledActions: [{ id: 'provision', mode: 'keyed' }] }, action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } }],
