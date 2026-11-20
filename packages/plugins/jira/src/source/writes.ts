@@ -14,6 +14,7 @@ import { JiraFailure, invalidJira, jiraFailure, numericId, object, string, type 
 import { JIRA_PLUGIN_ID, JIRA_SOURCE_ID } from '../contracts.js';
 import { jiraAdfText, projectJiraIssue, type JiraConfiguration, type JiraIssue } from './model.js';
 import { openJiraInstance, readExactJiraIssue, jiraViewer } from './operations.js';
+import { parseJiraCreationPlaceId } from './creationPlaceId.js';
 import { JIRA_FIELD_IDS, readJiraCreateDirectory, readJiraTransitions, jiraTransitionRequiredFields,
     jiraTransitionFieldDescriptor, jiraTransitionOptionId, missingJiraValue } from './metadata.js';
 
@@ -120,10 +121,10 @@ export async function createJiraIssue(raw: unknown, context: JiraSourceContext):
         let configuration = opened.configuration;
         const { client } = opened;
         if (input.placeId !== undefined) {
-            const [projectId, issueTypeId, extra] = input.placeId.split('/');
-            if (!numericId(projectId) || !numericId(issueTypeId) || extra !== undefined) refusal('jira/createPlaceInvalid');
-            if (!jiraProjectIncluded(configuration, projectId)) refusal('jira/projectMismatch');
-            configuration = { ...configuration, projectId, issueTypeId };
+            const place = parseJiraCreationPlaceId(input.placeId);
+            if (place === null) refusal('jira/createPlaceInvalid');
+            if (!jiraProjectIncluded(configuration, place.projectId)) refusal('jira/projectMismatch');
+            configuration = { ...configuration, ...place };
         }
         if (!configuration.projectId) refusal('jira/createProjectRequired');
         if (!configuration.issueTypeId) refusal('jira/issueTypeRequired');

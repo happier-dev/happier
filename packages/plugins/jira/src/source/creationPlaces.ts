@@ -3,6 +3,7 @@ import { jiraFailure, numericId, string, invalidJira, type JiraSourceContext } f
 import { listJiraScopeUnits, openJiraInstance } from './operations.js';
 import { jiraProjectIncluded } from './configurationContract.js';
 import { readJiraConfiguration } from './model.js';
+import { buildJiraCreationPlaceId } from './creationPlaceId.js';
 import { readJiraCreateDirectoryPage } from './metadata.js';
 
 export async function listJiraCreationPlaces(raw: unknown, context: JiraSourceContext): Promise<TriageTaskCreationPlacesResultV1> {
@@ -17,7 +18,7 @@ export async function listJiraCreationPlaces(raw: unknown, context: JiraSourceCo
         places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: {},
           ...(jiraProjectIncluded(configuration, unit.id)
             ? { childScopeId: unit.id, ...(configuration.projectId === unit.id && configuration.issueTypeId !== undefined
-              ? { placeId: `${unit.id}/${configuration.issueTypeId}` }
+              ? { placeId: buildJiraCreationPlaceId(unit.id, configuration.issueTypeId) }
               : { refusal: { reason: 'jira/issueTypeRequired', message: 'Choose an issue type' } }) }
             : { refusal: { reason: 'jira/projectMismatch', message: 'Not part of this connection' } }),
         })) });
@@ -26,10 +27,12 @@ export async function listJiraCreationPlaces(raw: unknown, context: JiraSourceCo
     const startAt = input.cursor === undefined ? 0 : numericId(input.cursor.token) ? Number(input.cursor.token) : NaN;
     if (!Number.isSafeInteger(startAt)) throw invalidJira('jira/createMetadataPageInvalid');
     const { client } = await openJiraInstance(input.instance, context);
-    const page = await readJiraCreateDirectoryPage(client, `/rest/api/3/issue/createmeta/${input.scopeId}/issuetypes`, 'issueTypes', startAt);
+    const projectId = input.scopeId;
+    const page = await readJiraCreateDirectoryPage(client, `/rest/api/3/issue/createmeta/${projectId}/issuetypes`, 'issueTypes', startAt);
     const places = page.rows.map(type => {
       if (!numericId(type.id) || !string(type.name)) throw invalidJira('jira/issueTypeInvalid');
-      return { id: `${input.scopeId}/${type.id}`, placeId: `${input.scopeId}/${type.id}`, label: projectTriageDisplayTextV1(String(type.name)).value || String(type.id),
+      const placeId = buildJiraCreationPlaceId(projectId, type.id);
+      return { id: placeId, placeId, label: projectTriageDisplayTextV1(String(type.name)).value || String(type.id),
         kindId: 'issue', fields: {} };
     });
     return TriageTaskCreationPlacesResultV1Schema.parse({ kind: 'page', status: page.nextStartAt === undefined ? 'complete' : 'partial', places,

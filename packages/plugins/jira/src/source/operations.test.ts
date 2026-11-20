@@ -18,6 +18,7 @@ import { createJiraIssue, editJiraIssue, transitionJiraIssue, commentJiraIssue }
 import { TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { readJiraConfiguration } from './model.js';
 import { JIRA_ACTIONS } from '../contracts.js';
+import { JIRA_TASK_FIELDS } from './metadata.js';
 
 const origin = 'https://work.atlassian.net';
 const account = { service: { pluginId: 'happier.jira', localId: 'jira-account' }, accountId: 'account-1' };
@@ -73,6 +74,12 @@ export function host(respond: (url: URL, body: unknown) => { status?: number; bo
 }
 
 describe('Jira source through provider HTTP', () => {
+    it('includes a labeled approval fact for every accepted create field', () => {
+      const declared = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === JIRA_ACTIONS.create);
+      const facts = declared?.confirmation?.inputFields ?? [];
+      const titledFieldPaths = facts.filter(fact => fact.title && fact.path.startsWith('fields.')).map(fact => fact.path);
+      expect(titledFieldPaths).toEqual(JIRA_TASK_FIELDS.map(field => `fields.${field}`));
+    });
     it.each([
         ['updated', 'asc', 'updated ASC'], ['updated', 'desc', 'updated DESC'],
         ['created', 'asc', 'created ASC'], ['created', 'desc', 'created DESC'],
@@ -450,6 +457,9 @@ describe('Jira source through provider HTTP', () => {
     it('creates once using the selected creation place and provider required-field metadata, then verifies the returned issue', async () => {
         const configured = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1, projectId: '10000', involvement: 'mine', issueTypeId: '10002' }) } };
         const h = host((url, body) => {
+            if (url.pathname.endsWith('/10000/issuetypes')) return {
+                body: { issueTypes: [{ id: '10002', name: 'Task' }], startAt: 0, maxResults: 50, total: 1 },
+            };
             if (url.pathname.includes('/createmeta/')) return { body: { fields: [
                 { fieldId: 'summary', required: true, operations: ['set'] },
                 { fieldId: 'project', required: true, operations: ['set'] },
@@ -465,7 +475,11 @@ describe('Jira source through provider HTTP', () => {
         expect(await createJiraIssue({ v: 1, instance: configured, kindId: 'issue', initialStatusId: 'native-state',
             fields: { title: 'Repair custody' } }, h.context)).toEqual({ kind: 'refused', reason: 'jira/unsupportedField' });
         expect(h.request).not.toHaveBeenCalled();
-        const result = TriageTaskWriteResultV1Schema.parse(await createJiraIssue({ v: 1, instance, kindId: 'issue', placeId: '10000/10002', fields: { title: 'Repair custody' } }, h.context));
+        const directory = await listJiraCreationPlaces({ v: 1, instance, scopeId: '10000' }, h.context);
+        if (directory.kind !== 'page') throw new Error('Expected Jira issue types');
+        const placeId = directory.places[0]?.placeId;
+        expect(placeId).toBe('10000/10002');
+        const result = TriageTaskWriteResultV1Schema.parse(await createJiraIssue({ v: 1, instance, kindId: 'issue', placeId, fields: { title: 'Repair custody' } }, h.context));
         expect(result).toMatchObject({ kind: 'applied', observation: { localRef: ref, snapshot: { title: 'Repair custody' } } });
         expect(h.request.mock.calls.filter(([r]) => new URL(r.url).pathname === '/rest/api/3/issue')).toHaveLength(1);
     });

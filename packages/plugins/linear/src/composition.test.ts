@@ -4,9 +4,16 @@ import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/t
 import { TriageListScopeUnitsResultV1Schema, TriageScanResultV1Schema, TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { runTriageScanPass } from '../../triage/src/projection/scanPass.js';
 import { LINEAR_PLUGIN } from './manifest.js';
+import { LINEAR_ACTIONS, LINEAR_CREATE_FIELDS } from './contracts.js';
 import { host, instance, issue, page } from './fixtures.test-support.js';
 
 describe('public Linear source composition', () => {
+  it('includes a labeled approval fact for every accepted create field', () => {
+    const declared = LINEAR_PLUGIN.manifest.contributes.actions?.find(action => action.id === LINEAR_ACTIONS.create);
+    const facts = declared?.confirmation?.inputFields ?? [];
+    const titledFieldPaths = facts.filter(fact => fact.title && fact.path.startsWith('fields.')).map(fact => fact.path);
+    expect(titledFieldPaths).toEqual(LINEAR_CREATE_FIELDS.map(field => `fields.${field}`));
+  });
   it('lists searchable, paged teams through the safe registered source role and projects configuration without HTTP', async () => {
     const h = host(({ operationName, variables }) => {
       expect(operationName).toBe('LinearTeams');

@@ -1,13 +1,25 @@
 import { listLinearCreationPlaces } from './creationPlaces.js';
 /** Finite Account HTTP operations; shared by declarations and portable activation. */
 import { TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
-import { LINEAR_PURPOSE, LINEAR_ACTIONS, LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema } from './contracts.js';
+import { LINEAR_PURPOSE, LINEAR_ACTIONS, LINEAR_CREATE_FIELDS, LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema } from './contracts.js';
 import { listLinearInstances, listLinearScopeUnits, scanLinearSource, getLinearEntry, readLinearDetail } from './source.js';
 import { createLinearIssue, editLinearIssue, transitionLinearIssue, commentLinearIssue } from './mutations.js';
 const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'linear-account-runtime', exportName: 'activate' } } as const;
 const sources = TriageSourcesContributionProtocolV1;
 const hostAccess = [LINEAR_PURPOSE, 'linear-graphql'];
 const bindings = [{ path: 'instance.binding.account', purpose: LINEAR_PURPOSE }];
+const linearCreateFieldTitles = {
+    title: 'Title',
+    body: 'Description',
+    assigneeIds: 'Assignees',
+    labelIds: 'Labels',
+    scopeId: 'Team',
+    projectId: 'Project',
+    priority: 'Priority',
+    dueDate: 'Due date',
+    estimate: 'Estimate',
+    parent: 'Parent',
+} satisfies Record<(typeof LINEAR_CREATE_FIELDS)[number], string>;
 export const LINEAR_ACCOUNT_ACTIONS = {
     [LINEAR_ACTIONS.listCreationPlaces]: {
         execution: ACCOUNT_EXECUTION, title: 'List Linear task creation places', placementBindings: [],
@@ -65,16 +77,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
           inputFields: [
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'kindId', title: 'Type' },
-            { path: 'fields.title', title: 'Title' },
-            { path: 'fields.body', title: 'Description' },
-            { path: 'fields.assigneeIds', title: 'Assignees' },
-            { path: 'fields.labelIds', title: 'Labels' },
-            { path: 'fields.scopeId', title: 'Team' },
-            { path: 'fields.projectId', title: 'Project' },
-            { path: 'fields.priority', title: 'Priority' },
-            { path: 'fields.dueDate', title: 'Due date' },
-            { path: 'fields.estimate', title: 'Estimate' },
-            { path: 'fields.parent', title: 'Parent' },
+            ...LINEAR_CREATE_FIELDS.map(field => ({ path: `fields.${field}`, title: linearCreateFieldTitles[field] })),
             { path: 'initialStatusId', title: 'Initial status' },
           ],
         },

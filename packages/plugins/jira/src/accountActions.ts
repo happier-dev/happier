@@ -3,6 +3,7 @@ import { listJiraCreationPlaces } from './source/creationPlaces.js';
 import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1, TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from './contracts.js';
 import { getJiraEntry, listJiraInstances, listJiraScopeUnits, scanJiraSource } from './source/operations.js';
+import { JIRA_TASK_FIELDS } from './source/metadata.js';
 import { JiraDetailResultSchema, readJiraDetail } from './source/detail.js';
 import { JiraCommentInputSchema, createJiraIssue, editJiraIssue, transitionJiraIssue, commentJiraIssue } from './source/writes.js';
 import { listJiraIssueTypes } from './source/configuration.js';
@@ -11,6 +12,15 @@ const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'jira-acco
 const sources = TriageSourcesContributionProtocolV1;
 const access = [JIRA_ACCOUNT_PURPOSE, 'jira-api'];
 const bindings = [{ path: 'instance.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }];
+const jiraCreateFieldTitles = {
+    title: 'Title',
+    body: 'Description',
+    assigneeIds: 'Assignees',
+    labelIds: 'Labels',
+    priority: 'Priority',
+    dueDate: 'Due date',
+    parent: 'Parent',
+} satisfies Record<(typeof JIRA_TASK_FIELDS)[number], string>;
 export const JIRA_ACCOUNT_ACTIONS = {
     [JIRA_ACTIONS.listCreationPlaces]: {
         execution: ACCOUNT_EXECUTION, title: 'List Jira task creation places', placementBindings: [],
@@ -36,13 +46,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
           inputFields: [
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'kindId', title: 'Type' },
-            { path: 'fields.title', title: 'Title' },
-            { path: 'fields.body', title: 'Description' },
-            { path: 'fields.assigneeIds', title: 'Assignees' },
-            { path: 'fields.labelIds', title: 'Labels' },
-            { path: 'fields.priority', title: 'Priority' },
-            { path: 'fields.dueDate', title: 'Due date' },
-            { path: 'fields.parent', title: 'Parent' },
+            ...JIRA_TASK_FIELDS.map(field => ({ path: `fields.${field}`, title: jiraCreateFieldTitles[field] })),
             { path: 'placeId', title: 'Place' },
             { path: 'initialStatusId', title: 'Initial status' },
           ],
