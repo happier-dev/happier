@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 /** Native diffs never render through Pierre, so there is no scroll root to bind: children pass through. */
-export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: React.ReactNode; getScrollRoot?: () => unknown }>) {
+export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: React.ReactNode; getScrollRoot?: () => unknown; unframed?: boolean }>) {
     return <>{props.children}</>;
 }
 

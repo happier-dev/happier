@@ -134,9 +134,11 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{
     /**
      * The list's own scroll node, when the list hands it over (a plugin List whose rows disclose diffs). Its
      * diffs then window their lines against that one scroller (QB-81) rather than each owning a capped one, and
-     * no anchor is searched or drawn.
+     * no anchor is searched.
      */
     getScrollRoot?: () => unknown;
+    /** Draw no layout frame of its own: the list keeps exactly the box its own layout gives it (a plugin List). */
+    unframed?: boolean;
 }>) {
     const getScrollRootRef = React.useRef(props.getScrollRoot);
     getScrollRootRef.current = props.getScrollRoot;
@@ -286,7 +288,7 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{
         };
     }, []);
 
-    if (scope.enclosing) {
+    if (props.unframed === true) {
         return <PierreScrollRootContext.Provider value={scope}>{props.children}</PierreScrollRootContext.Provider>;
     }
     return (

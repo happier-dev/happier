@@ -1,41 +1,21 @@
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
-import { useSetting } from '@/sync/store/settingsReadHooks';
 import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
 
 import type { DiffViewerProps } from './diffViewerTypes';
 import { HappierUnifiedDiffViewer } from './happier/HappierUnifiedDiffViewer';
 import { HappierTextDiffViewer } from './happier/HappierTextDiffViewer';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
-import { isPierreDiffKillSwitchEnabled, supportsPierreRuntime } from './pierre/pierreRuntimeSupport.web';
 import { useInitialPresentationReadiness } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import { useEffectiveDiffWrapLines } from './diffPresentationStyle';
 import { getLoadedPierreRenderer, loadPierreRenderer } from './pierre/pierreRendererLoader.web';
 import { ProseDiffViewer } from './prose/ProseDiffViewer';
 import { useDiffHunkSlots } from './hunks/useDiffHunkSlots';
 import { renderDiffHunkRow } from './hunks/DiffHunkRow';
-import { usePierreEnclosingScrollRoot } from './pierre/PierreScrollRootVirtualizerProvider.web';
+import { usePierreAllowed } from './inlineDiffScrollOwner.web';
 
 const PierreDiffViewer = retryableLazy(async () => ({ default: (await loadPierreRenderer()).PierreDiffViewer }));
-
-/** Whether this diff draws through Pierre. A leading lane is a per-line cell only the canonical line renderer draws. */
-function usePierreAllowed(rendersLeadingLane: boolean): boolean {
-    return useSetting('filesDiffRendererMode') === 'pierre'
-        && !rendersLeadingLane
-        && isPierreDiffKillSwitchEnabled()
-        && supportsPierreRuntime();
-}
-
-/**
- * A large inline diff in a list that hands over its scroller windows its lines against that one scroller (QB-81),
- * so its caller draws no capped viewport. Only Pierre can window a body against another scroller; the canonical
- * line renderer keeps its own bounded list.
- */
-export function useInlineDiffSharesEnclosingScroller(): boolean {
-    const enclosing = usePierreEnclosingScrollRoot();
-    return usePierreAllowed(false) && enclosing;
-}
 
 const boundedLazyMountStyle: React.CSSProperties = { height: '100%', minHeight: 0, position: 'relative' };
 

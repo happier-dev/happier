@@ -23,7 +23,7 @@ import { DiffReviewCommentsViewer } from '@/components/ui/code/diff/reviewCommen
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffViewportStyle } from '@/components/ui/code/diff/useInlineDiffViewportStyle';
 
 import { isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { useFilePreviewSource, type UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
@@ -321,7 +321,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         });
     }, [props.reviewCommentsEnabled, state.diff, virtualizationByteThreshold, virtualizationLineThreshold]);
 
-    const diffContainerStyle = virtualized ? resolveInlineDiffVirtualizedViewportStyle(maxVirtualizedHeight) : null;
+    const diffContainerStyle = useInlineDiffViewportStyle(virtualized, maxVirtualizedHeight);
     const shouldReserveVirtualizedHeightWhileLoading = React.useMemo(() => {
         if (props.reviewCommentsEnabled) return false;
         const estimated = estimatedChangedLines;

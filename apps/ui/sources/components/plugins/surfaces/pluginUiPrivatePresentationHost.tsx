@@ -509,7 +509,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     },
     renderCollectionScrollRoot({ getScrollNode, children }: Readonly<{ getScrollNode(): unknown; children: React.ReactNode }>) {
         // A List's own scroller is the one its disclosed diffs window against (QB-81).
-        return <PierreScrollRootVirtualizerProvider getScrollRoot={getScrollNode}>{children}</PierreScrollRootVirtualizerProvider>;
+        return <PierreScrollRootVirtualizerProvider getScrollRoot={getScrollNode} unframed>{children}</PierreScrollRootVirtualizerProvider>;
     },
     renderChangedFilesReview(input: HappierChangedFilesReviewRequest) {
         return <PluginUiPrivateChangedFilesReview {...resolveHappierChangedFilesReviewRequest(input)} />;

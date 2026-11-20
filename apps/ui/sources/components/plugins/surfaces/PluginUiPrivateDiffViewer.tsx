@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { HappierDiffViewerRequest } from '@happier-dev/plugin-ui/presentation';
-import { DiffViewer, useInlineDiffSharesEnclosingScroller } from '@/components/ui/code/diff/DiffViewer';
+import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffViewportStyle } from '@/components/ui/code/diff/useInlineDiffViewportStyle';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { useSetting } from '@/sync/store/settingsReadHooks';
@@ -22,9 +22,6 @@ export function PluginUiPrivateDiffViewer(props: Extract<HappierDiffViewerReques
     const configuredLineNumbers = useSetting('showLineNumbers');
     const thresholds = useInlineDiffVirtualizationThresholds();
     const { height: windowHeight } = usePresentationWindowDimensions();
-    // In a list that hands over its scroller (a List row's disclosed diff), that list is the one vertical scroller
-    // and the diff windows its lines against it (QB-81): no capped viewport of its own.
-    const sharesScroller = useInlineDiffSharesEnclosingScroller();
     // A filling diff is its panel's one scroller, so it is always the list (QB-55/81): never a capped box nested
     // in another scroller. An inline diff keeps the existing threshold and its capped viewport.
     const fill = props.fill === true;
@@ -35,12 +32,11 @@ export function PluginUiPrivateDiffViewer(props: Extract<HappierDiffViewerReques
         lineThreshold: thresholds.lineThreshold,
         byteThreshold: thresholds.byteThreshold,
     });
+    // In a List row's disclosed body the List is the one vertical scroller and the diff windows against it (QB-81).
+    const viewport = useInlineDiffViewportStyle(virtualized && !fill, resolveInlineDiffVirtualizedMaxHeight(windowHeight));
 
     return (
-        <View style={fill ? FILL_DIFF_STYLE : virtualized && !sharesScroller
-            ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight))
-            : undefined}
-        >
+        <View style={fill ? FILL_DIFF_STYLE : viewport ?? undefined}>
             <DiffViewer
                 mode="unified"
                 unifiedDiff={props.unifiedDiff}

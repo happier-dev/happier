@@ -5,7 +5,7 @@ import { useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/sta
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffViewportStyle } from '@/components/ui/code/diff/useInlineDiffViewportStyle';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
@@ -68,6 +68,7 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
             byteThreshold: virtualizationByteThreshold,
         });
     }, [newText, oldText, unifiedDiff, virtualizationByteThreshold, virtualizationLineThreshold]);
+    const viewport = useInlineDiffViewportStyle(virtualized, maxVirtualizedHeight);
     const reviewCommentsEnabled =
         reviewCommentsFeatureEnabled === true &&
         Boolean(reviewScope) &&
@@ -92,7 +93,7 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     });
 
     return (
-        <View style={[style, virtualized ? resolveInlineDiffVirtualizedViewportStyle(maxVirtualizedHeight) : null]}>
+        <View style={[style, viewport]}>
             <DiffViewer
                 findActive={find.active}
                 findRangesByLineId={findProps?.findRangesByLineId}

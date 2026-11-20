@@ -70,7 +70,7 @@ describe('DiffViewer (web) while the Pierre renderer loads', () => {
   });
 
   it('lets an inline diff share the list scroller it sits in only when Pierre draws it (QB-81)', async () => {
-    const { useInlineDiffSharesEnclosingScroller } = await import('./DiffViewer.web');
+    const { useInlineDiffSharesEnclosingScroller } = await import('./inlineDiffScrollOwner.web');
     const { PierreScrollRootVirtualizerProvider } = await import('./pierre/PierreScrollRootVirtualizerProvider.web');
     const seen = new Map<string, boolean>();
     function Probe({ phase }: Readonly<{ phase: string }>) { seen.set(phase, useInlineDiffSharesEnclosingScroller()); return null; }

@@ -16,7 +16,7 @@ import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resol
 import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffViewportStyle } from '@/components/ui/code/diff/useInlineDiffViewportStyle';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -93,8 +93,13 @@ function InlineDiffBody<TFile extends DiffFileEntry>(props: Readonly<{
     const content = render?.(props.input);
     if (content === null || content === undefined || content === false) return <>{props.fallback}</>;
     if (props.containerVariant === 'none') return <>{content}</>;
-    return <View style={[styles.inlineDiffContainer, props.virtualized
-        ? resolveInlineDiffVirtualizedViewportStyle(props.input.maxVirtualizedHeight) : null]}>{content}</View>;
+    return <InlineDiffFrame virtualized={props.virtualized} maxHeight={props.input.maxVirtualizedHeight}>{content}</InlineDiffFrame>;
+}
+
+/** An expanded file's diff frame: capped only while the diff scrolls itself, not when it windows against this list. */
+function InlineDiffFrame(props: Readonly<{ virtualized: boolean; maxHeight: number; children: React.ReactNode }>) {
+    const viewport = useInlineDiffViewportStyle(props.virtualized, props.maxHeight);
+    return <View style={[styles.inlineDiffContainer, viewport]}>{props.children}</View>;
 }
 
 /** A row drawn before the files in the list's own scroll (`leadingRows`); it holds no file index. */
@@ -278,6 +283,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     // Only expanded bodies consume renderer changes; the held inventory is independent of them.
     const [inlineRendererContext] = React.useState(() => React.createContext<DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff']>(undefined));
     const listRef = React.useRef<VirtualizedListRef | null>(null);
+    const getListScrollNode = React.useCallback(() => listRef.current?.getScrollableNode?.() ?? null, []);
 
     // The bodies this list draws arrive after it mounts: prepare their renderer now, while rows load.
     usePierreDiffRendererPreload(canRenderInlineDiffs);
@@ -503,12 +509,9 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
             showLineNumbers: ctx.showLineNumbers,
             showPrefix: ctx.showPrefix,
         };
-        const inlineVirtualizedContainerStyle = inlineVirtualized
-            ? resolveInlineDiffVirtualizedViewportStyle(ctx.maxVirtualizedHeight)
-            : null;
         const fallbackInlineDiff =
             file.unifiedDiff ? (
-                <View style={[styles.inlineDiffContainer, inlineVirtualizedContainerStyle]}>
+                <InlineDiffFrame virtualized={inlineVirtualized} maxHeight={ctx.maxVirtualizedHeight}>
                     <DiffViewer
                         findActive={findState?.findActive}
                         findRangesByLineId={findState?.findRangesByLineId}
@@ -522,9 +525,9 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                         showLineNumbers={ctx.showLineNumbers}
                         showPrefix={ctx.showPrefix}
                     />
-                </View>
+                </InlineDiffFrame>
             ) : file.oldText != null && file.newText != null ? (
-                <View style={[styles.inlineDiffContainer, inlineVirtualizedContainerStyle]}>
+                <InlineDiffFrame virtualized={inlineVirtualized} maxHeight={ctx.maxVirtualizedHeight}>
                     <DiffViewer
                         findActive={findState?.findActive}
                         findRangesByLineId={findState?.findRangesByLineId}
@@ -540,7 +543,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                         showLineNumbers={ctx.showLineNumbers}
                         showPrefix={ctx.showPrefix}
                     />
-                </View>
+                </InlineDiffFrame>
             ) : null;
 
         return (
@@ -647,7 +650,9 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         // Nothing inside a diff list (inline viewers, their own scroll roots) speaks for the pane's header.
         <inlineRendererContext.Provider value={renderInlineUnifiedDiff}>
         <PaneHeaderScrollIsolation>
-        <PierreScrollRootVirtualizerProvider>
+        {/* A virtualized list is its expanded diffs' one vertical scroller: they window against it (QB-81). */}
+        <PierreScrollRootVirtualizerProvider key={shouldUseVirtualizedList ? 'list' : 'inline'}
+            getScrollRoot={shouldUseVirtualizedList ? getListScrollNode : undefined}>
             {shouldUseVirtualizedList ? (
                 <VirtualizedList<DiffFilesListRow<TFile>>
                     ref={listRef}

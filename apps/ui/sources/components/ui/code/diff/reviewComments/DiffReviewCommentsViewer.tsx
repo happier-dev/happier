@@ -17,7 +17,7 @@ import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resol
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLineWordDiffConfig';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
-import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffViewportStyle } from '@/components/ui/code/diff/useInlineDiffViewportStyle';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import type { UnifiedDiffViewerProps } from '../diffViewerTypes';
 
@@ -111,6 +111,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
             byteThreshold,
         })
         : true;
+    const viewport = useInlineDiffViewportStyle(virtualized, resolveInlineDiffVirtualizedMaxHeight(windowHeight));
     const lineModelIntraLineDiff = virtualized ? DISABLED_INTRA_LINE_WORD_DIFF : intraLineDiff;
 
     const lines = React.useMemo(() => props.precomputedLines ?? buildCodeLinesFromUnifiedDiff({
@@ -162,7 +163,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
     }, [controls?.renderAfterLine, props.renderAfterLine, commentsByLineId, props.serverId, labels]);
 
     return (
-        <View style={virtualized ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight)) : undefined}>
+        <View style={viewport ?? undefined}>
             <DiffViewer
                 hunks={props.hunks}
                 reviewUnits={props.reviewUnits}
