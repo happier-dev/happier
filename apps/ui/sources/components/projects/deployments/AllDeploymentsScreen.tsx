@@ -28,7 +28,7 @@ import { useDeploymentPresentationDemand } from './useDeploymentPresentationDema
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { DeploymentEnvironmentRows, deploymentEnvironmentColumns, SERVICES_APPS_COLLECTION_ID, type DeploymentEnvironmentColumnsBinding } from './DeploymentEnvironmentRows';
+import { DeploymentEnvironmentRows, deploymentEnvironmentColumns, SERVICES_APPS_COLLECTION_ID, ServicesPageSheetAfterContext, type DeploymentEnvironmentColumnsBinding } from './DeploymentEnvironmentRows';
 import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -250,6 +250,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       ...(create && count ? { count } : {}),
     }} />
   );
+  // What stands right above every view's table: the head's band or count line, else its purpose line.
+  const sheetAfter = viewTabs || (view === 'apps' && notBackedUpFilter) || count || placesSpaces ? 'line' as const : 'purpose' as const;
   const retry = React.useCallback(() => {
     void read.refresh();
   }, [read]);
@@ -269,7 +271,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     <ServicesWatchedView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible} onCount={setViewCount} />
   ) : null;
   if (selectedView) {
-    return <ItemList testID="all-deployments" pageColumn="wide">{header(true)}{selectedView}</ItemList>;
+    return <ItemList testID="all-deployments" pageColumn="wide">{header(true)}
+      <ServicesPageSheetAfterContext.Provider value={sheetAfter}>{selectedView}</ServicesPageSheetAfterContext.Provider></ItemList>;
   }
 
   const readIssue = deploymentReadIssue(snapshot.failure?.code);
@@ -368,8 +371,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           <EmptyState testID="all-deployments.pageEmpty" layout="line" title={t('projects.deployments.allPageEmpty')} />
         </ItemGroup>
       ) : (
-        <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
-          openBackups={filtering} columns={appsColumns} />
+        <ServicesPageSheetAfterContext.Provider value={sheetAfter}>
+          <AllDeploymentsGroups items={shownItems} serverId={serverId} lifetime={props.lifetime ?? null}
+            openBackups={filtering} columns={appsColumns} />
+        </ServicesPageSheetAfterContext.Provider>
       )}
       <ServicesPaging testID="all-deployments.paging" page={read} onNewer={read.previousPage} onOlder={nextAppsPage} />
     </ItemList>

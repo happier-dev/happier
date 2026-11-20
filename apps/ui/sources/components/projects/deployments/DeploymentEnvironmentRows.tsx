@@ -322,6 +322,12 @@ const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { col
 /** The Environment name's floor before a chosen column gives way. */
 const DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH = 200;
 
+/**
+ * What stands right above a Services page list's table: the page head's count line or band (Collection `sheetAfter`).
+ * The Services page states it once for every view; a list elsewhere (a section, Monitoring) states nothing.
+ */
+export const ServicesPageSheetAfterContext = React.createContext<'purpose' | 'line' | undefined>(undefined);
+
 /** Every band of a Services list stands on its one sheet, under the one bar that names the columns (lab envList). */
 export const SERVICES_ONE_SHEET = { key: 'services', title: '' } as const;
 
@@ -351,10 +357,12 @@ export function ServicesPageList<Item>(props: Readonly<{
   // the sheet edge, so the list's sheet takes that edge; on the Services page the list is the page's own flat list.
   const inSection = useItemGroupRowPosition() !== null;
   const enclosingEdgePx = React.useContext(HappierColumnEdgeContext);
+  const sheetAfter = React.useContext(ServicesPageSheetAfterContext);
   const collection = (
     <CoreCollectionScope>
       <Collection<Item>
         testID={`${props.testID}.table`}
+        {...(sheetAfter === undefined ? {} : { sheetAfter })}
         model={props.model}
         anatomy={props.anatomy}
         accessibilityLabel={props.accessibilityLabel}

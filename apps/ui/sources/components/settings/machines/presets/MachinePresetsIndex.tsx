@@ -291,6 +291,9 @@ export function MachinePresetsPage(props: Readonly<{
             // The purpose line ends the head (no count or band); a Home's notice section brings its own space.
             {...(sections.some((section) => states?.[section.serverId]?.error != null || states?.[section.serverId]?.approval != null)
               ? {} : { sheetAfter: 'purpose' as const })}
+            // The purpose line ends the head (no count or band); a Home's notice section brings its own space.
+            {...(sections.some((section) => states?.[section.serverId]?.error != null || states?.[section.serverId]?.approval != null)
+              ? {} : { sheetAfter: 'purpose' as const })}
             loading={loading}
             loadingRows={3}
             empty={

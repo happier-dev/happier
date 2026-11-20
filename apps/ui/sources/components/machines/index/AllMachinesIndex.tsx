@@ -365,6 +365,8 @@ function AllMachinesIndexBody() {
                 preferredListRatio={1}
                 minCardWidth={CARD_MIN_WIDTH_PX}
                 header={header}
+                // Needs you (the subjects its own selector lists) ends the head with its own space; else the count line does.
+                {...(view === 'list' && !holding && lookSubjects.length > 0 ? {} : { sheetAfter: 'line' as const })}
                 loading={answerPending}
                 empty={empty}
                 {...(offlineFoldable ? { footer: (

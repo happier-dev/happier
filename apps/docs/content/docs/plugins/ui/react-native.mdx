@@ -2017,6 +2017,16 @@ lists use their section anatomy without that header. Inside an existing page
 section's sheet, Collection reuses the enclosing sheet rather than nesting
 another one. Let the shared owner compose this phone layout.
 
+In the 0.3 development contract, a page-scrolling table sits in one rounded
+sheet. Tell Collection what stands right above that sheet with `sheetAfter`, and it
+spaces the sheet for you. Use `'purpose'` when your page's description is the last
+thing above the table: the sheet then keeps the pause a page's first section has.
+Use `'line'` when a count or filter line ends your header: the table stays close to
+it. Leave it out under a toolbar, or when your header ends in a section of its own.
+When a table holds a single titled group, Collection draws that group's title above
+the sheet, in line with the page's other section titles. Groups become bands inside
+the sheet only when there are two or more.
+
 In the 0.3 development contract, pass `Collection.sort` with the active `key`,
 `direction` and `onChange(key)` to make `sortable` field titles interactive.
 Optional `orders: [{ key, label }]` adds a named-order menu to the table's title

@@ -321,6 +321,8 @@ export function ArtifactsBrowser(props: Readonly<{
                     preferredListRatio={1}
                     minCardWidth={phoneLayout ? PHONE_CARD_MIN_WIDTH_PX : CARD_MIN_WIDTH_PX}
                     header={header}
+                    // Rows show only past the first visit, where the head always ends in its toolbar and count line.
+                    sheetAfter="line"
                     loading={!loaded && total === 0 && !loadFailed}
                     empty={empty}
                 />

@@ -92,6 +92,7 @@ import { useHappierLayoutTextAlign } from '../presentation/text/layoutTextAlign.
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { Dropdown } from './Overlay.js';
 import { HappierSkeletonRows, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
+import { HappierListSection } from '../presentation/collection/List.js';
 import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
 import { encodeHappierSectionRowCellKey, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
 import { HAPPIER_ITEM_DENSITY_ROW_HEIGHT, HAPPIER_ROW_CONTENT_POINTER_EVENTS, HAPPIER_ROW_CONTROL_POINTER_EVENTS } from '../presentation/collection/List.js';
@@ -557,6 +558,13 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   sort?: CollectionSort;
   /** Totals rows after the last group, aligned under the field columns (two columns in the list). */
   summaryRows?: readonly CollectionSummaryRow[];
+  /**
+   * What stands right above a page table's sheet, so the pause before it replaces space rather than adding to it: the
+   * page's purpose line (`purpose`: the sheet is the page's first group and keeps the group pause) or a count or filter
+   * line (`line`: the table stays close to it). Omitted, nothing is added: a toolbar keeps its table close, and a header
+   * that ends in a section brings that section's own space.
+   */
+  sheetAfter?: 'purpose' | 'line';
   /**
    * `page`: a page-sized collection scrolls as the page — its `header`, every row and its `footer` in one scroller
    * and one reading and focus order, with no virtualization (for a few dozen items, not an open-ended feed).
@@ -2578,6 +2586,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // ---- the List's cells: rows, and each open peek right below its row (table only) ----
   const expanded = model.expanded;
   const previousCells = useRef<ReadonlyMap<string, CollectionCell<Item>>>(new Map());
+  // One titled group in a page table's sheet is that section's title, above the sheet on the page column beside its
+  // sibling sections' titles; groups band the sheet only when there are two or more (rounded-sheet ruling; N38,
+  // QA-STATUS-LISTS-1120).
+  const onlyGroup = drawnSections.length === 1 ? drawnSections[0]!.group : null;
+  const loneGroup = sheetTable && !cards && onlyGroup !== null && onlyGroup.title !== '' ? onlyGroup : null;
   const sections = useMemo(() => {
     const nextCells = new Map<string, CollectionCell<Item>>();
     const retainCell = (cell: CollectionCell<Item>): CollectionCell<Item> => {
@@ -2613,7 +2626,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       }
       return {
         key: group?.key ?? `collection-${index}`,
-        title: group?.title ?? '',
+        title: loneGroup !== null ? '' : group?.title ?? '',
         // Every titled group says how many rows it holds, a page section's heading as a dense list's band does (one
         // group-label anatomy, owner 2026-11-17; LABPARITY-ACCEPT-E fix 4: "Your machines 6"): a nested group every item
         // it holds, open or not, but not the owners shown only to place a match.
@@ -2634,7 +2647,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
     }
     return nextSections;
-  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, model.keyOf, model.sections, pageSections, sheetTable, tree]);
+  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, loneGroup, model.keyOf, model.sections, pageSections, sheetTable, tree]);
   // A page section's last row ends its sheet; on a table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
   // A browse list on a phone lies flat on the page (owner 2026-11-15): its sheet divides its rows in the one list-row
@@ -2853,6 +2866,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   }), [pageCellHeights, rowGeometry, metrics, size?.width, catalogDirectory, directoryColumns, props.testID]);
   // The sheet stands while there are rows or their skeleton; an empty table's statement stands on the page.
   const sheetShown = sheetTable && (model.keys.length > 0 || props.loading === true);
+  // A page list's rows start on their sheet's row inset; with no sheet of their own (a flat page list) on the page text
+  // edge, where its headings stand (monitoring-1115 B1). Its totals row starts there too.
+  const pageRowInsetPx = enclosingPageSheet === null && !sheetTable
+    ? HAPPIER_PAGE_METRICS.headingOpticalInsetPx : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const gridSheet = sheetShown && gridScroll && palette !== null ? palette : null;
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
@@ -2885,11 +2902,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       pageSheet: { colors: palette, flatSheet: false },
     } : pageSections && palette !== null ? {
       sectionHeaderTitleRole: 'section' as const,
-      // The page section header's rhythm: one section gap above, the header gap down to its sheet.
       sectionHeaderStyle: {
-        justifyContent: 'flex-end' as const,
-        paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
-        paddingBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
+        ...pageSectionHeadingRhythm,
         // A page-list's group label shares its rows' leading mark edge. Grid headings
         // retain their own card-column anatomy below.
         paddingHorizontal: catalogDirectory ? directoryHeadingInsetPx : HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
@@ -2906,7 +2920,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         flatSheet: false,
         // With no card around them, the rows' marks stand on the page's text edge, as the header's title and the
         // section headings do (monitoring-1115 B1, pfc-redesign flat lists), not a card's content inset in.
-        ...(enclosingPageSheet === null ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
+        rowInsetPx: pageRowInsetPx,
         stackedHeadings: narrowRows,
       } }),
     } : wrapTitles || catalogSideList ? {
@@ -3294,6 +3308,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       paddingEnd={TABLE.insetEnd + rowAccessoryWidth + 1}
       height={metrics.tableRow}
       fields={anatomy.fields ?? NO_FIELDS}
+      pageRowInsetPx={pageSections && rowGeometry === 'list' ? pageRowInsetPx : null}
     />
   );
 
@@ -3348,11 +3363,13 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // rows share its content edge with the section's own rows and actions (MACH-UI-GAPS-1120).
   const stageOnSheetEdge = enclosingPageSheet === null
     && (pageSections || sheetTable || (pageScroll && presentation === 'table' && palette !== null));
-  // Under the page's own header (its title and purpose), the table's sheet is the page's first group: it keeps the group
-  // pause, as a titled first group did before groups became the sheet's bands (DESIGN.md "Shell grid"; UI refinements
-  // "first-group gap 28", MACH-UI-GAPS-1120). A toolbar header keeps its table close: its controls belong to it.
-  const sheetUnderPageHeader = sheetShown && stageOnSheetEdge && pageScroll && !pushedPage
-    && props.header != null && typeof props.header !== 'function';
+  // The pause before a page table's sheet replaces space rather than adding to it (LAYOUT-ACCEPT-1120): under the page's
+  // purpose line the sheet is the page's first group and keeps the group pause (DESIGN.md "Shell grid"; UI refinements
+  // "first-group gap 28"); under a count or filter line it stays close. A lone group's title above the sheet brings that
+  // pause itself.
+  const sheetLeadPx = !sheetShown || !stageOnSheetEdge || !pageScroll || pushedPage || loneGroup !== null ? 0
+    : props.sheetAfter === 'purpose' ? HAPPIER_PAGE_METRICS.sectionGapPx
+      : props.sheetAfter === 'line' ? HAPPIER_PAGE_METRICS.collectionLineSheetGapPx : 0;
 
   // The open item stays marked in the list or on its card while its detail is open anywhere: in the split, pushed,
   // in the host details pane, or wherever the caller shows it (`detail: 'none'`).
@@ -3444,7 +3461,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
             stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
-            sheetUnderPageHeader ? { paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx } : null]}>
+            sheetLeadPx > 0 ? { paddingTop: sheetLeadPx } : null]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}
@@ -3458,6 +3475,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                 {...(pageSections ? { leadingGapPx: HAPPIER_PAGE_METRICS.sectionHeaderGapPx } : {})}>
                 {headerPlacesSearch ? null : search.tokenLine}
               </ListCollectionHeader>
+              {loneGroup === null ? null : (
+                <HappierListSection title={loneGroup.title} titleRole="section" style={loneGroupHeadingStyle}
+                  {...(sections[0]?.count === undefined ? {} : { count: sections[0].count })}
+                  {...(loneGroup.description === undefined ? {} : { description: loneGroup.description })}
+                  {...(control.sectionHeaderAction === undefined ? {} : { action: control.sectionHeaderAction(loneGroup.key) })} />
+              )}
               {loadingNotice ? (
                 <SurfaceState kind="unavailable" size="line" title={loadingNotice.sentence} />
               ) : cards && presentation === 'board' && loadingFirstWindow ? (
@@ -3745,6 +3768,16 @@ function CollectionSortArrow(props: Readonly<{ sort: CollectionSort; testID?: st
 }
 
 const sortHeaderStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 3, minWidth: 0 };
+/** A page section heading's rhythm: one section gap above, the header gap down to its sheet. */
+const pageSectionHeadingRhythm = {
+  justifyContent: 'flex-end' as const,
+  paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
+  paddingBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
+};
+/** A lone group's title above its table's sheet: a page section heading on the page text edge. */
+const loneGroupHeadingStyle: HappierPortableStyle = {
+  ...pageSectionHeadingRhythm, paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
+};
 const pageSheetHeaderStyle: HappierPortableStyle = {
   flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
   height: TABLE.headerHeight, paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx, borderBottomWidth: 1,
@@ -3777,6 +3810,8 @@ function CollectionSummaryRows(props: Readonly<{
   height: number;
   /** Which field's value the list keeps: the highest priority. */
   fields: readonly Readonly<{ key: string; priority: number }>[];
+  /** A page list's row inset: the title then stands where the rows' titles do, after their leading column. */
+  pageRowInsetPx: number | null;
 }>): ReactElement {
   const theme = useHappierUiTheme();
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
@@ -3789,7 +3824,9 @@ function CollectionSummaryRows(props: Readonly<{
           key={row.key}
           {...(row.testID === undefined ? {} : { testID: row.testID })}
           style={[tableRowContentStyle, { minHeight: props.height - 2, borderTopWidth: 1, borderTopColor: palette.rowDivider },
-            props.geometry === 'table' ? { paddingRight: props.paddingEnd } : { paddingRight: TABLE.insetTrailing }]}
+            props.geometry === 'table' ? { paddingRight: props.paddingEnd } : { paddingRight: TABLE.insetTrailing },
+            props.geometry === 'list' && props.pageRowInsetPx !== null
+              ? { paddingLeft: props.pageRowInsetPx, columnGap: HAPPIER_PAGE_METRICS.rowLeadingGapPx } : null]}
         >
           {props.geometry === 'table' ? (
             <>
@@ -3808,6 +3845,7 @@ function CollectionSummaryRows(props: Readonly<{
             </>
           ) : (
             <>
+              {props.pageRowInsetPx === null ? null : <View style={pageRowGlyphStyle} />}
               <View style={flexCellStyle}><SummaryTitle title={row.title} /></View>
               {lead === null ? null : (
                 <View {...(row.testID === undefined ? {} : { testID: `${row.testID}:${lead.key}` })}>

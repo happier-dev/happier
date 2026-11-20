@@ -421,6 +421,7 @@ type HarnessOptions = Readonly<{
   create?: CollectionProps<Entry>['create'];
   sort?: CollectionProps<Entry>['sort'];
   summaryRows?: CollectionProps<Entry>['summaryRows'];
+  sheetAfter?: CollectionProps<Entry>['sheetAfter'];
   renderDetail?: CollectionProps<Entry>['renderDetail'];
   title?: CollectionProps<Entry>['title'];
   titleKind?: CollectionProps<Entry>['titleKind'];
@@ -470,6 +471,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.create === undefined ? {} : { create: props.create })}
       {...(props.sort === undefined ? {} : { sort: props.sort })}
       {...(props.summaryRows === undefined ? {} : { summaryRows: props.summaryRows })}
+      {...(props.sheetAfter === undefined ? {} : { sheetAfter: props.sheetAfter })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
       {...(props.retainedRowKeys === undefined ? {} : { retainedRowKeys: props.retainedRowKeys })}
       {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
@@ -4145,15 +4147,18 @@ describe('the table sheet', () => {
     }
   });
 
-  // MACH-UI-GAPS-1120 (round 18, Presets at 1440): the table's sheet sat 8 px under the page's purpose line. Under the
-  // page's own header a table sheet is the page's first group: it keeps the group pause (DESIGN.md "Shell grid"; UI
-  // refinements "first-group gap 28 with no band padding"), grouped or not. A toolbar header keeps its table close.
+  // MACH-UI-GAPS-1120 / LAYOUT-ACCEPT-1120 fix 1: the pause above a page table's sheet replaces space, never adds to it.
+  // Under the page's purpose line the sheet is the page's first group (the group pause; DESIGN.md "Shell grid", UI
+  // refinements "first-group gap 28"); under a count or filter line it stays close (lab storage-view `.sv-cnt`); under a
+  // toolbar, or a header that ends in a section with its own space (All machines' Needs you), nothing is added.
   it.each([
-    { shape: 'ungrouped table under the page header (Presets)', grouped: false, header: <Text>Presets</Text>, leadPx: HAPPIER_PAGE_METRICS.sectionGapPx },
-    { shape: 'grouped table under the page header', grouped: true, header: <Text>Presets</Text>, leadPx: HAPPIER_PAGE_METRICS.sectionGapPx },
-    { shape: 'table under its toolbar', grouped: true, header: () => <Text>All runs</Text>, leadPx: 0 },
-  ])('stands a page $shape at its first-group lead', ({ grouped, header, leadPx }) => {
-    const view = mount({ presentation: 'list', scroll: 'page', grouped, detail: 'none', header });
+    { shape: 'under the purpose line (Presets)', sheetAfter: 'purpose' as const, header: <Text>Presets</Text>, leadPx: () => HAPPIER_PAGE_METRICS.sectionGapPx },
+    { shape: 'under a count line (Artifacts, Services)', sheetAfter: 'line' as const, header: <Text>2 artifacts</Text>, leadPx: () => HAPPIER_PAGE_METRICS.collectionLineSheetGapPx },
+    { shape: 'under a header that ends in a section (All machines)', sheetAfter: undefined, header: <Text>Needs you</Text>, leadPx: () => 0 },
+    { shape: 'under its toolbar (Runs)', sheetAfter: undefined, header: () => <Text>All runs</Text>, leadPx: () => 0 },
+  ])('stands a page table sheet $shape at its lead', ({ sheetAfter, header, leadPx }) => {
+    const view = mount({ presentation: 'list', scroll: 'page', grouped: true, detail: 'none', header,
+      ...(sheetAfter === undefined ? {} : { sheetAfter }) });
     try {
       view.measure(1440);
       const sheet = sheetAround(view, 'a')!;
@@ -4164,7 +4169,57 @@ describe('the table sheet', () => {
         drawnLeadPx += Number.parseFloat(style.marginTop || '0') + Number.parseFloat(style.paddingTop || '0');
         if (node === stage) break;
       }
-      expect(drawnLeadPx).toBe(leadPx);
+      expect(drawnLeadPx).toBe(leadPx());
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // QA-STATUS-LISTS-1120 (BOARD 20:07Z, N38): Workflows' one "Library" group stood as a band 15 px inside its sheet while
+  // the sibling "Built-in" title stood on the page column. One titled group is the section's title above the sheet, on
+  // the page column; bands stand inside the sheet only for two or more groups (the rounded-sheet ruling).
+  it.each([
+    { shape: 'page list', presentation: 'list' as const },
+    { shape: 'table', presentation: 'table' as const },
+  ])('titles a $shape with one group above its sheet, as a page section', ({ presentation }) => {
+    const view = mount({ presentation, scroll: 'page', grouped: true, detail: 'none',
+      items: entries.filter((entry) => entry.group === 'needs') });
+    try {
+      view.measure(1440);
+      const sheet = sheetAround(view, 'a')!;
+      expect(sheet.textContent).not.toContain('Needs you');
+      const title = [...view.container.querySelectorAll<HTMLElement>('*')].find((node) => node.children.length === 0
+        && node.textContent === 'Needs you');
+      expect(title).toBeDefined();
+      // Above the sheet, in the stage, on no band's fill.
+      expect(title!.compareDocumentPosition(sheet) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      for (let node: HTMLElement | null = title!; node !== null && node !== view.container; node = node.parentElement) {
+        const fill = getComputedStyle(node).backgroundColor;
+        expect(fill === '' || fill === 'transparent' || fill === 'rgba(0, 0, 0, 0)').toBe(true);
+      }
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // LAYOUT-ACCEPT-1120 fix 5 (Using the most at 390): the phone's totals row started 6 px left of the section's content
+  // edge. On a page list its title stands where the rows' titles do, as the wide table's does.
+  it("starts a page list's totals title on the rows' title edge", () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page', grouped: false, detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      summaryRows: [{ key: 'total', title: 'Total', cells: {}, testID: 'total' }],
+      enclosingSheet: {},
+    });
+    try {
+      view.measure(360);
+      const total = view.query('total')!;
+      const style = getComputedStyle(total);
+      const spacer = total.firstElementChild as HTMLElement;
+      const titleStartPx = Number.parseFloat(style.paddingLeft || '0') + Number.parseFloat(getComputedStyle(spacer).width || '0')
+        + Number.parseFloat(style.columnGap || style.gap || '0');
+      expect(titleStartPx).toBe(HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx
+        + HAPPIER_PAGE_METRICS.rowLeadingGapPx);
     } finally {
       view.unmount();
     }

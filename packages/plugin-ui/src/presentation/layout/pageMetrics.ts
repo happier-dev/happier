@@ -217,6 +217,12 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
    */
   collectionHeaderGapPx: 16,
   /**
+   * From a count or filter line standing right above a page's table to the table's sheet: the table stays with what
+   * counts and narrows it (lab storage-view-1119 `.sv-cnt`, s12; LAYOUT-ACCEPT-1120). Under the page's purpose line the
+   * sheet is the page's first group and keeps `sectionGapPx` instead (Collection `sheetAfter`).
+   */
+  collectionLineSheetGapPx: 12,
+  /**
    * The narrowest a section title and description may get beside the section's
    * action (the label column above). By default, a compact action ("Cancel", "Add")
    * that leaves more than this on a phone stays on the title's line.
