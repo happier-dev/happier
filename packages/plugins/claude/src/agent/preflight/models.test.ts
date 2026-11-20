@@ -27,19 +27,21 @@ function createExecRunFixture(params: Readonly<{
     const executable = { kind: 'systemTool' as const, id: 'claude-cli' };
     const executablePath = params.executablePath ?? '/managed/claude';
     const exec = {
+        readEnvironment: () => ({}),
         systemTools: {
             resolve: async () => ({ executable, executablePath }),
         },
         run: async (input, options) => {
             runs.push({ input, options });
             await new Promise((resolve) => { setTimeout(resolve, 0); });
+            const output = params.respond?.(input.args ?? []) ?? params;
             return {
                 termination: {
-                    observed: { kind: 'exit' as const, exitCode: params.exitCode ?? 0 },
+                    observed: { kind: 'exit' as const, exitCode: output.exitCode ?? 0 },
                     requestedBy: { kind: 'none' as const },
                 },
-                stdout: new TextEncoder().encode(params.stdout ?? ''),
-                stderr: new TextEncoder().encode(params.stderr ?? ''),
+                stdout: new TextEncoder().encode(output.stdout ?? ''),
+                stderr: new TextEncoder().encode(output.stderr ?? ''),
                 stdoutTruncated: false,
                 stderrTruncated: false,
             };
