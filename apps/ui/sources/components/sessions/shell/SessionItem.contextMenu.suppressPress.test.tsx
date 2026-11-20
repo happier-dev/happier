@@ -232,9 +232,8 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        const closedMenus = screen.tree.root.findAllByType('ContextMenu' as React.ElementType);
-        expect(closedMenus).toHaveLength(1);
-        expect(closedMenus[0].props.open).toBe(false);
+        // A closed menu mounts nothing per row (addc1a6fbfd); it mounts, open, when the native menu opens.
+        expect(screen.tree.root.findAllByType('ContextMenu' as React.ElementType)).toHaveLength(0);
 
         await act(async () => {
             await screen.update(

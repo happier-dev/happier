@@ -169,6 +169,8 @@ describe('SessionItem server-scoped mutations', () => {
             session={createSessionFixture({ id: 'sess_archived_delete', active: false, activeAt: 0, presence: 0, archivedAt: 42,
                 metadata: { path: '/repo', host: 'tester.local' } })}
             serverId="server_a" selected={false} compact={false}
+            // A row mounts its menu only while it is open (addc1a6fbfd): act through the opened native row menu.
+            nativeContextMenuOpen onNativeContextMenuOpenChange={() => {}}
         />);
         const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));

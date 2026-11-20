@@ -305,9 +305,10 @@ const beneathLine: ViewStyle = { flexDirection: 'row', alignItems: 'center', min
 const linedRow: ViewStyle = { alignItems: 'flex-start' };
 const linedColumn: ViewStyle = { flex: 1, minWidth: 0 };
 const linedBody: ViewStyle = { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0 };
-const linedTitleLine: ViewStyle = { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' };
 const linedTrailing: ViewStyle = { alignSelf: 'flex-start' };
-const linedLines: ViewStyle = { position: 'absolute', left: 0, right: 0 };
+const linedLines: ViewStyle = { position: 'absolute', left: 0, right: 0, bottom: 0 };
+const linedStack: ViewStyle = { flex: 1, minWidth: 0 };
+const linedTitleRow: ViewStyle = { minWidth: 0, flexDirection: 'row', alignItems: 'center' };
 const detailLineRow: ViewStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
 const detailLineStart: ViewStyle = { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' };
 const detailLineEnd: ViewStyle = { flexShrink: 0, marginLeft: M.trailingGap, flexDirection: 'row', alignItems: 'center' };
@@ -501,10 +502,17 @@ export function HappierCollectionRowContent(
     const linePx = Math.max(M.detailLine.minHeight, Math.ceil(resolveHappierTypeScale(M.detailLine.role, Platform.OS).lineHeight * scale));
     const linesPx = lines.length * (linePx + M.detailLine.gap);
     const topPad = Math.max(0, Math.floor((height - titleLinePx) / 2));
+    // The title line is at least one line tall and grows when large text wraps the title; the detail lines take a
+    // reserved band under it, so they always start below the title as drawn (B1-LISTS-REVIEW-1120 F1).
+    const linedContent = (
+      <View style={linedStack}>
+        <View style={[linedTitleRow, { minHeight: titleLinePx }]}>{content}</View>
+        {linesPx > 0 ? <View style={{ height: linesPx }} /> : null}
+      </View>
+    );
     const linedMain = props.renderContainer
-      ? props.renderContainer(<View style={[linedTitleLine, { height: titleLinePx }]}>{content}</View>,
-        { ...containerStyle, alignItems: 'flex-start' })
-      : <View style={[linedTitleLine, { height: titleLinePx }]}>{content}</View>;
+      ? props.renderContainer(linedContent, { ...containerStyle, alignItems: 'flex-start' })
+      : linedContent;
     return (
       <View
         style={[rowBase, linedRow, {
@@ -518,7 +526,7 @@ export function HappierCollectionRowContent(
         {props.leading}
         <View style={linedColumn}>
           {/* The press target spans every line; the status slot stays on the title line. */}
-          <View style={[linedBody, { height: titleLinePx + linesPx }]}>
+          <View style={linedBody}>
             {linedMain}
             <View {...props.trailingProps} style={[trailingBase, linedTrailing, { height: titleLinePx }]}>
               <View
@@ -540,10 +548,10 @@ export function HappierCollectionRowContent(
             aria-hidden
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            style={[linedLines, { top: titleLinePx + M.detailLine.gap }]}
+            style={[linedLines, { height: linesPx }]}
           >
             {lines.map((line) => (
-              <View key={line.key} style={[detailLineRow, { height: linePx, marginBottom: M.detailLine.gap }]}>
+              <View key={line.key} style={[detailLineRow, { height: linePx, marginTop: M.detailLine.gap }]}>
                 <View style={detailLineStart}>{line.start}</View>
                 {line.end != null ? <View style={detailLineEnd}>{line.end}</View> : null}
               </View>
