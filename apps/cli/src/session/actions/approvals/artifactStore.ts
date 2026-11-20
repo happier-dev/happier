@@ -203,10 +203,11 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
         return projectAccountArtifactToPromptLibraryStoredArtifact(artifact);
       },
       readHeadersByIds: async (ids, options) => {
-        const readHeader = accountArtifactStore.createHeaderReader({ ...options, prepareRecipients: false,
+        const results = await accountArtifactStore.readHeaders(ids, { ...options, prepareRecipients: false,
           ...(authorizationHeaders ? { authorizationHeaders } : {}) });
-        return Promise.allSettled(ids.map(async id => {
-          const artifact = await readHeader(id);
+        return Promise.allSettled(results.map(async result => {
+          if (result.status === 'rejected') throw result.reason;
+          const artifact = result.value;
           if (!artifact) return null;
           if (artifact.bodyVersion === undefined) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
           return { id: artifact.artifactId, header: artifact.header, body: null,

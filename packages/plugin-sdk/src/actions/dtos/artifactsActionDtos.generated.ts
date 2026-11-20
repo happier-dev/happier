@@ -68,6 +68,7 @@ export type ArtifactsActionInputById = {
         clientId?: string | undefined;
     };
     readonly "artifact.list": {
+        artifactIds?: string[] | undefined;
         audience?: 'received' | undefined;
         sharedWithTeamId?: string | undefined;
         teamResourceKind?: 'otherArtifacts' | 'projectDocuments' | 'prompts' | 'reviews' | 'workflows' | undefined;

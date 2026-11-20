@@ -16,18 +16,25 @@ export const REVIEW_DRAFT_V1 = { v: 1, keyStability: 'stable', binding: { purpos
 export const REVIEW_ACCOUNT_DATA_INSTANCE_V1 = { sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e',
     configurationRowId: 'happier-reviews', draft: REVIEW_DRAFT_V1 } as const;
 
-async function title(reviewId: string, context: Context): Promise<string> {
-    // artifact.get is the recipient's existing local opener; ciphertext is never
-    // copied into a server-readable attention projection.
-    const result = await context.services.actions.execute('artifact.get', { artifactId: reviewId }, { signal: context.signal });
+async function readTitles(reviewIds: readonly string[], context: Context): Promise<ReadonlyMap<string, string>> {
+    if (reviewIds.length === 0) return new Map();
+    // Only the recipient opens sealed titles; a page needs one selected header
+    // batch, while the Review document remains unopened until explicit demand.
+    const result = await context.services.actions.execute('artifact.list', { artifactIds: [...reviewIds] }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) throw new Error('Review title unavailable');
-    if (result.artifact === null) throw new Error('Review title unavailable');
-    const value = result.artifact.header.title;
-    return typeof value === 'string' && value.trim() ? value : 'Review';
+    return new Map(result.items.map(artifact => {
+        const value = artifact.header.title;
+        return [artifact.artifactId, typeof value === 'string' && value.trim() ? value : 'Review'] as const;
+    }));
 }
-async function attention(facts: Facts, subjectKind: Review['subjectKind'], context: Context): Promise<Extract<TriageReadAttentionResultV1, { kind: 'page' }>['items'][number]> {
+function title(reviewId: string, titles: ReadonlyMap<string, string>): string {
+    const value = titles.get(reviewId);
+    if (value === undefined) throw new Error('Review title unavailable');
+    return value;
+}
+function attention(facts: Facts, subjectKind: Review['subjectKind'], titles: ReadonlyMap<string, string>): Extract<TriageReadAttentionResultV1, { kind: 'page' }>['items'][number] {
     return { localRef: reviewTriageLocalRefV1(facts.reviewId), reason: facts.reason, type: 'decision',
-        title: await title(facts.reviewId, context), resolved: !facts.needsYou,
+        title: title(facts.reviewId, titles), resolved: !facts.needsYou,
         reviewAttention: { requestedVerdict: facts.requestedVerdict, subjectKind } };
 }
 
@@ -35,7 +42,7 @@ async function attention(facts: Facts, subjectKind: Review['subjectKind'], conte
 export async function readOneReviewAttentionV1(reviewId: string, context: Context) {
     const result = await context.services.actions.execute('review.get', { reviewId }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) throw new Error('Review unavailable');
-    return attention(result.human.needsYou, result.review.subjectKind, context);
+    return attention(result.human.needsYou, result.review.subjectKind, await readTitles([reviewId], context));
 }
 
 /** Finite pages reconnect through the existing lifecycle; no Review polling. */
@@ -43,14 +50,15 @@ export async function readReviewAttentionV1(input: TriageReadAttentionInputV1, c
     const result = await context.services.actions.execute('reviews.list', { limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         ...(input.cursor ? { cursor: input.cursor.token } : {}) }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) return { kind: 'failed', failure: unavailable };
-    return { kind: 'page', items: await Promise.all(result.items.map(review => attention(review.needsYou, review.subjectKind, context))),
+    const titles = await readTitles(result.items.map(review => review.reviewId), context);
+    return { kind: 'page', items: result.items.map(review => attention(review.needsYou, review.subjectKind, titles)),
         nextPage: result.cursor !== null, ...(result.cursor === null ? {} : { cursor: { v: 1, token: result.cursor } }) };
 }
 
-async function observation(review: Omit<Review, 'needsYou'>, facts: Facts, context: Context): Promise<Extract<TriageGetResultV1, { kind: 'present' }>> {
+function observation(review: Omit<Review, 'needsYou'>, facts: Facts, titles: ReadonlyMap<string, string>): Extract<TriageGetResultV1, { kind: 'present' }> {
     return { kind: 'present', localRef: reviewTriageLocalRefV1(review.reviewId),
         locator: { v: 1, displayPath: review.reviewId, routingToken: review.reviewId },
-        snapshot: { v: 1, title: await title(review.reviewId, context), scopeLabel: 'Reviews', facts: [],
+        snapshot: { v: 1, title: title(review.reviewId, titles), scopeLabel: 'Reviews', facts: [],
             state: { presentation: facts.needsYou ? 'active' : 'resolved', nativeLabel: facts.needsYou ? 'Needs you' : 'Reviewed' },
             createdAtMs: review.createdAt },
         viewer: { involvement: [], sourceAttention: facts.needsYou
@@ -59,13 +67,14 @@ async function observation(review: Omit<Review, 'needsYou'>, facts: Facts, conte
 export async function getReviewV1(input: TriageGetInputV1, context: Context): Promise<TriageGetResultV1> {
     const result = await context.services.actions.execute('review.get', { reviewId: input.localRef.entryId }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) return { kind: 'unresolved', localRef: input.localRef, failure: unavailable };
-    return observation(result.review, result.human.needsYou, context);
+    return observation(result.review, result.human.needsYou, await readTitles([result.review.reviewId], context));
 }
 export async function scanReviewsV1(input: TriageScanInputV1, context: Context): Promise<TriageScanResultV1> {
     const result = await context.services.actions.execute('reviews.list', { limit: input.page.kind === 'initial' ? input.page.limit : MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         ...(input.page.kind === 'continuation' ? { cursor: input.page.continuation.token } : {}) }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) return { kind: 'failed', failure: unavailable };
-    const observations = await Promise.all(result.items.map(review => observation(review, review.needsYou, context)));
+    const titles = await readTitles(result.items.map(review => review.reviewId), context);
+    const observations = result.items.map(review => observation(review, review.needsYou, titles));
     return result.cursor === null ? { kind: 'complete', observations, evidence: { kind: 'walkFinished' } }
         : { kind: 'page', observations, continuation: { v: 1, token: result.cursor }, evidence: { kind: 'partial', reason: 'pageLimit' } };
 }

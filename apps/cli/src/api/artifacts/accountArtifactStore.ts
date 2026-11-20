@@ -477,36 +477,20 @@ export function createAccountArtifactStore(params: Readonly<{
     return { Authorization: `Bearer ${params.credentials.token}` };
   };
   const fetchStoredResponse = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders,
-    projection?: 'headers', projectSourceId?: string): Promise<Readonly<{ data: unknown }> | null> => {
+    projectSourceId?: string): Promise<Readonly<{ data: unknown }> | null> => {
     signal?.throwIfAborted();
-    const path = projection ? '/v1/artifacts/read' : `/v1/artifacts/${encodeURIComponent(artifactId)}`
+    const path = `/v1/artifacts/${encodeURIComponent(artifactId)}`
       + (projectSourceId ? `?projectSourceId=${encodeURIComponent(projectSourceId)}` : '');
-    const body = projection ? ArtifactReadHeadersBatchInputV1Schema.parse({ artifactIds: [artifactId], projection }) : undefined;
-    const config = { headers: authorizationHeaders ? await authorizationHeaders({ method: body ? 'POST' : 'GET', path,
-      ...(body ? { body } : {}) }) : headers(), ...(signal ? { signal } : {}), validateStatus: () => true };
-    const response = body ? await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, config)
-      : await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${path}`, config);
+    const config = { headers: authorizationHeaders ? await authorizationHeaders({ method: 'GET', path }) : headers(),
+      ...(signal ? { signal } : {}), validateStatus: () => true };
+    const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${path}`, config);
     signal?.throwIfAborted();
-    // A missing batch endpoint is not evidence that the selected Artifact is absent.
-    if (!projection && response.status === 404) return null;
+    if (response.status === 404) return null;
     if (response.data && typeof response.data === 'object' && Reflect.get(response.data, 'error') === 'artifact_content_unavailable') {
       throw new ArtifactEncryptionMaterialUnavailableError();
     }
     if (response.status < 200 || response.status >= 300) throw artifactReadHttpError(response.status, response.data,
       authorizationHeaders ? config.headers : undefined);
-    if (projection) {
-      const parsed = ArtifactReadHeadersBatchResponseV1Schema.safeParse(response.data);
-      if (!parsed.success || parsed.data.items.length !== 1 || parsed.data.items[0]?.artifactId !== artifactId) {
-        throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
-      }
-      const item = parsed.data.items[0]!;
-      if (!item.ok) {
-        if (item.error === 'artifact_not_found') return null;
-        if (item.error === 'artifact_content_unavailable' && !item.retryable) throw new ArtifactEncryptionMaterialUnavailableError();
-        throw artifactReadHttpError(item.status);
-      }
-      return { data: item.artifact };
-    }
     if (!response.data || typeof response.data !== 'object' || Reflect.get(response.data, 'id') !== artifactId) {
       throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
     }
@@ -514,7 +498,7 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const fetchStored = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders,
     projectSourceId?: string): Promise<StoredArtifact | null> => {
-    const response = await fetchStoredResponse(artifactId, signal, authorizationHeaders, undefined, projectSourceId);
+    const response = await fetchStoredResponse(artifactId, signal, authorizationHeaders, projectSourceId);
     if (!response) return null;
     const stored = parseStoredArtifact(response.data);
     if (!stored) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
@@ -810,32 +794,62 @@ export function createAccountArtifactStore(params: Readonly<{
       ...(typeof hasUnclassified === 'boolean' ? { hasUnclassified } : {}) };
   };
   /** Selected headers use the admitted narrow transport, never a body read or inventory walk. */
-  const createHeaderReader = (options?: Readonly<{ signal?: AbortSignal; prepareRecipients?: boolean;
-    authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>) => {
-    return async (artifactId: string): Promise<AccountArtifactHeader | null> => {
-      const response = await fetchStoredResponse(artifactId, options?.signal, options?.authorizationHeaders, 'headers');
-      if (!response) return null;
-      const stored = parseStoredArtifactHeader(response.data);
-      if (!stored) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
-      const codec = await openStored(stored, undefined, options);
-      const header = decode(codec, stored.header);
-      if (!header || typeof header !== 'object' || Array.isArray(header) || Object.keys(header).length === 0) {
-        throw new ArtifactEncryptionMaterialUnavailableError();
-      }
-      if (options?.prepareRecipients !== false) await prepare(stored, codec, options?.signal, options?.authorizationHeaders);
-      await assertOwnerAccountMode(stored, undefined, { signal: options?.signal,
-        authorizationHeaders: options?.authorizationHeaders });
+  const readHeaders = async (artifactIds: readonly string[], options?: Readonly<{ signal?: AbortSignal; prepareRecipients?: boolean;
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>): Promise<PromiseSettledResult<AccountArtifactHeader | null>[]> => {
+    try {
       options?.signal?.throwIfAborted();
-      const provenance = stored.bodyVersion === undefined ? undefined
-        : readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion);
-      return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
-        ...(provenance ? { provenance } : {}),
-        ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
-        ownerAccountId: stored.ownerAccountId, access: stored.access, publicAudience: stored.publicAudience,
-        ...(stored.sharedTeamIds === undefined ? {} : { sharedTeamIds: stored.sharedTeamIds }),
-        headerVersion: stored.headerVersion, ...(stored.bodyVersion === undefined ? {} : { bodyVersion: stored.bodyVersion }),
-        seq: stored.seq, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
-    };
+      if (artifactIds.length === 0) return [];
+      const path = '/v1/artifacts/read';
+      const body = ArtifactReadHeadersBatchInputV1Schema.parse({ artifactIds, projection: 'headers' });
+      const config = { headers: options?.authorizationHeaders
+        ? await options.authorizationHeaders({ method: 'POST', path, body }) : headers(),
+        ...(options?.signal ? { signal: options.signal } : {}), validateStatus: () => true };
+      const response = await axios.post<unknown>(`${resolveServerHttpBaseUrl()}${path}`, body, config);
+      options?.signal?.throwIfAborted();
+      if (response.data && typeof response.data === 'object' && Reflect.get(response.data, 'error') === 'artifact_content_unavailable')
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      if (response.status < 200 || response.status >= 300) throw artifactReadHttpError(response.status, response.data,
+        options?.authorizationHeaders ? config.headers : undefined);
+      const parsed = ArtifactReadHeadersBatchResponseV1Schema.safeParse(response.data);
+      if (!parsed.success || parsed.data.items.length !== artifactIds.length
+        || parsed.data.items.some((item, index) => item.artifactId !== artifactIds[index]))
+        throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
+      return await Promise.allSettled(parsed.data.items.map(async (item): Promise<AccountArtifactHeader | null> => {
+        if (!item.ok) {
+          if (item.error === 'artifact_not_found') return null;
+          if (item.error === 'artifact_content_unavailable' && !item.retryable) throw new ArtifactEncryptionMaterialUnavailableError();
+          throw artifactReadHttpError(item.status);
+        }
+        const stored = parseStoredArtifactHeader(item.artifact);
+        if (!stored) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
+        const codec = await openStored(stored, undefined, options);
+        const header = decode(codec, stored.header);
+        if (!header || typeof header !== 'object' || Array.isArray(header) || Object.keys(header).length === 0) {
+          throw new ArtifactEncryptionMaterialUnavailableError();
+        }
+        if (options?.prepareRecipients !== false) await prepare(stored, codec, options?.signal, options?.authorizationHeaders);
+        await assertOwnerAccountMode(stored, undefined, { signal: options?.signal,
+          authorizationHeaders: options?.authorizationHeaders });
+        options?.signal?.throwIfAborted();
+        const provenance = stored.bodyVersion === undefined ? undefined
+          : readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion);
+        return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
+          ...(provenance ? { provenance } : {}),
+          ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
+          ownerAccountId: stored.ownerAccountId, access: stored.access, publicAudience: stored.publicAudience,
+          ...(stored.sharedTeamIds === undefined ? {} : { sharedTeamIds: stored.sharedTeamIds }),
+          headerVersion: stored.headerVersion, ...(stored.bodyVersion === undefined ? {} : { bodyVersion: stored.bodyVersion }),
+          seq: stored.seq, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
+      }));
+    } catch (reason) {
+      return artifactIds.map(() => ({ status: 'rejected', reason }));
+    }
+  };
+  const createHeaderReader = (options?: Parameters<typeof readHeaders>[1]) => async (artifactId: string): Promise<AccountArtifactHeader | null> => {
+    const [result] = await readHeaders([artifactId], options);
+    if (!result) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
   };
   // Header discovery and selected details share the same mode/envelope projection.
   const projectHeaderRows = async (rows: readonly unknown[], options: Readonly<{ includeBody?: boolean; signal?: AbortSignal }>,
@@ -1188,6 +1202,7 @@ export function createAccountArtifactStore(params: Readonly<{
         principal: { kind: 'account', accountId: subject.requesterAccountId }, accessLevel: 'view' }, input.signal);
     },
     createHeaderReader,
+    readHeaders,
     /** Header reads share the exact transport and header-only projection. */
     readHeader: (artifactId: string, options?: Parameters<typeof createHeaderReader>[0]) => createHeaderReader(options)(artifactId),
     /** Exposure admission reads existing grants/publications without opening content or repairing keys. */

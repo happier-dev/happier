@@ -221,8 +221,12 @@ when GitHub changed the notification reason.
 The built-in Account-data Review source consumes the Review owner's typed
 `needsYou` facts. Requested verdicts and pending finding decisions share one
 `review_needs_you` identity per recipient and Review; settling every cause
-resolves it, and a new round renews the same item. Titles are opened locally
-through the recipient's Artifact Action. Review invalidations reread only the
+resolves it, and a new round renews the same item. In unreleased 0.3 source,
+titles are opened locally through the recipient's `artifact.list` Action with
+selected `artifactIds`: one header batch per demanded Review page, with no
+inventory scan or Review body read. Single-item source reads use the same
+selected-header path; the Review body loads only when explicitly opened.
+Review invalidations reread only the
 hinted Reviews; reconnects replay the finite list through the existing feed
 lifecycle. Inbox opens these items at the Review's canonical Artifact route
 on the notice's Home.

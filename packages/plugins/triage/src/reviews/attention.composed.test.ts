@@ -34,11 +34,11 @@ describe('registered Review attention source', () => {
     const calls: string[] = [];
     // Opened Artifact transport is the boundary; the real Action executor keeps
     // kind admission in this source-to-recipient read path.
-    const artifactExecutor = createActionExecutor({ artifactAction: async () => ({ artifact: {
+    const artifactExecutor = createActionExecutor({ artifactAction: async () => ({ items: [{
       artifactId: 'review', header: { kind: 'review.v1', v: 1, reviewId: 'review', title: 'Recipient-opened title' },
-      body: JSON.stringify({ v: 1, rounds: [] }), revision: { headerVersion: 1, bodyVersion: 1 },
+      headerVersion: 1,
       ownerAccountId: 'owner', access: 'view', publicAudience: 'none', seq: 1, createdAt: 1, updatedAt: 2,
-    } }) });
+    }] }) });
     // Host Actions are the process boundary: permission and needs-you facts are
     // supplied by the Review owner, while the recipient Artifact opener owns title decryption.
     const actions = { execute: async (id: string) => {
@@ -48,8 +48,8 @@ describe('registered Review attention source', () => {
         currentRoundOrdinal: roundOrdinal, startedAt: 1, finishedAt: 2, counts: { total: 2, needsDecision: pendingDecisions ? 2 : 0 },
         needsYou: { reviewId: 'review', roundOrdinal, reason: 'review_needs_you', needsYou: requestedVerdict || pendingDecisions,
           requestedVerdict, pendingDecisions, canSubmitVerdict: true } }], cursor: null };
-      if (id === 'artifact.get') {
-        const result = await artifactExecutor.execute('artifact.get', { artifactId: 'review' }, { surface: 'ui' });
+      if (id === 'artifact.list') {
+        const result = await artifactExecutor.execute('artifact.list', { artifactIds: ['review'] }, { surface: 'ui' });
         if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
         return result.result;
       }

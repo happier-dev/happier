@@ -13,6 +13,17 @@ const encodeCursor = (row: Readonly<{ artifactId: string }>) => row.artifactId;
 const completeKindCoverage = { status: 'complete', unclassifiedCount: 0 } as const;
 
 describe('Artifact coarse selection', () => {
+  it('selects exact header identities separately from inventory selectors', () => {
+    expect(ArtifactListInputV1Schema.parse({ artifactIds: ['review-a', 'review-b'] }))
+      .toEqual({ artifactIds: ['review-a', 'review-b'] });
+    expect(ArtifactListInputV1Schema.parse({ artifactIds: [] })).toEqual({ artifactIds: [] });
+    expect(ArtifactListInputV1Schema.safeParse({ artifactIds: ['review-a'], kind: undefined }).success).toBe(true);
+    expect(ArtifactListInputV1Schema.safeParse({ artifactIds: ['review-a', 'review-a'] }).success).toBe(false);
+    expect(ArtifactListInputV1Schema.safeParse({ artifactIds: [''] }).success).toBe(false);
+    expect(ArtifactListInputV1Schema.safeParse({ artifactIds: ['review-a'], kind: 'review.v1' }).success).toBe(false);
+    expect(ArtifactListInputV1Schema.safeParse({ artifactIds: ['review-a'], cursor: 'inventory-frontier' }).success).toBe(false);
+  });
+
   it('keeps a Team bucket on one structural page including a sparse search and retained legacy hints', async () => {
     const options = artifactActionListSelectionV1(ArtifactListInputV1Schema.parse({
       sharedWithTeamId: 'team', teamResourceKind: 'otherArtifacts', limit: 2, search: 'chosen',

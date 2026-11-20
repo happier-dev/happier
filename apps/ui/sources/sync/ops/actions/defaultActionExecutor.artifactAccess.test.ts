@@ -37,6 +37,7 @@ import { buildWidgetDefinitionArtifactHeaderV1, type WidgetDefinitionV1 } from '
 import { createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { Encryption } from '@/sync/encryption/encryption';
 import { fetchArtifactWithBodyFromApi } from '@/sync/engine/artifacts/syncArtifacts';
+import { readReviewAttentionV1, readOneReviewAttentionV1, getReviewV1, scanReviewsV1 } from '../../../../../../packages/plugins/triage/src/reviews/source';
 
 // Only HTTP, device credentials and native UI modules are substituted. Account,
 // Artifact, Action, kind-policy and cryptographic owners execute their real logic.
@@ -53,7 +54,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Record<string, unknown>; body: string }>) {
+async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Record<string, unknown>; body: string }>, siblingArtifactIds: readonly string[] = []) {
     const home = await upsertAndActivateServer({ serverUrl: `https://document-sharing-${mode}.test`, scope: 'tab' });
     await upsertAndActivateServer({ serverUrl: `https://focused-sharing-${mode}.test`, scope: 'tab' });
     const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'owner' })), 'base64url')}.signature`;
@@ -70,6 +71,7 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
     const revisions: { bodyVersion: number; body: string; createdAt: number; sizeBytes: number }[] = [];
     let grants: ArtifactAccessGrantRowV1[] = [];
     const requests: string[] = [];
+    const artifactBatches: { artifactIds: string[]; projection?: string }[] = [];
     let publicLinkBody: Record<string, unknown> | undefined;
     const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: 'document' }, expiresAt: null, maxUses: null,
         useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
@@ -124,12 +126,13 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
             return Response.json(stored);
         }
         if (target.pathname === '/v1/artifacts/read' && init?.method === 'POST') {
-            return createArtifactReadBatchHttpResponse(JSON.parse(String(init.body)), artifactId => !stored || artifactId !== stored.id
+            artifactBatches.push(JSON.parse(String(init.body)));
+            return createArtifactReadBatchHttpResponse(JSON.parse(String(init.body)), artifactId => !stored || artifactId !== stored.id && !siblingArtifactIds.includes(artifactId)
                 ? { artifactId, ok: false, error: 'artifact_not_found', status: 404, retryable: false }
-                : { artifactId, ok: true, artifact: { ...stored, ownerAccountId: 'owner', access, encryptionMode: mode },
+                : { artifactId, ok: true, artifact: { ...stored, id: artifactId, ownerAccountId: 'owner', access, encryptionMode: mode },
                     recipientCensus: mode === 'plain' ? null : recipientCensus() });
         }
-        if (stored && target.pathname === '/v1/artifacts/document') {
+        if (stored && (target.pathname === '/v1/artifacts/document' || siblingArtifactIds.some(id => target.pathname === `/v1/artifacts/${id}`))) {
             if (init?.method === 'POST') {
                 const input = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
                 if (input.expectedHeaderVersion !== stored.headerVersion || input.expectedBodyVersion !== stored.bodyVersion)
@@ -142,7 +145,7 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
                     headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion! + 1, seq: stored.seq + 1 };
                 return Response.json({ success: true, headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion });
             }
-            return Response.json({ ...stored, ownerAccountId: 'owner', access, encryptionMode: mode });
+            return Response.json({ ...stored, id: target.pathname.slice('/v1/artifacts/'.length), ownerAccountId: 'owner', access, encryptionMode: mode });
         }
         if (stored && target.pathname === '/v1/artifacts/document/revisions') return Response.json({ revisions, retentionCount: 10 });
         if (stored && target.pathname === '/v1/artifacts/document/revisions/1/restore') {
@@ -193,7 +196,7 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     else await account.workflowArtifacts.create({ artifactId: 'document', header, body });
     const context = { serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    return { account, context, executor: createDefaultActionExecutor({ presentUserActionConfirmation: async () => true }), requests, envelopes, recipientSecret, fingerprint,
+    return { account, context, executor: createDefaultActionExecutor({ presentUserActionConfirmation: async () => true }), requests, artifactBatches, envelopes, recipientSecret, fingerprint,
         publicLinkBody: () => publicLinkBody,
         stored: () => stored!, setAccess: (value: typeof access) => { access = value; },
         setGrantStatus: (value: number) => { grantStatus = value; }, setCensusCallerEnvelope: (value: string) => { censusCallerEnvelope = value; },
@@ -203,6 +206,46 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
 }
 
 describe('UI Artifact sharing Action front door', () => {
+    it.each([{ mode: 'plain', rows: 3 }, { mode: 'e2ee', rows: 1 }] as const)('reads Review attention and source titles from $mode headers ($rows rows), opening a body only on demand', async ({ mode, rows }) => {
+        const ids = Array.from({ length: rows }, (_, index) => index === 0 ? 'document' : `document-${index}`);
+        const f = await fixture(mode, { header: { kind: 'review.v1', v: 1, reviewId: 'document', title: 'Recipient Review' }, body: 'private Review body' }, ids.slice(1));
+        const review = { reviewId: 'document', createdAt: 1, updatedAt: 2, projectSourceId: null, workflowId: null,
+            subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: 2, counts: { total: 1, needsDecision: 1 }, needsYou: {
+                reviewId: 'document', roundOrdinal: 1, reason: 'review_needs_you', needsYou: true,
+                requestedVerdict: true, pendingDecisions: true, canSubmitVerdict: true } } as const;
+        // Review host Actions cross the plugin boundary; Artifact Actions execute
+        // their real admission, Account transport and plain/E2EE header codecs.
+        const sourceContext = { signal: new AbortController().signal, services: { actions: { execute: async (id: Parameters<typeof f.executor.execute>[0], input: unknown) => {
+            if (id === 'reviews.list') return { items: ids.map(reviewId => ({ ...review, reviewId, needsYou: { ...review.needsYou, reviewId } })), cursor: null };
+            if (id === 'review.get') return { review, human: { needsYou: review.needsYou } };
+            const result = await f.executor.execute(id, input, f.context);
+            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            return result.result;
+        } } } } as unknown as Parameters<typeof readReviewAttentionV1>[1];
+        const instance = { v: 1, instance: { source: { pluginId: 'happier.triage', localId: 'reviews' },
+            sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' }, binding: { purpose: 'reviews', source: 'accountData' },
+            localInstanceKey: 'reviews', configuration: { v: 1, token: 'happier-reviews-v1' } } as const;
+        try {
+            f.requests.length = 0; f.artifactBatches.length = 0;
+            expect(await readReviewAttentionV1({ v: 1, instance }, sourceContext)).toMatchObject({ items: ids.map(() => ({ title: 'Recipient Review' })) });
+            expect(f.artifactBatches).toEqual([{ artifactIds: ids, projection: 'headers' }]);
+            expect(await readOneReviewAttentionV1('document', sourceContext)).toMatchObject({ title: 'Recipient Review' });
+            const localRef = { kindId: 'review', collisionScope: 'reviews', entryId: 'document' } as const;
+            expect(await getReviewV1({ v: 1, instance, localRef }, sourceContext)).toMatchObject({ snapshot: { title: 'Recipient Review' } });
+            expect(await scanReviewsV1({ v: 1, instance, page: { kind: 'initial', limit: rows } }, sourceContext))
+                .toMatchObject({ observations: ids.map(() => ({ snapshot: { title: 'Recipient Review' } })) });
+            expect(f.requests.filter(path => path === 'GET /v1/artifacts/document')).toEqual([]);
+            expect(f.artifactBatches.filter(batch => batch.projection !== 'headers')).toEqual([]);
+            expect(f.artifactBatches.length).toBeGreaterThan(0);
+            expect(f.requests.filter(path => path === 'GET /v1/artifacts')).toEqual([]);
+            expect(await f.executor.execute('artifact.get', { artifactId: 'document' }, f.context))
+                .toMatchObject({ ok: true, result: { artifact: { body: 'private Review body' } } });
+            expect(f.requests.some(path => path === 'GET /v1/artifacts/document')
+                || f.artifactBatches.some(batch => batch.projection !== 'headers')).toBe(true);
+        } finally { f.account.dispose(); }
+    });
+
     it('retries a transient grant-time envelope refusal so the recipient reads without an owner reopen', async () => {
         const f = await fixture('e2ee');
         try {

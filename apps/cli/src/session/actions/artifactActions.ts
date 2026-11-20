@@ -118,6 +118,14 @@ export function createCliArtifactActions(params: Readonly<{
         }
         case 'artifact.list': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
+          if (input.artifactIds !== undefined) {
+            const results = await params.store.readHeaders(input.artifactIds, { signal, prepareRecipients: false,
+              ...(readAuthorization ? { authorizationHeaders: readAuthorization(args.context, args.actionId) } : {}) });
+            return { items: results.flatMap(result => {
+              if (result.status === 'rejected') throw result.reason;
+              return result.value ? [projectArtifactHeaderV1(result.value)] : [];
+            }) };
+          }
           const page = await params.store.list(artifactActionListSelectionV1({ ...input, ...(signal ? { signal } : {}) }));
           const items = page.items.map(projectArtifactHeaderV1);
           return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };

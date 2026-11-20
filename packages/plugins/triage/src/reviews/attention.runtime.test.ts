@@ -36,8 +36,8 @@ describe('Review attention invalidation', () => {
           calls.push('list'); return readReviewAttentionV1(input, context);
         },
         execute: async (id: string, input: { reviewId: string }) => {
-          if (id === 'artifact.get') return { artifact: { header: { title: 'Review title' } } };
-          if (id === 'reviews.list') return { items: [{ subjectKind: 'comparison', needsYou: facts() }], cursor: null };
+          if (id === 'artifact.list') return { items: [{ artifactId: 'review-a', header: { title: 'Review title' } }] };
+          if (id === 'reviews.list') return { items: [{ reviewId: 'review-a', subjectKind: 'comparison', needsYou: facts() }], cursor: null };
           calls.push(`${id}:${input.reviewId}`);
           return { review: { reviewId: input.reviewId, subjectKind: 'comparison' }, human: { needsYou: facts() } };
         },

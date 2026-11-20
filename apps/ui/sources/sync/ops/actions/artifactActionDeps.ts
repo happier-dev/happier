@@ -259,6 +259,17 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 }
                 case 'artifact.list': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
+                    if (args.artifactIds !== undefined) {
+                        const results = await account.readArtifactHeaders(args.artifactIds, { signal });
+                        return { items: results.flatMap(result => {
+                            if (result.status === 'rejected') throw result.reason;
+                            const artifact = result.value;
+                            if (!artifact) return [];
+                            if (!artifact.isDecrypted || !artifact.rawHeader)
+                                throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+                            return [projectArtifactHeaderV1({ ...artifact, artifactId: artifact.id, header: artifact.rawHeader })];
+                        }) };
+                    }
                     const page = await listArtifactHeadersV1({ options: artifactActionListSelectionV1({ ...args, signal }),
                         readPage: (options) => account.listArtifacts(options ?? {}), encodeCursor: account.encodeArtifactListCursor });
                     // Native document lists also carry retained body metadata. The ordinary

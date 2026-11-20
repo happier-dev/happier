@@ -38,7 +38,8 @@ import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { createRoleSourceReaderV1, prepareAccountRoleArtifactDeletionV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
-import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema,
+  ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptTransportInputV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { readHttpStatus } from '@/api/client/httpStatusError';
@@ -99,6 +100,52 @@ vi.mock('@/configuration', async (importOriginal) => {
 });
 
 describe('createAccountArtifactStore', () => {
+  it.each(['plain', 'e2ee'] as const)('reads selected %s Review headers through the CLI Action in one batch without opening bodies', async mode => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const machineKey = new Uint8Array(32).fill(13);
+    const credentials = { token, encryption: mode === 'plain' ? null : { type: 'dataKey' as const, machineKey,
+      publicKey: x25519.getPublicKey(machineKey) } };
+    const key = await createResourceDataKey({ credentials, mode });
+    const encode = (value: unknown) => key.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : Buffer.from(encryptWithDataKey(value, key.dataKey)).toString('base64');
+    const rows = ['review-a', 'review-b'].map(id => ({ id, ownerAccountId: 'owner', access: 'owner' as const,
+      encryptionMode: mode, publicAudience: 'none' as const, dataEncryptionKey: key.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encode({ kind: 'review.v1', title: `Title ${id}` }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2 }));
+    mockGet.mockImplementation(async () => { throw new Error('Selected titles must not read documents or inventory'); });
+    mockPost.mockImplementation(async (url: string, body: unknown) => {
+      expect(new URL(url).pathname).toBe('/v1/artifacts/read');
+      const input = ArtifactReadHeadersBatchInputV1Schema.parse(body);
+      return { status: 200, data: ArtifactReadHeadersBatchResponseV1Schema.parse({ projection: 'headers',
+        items: input.artifactIds.map(artifactId => {
+          const artifact = rows.find(row => row.id === artifactId);
+          return artifact ? { artifactId, ok: true, artifact }
+            : { artifactId, ok: false, error: 'artifact_not_found', status: 404, retryable: false };
+        }) }) };
+    });
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode });
+    const artifactAction = createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null });
+    const executor = createActionExecutor({ artifactAction });
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute('artifact.list', { artifactIds: ['review-a', 'missing', 'review-b'] }, context))
+      .toMatchObject({ ok: true, result: { items: [
+        { artifactId: 'review-a', header: { title: 'Title review-a' } },
+        { artifactId: 'review-b', header: { title: 'Title review-b' } },
+      ] } });
+    expect(mockPost.mock.calls.map(call => call[1])).toEqual([{ artifactIds: ['review-a', 'missing', 'review-b'], projection: 'headers' }]);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(await executor.execute('artifact.list', { artifactIds: [] }, context)).toMatchObject({ ok: true, result: { items: [] } });
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    mockPost.mockResolvedValueOnce({ status: 409, data: { error: 'artifact_content_unavailable' } });
+    const unavailable = await store.readHeaders(['review-a', 'review-b'], { prepareRecipients: false });
+    expect(unavailable).toMatchObject([
+      { status: 'rejected', reason: { code: 'artifact_encryption_material_unavailable' } },
+      { status: 'rejected', reason: { code: 'artifact_encryption_material_unavailable' } },
+    ]);
+    mockPost.mockResolvedValueOnce({ status: 404, data: { error: 'not_found' } });
+    await expect(store.readHeader('review-a', { prepareRecipients: false })).rejects.toMatchObject({ code: 'artifact_read_unavailable' });
+  });
+
   it('admits a private template draft through the real CLI transport and refuses its grant-reachable copy', async () => {
     let artifactId = '';
     const sourceSessionRef = { serverId: 'home', sessionId: 'source-bot' };

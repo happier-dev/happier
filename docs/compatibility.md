@@ -5222,6 +5222,16 @@ extension, with no new endpoint, content envelope or older-Home adapter.
 Unfiltered document lists retain browser membership, and specialized approval
 body and mutation admission is unchanged.
 
+Unreleased 0.3 `artifact.list` accepts optional `artifactIds` for selected
+header reads, separately from inventory selectors. The Action input and output
+envelopes stay closed, and existing inventory requests keep their shape.
+The selector cannot be ignored safely: matching Protocol, SDK, Triage, UI and
+CLI development sources load together under the unpublished direct cut.
+The existing header batch HTTP contract and stored formats do not change;
+no wire epoch, runtime ABI or compatibility adapter is added. The inspected
+`../0.2` frontier at `24731ff73c0e032af6ee6b1347b0fceef947949b` has neither
+this Artifact Action contract nor the built-in Review source.
+
 Artifact kind filtering is an additive HTTP and persistence extension.
 Current readers send the optional coarse `kind` query, exact `kinds` set, or
 `browserListed=true`. These wire selectors and `unclassified` are mutually

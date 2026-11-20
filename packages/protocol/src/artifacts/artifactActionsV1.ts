@@ -4,7 +4,7 @@ import { ArtifactCreateIdV1Schema } from './artifactIdV1.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
-import { ArtifactCallerAccessV1Schema, ArtifactLockedAvailabilityV1Schema } from './artifactAccessV1.js';
+import { ArtifactCallerAccessV1Schema, ArtifactLockedAvailabilityV1Schema, ArtifactReadHeadersBatchInputV1Schema } from './artifactAccessV1.js';
 export { ArtifactLockedAvailabilityV1Schema, type ArtifactLockedAvailabilityV1 } from './artifactAccessV1.js';
 import { StoredContentPublicShareAccessLogResponseV1Schema, StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema, StoredContentPublicShareV1Schema, StoredContentPublicSharesListResponseV1Schema } from '../sharing/storedContentPublicShareV1.js';
 import { ArtifactBlobReferenceV1Schema, ArtifactBodyV1Schema, ArtifactRevisionProvenanceV1Schema } from './artifactBinaryV1.js';
@@ -69,6 +69,8 @@ export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ artifactId: z.optional(ArtifactCreateIdV1Schema), header: ArtifactHeaderMetadataV1Schema, ...upload }),
 ]));
 export const ArtifactListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Exact selected headers; cannot be combined with inventory selectors. */
+  artifactIds: z.optional(ArtifactReadHeadersBatchInputV1Schema.shape.artifactIds),
   audience: z.optional(z.literal('received')),
   sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
   teamResourceKind: z.optional(ArtifactTeamResourceKindV1Schema),
@@ -78,7 +80,9 @@ export const ArtifactListInputV1Schema = lazyZodSchema(() => z.strictObject({
   sort: z.optional(z.enum(['updated_desc', 'created_desc', 'title_asc'])),
   limit: z.optional(z.number().check(z.int(), z.positive())), cursor: z.optional(z.string().check(z.minLength(1))),
 }).check(z.refine(input => input.teamResourceKind === undefined || input.sharedWithTeamId !== undefined,
-  { message: 'Team resource kind requires a Team scope' })));
+  { message: 'Team resource kind requires a Team scope' }),
+  z.refine(input => input.artifactIds === undefined || Object.entries(input).every(([key, value]) => key === 'artifactIds' || value === undefined),
+    { message: 'Selected Artifact identities cannot be combined with inventory selectors' })));
 export const ArtifactUpdateInputV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, body: z.string() })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { expectedRevision: ArtifactRevisionV1Schema, header: ArtifactHeaderMetadataV1Schema, ...upload })),
