@@ -67,7 +67,7 @@ export function orderBulkSessionChangeRows(rows: readonly BulkSessionChangeRow[]
     return [...rows].sort((a, b) => rank[a.state] - rank[b.state]);
 }
 
-/** One confirmed fanout per grouped planner stage. The executor alone enumerates effects. */
+/** Each Home admits its own targets for each planner stage. The executor alone enumerates effects. */
 export async function executeBulkSessionChanges(input: Readonly<{
     plan: ExistingSessionChangePlan;
     executeConfirmed: ReturnType<typeof createDefaultActionExecutor>['executeConfirmed'];
@@ -106,21 +106,29 @@ export async function executeBulkSessionChanges(input: Readonly<{
             rows.set(key, row);
             input.onResult?.(row);
         };
-        let result: ActionExecuteResult;
-        try {
-            result = await input.executeConfirmed(stage.actionId, { ...stage.input,
-                sessionId: { selector: 'sessions', addresses: targets } }, { ...input.context,
-                onSessionTargetResult: event => {
-                    input.context?.onSessionTargetResult?.(event);
-                    accept(event.target, event.result);
-                } });
-        } catch (error) {
-            const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-            result = { ok: false, errorCode: diagnostic.errorCode ?? 'action_failed', error: diagnostic.errorClass };
+        const targetsByHome = new Map<string, ActionSessionAddressV1[]>();
+        for (const target of targets) {
+            const homeTargets = targetsByHome.get(target.serverId);
+            if (homeTargets) homeTargets.push(target);
+            else targetsByHome.set(target.serverId, [target]);
         }
-        const fanout = result.ok ? ActionSessionFanoutResultV1Schema.safeParse(result.result) : null;
-        if (fanout?.success) for (const leaf of fanout.data.results) accept(leaf.target, leaf.result);
-        else for (const target of targets) accept(target, result);
+        await Promise.all([...targetsByHome].map(async ([serverId, homeTargets]) => {
+            let result: ActionExecuteResult;
+            try {
+                result = await input.executeConfirmed(stage.actionId, { ...stage.input,
+                    sessionId: { selector: 'sessions', addresses: homeTargets } }, { ...input.context, serverId,
+                    onSessionTargetResult: event => {
+                        input.context?.onSessionTargetResult?.(event);
+                        accept(event.target, event.result);
+                    } });
+            } catch (error) {
+                const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+                result = { ok: false, errorCode: diagnostic.errorCode ?? 'action_failed', error: diagnostic.errorClass };
+            }
+            const fanout = result.ok ? ActionSessionFanoutResultV1Schema.safeParse(result.result) : null;
+            if (fanout?.success) for (const leaf of fanout.data.results) accept(leaf.target, leaf.result);
+            else for (const target of homeTargets) accept(target, result);
+        }));
     }
     return orderBulkSessionChangeRows([...rows.values()]);
 }
