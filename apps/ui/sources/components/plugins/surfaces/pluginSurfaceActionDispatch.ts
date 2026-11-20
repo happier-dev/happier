@@ -13,7 +13,7 @@ import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
-import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { createActionAutomationInvocationV1, readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
@@ -1554,9 +1554,11 @@ async function executeClientContributedAction(
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
-    const automationContext: ActionExecutorContext = { ...input.hostAction?.context,
+    const automationContext: ActionExecutorContext = { ...hostContext,
         surface: invocationSurface, authority: invocationAuthority, serverId: authority.serverId,
-        actionRequestId: input.actionRequestId ?? input.hostAction?.context?.actionRequestId ?? randomUUID() };
+        ...('machineId' in authority && !readActionAutomationExecutionMachineV1(hostContext ?? {})
+            ? { admittedMachineTarget: { machineId: authority.machineId, serverId: authority.serverId } } : {}),
+        actionRequestId: input.actionRequestId ?? hostContext?.actionRequestId ?? randomUUID() };
     let automationInvocation = automationContext.actionAutomationAdmission?.actionId === invocation.qualifiedId
         ? automationContext.actionAutomationAdmission : undefined;
     input = { ...input, actionRequestId: automationContext.actionRequestId ?? undefined,

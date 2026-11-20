@@ -2033,6 +2033,36 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         } finally { port.dispose(); await activation.composition.unload(); lifetime.retire(); }
     });
 
+    it('settles an Agent-originated client effect on the resolved contributor Machine', async () => {
+        const home = rpcHomes.get('server-client-action')!;
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        const activation = createClientActionActivation({ accountLifetime: lifetime, surfaces: ['agent'],
+            readOnly: false, handler: async input => input });
+        const action = { pluginId: activation.action.pluginId, localId: activation.action.id };
+        const actionId = formatQualifiedPluginActionId(action);
+        const occurrences: ActionSettlementV1[] = [];
+        const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
+            seed: async () => ({ v: 1, rows: [{ automationId: 'automation', triggerId: 'after', triggerRevision: 1,
+                workflowId: 'workflow', workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
+                actionIds: [actionId], phase: 'after' }] }),
+            settle: async ({ event }) => { occurrences.push(event); } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            const result = await dispatchPluginSurfaceAction({ action, input: { mode: 'save' }, clientAction: {},
+                invocationSurface: 'agent', pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action), actionAccountLifetime: lifetime,
+                hostAction: { execute: executor.execute, context: {
+                    surface: 'agent', authority: 'account_automation', serverId: lifetime.scope.serverId,
+                    serverIdentityId: home.serverIdentityId, runtimeAccountId: lifetime.scope.accountId,
+                    actionRequestId: 'reverse-save', actionAutomationPort: port,
+                } } });
+            expect(result).toMatchObject({ ok: true, result: { mode: 'save' } });
+            expect(occurrences).toMatchObject([{ actionId, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                requestId: 'reverse-save', status: 'succeeded' }]);
+        } finally { port.dispose(); await activation.composition.unload(); lifetime.retire(); }
+    });
+
     it.each([
         { name: 'conditional', readOnly: { op: 'eq', path: 'mode', value: 'preview' } as const, modes: ['preview', 'save'], expected: 1 },
         { name: 'read', readOnly: true as const, modes: ['save'], expected: 0 },
