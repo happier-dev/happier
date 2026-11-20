@@ -31,7 +31,7 @@ import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/proto
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget,
-    resolveCloudflareDomainTunnelOwnership } from './cloudflareDomainPreparation';
+    readCloudflareDomainAccount, resolveCloudflareDomainTunnelOwnership } from './cloudflareDomainPreparation';
 import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
@@ -273,8 +273,8 @@ export async function prepareOwnServerDomainReviewedChildren(
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
     const selected = resolved.selection;
     if (!selected) return null;
-    const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
-    if (purpose?.credentialRef.kind !== 'connectedAccount') return failure('connected_account_required');
+    const credentialRef = readCloudflareDomainAccount(selected.selection);
+    if (!credentialRef) return failure('connected_account_required');
     const { accountId, zoneId, tunnel } = selected.controller;
     const prepared = content.cloudflarePreparation;
     if (isDeploymentDomainRemoveActionIdV1(actionId) && !prepared) {
@@ -290,8 +290,8 @@ export async function prepareOwnServerDomainReviewedChildren(
         if (!discovered.ok) return discovered;
         const origin = discovered.topology.tunnelOrigin;
         if (!origin) return failure('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
-        return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
-            input: { credentialRef: purpose.credentialRef.account, accountId, zoneId, tunnelName: tunnel.name,
+        return { children: [{ action: { pluginId: credentialRef.service.pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
+            input: { credentialRef, accountId, zoneId, tunnelName: tunnel.name,
                 owned: [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
                     expectedService: origin.service }], dnsOwnership: [] } }] };
     }
@@ -300,8 +300,8 @@ export async function prepareOwnServerDomainReviewedChildren(
         ? resolveCloudflareDomainTunnelOwnership(content,
             (await readEnvironment(domain.targetLinkId)).content.cloudflareTunnels)
         : undefined;
-    return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: `cloudflare-named/${role}` }, role,
-        scopeInput: { credentialRef: purpose.credentialRef.account, accountId, zoneId,
+    return { children: [{ action: { pluginId: credentialRef.service.pluginId, localId: `cloudflare-named/${role}` }, role,
+        scopeInput: { credentialRef, accountId, zoneId,
             owned: prepared?.owned ?? selected.controller.owned,
             dnsOwnership: prepared?.dnsOwnership ?? selected.controller.dnsOwnership,
             ...(role === 'disable' && prepared ? { tunnelId: prepared.tunnelId,

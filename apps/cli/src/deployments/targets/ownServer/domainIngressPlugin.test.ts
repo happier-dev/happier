@@ -5,7 +5,11 @@ import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/action
 import { prepareOwnServerDomainReviewedChildren } from './ownServerDomainActions';
 import { disableCloudflareDomainForHost } from './cloudflareDomainPreparation';
 
-it.each(['example.ingress', 'happier.deploy.cloudflare'])('keeps the selected ingress supplier %s through review and removal', async pluginId => {
+it.each([
+    { pluginId: 'example.ingress', localId: 'cloudflare', admitted: false },
+    { pluginId: 'happier.deploy.cloudflare', localId: 'another-service', admitted: false },
+    { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare', admitted: true },
+])('admits only the declared ingress supplier during review and removal ($pluginId/$localId)', async ({ pluginId, localId, admitted }) => {
     const environment = createDeploymentEnvironmentDetailV1();
     const link = environment.targetLinks[0]!.targetLink;
     const content = DeploymentDomainContentV1Schema.parse({ hostname: 'app.example.test',
@@ -15,7 +19,7 @@ it.each(['example.ingress', 'happier.deploy.cloudflare'])('keeps the selected in
                 tunnel: { kind: 'create', name: 'app' }, owned: [], dnsOwnership: [],
                 connector: { imageRef: 'connector:1', version: '1' } } },
             credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount',
-                account: { service: { pluginId, localId: 'ingress-service' }, accountId: 'profile' } } }] } });
+                account: { service: { pluginId, localId }, accountId: 'profile' } } }] } });
     const unexpected = async (): Promise<never> => { throw new Error('No native effect during review'); };
     const plan = await prepareOwnServerDomainReviewedChildren({ actionId: 'deployments.domains.add', context: {},
         input: { serverId: 'home', environmentId: environment.environment.id, domainId: 'domain',
@@ -24,8 +28,6 @@ it.each(['example.ingress', 'happier.deploy.cloudflare'])('keeps the selected in
         readEnvironment: async () => environment, storage: unexpected, open: unexpected,
         dispatch: unexpected, readReceipt: unexpected, readInstallation: unexpected,
     });
-    expect(plan).toMatchObject({ children: [{ action: { pluginId, localId: 'cloudflare-named/configure' }, role: 'configure' }] });
-
     const recovered: HostReviewedChildInvocationV1 = { action: { pluginId, localId: 'cloudflare-named/disable' },
         role: 'disable', input: { tunnelName: 'app' } };
     const invoked: HostReviewedChildInvocationV1[] = [];
@@ -33,11 +35,24 @@ it.each(['example.ingress', 'happier.deploy.cloudflare'])('keeps the selected in
         invoked.push(request);
         return { ok: true as const, result: { kind: 'verified' } };
     } } };
-    await disableCloudflareDomainForHost(content, context);
+    if (!admitted) {
+        expect(plan).toMatchObject({ ok: false, errorCode: 'connected_account_required' });
+        await expect(disableCloudflareDomainForHost(content, context, false, undefined))
+            .rejects.toMatchObject({ code: 'connected_account_required' });
+        expect(invoked).toEqual([]);
+        return;
+    }
+    expect(plan).toMatchObject({ children: [{ action: { pluginId, localId: 'cloudflare-named/configure' }, role: 'configure' }] });
+    const wrongAction = { ...recovered, action: { pluginId, localId: 'cloudflare-named/configure' } };
+    await expect(disableCloudflareDomainForHost(content, { hostReviewedChild: { ...context.hostReviewedChild,
+        preparedChildren: [wrongAction] } }, false, undefined))
+        .rejects.toMatchObject({ code: 'required_fact_unavailable', details: { requiredFact: 'reviewed_cloudflare_child' } });
+    expect(invoked).toEqual([]);
+    await disableCloudflareDomainForHost(content, context, false, undefined);
     expect(invoked).toEqual([recovered]);
     invoked.length = 0;
     await disableCloudflareDomainForHost({ ...content,
-        cloudflarePreparation: { tunnelId: 'retained', owned: [], dnsOwnership: [] } }, context);
+        cloudflarePreparation: { tunnelId: 'retained', owned: [], dnsOwnership: [] } }, context, false, undefined);
     expect(invoked).toMatchObject([{ action: { pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
         input: { tunnelId: 'retained' } }]);
 });

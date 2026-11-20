@@ -5,6 +5,7 @@ import type { DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositi
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { parseMachineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
+import { getRelayAccessProviderDescriptor, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDomainSecretLaunchAdmissionForHost,
@@ -29,6 +30,16 @@ function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', opt
         ...(typeof child?.effectAttempted === 'boolean' ? { effectAttempted: child.effectAttempted } : {}) };
     throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { cause: failure });
 }
+export function readCloudflareDomainAccount(selection: RelayAccessConfig) {
+    const purpose = 'tunnel.manage';
+    const ref = selection.credentialRefs.find(item => item.purpose === purpose)?.credentialRef;
+    if (ref?.kind !== 'connectedAccount') return;
+    const declared = getRelayAccessProviderDescriptor(selection.provider).homeUi?.credentialBindings
+        ?.find(item => item.purpose === purpose)?.service;
+    const service = ref.account.service;
+    return declared?.pluginId === service.pluginId && declared.localId === service.localId ? ref.account : undefined;
+}
+
 type Connector = NonNullable<NonNullable<DeploymentDomainContentV1['cloudflarePreparation']>['connectors']>[number];
 type Grant = Pick<Connector, 'machineId' | 'installationId' | 'grantRef'>;
 type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; providerOutput?: string; tunnelId?: string;
@@ -53,8 +64,8 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     if (!origin) return refuse('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
     if (!identity) return refuse('required_fact_unavailable', { requiredFact: 'installation_identity' });
     if (!child) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
-    const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
-    if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
+    const credentialRef = readCloudflareDomainAccount(selected.selection);
+    if (!credentialRef) return refuse('connected_account_required');
     const previous = content.cloudflarePreparation;
     // Membership can reconfigure a recorded tunnel. A pending new tunnel
     // needs the Domain add that can commit its Environment creation proof.
@@ -81,8 +92,8 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             signal: context.signal ?? new AbortController().signal,
             domainAdmissions: admissions.flatMap(item => item.domainAdmission ? [item.domainAdmission] : []),
             assertCurrent: async () => { context.signal?.throwIfAborted(); }, onGrant: grant => acknowledged.push(grant) });
-        const result = await child.invoke({ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: 'cloudflare-named/configure' }, role: 'configure',
-            input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId, zoneId: selected.controller.zoneId,
+        const result = await child.invoke({ action: { pluginId: credentialRef.service.pluginId, localId: 'cloudflare-named/configure' }, role: 'configure',
+            input: { credentialRef, accountId: selected.controller.accountId, zoneId: selected.controller.zoneId,
                 tunnel: previous ? { kind: 'adopt', tunnelId: previous.tunnelId, name: selected.controller.tunnel.name } : selected.controller.tunnel,
                 owned: previous?.owned ?? selected.controller.owned, desired, dnsOwnership: previous?.dnsOwnership ?? selected.controller.dnsOwnership },
             invocationServices: { machineConnectorSecrets: service } });
@@ -141,16 +152,16 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
     const selected = readCloudflareNamedControllerSelection(content.ingress);
     if (!selected) return;
     const prepared = content.cloudflarePreparation;
-    const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
     if (!context.hostReviewedChild) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
-    if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
-    const pluginId = purpose.credentialRef.account.service.pluginId;
+    const credentialRef = readCloudflareDomainAccount(selected.selection);
+    if (!credentialRef) return refuse('connected_account_required');
+    const action = { pluginId: credentialRef.service.pluginId, localId: 'cloudflare-named/disable' };
     const recovered = context.hostReviewedChild.preparedChildren?.find(child => child.role === 'disable'
-        && typeof child.action !== 'string' && child.action.pluginId === pluginId
-        && child.action.localId === 'cloudflare-named/disable');
+        && typeof child.action !== 'string'
+        && child.action.pluginId === action.pluginId && child.action.localId === action.localId);
     const request: HostReviewedChildInvocationV1 | undefined = prepared ? {
-        action: { pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
-        input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId,
+        action, role: 'disable',
+        input: { credentialRef, accountId: selected.controller.accountId,
             zoneId: selected.controller.zoneId, tunnelId: prepared.tunnelId,
             ...(tunnelOwnership ? { tunnelOwnership } : {}), retireTunnel,
             owned: prepared.owned, dnsOwnership: prepared.dnsOwnership },
