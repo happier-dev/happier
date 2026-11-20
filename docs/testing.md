@@ -727,7 +727,14 @@ focused runs are served in arrival order and later focused runs cannot starve it
 `packages/plugins/*` workspaces a packet touches, while the committing lane waits) ranks
 with the shared producers (P03-GATE-TC, 2026-11-18). The broker derives the rank from the admitted command identity that the
 canonical client builds from the payload argv; a request field claiming priority is
-ignored. Priority waiters keep arrival order within their rank, a priority head
+ignored. Exact-tree compiler requests send the judged Git
+objects to the worker and materialize them in its own warm worktree. The worker
+launches the committed controller tools in temporary storage and prepares
+dependencies using the judged tree’s manifests, workspace configuration and
+lockfile. The package declaration check resolves the TypeScript API from that
+worktree. If a declaration worker's worktree is busy, the gate tries the next
+eligible worker and returns `declaration-comparison-incomplete` when no worker
+can judge the packet. Priority waiters keep arrival order within their rank. A priority head
 pledges releases at once instead of after the 22m24s bound, and ordinary source
 bundles cannot borrow its pledge. A shared-producer head (rank 2) holds its whole
 floor, free or released, so nothing backfills past it and it lends nothing to EASY

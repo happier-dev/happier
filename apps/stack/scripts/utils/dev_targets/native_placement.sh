@@ -30,8 +30,9 @@ print_execution_worker_connections() (
     if execution_target_is_automatic "$worker_number"; then
       worker_name=$(value_for_target name "$worker_number")
       if ! execution_target_is_excluded "$worker_name"; then
-        printf '%s\0%s\0%s\0' "$worker_name" "$(value_for_target ssh "$worker_number")" \
-          "$(execution_target_ssh_config "$worker_number")"
+        printf '%s\0%s\0%s\0%s\0%s\0' "$worker_name" "$(value_for_target ssh "$worker_number")" \
+          "$(execution_target_ssh_config "$worker_number")" "$(value_for_target cli_home "$worker_number")" \
+          "$(value_for_target remote_path "$worker_number")"
       fi
     fi
     worker_number=$((worker_number + 1))

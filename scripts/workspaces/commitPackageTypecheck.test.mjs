@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { runCommitGate } from './commitGate.mjs';
 import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
@@ -675,8 +677,7 @@ test('two report consumers split one queue: every commit is checked exactly once
   void git;
 });
 
-// A worker whose dispatch returns no rows (nl3's sync stalled 2026-11-18; hstack-exec gives up at its keepalive bound,
-// ~180 s, with exit 255) hands the request to the next worker instead of reporting the trees unjudged.
+// A worker whose SSH session closes before returning rows hands the request to the next worker.
 test('a worker dispatch that returns no rows falls back to the next worker', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-fallback-'));
@@ -696,9 +697,128 @@ test('a worker dispatch that returns no rows falls back to the next worker', asy
       return { status: 0, signal: null, stdout: `HAPPIER_ROLLING_ROWS ${JSON.stringify({ [tree]: { 'packages/plugins/codex': [] } })}\n` };
     },
   };
-  const rows = workerTreeRows({ repo, state, log: () => {}, workers: ['nl3', 'nl1'], lane: 'gate', transport })(treeId, ['packages/plugins/codex'], 'head');
+  const rows = await workerTreeRows({ repo, state, log: () => {}, workers: ['nl3', 'nl1'], lane: 'gate', transport })(treeId, ['packages/plugins/codex'], 'head');
   assert.deepEqual(dispatched, ['nl3', 'nl1']);
   assert.deepEqual(rows.get('packages/plugins/codex'), []);
+});
+
+test('an exact-tree worker reads the Git payload even when the source mirror cannot flush', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const source = fileURLToPath(new URL('../../', import.meta.url));
+  const workerHome = join(repo, 'worker-home');
+  const state = join(repo, '.git/typecheck-state');
+  const bin = join(repo, 'bin');
+  const config = join(repo, 'ssh.conf');
+  const mirrorLog = join(repo, 'mirror.log');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  await Promise.all([mkdir(workerHome), mkdir(state), mkdir(bin)]);
+  const write = async (name, contents, mode) => {
+    const path = join(repo, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, contents, { mode });
+  };
+  await write('ssh.conf', '');
+  await write('bin/ssh', `#!/bin/sh
+while [ "$#" -gt 2 ]; do
+  case "$1" in -F|-o) shift 2;; -T) shift;; *) exit 91;; esac
+done
+[ "$1" = configured-worker ] || exit 90
+export HOME=${JSON.stringify(workerHome)}
+unset HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED
+cd "$HOME" || exit
+exec /bin/bash -c "$2"
+`, 0o755);
+  for (const name of [
+    'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh',
+    'apps/stack/scripts/utils/dev_targets/historical_temp_roots.mjs',
+    'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh',
+    'apps/stack/scripts/utils/proc/native_process_identity.sh',
+    'apps/stack/scripts/utils/proc/native_process_priority.sh',
+    'scripts/testing/lib/compilerBaseline.mjs',
+    'scripts/board/postBoardEntry.mjs',
+    'packages/cli-common/packageExportMatch.cjs',
+    'scripts/workspaces/commitPackageTypecheck.mjs',
+    'scripts/workspaces/commitTypeCoherenceDiagnostics.mjs',
+    'scripts/workspaces/commitTreeEntryLoads.mjs',
+    'scripts/workspaces/workspaceBundleLock.mjs',
+    'packages/cli-common/packageBuildOutputTargets.mjs',
+    'packages/cli-common/sourceRuntimeEntries.mjs',
+    'packages/cli-common/cliRuntimeSidecars.mjs',
+    'packages/cli-common/sourceRuntimeDependencies.mjs',
+    'packages/cli-common/workspaceBundleLock.mjs',
+    'packages/cli-common/fileChangeObserver.mjs',
+    'packages/cli-common/workspaceBundleLockPriority.mjs',
+    'packages/cli-common/workspaceLockLease.mjs',
+    'packages/cli-common/processInstance.mjs',
+    'packages/cli-common/tempDirOwnership.mjs',
+  ]) await write(name, readFileSync(join(source, name)));
+  await write('apps/stack/bin/hstack-exec', `#!/bin/sh
+if [ "$1" = --execution-workers ]; then
+  printf '%s\\0' test-worker configured-worker ${JSON.stringify(config)} ${JSON.stringify(workerHome)} ''
+  exit 0
+fi
+if [ "$1" = --heavyweight-admission ]; then
+  while [ "$1" != -- ]; do shift; done
+  shift
+  [ "$2" = scripts/workspaces/commitGateTypecheck.mjs ] || { printf 'unstable admission entry: %s\\n' "$2" >&2; exit 95; }
+  exec "$@"
+fi
+printf 'attempted mirror dispatch\\n' >> ${JSON.stringify(mirrorLog)}
+exit 98
+`, 0o755);
+  await write('scripts/workspaces/commitGateTypecheck.mjs', readFileSync(join(source, 'scripts/workspaces/commitGateTypecheck.mjs')));
+  await write('apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs', `
+import { mkdirSync, symlinkSync } from 'node:fs';
+mkdirSync('node_modules', { recursive: true });
+symlinkSync(${JSON.stringify(dirname(createRequire(import.meta.url).resolve('typescript/package.json')))}, 'node_modules/typescript', 'dir');
+`);
+  // The compiler executable is the external boundary. Its declaration run
+  // yields a diagnostic only when checking the committed source.
+  await write('scripts/workspaces/runTypeScriptCli.mjs', `
+import { readFileSync } from 'node:fs';
+const project = process.argv[process.argv.indexOf('-p') + 1];
+if (!readFileSync('src/index.ts', 'utf8').includes('= 41')) process.exit(97);
+if (project !== 'tsconfig.json') {
+  console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
+  process.exitCode = 2;
+}
+`);
+  await write('packages/protocol/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
+  git('add', '--', 'apps/stack', 'scripts', 'packages/cli-common');
+  git('commit', '--quiet', '-m', 'trusted launch scripts');
+  const sha = await commit('packages/protocol/src/index.ts', 'export const value = 41;\n');
+  const treeId = git('rev-parse', `${sha}^{tree}`);
+  await write('packages/protocol/src/index.ts', 'export const value = 99;\n');
+  await write('scripts/workspaces/commitGateTypecheck.mjs', 'process.exit(96);\n');
+  const script = `
+    import { workerTreeRows } from ${JSON.stringify(new URL('./commitPackageTypecheck.mjs', import.meta.url).href)};
+    const rows = await workerTreeRows({ repo: process.cwd(), state: ${JSON.stringify(state)}, lane: 'gate',
+      entry: 'scripts/workspaces/commitGateTypecheck.mjs' })(${JSON.stringify(treeId)}, ['packages/protocol'], 'head');
+    console.log(JSON.stringify([...rows]));
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [['packages/protocol', [{
+    file: 'packages/protocol/src/index.ts', line: 1, column: 14, code: 9007, text: 'Fixture declaration diagnostic',
+  }]]], result.stderr);
+  assert.equal(existsSync(mirrorLog), false);
+
+  const lockPath = join(workerHome, '.happier-stack/cache/commit-typecheck-worker/typecheck-state/lane-gate/worktree.lock');
+  await withWorkspaceBundleLock(async () => {
+    const stalled = spawnSync(process.execPath, [
+      fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
+      '--label=commit-partial', `--base=${sha}^`, `--tree=${sha}`,
+    ], {
+      cwd: repo, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}`,
+        HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_DIR: state },
+    });
+    assert.equal(stalled.status, 11, stalled.error?.message ?? stalled.stderr + stalled.stdout);
+    assert.match(stalled.stderr, /exact-tree worker worktree busy/u);
+    assert.match(stalled.stdout, /"code":"declaration-comparison-incomplete"/u);
+  }, { lockPath });
 });
 
 test('an excluded fallback worker is never contacted for Git preparation', { skip: process.platform === 'win32' }, async t => {
@@ -715,7 +835,7 @@ test('an excluded fallback worker is never contacted for Git preparation', { ski
     dispatch: () => ({ status: 255, stdout: '' }),
   };
   const env = { ...process.env, HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS: 'nl3' };
-  const rows = workerTreeRows({ repo, state, env, workers: ['nl1', 'nl3'], lane: 'gate', transport, log: () => {} })(
+  const rows = await workerTreeRows({ repo, state, env, workers: ['nl1', 'nl3'], lane: 'gate', transport, log: () => {} })(
     treeId, ['packages/protocol'], 'head');
   assert.deepEqual(preparation, ['nl1']);
   assert.equal(rows.get('packages/protocol'), undefined);
