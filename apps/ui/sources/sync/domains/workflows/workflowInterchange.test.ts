@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { WorkflowBlock, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { exportWorkflowDefinition } from './workflowInterchange';
 import { createWorkflowEditorDraft, type WorkflowEditorDraft } from './workflowEditorDraft';
 import { setWorkflowDefaultField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { buildWorkflowDefinitionCandidate } from './workflowAuthoring';
+import { serializeWorkflowDocumentJsonV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 
 const CLAUDE_AGENT_TARGET = {
   kind: 'agent' as const,
@@ -34,56 +34,54 @@ function draftWith(blocks: readonly WorkflowBlock[], name = 'Review'): WorkflowE
   );
 }
 
-/** The catalog editor's export: the same validator and codec the export Action uses. */
 function exportDraft(draft: WorkflowEditorDraft) {
-  return exportWorkflowDefinition({ definition: buildWorkflowDefinitionCandidate(draft) });
+  const unexpected = (): never => { throw new Error('draft export must not access persistence'); };
+  const definitions = createWorkflowDefinitionActions({ encodeListCursor: unexpected, assertDefinitionWriteAllowed: unexpected,
+    artifactStore: { read: unexpected, list: unexpected, create: unexpected, update: unexpected, delete: unexpected } });
+  const workflowAction = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions,
+    runs: { execute: unexpected } });
+  return createActionExecutor({ workflowAction }).execute(
+    'workflow.definition.export', { draft: buildWorkflowDefinitionCandidate(draft) }, { surface: 'agent' },
+  );
 }
 
-describe('exportWorkflowDefinition', () => {
-  it('exports the mounted unsaved draft through the agent Action with exactly the UI JSON', async () => {
-    const unexpected = (): never => { throw new Error('draft export must not access persistence'); };
-    const definitions = createWorkflowDefinitionActions({ encodeListCursor: unexpected, assertDefinitionWriteAllowed: unexpected,
-      artifactStore: { read: unexpected, list: unexpected, create: unexpected, update: unexpected, delete: unexpected } });
-    const workflowAction = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions,
-      runs: { execute: unexpected } });
-    const executor = createActionExecutor({ workflowAction });
+describe('workflow.definition.export', () => {
+  it('exports an unsaved draft through the agent Action without touching persistence', async () => {
     const draft = draftWith([step('unsaved-analysis'), step('unsaved-review')]);
-    const expected = exportDraft(draft);
-    expect(expected.ok).toBe(true);
-    if (!expected.ok) throw new Error('invalid UI draft fixture');
-    await expect(executor.execute('workflow.definition.export', { draft: buildWorkflowDefinitionCandidate(draft) }, { surface: 'agent' }))
-      .resolves.toMatchObject({ ok: true, result: { json: expected.json, document: expected.document } });
+    const exported = await exportDraft(draft);
+    expect(exported).toMatchObject({ ok: true, result: { document: { kind: 'happier.workflow', version: 1,
+      definition: { blocks: [expect.objectContaining({ id: 'unsaved-analysis' }), expect.objectContaining({ id: 'unsaved-review' })] },
+    } } });
   });
-  it('refuses an invalid draft and names the first blocking issue', () => {
-    const result = exportDraft(draftWith([
+  it('refuses an invalid draft and names the dangling reference', async () => {
+    const result = await exportDraft(draftWith([
       step('analyze'),
       step('implement', {
         input: [{ kind: 'result', producer: { blockId: 'ghost', scope: { kind: 'current' } }, path: [] }],
       }),
     ]));
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.blockingIssue?.code).toBe('missing_reference');
-    expect(result.blockingIssue?.path).toBe('/blocks/1/input/0/producer/blockId');
-    expect(result.issues.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_input', details: { issues: expect.arrayContaining([
+      expect.objectContaining({ code: 'missing_reference', path: '/blocks/1/input/0/producer/blockId' }),
+    ]) } });
   });
 
-  it('exports only the canonical definition, with no credentials or run content', () => {
-    const result = exportDraft(draftWith([step('analyze'), step('implement')]));
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-
-    const parsed = JSON.parse(result.json) as Record<string, unknown>;
+  it('exports only the canonical definition, with no credentials or run content', async () => {
+    const result = await exportDraft(draftWith([step('analyze'), step('implement')]));
+    if (!result.ok) throw new Error('Expected a valid Workflow export');
+    const { WorkflowDefinitionExportResultV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+    const exported = WorkflowDefinitionExportResultV1Schema.parse(result.result);
+    expect(exported.json).toBe(serializeWorkflowDocumentJsonV1(exported.document));
+    const parsed = JSON.parse(exported.json) as Record<string, unknown>;
     expect(Object.keys(parsed).sort()).toEqual(['definition', 'kind', 'version']);
     expect(Object.keys(parsed['definition'] as Record<string, unknown>).sort())
       .toEqual(['blocks', 'defaults', 'inputs', 'version']);
     for (const forbidden of ['environmentVariables', 'runId', 'startedAt', 'progress', 'outcome', 'invocation']) {
-      expect(result.json).not.toContain(forbidden);
+      expect(exported.json).not.toContain(forbidden);
     }
   });
 
-  it('lets the canonical schema, not a hand-written filter, reject secret-bearing fields', () => {
+  it('lets the canonical schema reject secret-bearing fields', async () => {
     // `credentials` is not a member of the canonical step selection.
     // The cast is the only way to present the shape a hand-rolled exporter
     // would have had to strip; the schema must reject it instead.
@@ -92,9 +90,6 @@ describe('exportWorkflowDefinition', () => {
       execution: { credentials: { TOKEN: 'secret' } },
     } as unknown as WorkflowStep;
 
-    const result = exportDraft(draftWith([leaking]));
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.issues.map((issue) => issue.code)).toContain('unknown_field');
+    await expect(exportDraft(draftWith([leaking]))).resolves.toMatchObject({ ok: false, errorCode: 'invalid_input' });
   });
 });

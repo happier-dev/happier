@@ -1,12 +1,6 @@
-import {
-  serializeWorkflowDocumentJsonV1,
-  type WorkflowDocumentV1,
-  type WorkflowDocumentParseResultV1,
-} from '@happier-dev/protocol/workflows/workflowDocumentV1';
-import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
+import type { WorkflowDocumentParseResultV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 import type {
   WorkflowDefinitionV1,
-  WorkflowIngressContextV1,
   WorkflowValidationIssue,
 } from '@happier-dev/protocol/workflows/workflowV1';
 
@@ -15,11 +9,11 @@ import type { TranslationKeyNoParams } from '@/text';
 import {
   buildWorkflowEditorDraftFromDefinition,
   buildWorkflowDefinitionCandidate,
-  firstBlockingWorkflowIssue,
 } from './workflowAuthoring';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
 import { WorkflowDefinitionExportResultV1Schema, WorkflowDefinitionImportResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { callWorkflowAction } from './callWorkflowAction';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * JSON interchange for authored workflows.
@@ -69,21 +63,6 @@ export type WorkflowImportResult =
     repairDraft?: WorkflowEditorDraft;
   }>;
 
-export type WorkflowExportResult =
-  | Readonly<{ ok: true; json: string; document: WorkflowDocumentV1 }>
-  | Readonly<{
-    ok: false;
-    issues: readonly WorkflowValidationIssue[];
-    blockingIssue: WorkflowValidationIssue | null;
-  }>;
-
-function serializeValidatedWorkflowDefinition(
-  definition: WorkflowDefinitionV1,
-): Extract<WorkflowExportResult, Readonly<{ ok: true }>> {
-  const document: WorkflowDocumentV1 = { kind: 'happier.workflow', version: 1, definition };
-  return { ok: true, document, json: serializeWorkflowDocumentJsonV1(document) };
-}
-
 const IMPORT_FAILURE_MESSAGE_KEYS = {
   invalid_json: 'workflows.interchange.importFailedInvalidJson',
   unsupported_version: 'workflows.interchange.importFailedUnsupportedVersion',
@@ -109,10 +88,13 @@ export async function importWorkflowDocumentViaAction(params: WorkflowImportPara
   return projectImportedWorkflowDocument(params, parsed);
 }
 
-/** Export the mounted draft through the same validated Action as saved definitions and agents. */
-export async function exportWorkflowDocumentViaAction(params: Readonly<{ draft: WorkflowEditorDraft }>) {
+/** Export open authored content through the same validated Action as saved definitions. */
+export async function exportWorkflowDocumentViaAction(params: Readonly<(
+  { draft: WorkflowEditorDraft } | { definition: WorkflowDefinitionV1 }
+) & { accountLifetime?: ServerAccountScopeLifetime | null }>) {
   return callWorkflowAction({ actionId: 'workflow.definition.export',
-    input: { draft: buildWorkflowDefinitionCandidate(params.draft) },
+    input: { draft: 'draft' in params ? buildWorkflowDefinitionCandidate(params.draft) : params.definition },
+    ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
     parseResult: value => WorkflowDefinitionExportResultV1Schema.parse(value) });
 }
 
@@ -158,28 +140,4 @@ function projectImportedWorkflowDocument(params: WorkflowImportParams, parsed: W
       definition,
     }),
   };
-}
-
-/**
- * Serializes an already-opened saved or frozen Run definition through the same
- * validator and file codec as the editor. Callers never reconstruct authored
- * content from progress, results, transcripts, or list projections.
- */
-export function exportWorkflowDefinition(params: Readonly<{
-  definition: WorkflowDefinitionV1;
-  context?: WorkflowIngressContextV1;
-}>): WorkflowExportResult {
-  const validation = validateWorkflowDefinition(
-    params.definition,
-    params.context === undefined ? {} : { context: params.context },
-  );
-  const definition = validation.normalizedDefinition;
-  if (!validation.valid || definition === undefined) {
-    return {
-      ok: false,
-      issues: validation.issues,
-      blockingIssue: firstBlockingWorkflowIssue(validation),
-    };
-  }
-  return serializeValidatedWorkflowDefinition(definition);
 }

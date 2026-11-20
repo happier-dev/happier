@@ -1253,6 +1253,38 @@ describe('editor workflow composer', () => {
         expect(screen.findByTestId('workflow-builtin-more-settings-session')).not.toBeNull();
     });
 
+    it('applies the export Action policy to the built-in Workflow export', async () => {
+        const { Modal } = await import('@/modal');
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        const store = getStorage();
+        const settings = store.getState().settings;
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowBuiltinEditorHostScreen workflow="builtin:plan-with-a-panel" />
+        </AppPaneProvider>);
+        try {
+            const exportDocument = screen.root.findByType(WorkflowEditorBody).props.onExportJson;
+            const waitForExportOutcome = async () => {
+                await act(async () => exportDocument());
+                await waitForHomeGovernance(() => expect(confirm.mock.calls.length + alert.mock.calls.length).toBe(1));
+            };
+            await waitForExportOutcome();
+            expect(confirm).toHaveBeenCalledTimes(1);
+            confirm.mockClear();
+
+            await act(async () => home.setActionPolicy(appliedHome.serverId, 'workflow.definition.export', 'ui', 'off'));
+            await waitForExportOutcome();
+            expect(confirm).not.toHaveBeenCalled();
+            expect(alert).toHaveBeenCalledTimes(1);
+        } finally {
+            await screen.unmount();
+            store.setState({ settings });
+            confirm.mockRestore();
+            alert.mockRestore();
+        }
+    });
+
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {
         const [{ getBuiltinWorkflowCatalogV1}, { WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/workflows/builtins/catalog'), import('@happier-dev/protocol/workflows/actionsV1')]);
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { Modal } from '@/modal';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
@@ -10,7 +11,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope, useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
-import { exportWorkflowDefinition } from '@/sync/domains/workflows/workflowInterchange';
+import { exportWorkflowDocumentViaAction } from '@/sync/domains/workflows/workflowInterchange';
 import { isWorkflowProjectTarget, type WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t, tLoose } from '@/text';
@@ -157,8 +158,12 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     } });
     const exportSource = async () => {
         if (!isCurrent()) return;
-        const result = exportWorkflowDefinition({ definition: plugin.definition });
-        if (result.ok) await confirmWorkflowDocumentExport({ name: plugin.title, json: result.json, isCurrent });
+        try {
+            const result = await exportWorkflowDocumentViaAction({ definition: plugin.definition, accountLifetime: lifetime });
+            if (isCurrent()) await confirmWorkflowDocumentExport({ name: plugin.title, json: result.json, isCurrent });
+        } catch {
+            if (isCurrent()) Modal.alert(t('workflows.destination.exportFailedTitle'), t('workflows.loadFailedBody'));
+        }
     };
     return <>
         {runComposer}
