@@ -200,26 +200,26 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 13,
+      revision: 14,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: 'c8ba6cb40e03e798f3c10507a4fb6907db3b6324d31ac82606bcb261c1fa3bd7',
+      digest: '3e8593693bcdf958823382f25c37d66635d49c960f68eaae7e084d2e36ff86a4',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
     expect(rendered).toContain('canonical Happier tools');
-    expect(rendered).toContain('Voice agent can approve requests is enabled by default');
+    expect(rendered).toContain('read the current Account setting');
     expect(rendered).toContain('Never semantically retry a mutation');
     expect(rendered).toContain('Do not claim completion before canonical results exist');
     expect(rendered).not.toContain('sendSessionMessage');
     expect(rendered).not.toContain('{{');
   });
 
-  it('describes delegated Voice approval and its opt-out across Voice prompts', () => {
+  it('requires current approval preference before each invitation to answer by voice', () => {
     const prompts = [
       renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),
       buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' }),
@@ -230,7 +230,10 @@ describe('voiceAgentPrompt', () => {
     ];
 
     for (const prompt of prompts) {
-      expect(prompt).toContain('Voice agent can approve requests is enabled by default');
+      expect(prompt).toContain('before inviting a spoken approval for each pending request');
+      expect(prompt).toContain('read the current Account setting');
+      expect(prompt).toContain('If that read is unavailable');
+      expect(prompt).not.toContain('Voice agent can approve requests is enabled by default');
       expect(prompt).toContain('Read the specific request aloud within the sharing policy');
       expect(prompt).toContain("The person's explicit spoken request is the confirmation");
       expect(prompt).toContain('do not ask for confirmation again');

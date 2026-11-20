@@ -16,7 +16,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 13;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 14;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -42,9 +42,9 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
 const VOICE_AGENT_APPROVAL_RULES = [
-  'Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
+  'Use the settings Actions to read the current Account setting for Voice agent can approve requests before inviting a spoken approval for each pending request. Do not assume the setting from a default, a prior turn, or a previous approval.',
   'Read the specific request aloud within the sharing policy. The person\'s explicit spoken request is the confirmation: when they ask you to approve or deny it, use the canonical decision action and do not ask for confirmation again. Ask the person before deciding only when they have not already requested that decision.',
-  'When Voice agent can approve requests is off, tell the person a tap in the request UI is required; do not bypass a present_user_required refusal.',
+  'If that read is unavailable or the setting is off, tell the person a tap in the request UI is required. When the current setting permits spoken decisions, use the canonical decision Action and do not bypass a present_user_required refusal.',
   'Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
 ] as const;
 
