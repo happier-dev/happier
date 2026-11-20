@@ -477,7 +477,8 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 const firstPrincipal = producedPrincipal;
                 if (nested) {
                     expect(await executor.execute('reviews.comments.list', { sessionId: siblingId }, context))
-                        .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+                        .toMatchObject({ ok: false });
+                    expect(requests.at(-1)).toMatchObject({ status: 400, error: 'review_comment_permission_denied' });
                     const sibling = await executor.execute('reviews.comments.list', { sessionId: siblingId }, {
                         ...context, actionRequestId: `${runId}/${siblingInvocationId}/0`,
                     });
