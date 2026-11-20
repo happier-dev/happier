@@ -4,7 +4,7 @@ import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/ac
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowContextInputsV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
 import { buildReviewStartWorkflowDraftSeed } from './reviewStartWorkflowDraft';
@@ -39,13 +39,17 @@ describe('prestart Review workflow authoring', () => {
                     authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
                 effects: { resolveTargetAvailability: async () => true, resolveSessionTarget,
                     admitSessionAuthority: async target => sameStrictJsonValue(target.address, session),
-                    readActionContract: async () => ({ inputSchema: contract.inputSchema, outputSchema: contract.outputSchema ?? {} }) } });
+                    readActionContract: async () => ({ inputSchema: projectNativeJsonValueForTransport(contract.inputSchema),
+                        outputSchema: projectNativeJsonValueForTransport(contract.outputSchema ?? {}) }) } });
             expect(accepted, JSON.stringify(accepted.ok ? { ok: true } : accepted.error)).toMatchObject({ ok: true });
             if (!accepted.ok) throw new Error(accepted.error.code);
             const leaf = accepted.snapshot.materializedLeaves[0];
             expect(leaf?.actionInput).toMatchObject({ target: { kind: 'detached' }, sourceSession: session });
             expect(leaf?.actionInput).not.toHaveProperty('sessionId');
-            expect(leaf?.sessionAuthorityBindings).toEqual([{ inputName: 'sourceSession', targets: [{ address: session, machineId: 'machine-1' }] }]);
+            expect(leaf?.sessionAuthorityBindings).toEqual([
+                { inputName: 'sourceSession', targets: [{ address: session, machineId: 'machine-1' }] },
+                { targets: [{ address: session, machineId: 'machine-1' }] },
+            ]);
             const prepared = await executor.prepare('review.start', leaf!.actionInput, { surface: 'agent', serverId: 'home',
                 actionCaller: { kind: 'workflowRun', runId: 'workflow-1', authorization: {
                     principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } },

@@ -82,6 +82,7 @@ function rowsFor(messages: readonly Message[]) {
     messageIdsOldestFirst: messages.map((m) => m.id),
     messagesById: byId,
     groupToolCalls: true,
+    toolCallsGroupStrategy: 'consecutive_tools',
   });
   const rows = buildTranscriptTurnUnits({
     items: turns.map((turn) => ({ kind: 'turn' as const, id: turn.id, turn })),
