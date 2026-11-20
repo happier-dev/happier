@@ -59,15 +59,6 @@ const SessionListAttentionContinuationFieldsV1 = {
   attentionHasNext: z.optional(z.boolean()),
 } as const;
 
-const SessionListActionResultMarkerFieldsV1 = {
-  project: z.optional(QualifiedProjectKeyV1Schema),
-  projectFilterUnavailableCount: z.optional(z.number().check(z.int(), z.nonnegative())),
-  queryVersion: z.optional(z.literal(SESSION_LIST_QUERY_RESULT_VERSION_V1)),
-  metadataUpgradeRequiredCount: z.optional(SessionListMetadataUpgradeRequiredCountSchema),
-  botFilterUnavailableCount: z.optional(SessionListBotFilterUnavailableCountSchema),
-  ...SessionListAttentionContinuationFieldsV1,
-} as const;
-
 function requireAttentionContinuationPair(
   value: Readonly<Record<string, unknown>>,
   context: z.core.$RefinementCtx,
@@ -160,7 +151,12 @@ const SummarySessionListActionResultSchema = lazyZodSchema(() => z.intersection(
   SessionListResultSchema,
   LegacyUiSessionListResultSchema,
 ]), z.looseObject({
-  ...SessionListActionResultMarkerFieldsV1,
+  project: z.optional(QualifiedProjectKeyV1Schema),
+  projectFilterUnavailableCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+  queryVersion: z.optional(z.literal(SESSION_LIST_QUERY_RESULT_VERSION_V1)),
+  metadataUpgradeRequiredCount: z.optional(SessionListMetadataUpgradeRequiredCountSchema),
+  botFilterUnavailableCount: z.optional(SessionListBotFilterUnavailableCountSchema),
+  ...SessionListAttentionContinuationFieldsV1,
 })).check(z.superRefine((value, context) => {
   if (Object.hasOwn(value, 'view') || Object.hasOwn(value, 'projectionVersion')) {
     context.addIssue({ code: 'custom', message: 'A marked result must satisfy the awareness contract' });
