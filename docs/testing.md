@@ -1069,6 +1069,16 @@ Reclaimable file cache is excluded. Samples can miss spikes between observations
 A shared scope does not provide an attributable measurement. Sampled tree RSS
 remains diagnostic.
 
+The broker sample lists `stalledJobs` with PID, resource class, admitted age and
+requester command identity. On its one-minute observation, it uses the last
+30 minutes of attributable Linux job-scope CPU. Below 1% of one core is idle.
+When the class has successful samples, the job must also be older than twice
+the greatest retained duration. A job with missing CPU data needs a fresh full
+window of attributable observations. Every transition into the stalled list
+appends to the private broker root's `stalled-slot-cpu.jsonl`, even with no
+snapshot consumer. This report leaves the job running and its reservation held.
+The separate declaration comparison timeout retains its existing behavior.
+
 A new identity uses a median of related identities' typical working sets. Matching
 command entries with a containing project set come first, followed by the command
 family, the same project set, and the resource class. Each identity contributes

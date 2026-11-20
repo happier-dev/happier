@@ -21,6 +21,10 @@ export { brokerAddress } from './admission_socket.mjs';
 // this measured opportunity window, then accumulate releases for the old head.
 const HEAD_RESERVATION_DELAY_MS = 1_344_000;
 const RECENT_JUDGMENT_WINDOW_MS = 15 * 60 * 1000;
+const STALL_CPU_WINDOW_MS = 30 * 60 * 1000;
+const STALL_CPU_SAMPLE_MS = 60 * 1000;
+// CPU use below 1% of one core over a full window is treated as idle.
+const STALL_CPU_BUDGET_USEC = STALL_CPU_WINDOW_MS * 10;
 const GIT_TREE_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const COMMAND_DIGEST = /^[0-9a-f]{64}$/;
 
@@ -126,6 +130,23 @@ const IDENTITY_DURATION_CLASS = 'identity-history';
 // Systemic 20:31Z: class + component + script/entry + sorted projects, never argv.
 const identityKey = item => typeof item.entry === 'string' && item.entry && typeof item.component === 'string'
   ? JSON.stringify([item.resourceClass ?? item.className, item.component, item.entry, [...(item.projects ?? [])].sort()]) : null;
+
+const safeDiagnosticPath = value => /^[A-Za-z0-9_.@-][A-Za-z0-9_.@/-]*$/.test(value)
+  && !value.split('/').includes('..');
+function diagnosticRequester(component, entry) {
+  if (component === undefined) return null;
+  // An interpreter's identity can be an opaque inline program. Report only
+  // recognizable repository script paths and package script names.
+  const [program, argument, script, ...extra] = entry.split(' ');
+  let command = /^[A-Za-z0-9_.@-]+$/.test(program) ? program : null;
+  if (command && extra.length === 0 && argument === 'run' && /^[A-Za-z0-9_.:@-]+$/.test(script ?? '')) {
+    command = entry;
+  } else if (command && script === undefined && argument && (argument === '--test'
+    || (safeDiagnosticPath(argument) && (argument.includes('/') || /\.(?:[cm]?[jt]s|sh)$/.test(argument))))) {
+    command = entry;
+  }
+  return { component: safeDiagnosticPath(component) ? component : null, entry: command };
+}
 
 const socketGone = error => error.code === 'ECONNREFUSED' || error.code === 'ENOENT';
 const validDuration = value => (value.p99DurationMs === undefined && value.durationClass === undefined)
@@ -246,6 +267,7 @@ export function createAdmissionBroker({ root,
   const pendingConnections = new Set();
   const subscribers = new Map();
   let overrunWake;
+  let stallObservation;
   const watchers = new Map();
   const pendingResourceChanges = new Set();
   let resourceCatchUp;
@@ -618,6 +640,78 @@ export function createAdmissionBroker({ root,
     while (recentlyFinished[0]?.finishedAt < now - RECENT_JUDGMENT_WINDOW_MS) recentlyFinished.shift();
   }
 
+  function stallMonitored(slot) {
+    return (slot.admitted || slot.recovered) && Number.isFinite(slot.admittedAt)
+      && slot.peer && !slot.peer.destroyed && !slot.judgmentFinished;
+  }
+  function refreshStallObservation() {
+    if (closing || ![...slots.values()].some(stallMonitored)) {
+      clearInterval(stallObservation);
+      stallObservation = undefined;
+    } else if (!stallObservation) {
+      stallObservation = setInterval(sampleStallObservation, STALL_CPU_SAMPLE_MS);
+      stallObservation.unref();
+    }
+  }
+  function collectLearnedClassMaximums() {
+    const maximums = new Map();
+    for (const [key, durations] of recordedIdentityDurations()) {
+      if (!durations.length) continue;
+      let resourceClass;
+      try { resourceClass = JSON.parse(key)?.[0]; } catch { continue; }
+      if (!Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass)) continue;
+      maximums.set(resourceClass, Math.max(maximums.get(resourceClass) ?? 0, ...durations));
+    }
+    return maximums;
+  }
+  // Use the job's dedicated scope so completed children remain in the cumulative
+  // CPU counter. An unknown/reset counter cannot prove the job was idle.
+  function sampleStallObservation() {
+    const now = Date.now();
+    const maximums = collectLearnedClassMaximums();
+    for (const slot of slots.values()) {
+      if (!stallMonitored(slot)) continue;
+      const cpuUsec = readSlotCpuUsageUsec(slot.pid);
+      const observations = slot.stallCpuObservations ??= [];
+      const previous = observations.at(-1);
+      if (cpuUsec === null || (previous && (cpuUsec < previous.cpuUsec || now <= previous.at))) {
+        observations.length = 0;
+      }
+      const windowStart = now - STALL_CPU_WINDOW_MS;
+      while (observations[1]?.at <= windowStart) observations.shift();
+      const baseline = observations[0];
+      if (cpuUsec !== null) observations.push({ at: now, cpuUsec });
+      const [identityClass, component, entry] = slot.identityKey ? JSON.parse(slot.identityKey) : [];
+      const resourceClass = slot.resourceClass ?? identityClass ?? slot.className;
+      const className = Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass) ? resourceClass : 'unknown';
+      const learnedMaxMs = maximums.get(className) ?? null;
+      const ageMs = now - slot.admittedAt;
+      const windowCpuUsec = cpuUsec === null || !baseline || baseline.at > windowStart ? null : cpuUsec - baseline.cpuUsec;
+      if (windowCpuUsec === null || windowCpuUsec >= STALL_CPU_BUDGET_USEC
+        || (learnedMaxMs !== null && ageMs <= 2 * learnedMaxMs)) {
+        slot.idleDiagnostic = undefined;
+        continue;
+      }
+      const diagnostic = { slotId: slot.slotId, pid: slot.pid, className,
+        requester: diagnosticRequester(component, entry),
+        windowCpuUsec, learnedMaxMs };
+      if (!slot.idleDiagnostic) {
+        try {
+          appendFileSync(join(root, 'stalled-slot-cpu.jsonl'), JSON.stringify({
+            ...diagnostic, ageMs, observedAt: new Date(now).toISOString(),
+          }) + '\n', { mode: 0o600 });
+        } catch (error) { recordFailure(error); }
+      }
+      slot.idleDiagnostic = diagnostic;
+    }
+    publishAdmissionStatus();
+  }
+  function observedStatus() {
+    const now = Date.now();
+    return { ...status(), stalledJobs: [...slots.values()].filter(slot => slot.idleDiagnostic && stallMonitored(slot))
+      .map(slot => ({ ...slot.idleDiagnostic, ageMs: now - slot.admittedAt })) };
+  }
+
   function queueSnapshot() {
     const sampledAt = Date.now();
     pruneFinished(sampledAt);
@@ -649,10 +743,11 @@ export function createAdmissionBroker({ root,
     clearTimeout(overrunWake);
     overrunWake = undefined;
     if (closing || subscribers.size === 0) return;
-    const snapshot = status();
+    const snapshot = observedStatus();
     const identity = JSON.stringify({ activeCount: snapshot.activeCount,
       durationHistoryUnavailableCount: snapshot.durationHistoryUnavailableCount,
-      nextOverrunAt: snapshot.nextOverrunAt, overruns: snapshot.overruns.map(({ ageMs, ...slot }) => slot) });
+      nextOverrunAt: snapshot.nextOverrunAt, overruns: snapshot.overruns.map(({ ageMs, ...slot }) => slot),
+      stalledSlotIds: snapshot.stalledJobs.map(slot => slot.slotId) });
     for (const [socket, previous] of subscribers) {
       if (previous === identity) continue;
       subscribers.set(socket, identity);
@@ -832,6 +927,7 @@ export function createAdmissionBroker({ root,
   function releaseReservation(slot) {
     if (!slots.delete(slot.address)) return false;
     clearTimeout(slot.stallTimer);
+    refreshStallObservation();
     // Before the measured wait bound, releases remain reusable by backfills.
     // After it, include recovered slots too so sustained traffic cannot starve
     // the head. Evaluate on this release, never retroactively or on a new timer.
@@ -1128,6 +1224,7 @@ export function createAdmissionBroker({ root,
             pruneFinished(finishedAt);
             recentlyFinished.push({ ...(slot.judgment ?? queueJudgment()), finishedAt });
             slot.judgmentFinished = true;
+            refreshStallObservation();
           }
           if (metadata.status === 0 && !slot.stalled) {
             slot.succeeded = true;
@@ -1171,6 +1268,7 @@ export function createAdmissionBroker({ root,
         Object.assign(slot, { admittedAt: metadata.admittedAt, slotId: metadata.slotId, className: metadata.className,
           durationClass: metadata.durationClass, p99DurationMs: metadata.p99DurationMs });
         monitorDeclarationComparison(slot);
+        refreshStallObservation();
       });
     });
     peer.once('close', () => enqueue(() => release(slot)));
@@ -1217,7 +1315,7 @@ export function createAdmissionBroker({ root,
         const valid = identity && typeof identity.resourceClass === 'string' && typeof identity.component === 'string'
           && typeof identity.entry === 'string' && Number.isSafeInteger(identity.floorKiB) && identity.floorKiB > 0
           && Array.isArray(identity.projects) && identity.projects.every(project => typeof project === 'string');
-        const snapshot = status();
+        const snapshot = observedStatus();
         send(socket, { kind: 'sample', ...(request.includeQueue === true ? { queue: queueSnapshot() } : {}),
           ...(valid ? { identityFloorKiB: recordedIdentityFloorKiB({ resourceClass: identity.resourceClass,
           className: identity.resourceClass, component: identity.component, entry: identity.entry,
@@ -1244,6 +1342,7 @@ export function createAdmissionBroker({ root,
           item.slot.admitted = true;
           item.slot.admittedAt = item.slot.lastSampleAt = Date.now();
           monitorDeclarationComparison(item.slot);
+          refreshStallObservation();
           item.settled = true;
           removeWaiting(item);
           send(socket, { kind: 'admitted', slotId: item.slot.slotId, admittedAt: item.slot.admittedAt,
@@ -1437,6 +1536,7 @@ export function createAdmissionBroker({ root,
       closing = true;
       rootWatcher?.close();
       clearTimeout(overrunWake);
+      clearInterval(stallObservation);
       clearTimeout(resourceCatchUp);
       resourceCatchUp = undefined;
       for (const watcher of watchers.values()) watcher.close();

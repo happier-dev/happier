@@ -62,6 +62,59 @@ test('status flags each admitted slot once only after twice its recorded class p
     'each flagged slot is recorded in the sentinel ledger');
 });
 
+test('reports idle admitted jobs without flagging slow busy jobs or releasing slots', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const cpuUsec = new Map([[101, 0], [102, 0], [103, 0]]);
+  const { root } = await fixture(t, { readSlotCpuUsageUsec: pid => cpuUsec.get(pid) ?? null });
+  const minute = 60_000;
+  const history = JSON.stringify(['compilation', 'apps/cli', 'pnpm run typecheck:local', []]);
+  await writeFile(join(root, 'identity-durations.json'), JSON.stringify({ [history]: [2 * minute, 20 * minute] }));
+  const requester = { component: 'apps/ui', entry: 'pnpm run test' };
+  const load = slot => acquire(root, 1, t, { ...requester, ...slot }).then(waiter => waiter.admit());
+  const idle = await load({ pid: 101, entry: 'bash echo private-fixture-label' });
+  await load({ pid: 102 });
+  await load({ pid: 103, className: 'compilation', entry: 'pnpm run typecheck:local' });
+  await load({ pid: 104 });
+  const advance = mins => {
+    for (let i = 0; i < mins; i++) {
+      now += minute;
+      cpuUsec.set(102, cpuUsec.get(102) + 600_001);
+      t.mock.timers.tick(minute);
+    }
+  };
+
+  advance(31);
+  // No caller has requested a sample yet. The diagnostic still reaches disk.
+  const log = join(root, 'stalled-slot-cpu.jsonl');
+  const events = async () => (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual((await events()).map(row => row.pid), [101], 'the log is written before any snapshot request');
+  const first = await requestAdmissionSample(root);
+  assert.deepEqual(first.stalledJobs.map(({ pid, className, ageMs, requester }) =>
+    ({ pid, className, ageMs, requester })), [{ pid: 101, className: 'validation', ageMs: 31 * minute,
+      requester: { component: 'apps/ui', entry: 'bash' } }]);
+  assert.equal(first.activeCount, 4);
+
+  advance(9);
+  const learnedBoundary = await requestAdmissionSample(root);
+  assert.deepEqual(learnedBoundary.stalledJobs.map(row => row.pid), [101], 'exactly twice the learned maximum stays clear');
+  advance(1);
+  const rows = await events();
+  assert.deepEqual(rows.map(row => row.pid), [101, 103], 'log transitions are default-on and each idle episode logs once');
+  assert.equal(rows[0].requester.entry, 'bash');
+  assert.equal(rows[1].requester.entry, 'pnpm run typecheck:local');
+  const snapshot = await requestAdmissionSample(root);
+  assert.deepEqual(snapshot.stalledJobs.map(row => [row.pid, row.className]), [[101, 'validation'], [103, 'compilation']]);
+  assert.equal(snapshot.activeCount, 4);
+  assert.equal(snapshot.unreservedCpuCores, first.unreservedCpuCores);
+
+  cpuUsec.set(101, 60_000_000);
+  advance(1);
+  assert.deepEqual((await requestAdmissionSample(root)).stalledJobs.map(row => row.pid), [103]);
+  await idle.release();
+});
+
 test('declaration comparison aborts on observed CPU inactivity or twice its learned maximum', { ...linux, timeout: 12_000 }, async t => {
   for (const scenario of ['idle', 'learned-duration', 'progressing']) {
     await t.test(scenario, async t => {
@@ -909,10 +962,10 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readCpuPressure, readSlotWorkingSetKiB = () => null, readSlotCpuUsageUsec } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readCpuPressure, readSlotWorkingSetKiB = () => null, readSlotCpuUsageUsec, scratchParent = process.env.HAPPIER_ADMISSION_BROKER_TEST_TMP ?? '/tmp' } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
-  const root = await mkdtemp('/tmp/happier-broker-test-');
+  const root = await mkdtemp(join(scratchParent, 'happier-broker-test-'));
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
     readMemory, readProcesses });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
