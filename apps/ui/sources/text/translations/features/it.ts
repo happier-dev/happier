@@ -12376,7 +12376,7 @@ const pluginSettingsPresentationTranslations = { it: {
             setupSignIn: 'Accedi',
             setupChoose: 'Scegli',
             setupUseOnMachine: 'Usa su una macchina',
-            setupAccountFallback: 'Account',
+            setupAccountFallback: 'Account utente',
             setupRecipeFallback: 'Ricetta macchina',
             setupSkip: 'Salta',
             setupSkipped: 'Saltato',
