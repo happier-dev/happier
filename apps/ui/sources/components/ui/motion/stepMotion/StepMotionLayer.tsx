@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Easing, Platform, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Easing, Platform, View, type GestureResponderEvent, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 
@@ -21,6 +21,7 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     warmOnMount?: boolean;
     shareFocalWithParent?: boolean;
     style?: StyleProp<ViewStyle>;
+    onLayout?: (event: LayoutChangeEvent) => void;
 }>>;
 
 export const FIRST_RUN_WORKFLOW_LAYER = 'workflow';
@@ -140,6 +141,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             collapsable={false}
             style={[props.style, { opacity: surfaceOpacity }]}
             testID={props.testID}
+            onLayout={props.onLayout}
             onTouchStart={Platform.OS !== 'web' ? onTouchStart : undefined}
         >
             <MotionLayerContext.Provider value={scope}>

@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 
 import { WelcomeAtmosphere } from './WelcomeAtmosphere';
@@ -66,16 +67,34 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     const styles = stylesheet;
     const layout = useUnauthShellLayout(props.frameWidth);
     const compact = layout === 'compact';
+    const fieldHost = React.useRef<View | null>(null);
+    const { tap, onTouchEnd } = useGlyphFieldTap(fieldHost);
+    const [quietColumn, setQuietColumn] = React.useState<Readonly<{ x: number; width: number }> | null>(null);
+    const onColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { x, width } = event.nativeEvent.layout;
+        if (width <= 0) return;
+        setQuietColumn(current => current?.x === x && current.width === width ? current : { x, width });
+    }, []);
+    const presentation = props.workflowPresentation ?? 'padded';
+    const measureColumn = presentation !== 'fullBleed';
     return (
-        <View testID={props.testID ?? 'unauth-shell'} style={styles.root}>
-            <WelcomeAtmosphere state={props.isWelcomeStep ? 'welcome' : 'deep'} phone={compact} />
+        <View ref={fieldHost} collapsable={false} testID={props.testID ?? 'unauth-shell'} style={styles.root} onTouchEnd={onTouchEnd}>
+            <WelcomeAtmosphere
+                state={props.isWelcomeStep ? 'welcome' : 'deep'}
+                stepId={props.stepId}
+                phone={compact}
+                host={fieldHost}
+                nativeTap={tap}
+                quietColumn={measureColumn ? quietColumn : null}
+            />
             <WorkflowPanel
                 variant={compact ? 'mobile' : 'desktop'}
                 isWelcomeStep={props.isWelcomeStep}
                 showMobileWordmark={props.showMobileWordmark}
                 onBack={props.onBack}
                 transitionKey={props.stepId}
-                presentation={props.workflowPresentation ?? 'padded'}
+                presentation={presentation}
+                onColumnLayout={measureColumn ? onColumnLayout : undefined}
                 footerAccessory={props.footerAccessory}
             >
                 {/*

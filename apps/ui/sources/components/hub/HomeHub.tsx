@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useAtmosphereBackdrop } from '@/components/atmosphere/atmosphereBackdrop';
-import { Platform, useWindowDimensions, View, type GestureResponderEvent, type ScrollView } from 'react-native';
-import { measureInWindow } from '@/components/ui/popover/measure';
+import { Platform, useWindowDimensions, View, type ScrollView } from 'react-native';
+import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 
 import { HomeWhereLine } from '@/components/homes/journeys/label/HomeWhereLine';
 import { useReturningGreeting } from '@/components/onboarding/preAuth/useReturningGreeting';
@@ -502,16 +502,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const heroActive = atmosphere.source !== 'none';
     const backdrop = useAtmosphereBackdrop(atmosphere);
     const heroFrame = useHomeHeroFrame({ active: heroActive, focused, phone, backdrop });
-    const fieldTap = React.useRef<((x: number, y: number) => void) | null>(null);
     const fieldHost = heroFrame.paneRef;
-    const onFieldTap = React.useCallback((event: GestureResponderEvent) => {
-        const tap = fieldTap.current;
-        if (!tap) return;
-        const { pageX, pageY } = event.nativeEvent;
-        void measureInWindow(fieldHost.current).then(box => {
-            if (box && fieldTap.current === tap) tap(pageX - box.x, pageY - box.y);
-        });
-    }, [fieldHost]);
+    const { tap: fieldTap, onTouchEnd: onFieldTap } = useGlyphFieldTap(fieldHost);
     const sending = useAtmosphereSending() && atmosphere.moments.send !== false;
     const dissolving = useAtmosphereSendDissolving() && atmosphere.moments.send !== false;
     const pictureShown = useAtmospherePictureShown();
@@ -683,13 +675,13 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     return framed(
         <WidgetMachineAddRecoveryContext.Provider value={firstRunLeadId !== null}>
             <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure}
-                onTouchEnd={Platform.OS === 'web' ? undefined : onFieldTap} collapsable={false}>
+                onTouchEnd={onFieldTap} collapsable={false}>
                 <ItemList
                     ref={homeListRef}
                     innerViewRef={contentRef as React.RefObject<View>}
                     testID="home-hub"
                     pageColumn="dashboard"
-                    onScroll={event => { tracker.onScroll(event); if (heroActive) visibleWindow.onScroll(event); heroFrame.onScroll(event); }}
+                    onScroll={event => { tracker.onScroll(event); visibleWindow.onScroll(event); heroFrame.onScroll(event); }}
                     onLayout={event => { tracker.onLayout(event); visibleWindow.onLayout(event); homeDrop.onLayout(event); }}
                     onContentSizeChange={tracker.onContentSizeChange}
                     scrollEventThrottle={16}

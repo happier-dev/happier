@@ -5,7 +5,9 @@ import {
   type GlyphLayer,
 } from '@happier-dev/brand/glyph-scene';
 import {
+  interpolateWelcomePlanetPose,
   welcomePlanetPose,
+  type WelcomePlanetGeometry,
   type WelcomePlanetState,
 } from '@happier-dev/brand/planet-placement';
 import * as React from 'react';
@@ -15,29 +17,42 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
   GlyphSurface,
   type GlyphMotion,
+  type GlyphSurfaceReadiness,
 } from '@/components/atmosphere/glyph/GlyphSurface';
 import { useHomeGlyphField } from '@/components/atmosphere/glyph/useHomeGlyphField';
+import { easeInOutCubic } from '@/components/ui/motion/stepMotion/stepMotionChoreography';
+import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { FirstOpenWelcomeEpoch } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
+import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
+
+type WelcomePoseMove = Readonly<{ from: WelcomePlanetGeometry; startS: number }>;
+
+function sampleWelcomePose(move: WelcomePoseMove, target: WelcomePlanetGeometry, seconds: number) {
+  const progress = easeInOutCubic((seconds - move.startS) / stepMotionTiming.forwardS);
+  return interpolateWelcomePlanetPose(move.from, target, progress);
+}
 
 /**
  * Direction A's background (owner 2026-11-19): the one glyph planet in the step's welcome pose (`welcomePlanetPose`)
  * under the website's living dot field, behind the centred column on every signed-out step. Both draw through plan
- * 01's renderer; the field calms on its own clock and the planet holds still, so a settled welcome schedules no frames.
- * Hidden or reduced motion keeps the still field.
+ * 01's renderer and share the field's calm clock. The step pose moves with that clock and holds when settled.
  */
 export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
   props: Readonly<{
     state: WelcomePlanetState;
+    stepId: string;
     phone: boolean;
+    host: React.RefObject<View | null>;
+    nativeTap: React.RefObject<((x: number, y: number) => void) | null>;
+    quietColumn: Readonly<{ x: number; width: number }> | null;
   }>,
 ) {
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
   const viewed = useHostActivelyViewed();
   const arrivalEpoch = React.useContext(FirstOpenWelcomeEpoch);
-  const host = React.useRef<View | null>(null);
+  const openingPaints = React.useContext(FirstOpenOwnsWelcomePaint);
   const [pane, setPane] = React.useState<Readonly<{
     width: number;
     height: number;
@@ -57,16 +72,50 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
         : null,
     [pane, props.phone, props.state],
   );
-  const field = useHomeGlyphField({
-    mode: !pane ? 'off' : reducedMotion || (!viewed && arrivalEpoch === null) ? 'still' : 'animated',
+  const quiet = React.useMemo(() => pane && props.quietColumn ? [{
+    ...props.quietColumn,
+    y: 0,
+    height: pane.height,
+    ...(props.phone && { level: 0.55 }),
+  }] : undefined, [pane, props.phone, props.quietColumn]);
+  const mode = !pane || openingPaints ? 'off' : reducedMotion || (!viewed && arrivalEpoch === null) ? 'still' : 'animated';
+  const { layer: fieldLayer, epoch, readDurationS, settle, stir } = useHomeGlyphField({
+    mode,
     arriving: arrivalEpoch !== null,
     arrivalEpoch: arrivalEpoch ?? undefined,
-    host,
+    host: props.host,
+    nativeTap: props.nativeTap,
+    quiet,
     // The website's quiet stipple: the Quiet planet's field strength.
     strength: homeFieldStrength('quiet', { phone: props.phone }),
     planet: geometry ?? undefined,
   });
-  const { layer: fieldLayer, epoch, readDurationS, settle } = field;
+  const lastStep = React.useRef<Readonly<{
+    geometry: typeof geometry;
+    stepId: string;
+    state: WelcomePlanetState;
+    pane: typeof pane;
+    phone: boolean;
+  }> | null>(null);
+  const poseMove = React.useRef<WelcomePoseMove | null>(null);
+  React.useLayoutEffect(() => {
+    const previous = lastStep.current;
+    lastStep.current = { geometry, stepId: props.stepId, state: props.state, pane, phone: props.phone };
+    const samePane = previous !== null && previous.pane === pane && previous.phone === props.phone;
+    if (!samePane || mode !== 'animated' || arrivalEpoch !== null) poseMove.current = null;
+    if (!geometry || !previous?.geometry || mode !== 'animated' || arrivalEpoch !== null) return;
+
+    const poseChanged = previous.state !== props.state;
+    if (previous.stepId === props.stepId && !poseChanged) return;
+    const startS = stir();
+    if (startS === null || !poseChanged || !samePane) return;
+    const from = poseMove.current ? sampleWelcomePose(poseMove.current, previous.geometry, startS) : previous.geometry;
+    poseMove.current = { from, startS };
+  }, [arrivalEpoch, geometry, mode, pane, props.phone, props.state, props.stepId, stir]);
+  const settlePoseAndField = React.useCallback(() => {
+    poseMove.current = null;
+    settle();
+  }, [settle]);
   const scene = React.useMemo(() => {
     if (!geometry) return [];
     const planet = planetGlyphLayer({
@@ -75,36 +124,36 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
       digits: true,
       soft: props.phone,
     });
-    return (seconds: number) => {
+    return (seconds: number, readiness?: GlyphSurfaceReadiness) => {
+      const pose = poseMove.current && readiness !== 'still' ? sampleWelcomePose(poseMove.current, geometry, seconds) : geometry;
       const layers: GlyphLayer[] = [];
-      const dots = fieldLayer(seconds);
+      const dots = fieldLayer(seconds, pose);
       if (dots) layers.push(dots);
-      layers.push(planet);
+      layers.push(pose === geometry ? planet : planetGlyphLayer({ ...planet, geometry: pose }));
       return layers;
     };
   }, [fieldLayer, geometry, props.phone]);
   const motion = React.useMemo<GlyphMotion>(
     () =>
-      epoch === null
+      epoch === null || mode !== 'animated'
         ? null
         : {
             kind: 'field-calm',
             epoch,
             durationS: glyphFieldDurationS,
             readDurationS,
-            onSettled: settle,
+            onSettled: settlePoseAndField,
           },
-    [epoch, readDurationS, settle],
+    [epoch, mode, readDurationS, settlePoseAndField],
   );
   return (
     <View
-      ref={host}
       testID="welcome-atmosphere"
-      pointerEvents="box-none"
+      pointerEvents="none"
       style={StyleSheet.absoluteFill}
       onLayout={onLayout}
     >
-      {pane && geometry ? (
+      {!openingPaints && pane && geometry ? (
         <GlyphSurface
           width={pane.width}
           height={pane.height}

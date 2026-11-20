@@ -18,14 +18,14 @@ export function resolveMoveGrammar(input: Readonly<{
 }
 
 const segment = (p: number, start: number, end: number) => Math.min(1, Math.max(0, (p - start) / (end - start)));
-const cubic = (p: number) => p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2;
+export const easeInOutCubic = (p: number) => p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2;
 const smooth = (p: number) => p * p * (3 - 2 * p);
 
 function climbPace(p: number) {
     const knee = 1.5 / (3.6 - 3.6 * stepMotionTiming.homeClimbStart);
     return p < knee
         ? 0.62 * (1 - (1 - p / knee) ** 3)
-        : 0.62 + 0.38 * cubic(segment(p, knee, 1));
+        : 0.62 + 0.38 * easeInOutCubic(segment(p, knee, 1));
 }
 
 const homeClimbAtClear = climbPace(segment(stepMotionTiming.homeClear, stepMotionTiming.homeClimbStart, 1));
@@ -56,7 +56,7 @@ export function visualAt(grammar: Exclude<StepGrammar, 'fade'>, p: number) {
         return { leave: 0, arrive: arriveFront, pressed: 0, focal: 0, leaveFront: 1, arriveFront };
     }
     if (grammar === 'home') {
-        const leaveFront = cubic(segment(p, 0, stepMotionTiming.homeClear));
+        const leaveFront = easeInOutCubic(segment(p, 0, stepMotionTiming.homeClear));
         const pace = climbPace(segment(p, stepMotionTiming.homeClimbStart, 1));
         // Home's early climb travels below the window while the outgoing digits clear.
         const arriveFront = segment(pace, homeClimbAtClear, 1);
@@ -69,8 +69,8 @@ export function visualAt(grammar: Exclude<StepGrammar, 'fade'>, p: number) {
             arriveFront,
         };
     }
-    const leaveFront = cubic(segment(p, 0, 0.55));
-    const arriveFront = cubic(segment(p, 0.2, 1));
+    const leaveFront = easeInOutCubic(segment(p, 0, 0.55));
+    const arriveFront = easeInOutCubic(segment(p, 0.2, 1));
     return {
         leave: 1 - leaveFront,
         arrive: arriveFront,

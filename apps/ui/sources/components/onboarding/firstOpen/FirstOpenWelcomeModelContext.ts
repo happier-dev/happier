@@ -8,6 +8,9 @@ export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryV
 /** Shared phase for the real Welcome and the replica during the native hand-off. */
 export const FirstOpenWelcomeEpoch = createContext<number | null>(null);
 
+/** The opening surface supplies the Welcome backing while it paints this window. */
+export const FirstOpenOwnsWelcomePaint = createContext(false);
+
 export function usePublishFirstOpenWelcomeModel(model: WelcomeEntryViewModel | null): void {
     const publish = useContext(FirstOpenWelcomeModelContext);
     const previous = useRef<{ publish: typeof publish; serialized: string } | null>(null);

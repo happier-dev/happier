@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { glyphFieldDurationS, glyphFrame } from '@happier-dev/brand/glyph-scene';
 import { Text, TextInput } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,8 @@ import { standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { GlyphSurface, type GlyphSurfaceProps } from '@/components/atmosphere/glyph/GlyphSurface';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 import type { UnauthShellLayout } from './useUnauthShellLayout';
@@ -23,6 +26,10 @@ vi.mock('react-native', async () => {
         useWindowDimensions: () => ({ width: deviceState.width, height: 800, scale: 1, fontScale: 1 }),
     });
 });
+
+// Vitest uses the source fallback without Metro's web-extension precedence.
+vi.mock('@/components/atmosphere/glyph/GlyphSurface', async () =>
+    await vi.importActual('@/components/atmosphere/glyph/GlyphSurface.web'));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -163,6 +170,97 @@ describe('UnauthenticatedSplitShell', () => {
         expect(screen.findAllHostsByTestId('unauth-shell-workflow-pane')).toHaveLength(1);
         expect(screen.findAllHostsByTestId('welcome-mobile-wordmark')).toHaveLength(1);
     });
+
+    it('softens the real field beneath the measured workflow column', async () => {
+        setLayoutFixture('desktop');
+        const screen = await renderScreen(
+            <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
+                <FakeBody label="Welcome body" />
+            </UnauthenticatedSplitShell>,
+        );
+        try {
+            const view = { width: 1000, height: 800 };
+            await act(async () => {
+                screen.findHostByTestId('welcome-atmosphere')?.props.onLayout({ nativeEvent: { layout: view } });
+            });
+            const sampleMask = () => {
+                const { scene } = screen.findByType(GlyphSurface).props as GlyphSurfaceProps;
+                const layers = typeof scene === 'function' ? scene(0) : scene;
+                return glyphFrame({ view: { w: view.width, h: view.height }, dpr: 1, theme: 'dark', layers }).field!.mask;
+            };
+            const before = sampleMask();
+            await act(async () => {
+                screen.findHostByTestId('unauth-shell-step-transition')?.props.onLayout?.({
+                    nativeEvent: { layout: { x: 250, y: 200, width: 500, height: 230 } },
+                });
+            });
+            const after = sampleMask();
+            const summedAlpha = (mask: typeof before, firstCol: number, lastCol: number) => {
+                let alpha = 0;
+                for (let row = 10; row < 38; row++) {
+                    for (let col = firstCol; col < lastCol; col++) alpha += mask.rgba[(row * mask.width + col) * 4 + 3]!;
+                }
+                return alpha;
+            };
+            expect(summedAlpha(before, 25, 55)).toBeGreaterThan(0);
+            expect(summedAlpha(after, 25, 55)).toBeLessThan(summedAlpha(before, 25, 55) / 2);
+            expect(summedAlpha(after, 0, 7)).toBe(summedAlpha(before, 0, 7));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('eases a step pose and renews the same field calm window even when the next pose is identical', async () => {
+        setLayoutFixture('desktop');
+        setReducedMotionPreferenceOverride(false);
+        const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+        const entry = (stepId: string, isWelcomeStep = false) => (
+            <UnauthenticatedSplitShell stepId={stepId} isWelcomeStep={isWelcomeStep}>
+                <FakeBody label={stepId} />
+            </UnauthenticatedSplitShell>
+        );
+        const screen = await renderScreen(entry('welcome', true));
+        try {
+            const view = { width: 1000, height: 800 };
+            await act(async () => {
+                screen.findHostByTestId('welcome-atmosphere')?.props.onLayout({ nativeEvent: { layout: view } });
+            });
+            const surface = () => screen.findByType(GlyphSurface).props as GlyphSurfaceProps;
+            const centreY = (seconds: number) => {
+                const { scene } = surface();
+                const layers = typeof scene === 'function' ? scene(seconds) : scene;
+                return glyphFrame({ view: { w: view.width, h: view.height }, dpr: 1, theme: 'dark', layers }).body!.disc.cy;
+            };
+            const welcomeY = centreY(0);
+            expect(surface().motion).toBeNull();
+            await screen.update(entry('approve'));
+            const first = surface().motion;
+            expect(first?.kind).toBe('field-calm');
+            expect(centreY(0)).toBe(welcomeY);
+            expect(centreY(0.23)).toBeGreaterThan(welcomeY);
+            expect(centreY(0.23)).toBeLessThan(welcomeY + (centreY(1) - welcomeY) / 4);
+            expect(centreY(0.46)).toBeGreaterThan(welcomeY);
+            expect(centreY(0.46)).toBeLessThan(centreY(1));
+
+            clock.mockReturnValue(2200);
+            const approveY = centreY(1.2);
+            await screen.update(entry('restore'));
+            const second = surface().motion;
+            expect(second).toMatchObject({ kind: 'field-calm', epoch: 1000 });
+            expect(second?.kind === 'field-calm' && second.readDurationS?.()).toBeCloseTo(1.2 + glyphFieldDurationS);
+            expect(centreY(1.2)).toBe(approveY);
+
+            await act(async () => setReducedMotionPreferenceOverride(true));
+            await screen.update(entry('welcome', true));
+            expect(surface().motion).toBeNull();
+            expect(centreY(0)).toBe(welcomeY);
+        } finally {
+            await screen.unmount();
+            clock.mockRestore();
+            setReducedMotionPreferenceOverride(null);
+        }
+    });
+
     it('keeps mobile workflow content inside native safe areas and stretches transitioned content', async () => {
         setLayoutFixture('compact');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };

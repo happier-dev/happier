@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, type ViewStyle } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -75,6 +75,7 @@ export type WorkflowPanelProps = Readonly<{
     onBack?: () => void;
     transitionKey: string;
     presentation?: WorkflowPanelPresentation;
+    onColumnLayout?: (event: LayoutChangeEvent) => void;
     /**
      * One trailing control at the pane's bottom right (the signed-out Updates entry): the end of
      * the welcome help row, and a row of its own under every later step, so it never floats over
@@ -246,7 +247,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         <>
                             {/* As on a computer: the column stands above the planet, two parts of the free height above it. */}
                             <View style={styles.welcomeLead} />
-                            <View>
+                            <View onLayout={props.onColumnLayout}>
                                 <StepMotionLayer
                                     layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                     active={focused}
@@ -278,6 +279,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 testID="unauth-shell-step-transition"
                                 stepKey={props.transitionKey}
                                 compact={isMobile}
+                                onLayout={props.onColumnLayout}
                                 style={[STEP_TRANSITION_NATURAL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                             >
                                 {props.children}
@@ -301,6 +303,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             testID="unauth-shell-step-transition"
                             stepKey={props.transitionKey}
                             compact={isMobile}
+                            onLayout={props.onColumnLayout}
                             style={isMobile ? STEP_TRANSITION_FILL_STYLE : [STEP_TRANSITION_FILL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                         >
                             {props.children}
