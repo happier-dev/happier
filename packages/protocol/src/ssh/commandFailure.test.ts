@@ -20,6 +20,17 @@ describe('released guest auth stderr', () => {
 });
 
 describe('guest enrollment diagnostics at Action settlement', () => {
+  it('retains the unavailable guest payload code in the managed operation failure', () => {
+    const error = Object.assign(new Error('The local CLI payload has no executable for linux-x64.'), {
+      name: 'SystemTaskExecutionError', code: 'guest_payload_missing',
+    });
+    const failure = normalizeActionExecutorThrownError(error, 'machines.managed.acquire');
+    expect(ActionOperationFailureV1Schema.parse(failure)).toMatchObject({
+      errorCode: 'guest_payload_missing',
+      failureCause: { phase: 'machines.managed.acquire', errorCode: 'guest_payload_missing' },
+    });
+  });
+
   it.each([
     { suffix: 'category http_error; HTTP 503; attemptedCarrier https; carrierReason unavailable', valid: true },
     { suffix: 'category tls_error; attemptedCarrier https; carrierReason unavailable', valid: true },
@@ -30,8 +41,14 @@ describe('guest enrollment diagnostics at Action settlement', () => {
   ])('retains only closed guest facts ($suffix)', ({ suffix, valid }) => {
     const message = `Remote Home enrollment failed during auth request (exit 1; code AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE; ${suffix}).`;
     const failure = normalizeActionExecutorThrownError(Object.assign(new Error(message), { code: 'remote_command_failed' }));
-    expect(failure).toMatchObject({ errorCode: 'remote_command_failed', error: valid ? message : 'Remote command failed.' });
-    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
-    expect(JSON.stringify(failure)).not.toContain('private_token');
+    expect(failure).toMatchObject({
+      errorCode: 'remote_command_failed',
+      error: valid ? message : 'Remote command failed.',
+      failureCause: { errorCode: 'remote_command_failed' },
+    });
+    const json = JSON.stringify(failure);
+    const wire: unknown = JSON.parse(json);
+    expect(ActionOperationFailureV1Schema.parse(wire)).toEqual(wire);
+    expect(json).not.toContain('private_token');
   });
 });

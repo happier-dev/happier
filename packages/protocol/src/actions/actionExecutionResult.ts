@@ -417,12 +417,12 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
       const parsedClass = ActionErrorClassV1Schema.safeParse(name);
       if (parsedClass.success) errorClass = parsedClass.data;
       const code = 'code' in error ? error.code : 'rpcErrorCode' in error ? error.rpcErrorCode : undefined;
-      // Only known platform/database/Session codes; arbitrary fields may be private content.
+      // Only known public codes; arbitrary fields may be private content.
       if (typeof code === 'string' && (/^P\d{4}$/u.test(code) || [
         'EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'EIO', 'ENOSPC', 'EMFILE', 'ENFILE', 'EBUSY', 'EINVAL',
         'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN',
         'UND_ERR_INVALID_ARG',
-        'plugin_exec_system_tool_unavailable',
+        'plugin_exec_system_tool_unavailable', 'guest_payload_missing', 'remote_command_failed',
         'service_unavailable',
         'SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_IOERR', 'SQLITE_FULL', 'SQLITE_CONSTRAINT', 'SQLITE_ERROR',
         'SQLITE_CANTOPEN', 'SQLITE_CORRUPT',
