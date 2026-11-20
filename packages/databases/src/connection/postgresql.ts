@@ -114,7 +114,8 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         if (operationSignal?.aborted) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
         if (closed || terminalError) return { ok: false, status: 'failed', code: 'database_connection_unavailable',
             ...(terminalError ? { cause: postgresqlFailureCause(terminalError) } : {}), reason: 'Reopen the database connection' };
-        const write = input.operation === 'edits.apply'
+        const signalsBackend = input.operation === 'activity.cancel';
+        const write = input.operation === 'edits.apply' || input.operation === 'stats.enable'
             || (input.operation === 'statement.run' && input.mode === 'write')
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
         let transaction = false;
@@ -131,6 +132,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         };
         operationSignal?.addEventListener('abort', onAbort, { once: true });
         try {
+            if (signalsBackend) return await executePostgresqlOperation(input, query);
             await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
             transaction = true;
             const result = await executePostgresqlOperation(input, query, executionOptions);
@@ -148,7 +150,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                 try { await query({ text: 'ROLLBACK', values: [] }); }
                 catch { await close().catch(() => {}); }
             }
-            if (committing && (closed || operationSignal?.aborted || postgresqlFailureCause(error).source === 'transport')) return { ok: false, status: 'outcome_unknown', code: 'database_outcome_unknown', cause: postgresqlFailureCause(error) };
+            if ((committing || signalsBackend) && (closed || operationSignal?.aborted || postgresqlFailureCause(error).source === 'transport')) return { ok: false, status: 'outcome_unknown', code: 'database_outcome_unknown', cause: postgresqlFailureCause(error) };
             if (operationSignal?.aborted || closed) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };

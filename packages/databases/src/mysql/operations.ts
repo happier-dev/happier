@@ -371,6 +371,8 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };
         }
         case 'cell.read': return readCell(query, input);
+        case 'activity.cancel':
+        case 'stats.enable': return unavailable('unsupported_engine');
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
             const plan = compileMysqlStatsV1(input.request);

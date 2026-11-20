@@ -46,7 +46,7 @@ const count = z.string().check(z.regex(/^\d+$/u));
 
 export const DATABASE_OPERATION_NAMES_V1 = [
     'describe', 'schemas.list', 'relations.list', 'relation.structure', 'rows.read',
-    'cell.read', 'statement.run', 'statement.explain', 'edits.apply', 'stats.read',
+    'cell.read', 'statement.run', 'statement.explain', 'edits.apply', 'stats.read', 'activity.cancel', 'stats.enable',
 ] as const;
 export const DatabaseOperationNameV1Schema = z.enum(DATABASE_OPERATION_NAMES_V1);
 export type DatabaseOperationNameV1 = z.infer<typeof DatabaseOperationNameV1Schema>;
@@ -98,11 +98,17 @@ export const DatabaseEditsApplyInputV1Schema = z.strictObject({
     changes: z.array(DatabaseEditV1Schema).check(z.minLength(1)),
 });
 export type DatabaseEditsApplyInputV1 = z.infer<typeof DatabaseEditsApplyInputV1Schema>;
+export const DatabaseActivityCancelInputV1Schema = z.strictObject({
+    operation: z.literal('activity.cancel'), ...operationContext, activityKey: name, queryStartedAt: name,
+});
+export const DatabaseStatsEnableInputV1Schema = z.strictObject({
+    operation: z.literal('stats.enable'), ...operationContext,
+});
 export const DatabaseOperationInputV1Schema = z.union([
     DatabaseDescribeInputV1Schema, DatabaseSchemasListInputV1Schema, DatabaseRelationsListInputV1Schema,
     DatabaseRelationStructureInputV1Schema, DatabaseRowsReadInputV1Schema, DatabaseCellReadInputV1Schema,
     DatabaseStatementRunInputV1Schema, DatabaseStatementExplainInputV1Schema, DatabaseEditsApplyInputV1Schema,
-    DatabaseStatsOperationInputV1Schema,
+    DatabaseStatsOperationInputV1Schema, DatabaseActivityCancelInputV1Schema, DatabaseStatsEnableInputV1Schema,
 ]);
 export type DatabaseOperationInputV1 = z.infer<typeof DatabaseOperationInputV1Schema>;
 
@@ -214,5 +220,7 @@ export const DatabaseOperationResultV1Schema = z.union([
     z.strictObject({ ok: z.literal(true), operation: z.literal('statement.explain'), format: z.enum(['text', 'json']), plan: z.union([z.string(), z.json()]), completeness: DatabaseCompletenessV1Schema }),
     z.strictObject({ ok: z.literal(true), operation: z.literal('edits.apply'), status: z.literal('committed'), inserted: count, updated: count, deleted: count }),
     z.strictObject({ ok: z.literal(true), operation: z.literal('stats.read'), observation: DatabaseStatsObservationV1Schema }),
+    z.strictObject({ ok: z.literal(true), operation: z.literal('activity.cancel'), status: z.enum(['signal_sent', 'activity_ended', 'signal_failed']) }),
+    z.strictObject({ ok: z.literal(true), operation: z.literal('stats.enable'), status: z.enum(['enabled', 'restart_required']) }),
 ]);
 export type DatabaseOperationResultV1 = z.infer<typeof DatabaseOperationResultV1Schema>;

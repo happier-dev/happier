@@ -1745,6 +1745,7 @@
 | `./database` | `DatabaseAccessSummaryV1` | type | any |
 | `./database` | `DatabaseAccessSummaryV1Schema` | value | any |
 | `./database` | `DatabaseActionIdV1` | type | any |
+| `./database` | `DatabaseActivityCancelInputV1Schema` | value | any |
 | `./database` | `DatabaseAgentAccessV1` | type | any |
 | `./database` | `DatabaseAgentAccessV1Schema` | value | any |
 | `./database` | `DatabaseAgentLevelV1` | type | any |
@@ -1920,6 +1921,7 @@
 | `./database` | `DatabaseStatsCounterComparisonV1` | type | any |
 | `./database` | `DatabaseStatsCounterSampleV1` | type | any |
 | `./database` | `DatabaseStatsCounterSampleV1Schema` | value | any |
+| `./database` | `DatabaseStatsEnableInputV1Schema` | value | any |
 | `./database` | `DatabaseStatsGroupV1` | type | any |
 | `./database` | `DatabaseStatsIntervalBasisV1` | type | any |
 | `./database` | `DatabaseStatsObservationV1` | type | any |

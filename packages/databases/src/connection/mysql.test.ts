@@ -98,5 +98,9 @@ it('advertises implemented builtin statistics while execution owns group availab
     for (const engine of ['postgresql', 'mysql', 'sqlite'] as const) {
         expect(builtinDatabaseCapabilities(engine).find(capability => capability.operation === 'stats.read'))
             .toEqual({ operation: 'stats.read', available: true });
+        const setupAndCancel = builtinDatabaseCapabilities(engine)
+            .filter(capability => capability.available && (capability.operation === 'stats.enable' || capability.operation === 'activity.cancel'))
+            .map(capability => capability.operation);
+        expect(setupAndCancel).toEqual(engine === 'postgresql' ? ['activity.cancel', 'stats.enable'] : []);
     }
 });

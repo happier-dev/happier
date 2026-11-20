@@ -87,7 +87,8 @@ export function InsightsRailList(
   );
   const { stats, unavailable, views } = statements;
   if (unavailable)
-    return <InsightsSetup observation={unavailable} size="pane" />;
+    return <InsightsSetup observation={unavailable} size="pane"
+      descriptor={instance.target(props.targetKey)} onRetry={stats.refresh} />;
   if (stats.status === 'loading' && views.length === 0)
     return <LoadingState layout="line" rows={6} rowShape="compact" />;
   if (stats.status === 'unavailable') {
@@ -141,7 +142,7 @@ export function InsightsRailList(
         <IconButton
           accessibilityLabel={translate('plugins.database.refresh', 'Refresh')}
           icon={<Icon name="refresh" />}
-          onPress={() => instance.refresh(props.targetKey)}
+          onPress={stats.refresh}
         />
       </Row>
     </Stack>
@@ -213,7 +214,7 @@ function StatementDetailsTab(props: Readonly<{ context: RenderContext; targetKey
     );
   }, [observation, change?.key, statementKey]); // eslint-disable-line react-hooks/exhaustive-deps
   if (observation?.status === 'unavailable')
-    return <InsightsSetup observation={observation} size="details" />;
+    return <InsightsSetup observation={observation} size="details" descriptor={descriptor} onRetry={stats.refresh} />;
   if (stats.status === 'loading')
     return <LoadingState layout="line" rows={4} />;
   if (!view) {

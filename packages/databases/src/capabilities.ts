@@ -1,7 +1,6 @@
 import type { DatabaseBuiltinEngineIdV1, DatabaseCapabilityV1 } from '@happier-dev/plugin-sdk/database';
 
-// The current built-in adapters implement the same operation family. These facts
-// describe execution support; engine roles and statement forms settle on execution.
+// Engine roles and statement forms settle on execution.
 const builtinExecutionCapabilities: readonly DatabaseCapabilityV1[] = [
     { operation: 'schemas.list', available: true },
     { operation: 'relations.list', available: true },
@@ -14,7 +13,11 @@ const builtinExecutionCapabilities: readonly DatabaseCapabilityV1[] = [
     { operation: 'stats.read', available: true },
 ];
 
-export const postgresqlCapabilities = builtinExecutionCapabilities;
+export const postgresqlCapabilities: readonly DatabaseCapabilityV1[] = [
+    ...builtinExecutionCapabilities,
+    { operation: 'activity.cancel', available: true },
+    { operation: 'stats.enable', available: true },
+];
 export const mysqlCapabilities = builtinExecutionCapabilities;
 export const sqliteCapabilities = builtinExecutionCapabilities;
 

@@ -101,7 +101,11 @@ export function createHostWorkbenchClient(
       }
     }
     const unsubscribe = selected.subscribe(changed, true);
-    const value = { ready, subscriptionId: () => subscriptionId, dispose() { unsubscribe(); store.dispose(); } };
+    const value = { ready, subscriptionId: () => subscriptionId, dispose() {
+      rejectReady(new DOMException('The database connection demand was released', 'AbortError'));
+      unsubscribe();
+      store.dispose();
+    } };
     demands.set(targetKey, value);
     return value;
   }
@@ -111,6 +115,12 @@ export function createHostWorkbenchClient(
   }
   return {
     dispose,
+    releaseReadDemand(target) {
+      const targetKey = workbenchTargetKey(target);
+      const held = demands.get(targetKey);
+      demands.delete(targetKey);
+      held?.dispose();
+    },
     async describe(target) {
       return (await demand(target).ready).descriptor;
     },

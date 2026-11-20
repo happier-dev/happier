@@ -1,12 +1,20 @@
 import * as React from 'react';
-import type { DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { isPluginActionConfirmationDeclined } from '@happier-dev/plugin-ui/hostApi';
 import {
+  Action,
+  Button,
   CodeBlock,
+  Row,
   Stack,
   SurfaceState,
+  Text,
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
+import { databaseActionSettlement } from '../../actionSettlement.js';
 
 type Unavailable = Extract<
   DatabaseStatsObservationV1,
@@ -66,19 +74,59 @@ function describeReason(
   }
 }
 
-/**
- * P4's one diagnosed setup state, the same on the page and in the rail (D24 C). The producer's remediation is the
- * setting to copy. Turn on (database.stats.enable) and Ask an agent (R7 handoff) join here once their producers are
- * registered; until then nothing is drawn that cannot succeed.
- */
+function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTargetV1; onRetry?: (() => void) | undefined }>) {
+  const t = usePluginTranslation();
+  const input = projectNativeJsonValueForTransport({ target, operation: 'stats.enable' });
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; pending?: boolean }> | null>(null);
+  return <>
+    <Action.Control
+      action={databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1)}
+      title={t('plugins.database.insights.setup.enable', 'Enable statistics')}
+      disabled={notice?.pending === true}
+      reviewedInput={input}
+      controller={{
+        prepare: async () => ({ input }),
+        onSettled(execution) {
+          const settled = databaseActionSettlement(execution, 'stats.enable');
+          if (isPluginActionConfirmationDeclined(settled)) return;
+          if (settled.status === 'pending') {
+            setNotice({ text: t('plugins.database.insights.setup.pending', 'Waiting for approval.'), pending: true });
+          } else if (settled.status === 'success' && settled.result.ok && settled.result.operation === 'stats.enable') {
+            if (settled.result.status === 'enabled') {
+              setNotice(null);
+              onRetry?.();
+            } else {
+              setNotice({ text: t('plugins.database.insights.setup.restartRequired',
+                'Add pg_stat_statements to shared_preload_libraries and restart PostgreSQL before retrying.') });
+            }
+          } else {
+            setNotice({ text: 'message' in settled ? settled.message
+              : t('plugins.database.insights.setup.enableFailed', 'Statistics could not be enabled.') });
+          }
+        },
+      }}
+    />
+    {notice ? <Text tone="secondary" value={notice.text} /> : null}
+  </>;
+}
+
+/** One diagnosed setup state for the page and rail (D24 C). */
 export function InsightsSetup(
   props: Readonly<{
     observation: Unavailable;
     size?: 'pane' | 'details' | 'page' | 'phone';
+    descriptor?: DatabaseDescriptorV1;
+    onRetry?: () => void;
   }>,
 ) {
   const translate = usePluginTranslation();
   const setup = isStatsSetupReason(props.observation.reason);
+  const descriptor = props.descriptor;
+  const canEnable = (descriptor?.target.kind === 'deployment_service' || descriptor?.target.kind === 'managed_deployment')
+    && props.observation.reason === 'extension_missing'
+    && descriptor.access?.canWrite === true
+    && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
+  const remediation = props.observation.remediation;
   return (
     <SurfaceState
       kind={setup ? 'empty' : 'unavailable'}
@@ -95,12 +143,12 @@ export function InsightsSetup(
             )
       }
       description={describeReason(translate, props.observation.reason)}
-      {...(props.observation.remediation
+      {...(remediation || canEnable || props.onRetry
         ? {
             body: (
               <Stack gap="small">
-                <CodeBlock
-                  code={props.observation.remediation}
+                {remediation ? <CodeBlock
+                  code={remediation}
                   copyLabel={translate(
                     'plugins.database.insights.setup.copy',
                     'Copy the setting',
@@ -109,7 +157,12 @@ export function InsightsSetup(
                     'plugins.database.insights.setup.copied',
                     'Copied',
                   )}
-                />
+                /> : null}
+                {canEnable || props.onRetry ? <Row gap="small" wrap>
+                  {canEnable ? <EnableStatistics target={descriptor.target} onRetry={props.onRetry} /> : null}
+                  {props.onRetry ? <Button variant="plain" size="small" onPress={props.onRetry}
+                    title={translate('plugins.database.retry', 'Try again')} /> : null}
+                </Row> : null}
               </Stack>
             ),
           }

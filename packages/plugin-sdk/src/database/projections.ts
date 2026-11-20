@@ -143,6 +143,8 @@ export type {
     DatabaseTargetsListResultV1,
 } from './schemas/databaseOperations.js';
 import * as databaseOperations from './schemas/databaseOperations.js';
+export const DatabaseActivityCancelInputV1Schema = projectZodProtocolSchema(databaseOperations.DatabaseActivityCancelInputV1Schema);
+export const DatabaseStatsEnableInputV1Schema = projectZodProtocolSchema(databaseOperations.DatabaseStatsEnableInputV1Schema);
 export const DatabaseCapabilityV1Schema: ProtocolComposableSchema<ReturnType<typeof databaseOperations.DatabaseCapabilityV1Schema.parse>> =
     projectZodProtocolSchema(databaseOperations.DatabaseCapabilityV1Schema);
 export const DatabaseCellReadInputV1Schema: ProtocolComposableSchema<ReturnType<typeof databaseOperations.DatabaseCellReadInputV1Schema.parse>, JsonObjectOutput<ReturnType<typeof databaseOperations.DatabaseCellReadInputV1Schema.parse>>> =

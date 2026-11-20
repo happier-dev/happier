@@ -12,6 +12,8 @@ export const databaseOperationActions = {
     'statement.explain': { id: database.DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, inputSchema: database.DatabaseStatementExplainInputV1Schema },
     'edits.apply': { id: database.DATABASE_EDITS_APPLY_ACTION_ID_V1, inputSchema: database.DatabaseEditsApplyInputV1Schema },
     'stats.read': { id: database.DATABASE_STATS_READ_ACTION_ID_V1, inputSchema: database.DatabaseStatsOperationInputV1Schema },
+    'activity.cancel': { id: database.DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, inputSchema: database.DatabaseActivityCancelInputV1Schema },
+    'stats.enable': { id: database.DATABASE_STATS_ENABLE_ACTION_ID_V1, inputSchema: database.DatabaseStatsEnableInputV1Schema },
 } as const satisfies Record<database.DatabaseOperationInputV1['operation'], {
     id: database.DatabaseActionIdV1;
     inputSchema: unknown;

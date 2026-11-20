@@ -161,7 +161,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
                 'Refresh',
               )}
               icon={<Icon name="refresh" />}
-              onPress={() => instance.refresh(props.targetKey)}
+              onPress={tab === 'statements' ? statements.stats.refresh : () => instance.refresh(props.targetKey)}
             />
           )
         }
@@ -224,7 +224,7 @@ function StatementsPanel(
 ) {
   const translate = usePluginTranslation();
   const { stats, available, unavailable, views } = props.statements;
-  if (unavailable) return <InsightsSetup observation={unavailable} />;
+  if (unavailable) return <InsightsSetup observation={unavailable} descriptor={props.descriptor} onRetry={stats.refresh} />;
   if (stats.status === 'unavailable') {
     return (
       <ErrorState

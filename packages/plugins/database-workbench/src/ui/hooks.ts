@@ -258,7 +258,10 @@ export function useDatabaseInsights(targetKey: string, request: Exclude<Database
     const resource = instance.stats(targetKey, request);
     const snapshot = useResource(resource);
     return useMemo(() => ({ observation: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error,
-        refresh: () => resource.invalidate() }), [snapshot, resource]);
+        refresh: () => {
+            if (request.group === 'statements') instance.client.releaseReadDemand?.(instance.target(targetKey).target);
+            resource.invalidate();
+        } }), [snapshot, resource, instance, targetKey, request.group]);
 }
 
 /**

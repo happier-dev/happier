@@ -1,13 +1,17 @@
 import * as React from 'react';
-import type { DatabaseStatsObservationV1, DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseStatsObservationV1, DatabaseStatsReadV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import {
   Collection,
   useHappierCollection,
   type CollectionAnatomy,
   type CollectionField,
+  type CollectionRowActions,
 } from '@happier-dev/plugin-ui/components';
-import { usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
 import {
+  Action,
   ErrorState,
   FreshnessLine,
   Metric,
@@ -17,7 +21,8 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { useDatabaseActivity } from '../../hooks.js';
+import { useDatabaseActivity, useWorkbenchInstance } from '../../hooks.js';
+import { databaseActionSettlement } from '../../actionSettlement.js';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
 import { formatElapsed } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
@@ -196,12 +201,60 @@ function Summary(props: Readonly<{ views: readonly SessionView[] }>) {
   );
 }
 
-/**
- * Live activity: refreshed by the host's presented-demand owner only while this view is on screen, and stopped
- * when it is hidden or closed (R13, D21). Stop (database.activity.cancel) joins the blocking row once registered.
- */
+function CancelActivity({ target, activityKey, queryStartedAt }: Readonly<{
+  target: DatabaseTargetV1;
+  activityKey: string;
+  queryStartedAt: string;
+}>) {
+  const t = usePluginTranslation();
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; disable?: boolean }> | null>(null);
+  const input = projectNativeJsonValueForTransport({
+    target, operation: 'activity.cancel', activityKey, queryStartedAt,
+  });
+  return <Stack gap="small">
+    <Action.Control
+      action={databaseActionLocalIdV1(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1)}
+      title={t('plugins.database.activity.cancel', 'Cancel activity')}
+      variant="destructive"
+      disabled={notice?.disable === true}
+      reviewedInput={input}
+      controller={{
+        prepare: async () => ({ input }),
+        onSettled(execution) {
+          const settled = databaseActionSettlement(execution, 'activity.cancel');
+          if (isPluginActionConfirmationDeclined(settled)) return;
+          if (settled.status === 'pending') {
+            setNotice({ text: t('plugins.database.activity.cancelPending', 'Waiting for approval.'), disable: true });
+          } else if (settled.status === 'success' && settled.result.ok && settled.result.operation === 'activity.cancel') {
+            const { status } = settled.result;
+            setNotice({
+              text: status === 'signal_sent' ? t('plugins.database.activity.cancelSent', 'Cancellation requested.')
+                : status === 'activity_ended' ? t('plugins.database.activity.cancelEnded', 'This query has already ended.')
+                : t('plugins.database.activity.cancelFailed', 'The database could not cancel this query.'),
+              disable: status !== 'signal_failed',
+            });
+          } else {
+            setNotice({ text: 'message' in settled ? settled.message
+              : t('plugins.database.activity.cancelUnconfirmed', 'Cancellation could not be confirmed.') });
+          }
+        },
+      }}
+    />
+    {notice ? <Text tone="secondary" value={notice.text} /> : null}
+  </Stack>;
+}
+
+/** Live activity retains the host's presented demand only while this view is on screen (R13, D21). */
 export function ActivityView(props: Readonly<{ targetKey: string }>) {
   const translate = usePluginTranslation();
+  const descriptor = useWorkbenchInstance().target(props.targetKey);
+  const canCancel = descriptor.access?.canWrite === true
+    && descriptor.capabilities.some(capability => capability.operation === 'activity.cancel' && capability.available);
+  const rowActions = React.useCallback(({ session }: SessionView): CollectionRowActions => {
+    if (session.state !== 'active' || !session.queryStartedAt) return {};
+    return { accessory: <CancelActivity key={session.queryStartedAt}
+      target={descriptor.target} activityKey={session.key} queryStartedAt={session.queryStartedAt} /> };
+  }, [descriptor.target]);
   const presented = usePluginSurfaceActivity().active;
   const activity = useDatabaseActivity(
     props.targetKey,
@@ -338,6 +391,7 @@ export function ActivityView(props: Readonly<{ targetKey: string }>) {
         model={model}
         anatomy={anatomy}
         presentation="table"
+        {...(canCancel ? { useRowActions: rowActions } : {})}
         collapsedGroups={EMPTY_SET}
         loading={!available}
         empty={

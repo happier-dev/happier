@@ -377,6 +377,8 @@ export function executeSqliteOperation(input: DatabaseOperationInputV1, query: S
             }
             return { ok: true, operation: input.operation, status: 'committed', inserted: String(inserted), updated: String(updated), deleted: String(deleted) };
         }
+        case 'activity.cancel':
+        case 'stats.enable': return unavailable('unsupported_engine');
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
             const plan = compileSqliteStatsV1(input.request, options.stats);

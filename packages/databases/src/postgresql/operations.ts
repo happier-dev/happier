@@ -377,6 +377,26 @@ function compileEdit(relation: DatabaseRelationV1, change: DatabaseEditV1, metad
 async function executeDialectOperation(input: DatabaseOperationInputV1, query: PostgresqlQuery, options: PostgresqlExecutionOptions): Promise<DatabaseOperationResultV1> {
     switch (input.operation) {
         case 'describe': return unavailable('Target descriptions belong to the selected-target resolver');
+        case 'activity.cancel': {
+            // Select the same query on the same database before sending the signal. A PID alone can be reused.
+            const result = await query({ text: `SELECT pg_catalog.pg_cancel_backend(a.pid) AS signalled
+                FROM pg_catalog.pg_stat_activity a
+                WHERE a.datname = current_database() AND a.pid = $1::integer
+                    AND a.query_start = $2::timestamptz AND a.state = 'active' AND a.pid <> pg_catalog.pg_backend_pid()`,
+                values: [input.activityKey, input.queryStartedAt] });
+            const row = result.rows[0];
+            return { ok: true, operation: input.operation, status: !row ? 'activity_ended' : row[0] === 't' ? 'signal_sent' : 'signal_failed' };
+        }
+        case 'stats.enable': {
+            if (input.target.kind === 'worktree' || input.target.kind === 'manual') return unavailable('statistics_setup_requires_target_support');
+            const result = await query({ text: `SELECT EXISTS (
+                SELECT FROM pg_catalog.regexp_split_to_table(pg_catalog.current_setting('shared_preload_libraries'), ',') AS library(name)
+                WHERE pg_catalog.btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
+            )`, values: [] });
+            if (result.rows[0]?.[0] !== 't') return { ok: true, operation: input.operation, status: 'restart_required' };
+            await query({ text: 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements', values: [] });
+            return { ok: true, operation: input.operation, status: 'enabled' };
+        }
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
             const plan = compilePostgresqlStatsV1(input.request, options.stats);

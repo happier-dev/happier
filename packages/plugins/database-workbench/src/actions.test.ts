@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
+    DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1,
+    DATABASE_STATS_ENABLE_ACTION_ID_V1,
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_ROWS_EXPORT_ACTION_ID_V1,
@@ -33,8 +35,10 @@ import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { pluginActionDeclarationIsReadOnlyForInput, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { plugin as workbenchPlugin } from './manifest.js';
 import { createDatabaseActions } from './actions.js';
 import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
+import { executePostgresqlOperation, type PostgresqlQuery } from '@happier-dev/databases/postgresql';
 import { buildDatabaseFindingBriefV1 } from './insights/brief.js';
 
 const target = {
@@ -54,6 +58,81 @@ function declarations() {
 }
 
 describe('producer-backed database Action declarations', () => {
+    it('cancels only the selected activity through the reviewed writer and settles a vanished backend', async () => {
+        const deployment = {
+            kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+            deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing',
+        } as const;
+        const descriptor = { target: deployment, label: 'billing', origin: { label: 'Environment' }, capabilities: [],
+            engine: 'postgresql', placement: { serverId: 'home', accountId: 'account', machineId: 'machine', installationId: 'installation' } } as const;
+        let active = true;
+        let commands = 0;
+        const query: PostgresqlQuery = async statement => {
+            commands++;
+            expect(statement.values).toEqual(['153', '2026-11-20 10:00:00+00']);
+            const rows = active ? [['t']] : [];
+            active = false;
+            return { fields: [{ name: 'signalled', dataTypeID: 16 }], rows, command: 'SELECT', rowCount: rows.length };
+        };
+        const unexpected = async (): Promise<never> => { throw new Error('Cancellation must not reuse read admission or enumerate targets'); };
+        const kit = await createPluginTestkit({ manifest: workbenchPlugin.manifest, module: workbenchPlugin, services: {
+            deploymentDatabases: {
+                listTargets: unexpected, admit: unexpected, ...{ attachReadAccess: unexpected, createReadAccess: unexpected },
+                async resolve(_input, access) {
+                    expect(access).toBe('write');
+                    return { descriptor: { ...descriptor, capabilities: [] }, connection: { engine: 'postgresql',
+                        execute: input => executePostgresqlOperation(input, query), close: async () => {} } };
+                },
+            },
+        } });
+        try {
+            const action = databaseActionLocalIdV1(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1);
+            const input = { operation: 'activity.cancel', target: deployment, activityKey: '153', queryStartedAt: '2026-11-20 10:00:00+00' };
+            await expect(kit.invokeAction(action, input)).resolves.toEqual({ ok: true, operation: 'activity.cancel', status: 'signal_sent' });
+            await expect(kit.invokeAction(action, input)).resolves.toEqual({ ok: true, operation: 'activity.cancel', status: 'activity_ended' });
+            expect(commands).toBe(2);
+        } finally { await kit.dispose(); }
+    });
+
+    it('enables PostgreSQL statistics through the reviewed setup write only when already preloaded', async () => {
+        const deployment = {
+            kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+            deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing',
+        } as const;
+        const descriptor = { target: deployment, label: 'billing', origin: { label: 'Environment' },
+            engine: 'postgresql', placement: { serverId: 'home', accountId: 'account', machineId: 'machine', installationId: 'installation' } } as const;
+        let preloaded = false;
+        let installed = false;
+        const query: PostgresqlQuery = async ({ text }) => {
+            if (text.startsWith('CREATE EXTENSION')) {
+                expect(preloaded).toBe(true);
+                installed = true;
+                return { fields: [], rows: [], command: 'CREATE', rowCount: 0 };
+            }
+            return { fields: [{ name: 'preloaded', dataTypeID: 16 }], rows: [[preloaded ? 't' : 'f']], command: 'SELECT', rowCount: 1 };
+        };
+        const unexpected = async (): Promise<never> => { throw new Error('Setup must not use read admission or enumerate targets'); };
+        const kit = await createPluginTestkit({ manifest: workbenchPlugin.manifest, module: workbenchPlugin, services: {
+            deploymentDatabases: {
+                listTargets: unexpected, admit: unexpected, ...{ attachReadAccess: unexpected, createReadAccess: unexpected },
+                async resolve(_input, access) {
+                    expect(access).toBe('write');
+                    return { descriptor: { ...descriptor, capabilities: [] }, connection: { engine: 'postgresql',
+                        execute: input => executePostgresqlOperation(input, query), close: async () => {} } };
+                },
+            },
+        } });
+        try {
+            const action = databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1);
+            const input = { operation: 'stats.enable', target: deployment };
+            await expect(kit.invokeAction(action, input)).resolves.toEqual({ ok: true, operation: 'stats.enable', status: 'restart_required' });
+            expect(installed).toBe(false);
+            preloaded = true;
+            await expect(kit.invokeAction(action, input)).resolves.toEqual({ ok: true, operation: 'stats.enable', status: 'enabled' });
+            expect(installed).toBe(true);
+        } finally { await kit.dispose(); }
+    });
+
     it('invokes findings and real task briefs through their canonical schemas without agent exposure', async () => {
         const unavailable = { ok: false, status: 'unavailable', code: 'database_unavailable', reason: 'The fixture database is offline' } as const;
         const producers = {

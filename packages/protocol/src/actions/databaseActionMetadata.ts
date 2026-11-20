@@ -89,12 +89,14 @@ const databaseActionDeclarations = {
     [database.UI_DATABASE_DRAFT_READ_ACTION_ID_V1]: { ...read, title: 'Read database draft' },
     [database.DATABASE_STATS_READ_ACTION_ID_V1]: { ...read, title: 'Read database statistics' },
     [database.DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1]: {
-        ...write, title: 'Cancel database activity', placementBindings: ['rowAction'],
-        confirmation: { title: 'Cancel this database session activity?' },
+        ...targetWrite, title: 'Cancel database activity', placementBindings: ['rowAction'], approvalScope: 'environment',
+        confirmation: { title: 'Cancel this database session activity?', mountedReview: 'exact_input',
+            inputFields: [{ path: 'activityKey', title: 'Backend PID' }, { path: 'queryStartedAt', title: 'Query started at' }] },
     },
     [database.DATABASE_STATS_ENABLE_ACTION_ID_V1]: {
-        ...write, title: 'Enable database statistics', placementBindings: ['secondary'], approvalScope: 'environment',
-        confirmation: { title: 'Enable statistics for this database?' },
+        ...targetWrite, title: 'Enable database statistics', placementBindings: ['secondary'], approvalScope: 'environment',
+        confirmation: { title: 'Enable statistics for this database?', mountedReview: 'exact_input',
+            body: 'Runs CREATE EXTENSION IF NOT EXISTS pg_stat_statements on this database. If PostgreSQL has not loaded the library, it must be configured and restarted before you retry.' },
     },
     [database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1]: { ...read, title: 'List database findings' },
     [database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1]: { ...read, title: 'Read database finding' },

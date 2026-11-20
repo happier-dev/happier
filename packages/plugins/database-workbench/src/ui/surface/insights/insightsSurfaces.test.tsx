@@ -7,6 +7,7 @@ import {
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+    DATABASE_STATS_ENABLE_ACTION_ID_V1,
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
@@ -107,9 +108,9 @@ const extensionMissing: DatabaseStatsObservationV1 = {
   remediation: "shared_preload_libraries = 'pg_stat_statements'",
 };
 
-function resourceHandlers() {
+function resourceHandlers(selected = descriptor) {
   const text = JSON.stringify({
-    descriptor,
+    descriptor: selected,
     ownWriteRevision: 0,
     relationRevisions: [],
   });
@@ -240,6 +241,52 @@ describe('Database Insights surfaces', () => {
     } finally {
       await page.dispose();
     }
+  });
+
+  it('enables statistics on the reviewed database and rereads once through a new connection demand', async () => {
+    const environment = { serverId: 'home', environmentId: 'prod', projectSourceId: 'billing' };
+    const selected: DatabaseDescriptorV1 = {
+      ...descriptor,
+      target: { kind: 'deployment_service', environment, deploymentId: 'deploy', targetLinkId: 'link', serviceId: 'db', database: 'billing' },
+      capabilities: [{ operation: 'stats.enable', available: true }],
+      access: { canRead: true, canWrite: true },
+    };
+    let installed = false;
+    const executeAction = daemon(() => installed ? statements() : extensionMissing);
+    const enable = vi.fn(async () => {
+      installed = true;
+      return { ok: true as const, result: { ok: true, operation: 'stats.enable', status: 'enabled' } };
+    });
+    const actionControl = createPluginUiActionControlTestHost(enable);
+    const resource = resourceHandlers(selected);
+    const watchResource = vi.fn(resource.watchResource);
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'enable', mountNonce: 'enable' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope: { kind: 'environment', environment }, descriptor: selected }),
+      subPath: 'insights',
+      surfaceContext: pageContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...resource, watchResource, executeAction, actionControl: actionControl.handler },
+    });
+    const statementsReads = () => executeAction.mock.calls.filter(([call]) => call.action === databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1));
+    try {
+      await settle();
+      expect(statementsReads()).toHaveLength(1);
+      expect(watchResource).toHaveBeenCalledTimes(1);
+      expect(enable).not.toHaveBeenCalled();
+      await act(async () => actionControl.press('Enable statistics'));
+      await settle();
+      expect(enable).toHaveBeenCalledOnce();
+      expect(enable).toHaveBeenCalledWith(expect.objectContaining({
+        action: databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1),
+        input: { operation: 'stats.enable', target: selected.target },
+      }));
+      expect(await page.getByText(SLOW)).toBeTruthy();
+      expect(statementsReads()).toHaveLength(2);
+      expect(watchResource).toHaveBeenCalledTimes(2);
+    } finally { await page.dispose(); }
   });
 
   it('opens a statement from the Insights rail tab as a details tab at that statement', async () => {
