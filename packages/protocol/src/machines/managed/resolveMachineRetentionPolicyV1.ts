@@ -2,7 +2,7 @@ import { isManagedOpaquePresetMachineV1 } from './managedMachineV1.js';
 import { isMachineOnlineV1 } from '../machineReachabilityV1.js';
 import { isMachineReplaced } from '../identity/canonicalMachineId.js';
 import type { BillingCapabilitiesV1, RetentionCapabilitiesV1 } from './providerFactsV1.js';
-import type { ManagedControllerV1, ManagedMachineV1, ManagedMachineInputWakeV1, ManagedMachineNewSessionWakeV1, RetentionV1 } from './managedMachineV1.js';
+import type { ManagedAsleepWakeV1, ManagedControllerV1, ManagedMachineV1, ManagedMachineInputWakeV1, ManagedMachineNewSessionWakeV1, RetentionV1 } from './managedMachineV1.js';
 import type { MachineRetentionCategoryV1, MachineRetentionDefaultsV1, MachineRetentionOverrideV1, MachineRetentionPolicyV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 
 /** D21's selected product default, not a lifecycle timeout or resource limit. */
@@ -40,6 +40,16 @@ export function resolveManagedWakeAvailabilityV1(
     && isMachineOnlineV1({ active: observed.online, revokedAt: observed.revokedAt, presenceProtocolVersion: 1 })
     && !isMachineReplaced(observed)
     ? { kind: 'available' } : { kind: 'unavailable', reason: 'controller_unavailable' };
+}
+
+/** Controllerless accepted input uses Home custody even when finite new-Session wake is unavailable. */
+export function resolveManagedAsleepWakeV1(
+  wakeOnAcceptedInput: boolean,
+  availability: ManagedMachineNewSessionWakeV1,
+): ManagedAsleepWakeV1 {
+  if (!wakeOnAcceptedInput) return 'off';
+  return availability.kind === 'unavailable' && availability.reason === 'controller_unavailable'
+    ? 'waitsForController' : 'onSend';
 }
 
 /** Desired intent is history; only an unsettled submitted effect proves a native power transition. */

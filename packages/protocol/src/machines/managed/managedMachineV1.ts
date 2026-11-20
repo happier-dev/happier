@@ -36,6 +36,10 @@ export const ManagedMachineNewSessionWakeV1Schema = lazyDefinition(() => z.discr
 ]));
 export type ManagedMachineNewSessionWakeV1 = z.infer<typeof ManagedMachineNewSessionWakeV1Schema>;
 
+/** How accepted input wakes a parked Machine, without exposing its controller. */
+export const ManagedAsleepWakeV1Schema = lazyDefinition(() => z.enum(['onSend', 'waitsForController', 'off']));
+export type ManagedAsleepWakeV1 = z.infer<typeof ManagedAsleepWakeV1Schema>;
+
 /** Native qualification is independent of the exact guest's live reachability. */
 export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictObject({
     nativeReady: z.boolean(),
@@ -43,6 +47,7 @@ export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictO
     /** Native wake placement only; the Home Pending record retains input ownership. */
     acceptedInputWakeOwner: z.optional(z.enum(['home', 'caller'])),
     newSessionWake: z.optional(ManagedMachineNewSessionWakeV1Schema),
+    asleepWake: z.optional(ManagedAsleepWakeV1Schema),
     /** Current lifecycle only; automatic wake eligibility stays in wakeState. Older Homes omit it. */
     state: z.optional(z.nullable(z.union([ManagedMachineInputWakeV1Schema, z.literal('stopping')]))),
 }));

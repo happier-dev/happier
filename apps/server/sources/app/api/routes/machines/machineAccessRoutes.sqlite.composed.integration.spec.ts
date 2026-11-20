@@ -130,7 +130,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
             const asleep = await read();
             expect(asleep.statusCode, asleep.body).toBe(200);
-            expect(asleep.json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady: false, wakeState: 'asleep' }));
+            expect(asleep.json().machine.managedInputRuntime).toEqual(expect.objectContaining({
+                nativeReady: false, wakeState: 'asleep', state: 'asleep', asleepWake: 'onSend',
+            }));
             expect(asleep.json().machine.managedInputRuntime).not.toHaveProperty('creationScopeRetention');
             expect(asleep.json().machine.managedInputRuntime).not.toHaveProperty('source');
             expect(asleep.json().machine.access).toMatchObject({ role: 'use' });
@@ -146,7 +148,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
                 await invalidateManagedMachineInTx(tx, previous);
             });
             const disabled = await read();
-            expect(disabled.json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady: false, wakeState: null }));
+            expect(disabled.json().machine.managedInputRuntime).toEqual(expect.objectContaining({
+                nativeReady: false, wakeState: null, state: 'asleep', asleepWake: 'off',
+            }));
             expect((await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
                 accountId: recipient.id, kind: 'machine', entityId: machine.id,
             } } })).cursor).toBeGreaterThan(before?.cursor ?? 0);
@@ -158,7 +162,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
                     } });
                     await invalidateManagedMachineInTx(tx, previous);
                 });
-                expect((await read()).json().machine.managedInputRuntime).toEqual(expect.objectContaining({ nativeReady, wakeState: null }));
+                const runtime = (await read()).json().machine.managedInputRuntime;
+                expect(runtime).toEqual(expect.objectContaining({ nativeReady, wakeState: null }));
+                expect(runtime).not.toHaveProperty('asleepWake');
             }
         });
     });
@@ -213,9 +219,11 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         await withAuthenticatedTestApp(machinesRoutes, async app => {
             const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(state === 'online'
+            const { managedInputRuntime } = response.json().machine;
+            expect(managedInputRuntime.newSessionWake).toEqual(state === 'online'
                 ? { kind: 'available' } : { kind: 'unavailable', reason: state === 'absent' ? 'no_controller' : 'controller_unavailable' });
-            expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
+            expect(managedInputRuntime.asleepWake).toBe(state === 'online' || state === 'absent' ? 'onSend' : 'waitsForController');
+            expect(managedInputRuntime).not.toHaveProperty('controller');
         });
     });
 

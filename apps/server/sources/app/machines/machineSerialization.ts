@@ -9,7 +9,7 @@ import * as privacyKit from 'privacy-kit';
 import type { MachineKeyBasisV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import type { DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1, ManagedMachineNewSessionWakeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { resolveManagedMachineRuntimeV1, resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveManagedAsleepWakeV1, resolveManagedMachineRuntimeV1, resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { projectManagedMachine } from './managed/managedMachineProjection';
 import type { StoredManagedMachine } from './managed/managedRows';
 import type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
@@ -58,9 +58,12 @@ export function serializeManagedInputRuntime(row: Pick<MachineSerializationRow, 
         // owner still decides whether this exact enrolled daemon is reachable.
         const projection = projectManagedMachine(managed);
         const runtime = resolveManagedMachineRuntimeV1(projection, row.id, true);
-        return { nativeReady: runtime.ready, wakeState: managed.wakeOnAcceptedMessage ? runtime.wakeState : null,
+        const wakeState = managed.wakeOnAcceptedMessage ? runtime.wakeState : null;
+        const newSessionWake = row.managedWakeAvailability ?? resolveManagedWakeAvailabilityV1(projection.controller, undefined);
+        return { nativeReady: runtime.ready, wakeState, newSessionWake,
             acceptedInputWakeOwner: runtime.acceptedInputWakeOwner,
-            newSessionWake: row.managedWakeAvailability ?? resolveManagedWakeAvailabilityV1(projection.controller, undefined), state: runtime.state };
+            state: runtime.state,
+            ...(runtime.state === 'asleep' ? { asleepWake: resolveManagedAsleepWakeV1(wakeState === 'asleep', newSessionWake) } : {}) };
     }
     catch { return null; }
 }

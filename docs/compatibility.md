@@ -13821,7 +13821,7 @@ managed-resource producer. This preserves the Home-presence coexistence contract
 above; it does not promise managed wake against an older development Home.
 
 Current development Machine reads and new/update events also publish optional
-`managedInputRuntime: { nativeReady, wakeState, acceptedInputWakeOwner?, newSessionWake?, state? } | null`. The managed runtime
+`managedInputRuntime: { nativeReady, wakeState, acceptedInputWakeOwner?, newSessionWake?, asleepWake?, state? } | null`. The managed runtime
 owner derives native qualification independently of connectivity; existing
 guest presence still decides reachability. `wakeState` is `asleep`, `starting`
 or null and makes a wake claim only while the owner enables accepted-input
@@ -13842,6 +13842,11 @@ Machine before sending. Optional `state` reports the current native transition (
 `stopping`), a parked resource (`asleep`), or null, independently of wake
 eligibility. Desired intent alone does not prove a transition. It contains no
 protected native identity, and native Running does not prove guest reachability.
+On asleep rows, optional `asleepWake` carries Home's resolved accepted-input
+rule (`onSend`, `waitsForController`, or `off`) even for Machine readers without access to
+the managed resource. Home uses the existing runtime and controller-readiness
+facts. The field exposes no controller identity and leaves finite new-Session
+eligibility to `newSessionWake`.
 Machine rows, headers and Project Services consume the same presentation and
 recovery from these facts; dated native observations remain in Details. Matching
 Protocol, Home and UI development readers reload together because older strict

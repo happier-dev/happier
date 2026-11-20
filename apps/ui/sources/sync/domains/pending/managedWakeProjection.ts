@@ -1,12 +1,13 @@
-import type { ManagedMachineNewSessionWakeV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import type { ManagedAsleepWakeV1, ManagedMachineNewSessionWakeV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedAsleepWakeV1, resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 
 export { resolveManagedWakeAvailabilityV1 as resolveManagedWakeAvailability } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 /** What wakes an asleep created Machine, as its state card says it: its wake rule, then the readiness classifier above. */
-export type ManagedAsleepWake = Readonly<{ kind: 'onSend' }> | Readonly<{ kind: 'waitsForController'; controller: string | null }> | Readonly<{ kind: 'off' }>;
+export type ManagedAsleepWake = Readonly<{ kind: Exclude<ManagedAsleepWakeV1, 'waitsForController'> }>
+    | Readonly<{ kind: 'waitsForController'; controller: string | null }>;
 
 export function resolveManagedAsleepWake(input: Readonly<{
     wakeOnAcceptedMessage: boolean;
@@ -14,9 +15,8 @@ export function resolveManagedAsleepWake(input: Readonly<{
     /** Null while its name is still being read. */
     controllerName: string | null;
 }>): ManagedAsleepWake {
-    if (!input.wakeOnAcceptedMessage) return { kind: 'off' };
-    return input.availability.kind === 'unavailable' && input.availability.reason === 'controller_unavailable'
-        ? { kind: 'waitsForController', controller: input.controllerName } : { kind: 'onSend' };
+    const kind = resolveManagedAsleepWakeV1(input.wakeOnAcceptedMessage, input.availability);
+    return kind === 'waitsForController' ? { kind, controller: input.controllerName } : { kind };
 }
 
 /** Held managed input recovers through its existing activation Action, not a second immediate send. */
