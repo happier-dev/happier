@@ -214,7 +214,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const credentialTargets = React.useMemo(() => visibleCreation ? managedCredentialReceiptTargets(visibleCreation.launch) : [], [visibleCreation?.launch]);
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
     const configuration = useMachinePresetConfiguration({ binding: catalog.binding, resolution: catalog.resolution, client: catalog.client, homeId: catalog.homeId,
-        preset: visiblePreset, provisioner, optionsInput, onApprovalPending, refreshPreset: detail.refresh, refreshRevision: detail.refreshRevision });
+        preset: visiblePreset, provisioner, optionsInput, onApprovalPending, refreshPreset: detail.refresh, refreshRevision: detail.refreshRevision,
+        catalogReading: catalog.reading, onOccurrenceStale: catalog.refresh });
     const canManage = visiblePreset?.owner.kind === 'account'
         ? visiblePreset.owner.accountId === detail.accountId
         : Boolean(teamState?.mutationsAvailable && teamState.team.capabilities.manageSettings);

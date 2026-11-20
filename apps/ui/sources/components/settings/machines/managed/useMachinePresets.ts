@@ -258,6 +258,10 @@ export function useMachinePresetConfiguration(input: Readonly<{
     optionsInput: ManagedProvisionerOptionsInput;
     refreshPreset?: () => void;
     refreshRevision?: number;
+    /** The provider catalog is being read; a stale occurrence waits for its answer. */
+    catalogReading?: boolean;
+    /** Asks the provider catalog again when the controller no longer runs the occurrence it named. */
+    onOccurrenceStale?: () => void;
     onApprovalPending: (approval: ActionApprovalRegistration) => void;
 }>) {
     const { binding, resolution, client, homeId, preset, provisioner, optionsInput, onApprovalPending } = input;
@@ -269,6 +273,12 @@ export function useMachinePresetConfiguration(input: Readonly<{
         { queryKey: '', draft: null, error: null });
     const readCleanup = React.useRef<(() => void) | null>(null);
     const refreshedAvailability = React.useRef(input.refreshRevision);
+    // A retired plugin occurrence is not an availability answer: the catalog is asked once for the current one
+    // while the read stays loading, so a valid preset never flashes "no longer available" (L12 review 2, A-2).
+    const staleOccurrence = React.useRef<string | null>(null);
+    const [awaitingCatalog, setAwaitingCatalog] = React.useState<string | null>(null);
+    const onOccurrenceStale = React.useRef(input.onOccurrenceStale);
+    onOccurrenceStale.current = input.onOccurrenceStale;
     const readConfiguration = React.useCallback(() => {
         readCleanup.current?.();
         readCleanup.current = null;
@@ -285,8 +295,16 @@ export function useMachinePresetConfiguration(input: Readonly<{
                 ...(preset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } : {}) } }),
             selected: { id: `preset:${preset.id}`, title: preset.name, launch: preset.launch.choices } };
         const selectors = optionsSchema ? managedConfiguratorOptionsSelectors(initial, optionsSchema) : null;
-        const waitingForSchema = optionsInput.kind === 'loading';
+        const askCatalog = () => {
+            staleOccurrence.current = provisioner.occurrenceId;
+            setAwaitingCatalog(queryKey);
+            onOccurrenceStale.current?.();
+        };
+        // The options schema can name the retired occurrence before any check runs: same answer, ask the catalog.
+        const staleSchema = optionsInputError === 'plugin_occurrence_stale' && staleOccurrence.current !== provisioner.occurrenceId;
+        const waitingForSchema = optionsInput.kind === 'loading' || staleSchema;
         const canReadOptions = optionsInput.kind === 'ready' && selectors !== null;
+        if (staleSchema) askCatalog();
         setState(current => {
             const previous = current.queryKey === queryKey ? current.draft : null;
             const draft = beginManagedConfiguratorRead(previous
@@ -313,6 +331,11 @@ export function useMachinePresetConfiguration(input: Readonly<{
             provisioner: provisioner.descriptor, selectors,
             signal: abort.signal, onApprovalPending }).then(result => {
             if (result.kind === 'retired') return;
+            const code = result.failure?.code ?? (result.check && !result.check.available ? result.check.code : undefined);
+            if (code === 'plugin_occurrence_stale' && staleOccurrence.current !== provisioner.occurrenceId) {
+                askCatalog();
+                return;
+            }
             setState(current => {
                 if (current.queryKey !== queryKey || !current.draft) return current;
                 const draft = settleManagedConfiguratorRead(current.draft, result);
@@ -324,6 +347,12 @@ export function useMachinePresetConfiguration(input: Readonly<{
         readCleanup.current = () => { abort.abort(); retirement.dispose(); };
     }, [binding, client, homeId, preset, provisioner, queryKey, optionsInput.kind, optionsSchema, optionsInputError, onApprovalPending, input.refreshRevision]);
     React.useEffect(() => { readConfiguration(); return () => readCleanup.current?.(); }, [readConfiguration]);
+    React.useEffect(() => {
+        if (awaitingCatalog === null || input.catalogReading) return;
+        setAwaitingCatalog(null);
+        // A newly named occurrence re-keys the read by itself; the same one is asked once more.
+        if (awaitingCatalog === queryKey) readConfiguration();
+    }, [awaitingCatalog, input.catalogReading, queryKey, readConfiguration]);
     const refresh = () => {
         if (binding && homeId && provisioner) refreshManagedProvisionerAvailability(binding, { homeId,
             ...(preset?.controller ? { controller: preset.controller } : {}), contribution: provisioner.contribution });

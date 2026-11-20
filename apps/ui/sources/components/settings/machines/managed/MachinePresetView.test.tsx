@@ -2445,6 +2445,32 @@ describe('reachable preset detail', () => {
     ).not.toBe(preset.controller.machineId);
   });
 
+  it('reads past a retired provider occurrence by refreshing the catalog, never flashing unavailable (L12 review 2, A-2)', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId);
+    // Live right after Save: the catalog the page starts from names a plugin occurrence the controller has replaced,
+    // so its first availability answer is "stale"; the controller's next catalog answer names the current one.
+    let checks = 0;
+    await answerExternalActionAccountForHome(harness, serverId, {
+      actionId: 'machines.provisioners.check', machineId: preset.controller.machineId,
+      installationId: preset.controller.installationId, tokenEpoch: 0,
+      execute: () => ++checks === 1 ? { available: false, code: 'plugin_occurrence_stale' } : { available: true },
+    });
+    const controllerLists = () => harness.requestsFor('/v1/actions/machines.provisioners.list')
+      .filter(request => ExternalActionRequestEnvelopeV1Schema.parse(request.input).target?.kind === 'machine').length;
+    const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(checks).toBeGreaterThan(0));
+      await flushHookEffects({ cycles: 30 });
+      expect(screen.findByTestId('machine-preset.configuration-unavailable'), screen.getTextContent()).toBeNull();
+      // The stale answer asks the catalog again, then the configuration is read against its answer.
+      await waitForHomeGovernance(() => expect(checks).toBe(2));
+      expect(controllerLists()).toBeGreaterThan(1);
+      await flushHookEffects({ cycles: 30 });
+      expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('opens New preset through the declaration catalog and saves an exact-controller launch without acquiring', async () => {
     const serverId = await seed();
     const scopeId = await seedConfiguration(serverId);
