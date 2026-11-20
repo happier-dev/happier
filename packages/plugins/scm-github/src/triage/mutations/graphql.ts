@@ -96,7 +96,7 @@ export async function settleGithubGraphqlMutation<TApplied extends Readonly<{ ki
   dependencies: Readonly<{ client: GithubApiClientV1; now: () => number }>,
 ): Promise<TApplied | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>> {
-  const settled = await settleAtMostOnceProviderWrite({
+  const settled = await settleAtMostOnceProviderWrite<GithubGraphqlOutcomeV1, TApplied, TriageSourceFailureV1>({
     dispatch: () => sendGithubGraphqlRequest(request, dependencies),
     mayHaveChanged: response => response.ok || response.mayHaveChanged,
     confirm: async response => {
