@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -20,6 +25,65 @@ vi.mock('undici', async importOriginal => {
 
 describe('deployment read placement from a CLI on another Machine', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+    it.each(['read', 'write'] as const)('sends the native database %s to Home admission without an explicit Machine selector', async mode => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-native-database-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) },
+                credentialProvenance: 'stored_session' as const };
+            const machineId = 'own-machine';
+            const serverId = 'srv_home';
+            const requestId = `native-postgres-${mode}`;
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId, accountId: 'owner' });
+            const daemon = vi.fn(async (url: RequestInfo | URL) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
+                return Response.json({ matched: true, result: {
+                    ok: false, errorCode: 'deployment_access_denied', error: 'deployment_access_denied',
+                } });
+            });
+            vi.stubGlobal('fetch', daemon);
+            const homeReads = vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+                if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: {
+                    id: machineId, kind: 'persistent', active: true, activeAt: Date.now(), installationId: 'installation',
+                    revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+                    installationPublicKey: null, access: { custodian: { accountId: 'owner', displayName: 'Owner' },
+                        role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
+                } } };
+                return { status: 404, data: { error: 'not_found' } };
+            });
+            const mint = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
+                return availability ? { status: 200, data: availability }
+                    : { status: 403, data: { error: 'credential_scope_denied' } };
+            });
+            const target = { kind: 'deployment_service', environment: { serverId, environmentId: 'env', projectSourceId: 'source' },
+                targetLinkId: 'link', deploymentId: 'active-deployment', serviceId: 'database', database: 'postgres' };
+            const statement = { sql: mode === 'read' ? 'SELECT $1::text' : 'UPDATE sentinel SET value = $1',
+                parameters: [{ type: 'text', value: 'private-parameter' }] };
+            const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: serverId, serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const result = await executor.execute(ACTION_INVOKE_ACTION_ID_V1, { action, input: { operation: 'statement.run', target, mode,
+                ...(mode === 'read' ? { statement } : { executionMode: 'transaction', statements: [statement] }) } },
+            { surface: 'cli', actionRequestId: requestId });
+
+            const submitted = mint.mock.calls.find(([url]) => String(url).endsWith('/action.invoke/execution-authorization'));
+            const evidence = JSON.stringify({ result, homeReads: homeReads.mock.calls.map(([url]) => String(url)),
+                daemonRequests: daemon.mock.calls.map(([url]) => String(url)), homePosts: mint.mock.calls.map(([url]) => String(url)) });
+            expect(submitted, evidence).toBeDefined();
+            const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(submitted?.[1]);
+            expect(envelope).toMatchObject({ v: 2, requestId, target: { kind: 'machine', machineId },
+                deploymentReadAdmission: { actionId: ACTION_INVOKE_ACTION_ID_V1, action, environmentId: 'env',
+                    targetLinkId: 'link', databaseTarget: target, access: mode } });
+            expect(JSON.stringify(envelope)).not.toContain('private-parameter');
+            expect(daemon.mock.calls.some(([url]) => String(url).endsWith('/plugins/actions/execute'))).toBe(false);
+        });
+    });
 
     it('reads a Team Environment from Home without a requester daemon', async () => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-environment-reader-' }, async () => {
