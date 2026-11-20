@@ -306,14 +306,17 @@ async function readRecipientAccessMaterialsInTx(tx: Tx, targets: readonly Machin
 
 async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: string,
     material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
-    resolvedRole?: MachineAccessRoleV1 | null): Promise<MachineAccessFacts | null> {
+    resolvedRole?: MachineAccessRoleV1 | null,
+    storedContentMatchesByMachine?: Map<MachineFacts, boolean>): Promise<MachineAccessFacts | null> {
     const role = resolvedRole === undefined ? (await machineRolesInTx(tx, [row], [actorAccountId])).get(row.id)?.get(actorAccountId) ?? null : resolvedRole;
     if (!role) return null;
     const owned = row.accountId === actorAccountId;
     if (!owned && classifyMachineAvailabilityState(row) !== 'available') return null;
     const encryptionMode = resourceMode(row);
     if (encryptionMode === null) return null;
-    let accessState: MachineAccessFacts['accessState'] = resourceContentMatchesMode(row, encryptionMode) ? 'ready' : 'refused';
+    const storedContentMatchesMode = storedContentMatchesByMachine?.get(row) ?? resourceContentMatchesMode(row, encryptionMode);
+    storedContentMatchesByMachine?.set(row, storedContentMatchesMode);
+    let accessState: MachineAccessFacts['accessState'] = storedContentMatchesMode ? 'ready' : 'refused';
     let reason: MachineAccessRefusalCode | null = accessState === 'refused' ? 'encryption_material_unavailable' : null;
     let canPrepareKeys = false;
     if (accessState === 'ready' && !owned && encryptionMode === 'plain' && !safePlainContent(row)) {
@@ -530,9 +533,11 @@ export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readon
             && roles.get(row.id)?.get(target.actorAccountId);
     });
     const materials = await readRecipientAccessMaterialsInTx(tx, encrypted);
+    // The captured Machine content is the same for every requester in this batch.
+    const storedContentMatchesByMachine = new Map<MachineFacts, boolean>();
     const admissions: MachineAdmission[] = [];
     for (const target of targets) admissions.push(await machineAdmissionFromFactsWithRoleInTx(tx, facts.get(target.machineId) ?? null,
-        target, roles.get(target.machineId)?.get(target.actorAccountId) ?? null, materials.get(target.actorAccountId)));
+        target, roles.get(target.machineId)?.get(target.actorAccountId) ?? null, materials.get(target.actorAccountId), storedContentMatchesByMachine));
     return admissions;
 }
 
@@ -562,14 +567,17 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineA
 }
 function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
     input: MachineAdmissionInput & Readonly<{ purpose?: never }>, role?: MachineAccessRoleV1 | null,
-    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission>;
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
+    storedContentMatchesByMachine?: Map<MachineFacts, boolean>): Promise<MachineAdmission>;
 function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
     input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
-    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission | WorkflowMachineAdmission>;
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
+    storedContentMatchesByMachine?: Map<MachineFacts, boolean>): Promise<MachineAdmission | WorkflowMachineAdmission>;
 async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
     input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
-    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission | WorkflowMachineAdmission> {
-    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId, material, role);
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
+    storedContentMatchesByMachine?: Map<MachineFacts, boolean>): Promise<MachineAdmission | WorkflowMachineAdmission> {
+    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId, material, role, storedContentMatchesByMachine);
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
     if (input.purpose === 'workflow' && access.owned) {
         const availability = classifyMachineAvailabilityState(row);
@@ -578,7 +586,9 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
             machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode,
             availability };
     }
-    if (!resourceContentMatchesMode(row, access.encryptionMode)) return { kind: 'denied', code: 'encryption_material_unavailable' };
+    if (access.accessState === 'refused' && access.reason === 'encryption_material_unavailable') {
+        return { kind: 'denied', code: access.reason };
+    }
     const availability = classifyMachineAvailabilityState(row);
     if (availability === 'revoked') return { kind: 'denied', code: 'machine_unavailable',
         diagnostic: { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' } };

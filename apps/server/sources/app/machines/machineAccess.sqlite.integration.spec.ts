@@ -59,6 +59,35 @@ describe('Machine current access (real SQLite)', () => {
         return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
     };
 
+    it('decodes stored content once per selected Machine field across repeated placement targets', async () => {
+        const { owner, machine } = await fixture();
+        const secondMachineId = crypto.randomUUID();
+        const unselectedMachineIds = Array.from({ length: 3 }, () => crypto.randomUUID());
+        await db.machine.createMany({ data: [secondMachineId, ...unselectedMachineIds].map(id => ({
+            id, accountId: owner.id, installationId: 'install',
+            metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
+        })) });
+        const targets = [machine.id, secondMachineId, machine.id, secondMachineId, machine.id]
+            .map(machineId => ({ actorAccountId: owner.id, machineId }));
+        const decode = vi.spyOn(TextDecoder.prototype, 'decode');
+        try {
+            const admissions = await inTx(tx => access.resolveMachineTargetAdmissionsInTx(tx, targets));
+            expect(admissions).toMatchObject(targets.map(({ machineId }) => ({
+                kind: 'admitted', machineId, encryptionMode: 'plain', role: 'manage',
+            })));
+            const envelopeDecodes = decode.mock.results.filter(result => result.type === 'return'
+                && typeof result.value === 'string' && result.value.startsWith('{"t":"plain","v":{'));
+            expect(envelopeDecodes).toHaveLength(4);
+        } finally {
+            decode.mockRestore();
+        }
+        await db.machine.update({ where: { id: machine.id }, data: { metadata: 'not-plain-content' } });
+        const admissions = await inTx(tx => access.resolveMachineTargetAdmissionsInTx(tx, targets));
+        expect(admissions).toMatchObject(targets.map(({ machineId }) => machineId === machine.id
+            ? { kind: 'denied', code: 'encryption_material_unavailable' }
+            : { kind: 'admitted', machineId, encryptionMode: 'plain', role: 'manage' }));
+    });
+
     it('shares batch facts while preserving operation-specific Manage refusals and requester identity', async () => {
         const f = await fixture();
         const requester = await account();
