@@ -15,6 +15,7 @@ import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionP
 import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt } from '@/sync/domains/state/onboardingUiState';
 
 import { FirstOpenHost, useFirstOpenContentLayout } from './FirstOpenHost';
+import { installFirstOpenWebGraphics } from './firstOpenWebGraphics.fixture';
 import { resolveFirstOpen } from './resolveFirstOpen';
 
 vi.mock('react-native', async () => await vi.importActual('react-native-web'));
@@ -25,11 +26,6 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-vi.mock('@/components/atmosphere/glyph/glyphPainter.web', () => ({
-    createWebGlyphPainter: () => ({ ready: true, renderer: 'test GPU', paint() {}, dispose() {} }),
-    warmWebGlyphAtlas: async () => ({}),
-}));
-
 it.each([
     { name: 'Welcome', segments: ['(app)', 'index'], width: 1440 },
     { name: 'Team sign-in', segments: ['(app)', 'teams', '[teamId]', 'sign-in'], width: 390 },
@@ -45,6 +41,7 @@ it.each([
     document.body.append(box);
     const root = createRoot(box);
     const frame = { x: 0, y: 0, width, height: 844 };
+    const restoreGraphics = installFirstOpenWebGraphics(frame.width, frame.height);
     const onAction = vi.fn();
     const animate = vi.fn(() => ({ onfinish: null, cancel: vi.fn() }));
     const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
@@ -79,8 +76,8 @@ it.each([
         expect(readOpeningSeenAt()).toBeNull();
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(scene()?.querySelector('canvas[data-glyph-linked=true]')).toBeTruthy();
-            expect(box.querySelectorAll('canvas[data-glyph-linked=true]').length).toBeGreaterThan(1);
+            expect(scene()?.querySelector('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]')).toBeTruthy();
+            expect(box.querySelectorAll('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]').length).toBeGreaterThan(1);
         });
         animate.mockClear();
         await act(async () => commitLayout());
@@ -104,6 +101,7 @@ it.each([
         if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
         else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
         setReducedMotionPreferenceOverride(null);
+        restoreGraphics();
         vi.unstubAllGlobals();
     }
 });
