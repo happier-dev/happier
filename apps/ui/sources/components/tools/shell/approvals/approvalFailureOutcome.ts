@@ -158,7 +158,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-    const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecoveryV1(failure.errorCode) : null;
+    const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecoveryV1(failure.errorCode, failure.details) : null;
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;

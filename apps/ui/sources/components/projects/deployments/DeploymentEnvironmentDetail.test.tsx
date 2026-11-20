@@ -234,7 +234,7 @@ async function answerExistingDeploymentCheckout(detail: ReturnType<typeof enviro
   }) });
 }
 
-it.each(['opened', 'refused', 'declined'] as const)('prepares a fresh first deploy through reviewed Open checkout (%s)', async openResult => {
+it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepares a fresh first deploy through reviewed Open checkout (%s)', async openResult => {
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
   const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
   const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
@@ -273,6 +273,9 @@ it.each(['opened', 'refused', 'declined'] as const)('prepares a fresh first depl
       // The native receiver requires its destination review, exactly as manual Open does.
       if (context.invocation?.presentUserConfirmation?.reviewDigest !== reviewDigest) return { reviewRequired: input };
       effects.push('open');
+      if (openResult === 'unsupported-forge') return { kind: 'refused', code: 'INVALID_REQUEST', effectAttempted: false,
+        remediation: { kind: 'unsupported_provider' },
+        failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null } };
       return openResult === 'refused' ? { kind: 'refused', code: 'destination_exists', effectAttempted: false } : {
         kind: 'opened', workspace: { serverId: scope.serverId, machineId, workspaceId: 'checkout', rootPath: '/home/me/src/app' },
         directory: '/home/me/src/app', setup: 'approvalRequired' };
@@ -309,6 +312,14 @@ it.each(['opened', 'refused', 'declined'] as const)('prepares a fresh first depl
         .toEqual(openResult === 'opened' ? ['open', 'deploy'] : openResult === 'declined' ? [] : ['open']);
       if (openResult === 'opened') expect(openedReceipts).toEqual(['first-deploy']);
       else expect(screen.findByTestId('project-deployments.outcome.refused.other')).not.toBeNull();
+      if (openResult === 'unsupported-forge') {
+        expect(openedReceipts).toEqual([]);
+        expect(screen.findAllByType(DeployOutcomeBanner)[0]?.props.controller.outcome.failure).toMatchObject({
+          errorCode: 'deployment_source_clone_failed', effectAttempted: false,
+          failureCause: { phase: 'projects.open', errorCode: 'INVALID_REQUEST' },
+        });
+        expect(screen.getTextContent()).toMatch(/could not clone.*hosting provider/i);
+      }
     });
   } finally { account.dispose(); await act(async () => { controller.retire(); }); }
 });

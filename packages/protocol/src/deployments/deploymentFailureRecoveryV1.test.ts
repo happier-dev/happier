@@ -4,6 +4,17 @@ import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
 
+it('routes a repository clone refusal with INVALID_REQUEST to repair the deployment Source', () => {
+    const cause = { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null };
+    const refused = { kind: 'refused', code: 'INVALID_REQUEST', effectAttempted: false,
+        remediation: { kind: 'unsupported_provider' }, failureCause: cause };
+    expect(readDeploymentRefusalRecoveryV1(refused.code, refused)).toMatchObject({
+        remedy: expect.stringMatching(/could not clone.*hosting provider/i),
+        nextAction: { destination: 'source' },
+    });
+    expect(readDeploymentRefusalRecoveryV1(refused.code, { ...refused, remediation: undefined })).toBeNull();
+});
+
 it.each([
     { step: 'native_execution' },
     { failureCause: { phase: 'deployment.domain.native_execution', errorCode: 'deployment_conflict' } },

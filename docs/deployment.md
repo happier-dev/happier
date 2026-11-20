@@ -55,6 +55,10 @@ and the person's ordinary destination review. An Open refusal or uncertain
 outcome stops the sequence. Stored definitions and provider Git integration do
 not require this checkout step. Deploy itself never opens a checkout internally.
 
+If Upload cannot clone a Source, the Deploy panel shows the checkout failure and
+its repair step. The failed checkout is recorded by Projects Open. A deployment
+receipt begins only after Deploy is admitted.
+
 ## Declared platform plans (0.3 development)
 
 The optional `deploymentTargets[].plans` contribution carries provider-authored

@@ -1,6 +1,6 @@
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
-import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -45,11 +45,15 @@ export async function prepareDeploymentSourceCheckout(
     const executed = await createFrontDoorActionExecute()('projects.open', input, {
       surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
     });
+    const refused = OpenProjectRefusalV1Schema.safeParse(executed.ok ? executed.result : executed.details);
+    if (refused.success) {
+      const failure = projectOpenProjectRefusalV1(refused.data);
+      const code = refused.data.remediation?.kind === 'unsupported_provider' ? 'deployment_source_clone_failed' : failure.errorCode;
+      throw new HappyError(code, false, { code, details: failure.details, failureCause: failure.failureCause,
+        effectAttempted: failure.effectAttempted, ...(!executed.ok && executed.requestId ? { requestId: executed.requestId } : {}) });
+    }
     requireActionSuccess(executed, 'projects.open');
     const result = OpenProjectResultV1Schema.parse(executed.result);
-    if (result.kind !== 'opened') {
-      const code = result.kind === 'refused' ? result.code : 'outcome_unknown';
-      throw new HappyError(code, false, { code, details: result });
-    }
+    if (result.kind !== 'opened') throw new HappyError('outcome_unknown', false, { code: 'outcome_unknown', details: result });
   } finally { account.dispose(); }
 }

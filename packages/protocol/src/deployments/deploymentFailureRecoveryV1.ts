@@ -2,6 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { isRecord } from '../common/records.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
+import { OpenProjectRefusalV1Schema } from '../projects/openProjectV1.js';
 import type { OpenProjectDraftSelectionV1 } from '../projects/openProjectDraftV1.js';
 import type { ProjectSourceRepositorySelectorV1 } from '../projects/sources/projectSourceV1.js';
 
@@ -76,6 +77,7 @@ const recoveries = {
     native_build_failed: recovery('The image build failed. Read its build output to fix the reported command or executable before deploying again.', 'logs', 'Open build output'),
     deployment_source_unavailable: recovery('Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.', 'source', 'Open Source details'),
     deployment_source_checkout_required: recovery("The Environment's Machine has no checkout of this Source yet. Open the Source's checkout on that Machine, then deploy again.", 'source', 'Open checkout'),
+    deployment_source_clone_failed: recovery('Happier could not clone the repository on the selected Machine. Open Source details and check the repository address and its access, then deploy again.', 'source', 'Open Source details'),
     required_fact_unavailable: recovery("Happier could not confirm the deployment's current state. Open its history to check what ran before trying again.", 'history', 'Review deployment history'),
     template_domain_route_required: recovery('This app needs a route for its address. Choose how to reach it, or leave the address out if the template makes it optional.', 'domains', 'Choose address'),
     template_domain_required: recovery('This template requires an address. Choose one in the app setup before installing.', 'domains', 'Set required address'),
@@ -265,6 +267,7 @@ function sourceFileRecovery(details: Record<string, unknown>) {
 export type DeploymentRefusalRequestV1 = Readonly<{ pullRequestHead?: boolean }>;
 // An exact pull-request head the Source can't supply is that head's problem, not the Source's setup.
 const pullRequestHeadRecovery = recovery('This pull request head could not be fetched for deploy. The pull request may be merged, closed or from a fork. Read its latest head again, or deploy its branch.', 'source', 'Open Source details');
+const unsupportedCloneProviderRecovery = recovery('Happier could not clone the repository because the selected hosting provider does not support the repository address. Open Source details and choose a supported provider and repository, then deploy again.', 'source', 'Open Source details');
 
 function recoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
     // Store keeps completed steps alongside the Domain owner's failure. Its
@@ -275,6 +278,10 @@ function recoveryDetails(details: Record<string, unknown>): Record<string, unkno
 
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
+    if (details.kind === 'refused') {
+        const open = OpenProjectRefusalV1Schema.safeParse(details);
+        if (open.success && open.data.remediation?.kind === 'unsupported_provider') return unsupportedCloneProviderRecovery;
+    }
     // The transport sets this fact only after consuming Home's confirmed rollback.
     if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;
     const failure = isRecord(details.failure) ? details.failure : undefined;
