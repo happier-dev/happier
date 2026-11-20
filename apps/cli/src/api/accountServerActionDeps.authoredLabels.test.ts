@@ -2,7 +2,13 @@ import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec, SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
   ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
@@ -83,6 +89,75 @@ describe.each(['plain', 'e2ee'] as const)('authored labels through the CLI Accou
       ...(mode === 'e2ee' ? { accountKey } : {}) })).toBe(value);
     return projected;
   };
+
+  it.each([
+    { accountGrants: undefined },
+    { accountGrants: ['recipient-account'] },
+  ])('returns the Saved Secret create receipt with Account grants $accountGrants after the Home commits', async ({ accountGrants }) => {
+    const actionId = 'secrets.shared.create';
+    const audience = accountGrants === undefined ? {} : { accountGrants };
+    const content = { v: 1 as const, name: 'Fixture Secret', kind: 'password' as const, value: 'fixture' };
+    const storedContent = mode === 'plain'
+      ? sealSavedSecretResourceStoredContentV1({ resourceId: id, mode, content })
+      : sealSavedSecretResourceStoredContentV1({ resourceId: id, mode, content,
+          resourceDataKey: accountKey, randomBytes: length => new Uint8Array(length).fill(2) });
+    const committed = new Map<string, number>();
+    app.post(SHARED_SAVED_SECRET_ACTION_PATHS_V1[actionId], async request => {
+      const input = SharedSavedSecretCreateInputV1Schema.parse(request.body);
+      expect(input.accountGrants).toEqual(accountGrants);
+      committed.set(input.resourceId, 1);
+      return { resourceId: input.resourceId, revision: 1 };
+    });
+
+    let stored: ApprovalRequest | null = null;
+    const executor = createActionExecutor({
+      ...createAccountServerActionDeps({
+        token, credentials: { token, encryption: mode === 'e2ee' ? encryption : null },
+        serverId: 'home', serverHttpBaseUrl: 'https://account.test',
+      }),
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'saved-secret-review' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval Artifact');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: accountId } as const;
+    const result = await executor.execute(actionId, {
+      resourceId: id, displayName: content.name, kind: content.kind, encryptionMode: mode, storedContent, ...audience,
+    }, { ...context, actionRequestId: 'saved-secret-create' });
+    expect(committed.size).toBe(0);
+    if (!result.ok) throw new Error(result.errorCode);
+    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(result.result);
+    const openObservation = await executor.execute('approval.request.get', { artifactId }, context);
+    const decision = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+      { ...context, actionRequestId: 'saved-secret-approve' });
+    if (routeError) throw routeError;
+    expect(committed.get(id)).toBe(1);
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed',
+      execution: { ok: true, result: { resourceId: id, revision: 1 } } } });
+    if (!stored) throw new Error('Missing terminal approval receipt');
+    const completion = buildActionExecuteResultFromRecordedApprovalExecution(stored);
+    expect(completion).toEqual({ ok: true, result: { resourceId: id, revision: 1 } });
+    if (!completion?.ok) throw new Error('Expected successful create completion');
+    expect(getActionSpec(actionId).outputSchema?.parse(completion.result)).toEqual({ resourceId: id, revision: 1 });
+    expect(SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS[actionId].parse(completion.result)).toEqual({ resourceId: id, revision: 1 });
+    // The waiting CLI starts this read while the decision and Home write are
+    // still in flight. A rejected observation can outlive a committed effect.
+    if (!openObservation.ok) throw new Error(openObservation.errorCode);
+    expect(openObservation.result).toHaveProperty('request.status', 'open');
+    expect(openObservation.result).toHaveProperty('request.actionArgs', {
+      resourceId: id, displayName: content.name, kind: content.kind, encryptionMode: mode, ...audience,
+    });
+  });
 
   it('creates a Group from its name and description', async () => {
     expectedOwner = { kind: 'team', teamId };
