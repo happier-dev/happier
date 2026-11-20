@@ -20,7 +20,7 @@ import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usa
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, mergeRetainedUsageAllowance, readUiUsageQueryBatch } from './usageQueryResource';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getRetainedQuotaPeriodKey, getUsageQueryResourceStore, invalidateUsageQueryResources, mergeRetainedUsageAllowance, readUiUsageQueryBatch } from './usageQueryResource';
 import type { UsageQueryReprojection } from './usageQueryProjection';
 import { storage } from '@/sync/domains/state/storage';
 import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -228,6 +228,18 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it('retains distinct quota history keys for different periods with optional bounds', () => {
+    const exact = normalizeUsageQuery({ period: { startMs: 0, endMs: 20, relative: undefined } });
+    const same = normalizeUsageQuery({ ...exact, period: { startMs: 0, endMs: 20 } });
+    const later = normalizeUsageQuery({ ...exact, period: { startMs: 1, endMs: 20 } });
+    const open = normalizeUsageQuery({ ...exact, period: { startMs: undefined, endMs: 20 } });
+    const week = normalizeUsageQuery({ ...exact, period: { relative: '7days', startMs: undefined } });
+    const month = normalizeUsageQuery({ ...exact, period: { relative: '30days' } });
+
+    expect(getRetainedQuotaPeriodKey(exact)).toBe(getRetainedQuotaPeriodKey(same));
+    expect(new Set([exact, later, open, week, month].map(getRetainedQuotaPeriodKey)).size).toBe(5);
+  });
+
   it.each(['empty', 'started', 'accounted'] as const)(
     'keeps the Coach population canonical when an archived %s Session has compact facts without turns', async kind => {
       const nowMs = 1_710_000_000_000;

@@ -478,9 +478,11 @@ function getQuotaHistoryMode(query: UsageQuery): 'head' | 'daily' | 'exact' {
 }
 
 /** Latest-batch siblings may share history only when they ask for the same history. */
-function getRetainedQuotaPeriodKey(query: UsageQuery): string {
+export function getRetainedQuotaPeriodKey(query: UsageQuery): string {
     const mode = getQuotaHistoryMode(query);
-    return mode === 'head' ? mode : createCanonicalJsonSigningInput([mode, query.period, query.timeZoneOffsetMinutes ?? 0]);
+    return mode === 'head' ? mode : createCanonicalJsonSigningInput([
+        mode, projectNativeJsonValueForTransport(query.period), query.timeZoneOffsetMinutes ?? 0,
+    ]);
 }
 
 type RetainedUsageAllowance = Readonly<{
