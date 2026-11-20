@@ -30,6 +30,33 @@ describe('Source catalog real SQLite owner', () => {
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-source-catalog-', initEncrypt: true }); }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
     const account = () => db.account.create({ data: { encryptionMode: 'plain' } });
+
+    it('admits a Source share to several Groups with one Group read and rejects an archived or wrong-Team pair', async () => {
+        const owner = await account();
+        const [team, otherTeam] = await Promise.all(['Share team', 'Other team'].map(name => db.team.create({ data: { name } })));
+        await db.teamMembership.createMany({ data: [team, otherTeam].map(row => ({ teamId: row.id, accountId: owner.id, role: 'owner' as const })) });
+        const groups = await Promise.all(Array.from({ length: 8 }, (_, index) => db.teamGroup.create({ data: {
+            teamId: team.id, name: storedPlainPrivateLabel(`Group ${index}`),
+        } })));
+        const grant = (teamId: string, groupId: string) => ({ principal: { kind: 'group' as const, teamId, groupId }, level: 'view' as const });
+        const share = (audience: ReturnType<typeof grant>[]) => inTx(tx => createProjectSourceInTx(tx, owner.id, {
+            serverId, requestKey: crypto.randomUUID(), name: 'Group share', audience,
+        }));
+        const audience = groups.map(group => grant(team.id, group.id));
+        let reads = 0;
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === 'TeamGroup' && ['findFirst', 'findMany'].includes(request.action)) reads++;
+        } });
+        try {
+            expect(await share(audience)).toMatchObject({ ok: true, source: { audience } });
+        } finally { stop(); }
+        expect(await share([grant(otherTeam.id, groups[0]!.id)])).toMatchObject({ ok: false, error: 'source_access_denied' });
+        await db.teamGroup.update({ where: { id: groups[0]!.id }, data: { archivedAt: new Date() } });
+        expect(await share(audience)).toMatchObject({ ok: false, error: 'source_access_denied' });
+        console.info('Source share Group reads', reads);
+        expect(reads).toBe(1);
+    });
+
     it('widens retained SQLite Sources without losing either FK child, data, indexes or integrity', async () => {
         const migrationName = '20261027122000_project_source_optional_repository';
         const tombstoneMigration = '20261103133000_project_source_tombstone';

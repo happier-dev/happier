@@ -161,13 +161,20 @@ async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: re
         subjectAccountIds: requested.filter(accountId => retained.has(accountId) === hasExistingGrant),
     })));
     if (!resolutions.flat().every(resolution => resolution.ok)) return false;
+    const groups: Extract<ProjectSourceGrantV1['principal'], { kind: 'group' }>[] = [];
     for (const { principal } of audience) {
         if (principal.kind !== 'account') {
             if (admission.admittedTeam(principal.teamId)?.teamCapabilities.manageSettings !== true) return false;
-            if (principal.kind === 'group' && !(await tx.teamGroup.findFirst({ where: { id: principal.groupId, teamId: principal.teamId, archivedAt: null }, select: { id: true } }))) return false;
+            if (principal.kind === 'group') groups.push(principal);
         }
     }
-    return true;
+    const groupIds = [...new Set(groups.map(group => group.groupId))];
+    const activeGroups = new Map<string, string>();
+    for (const ids of portableQueryChunks({ values: groupIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const rows = await tx.teamGroup.findMany({ where: { id: { in: [...ids] }, archivedAt: null }, select: { id: true, teamId: true } });
+        for (const row of rows) activeGroups.set(row.id, row.teamId);
+    }
+    return groups.every(group => activeGroups.get(group.groupId) === group.teamId);
 }
 
 /** One reader census, with a result for every input (including old/new versions of the same Source).
