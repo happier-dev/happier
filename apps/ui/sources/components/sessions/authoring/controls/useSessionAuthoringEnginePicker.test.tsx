@@ -5,6 +5,8 @@ import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentI
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { WorkflowSessionAuthoringSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { act } from 'react-test-renderer';
 
 installDisconnectedServerSocketBoundary();
 installAgentInputCommonModuleMocks();
@@ -25,6 +27,37 @@ const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatal
 const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
 const account = createProviderSettingsAccountHarness();
 afterEach(async () => { await standardCleanup(); await account.reset(); });
+
+it('keeps the last engine choices on HTTP 503 and offers Retry through the picker', async () => {
+    const answer = { body: { status: 'present', revision: 1, content: { t: 'plain', v: {
+        v: 1, definitions: [{ id: 'qa-review', name: 'qa-review', title: 'QA Review',
+            launch: { kind: 'command', command: 'review', args: [] }, env: {},
+            capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' }, createdAt: 1, updatedAt: 1 }],
+    } } } };
+    const { serverId } = await account.restore({ httpAnswers: { [ACP_CATALOG_ROWS_ROUTE_V1]: answer } });
+    const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
+    const { invalidateAcpCatalogProjection } = await import('@/sync/engine/settings/acpCatalogEngine');
+    const hook = await renderHook(() => {
+        const facts = useSessionAuthoringControlFacts({ machineId: null, serverId });
+        return useSessionAuthoringEnginePicker({ values: {}, facts, onChangeFields: () => {} });
+    });
+    const choice = () => hook.getCurrent().options.find(option => option.label === 'QA Review');
+    const failure = () => hook.getCurrent().options.find(option => option.id === 'session-authoring-engine-catalog-unavailable');
+    await vi.waitFor(() => expect(choice()).toMatchObject({ disabled: false }));
+    account.home.answer(serverId, ACP_CATALOG_ROWS_ROUTE_V1, { status: 503, body: { error: 'database_connection_unavailable' } });
+    await act(async () => { await invalidateAcpCatalogProjection({ serverId, accountId: 'account-a' }); });
+    expect.soft(choice()).toMatchObject({ disabled: true });
+    const detail = failure()?.renderDetailContent?.({ onRequestClose: () => {} });
+    if (!React.isValidElement(detail)) throw new Error('The failed engine catalog has no Retry presentation');
+    const screen = await renderScreen(detail);
+    account.home.answer(serverId, ACP_CATALOG_ROWS_ROUTE_V1, answer);
+    await screen.pressByTestIdAsync('session-authoring-engine-catalog-unavailable:action');
+    await vi.waitFor(() => {
+        expect(failure()).toBeUndefined();
+        expect(choice()).toMatchObject({ disabled: false });
+    });
+});
 
 it('honors unavailable rows and stages only the engine when choosing an existing-Session option', async () => {
     const { serverId } = await account.restore();

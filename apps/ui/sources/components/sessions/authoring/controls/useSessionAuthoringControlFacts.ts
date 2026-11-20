@@ -66,7 +66,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const directory = params.directory?.trim() ?? '';
     const selectedMachine = useServerScopedMachine(serverId, machineId);
     const preferredLanguage = getPreferredLanguage();
-    const { snapshot: acpCatalog } = useAcpCatalogForServer(params.serverId);
+    const { snapshot: acpCatalog, refresh: refreshAcpCatalog } = useAcpCatalogForServer(params.serverId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const { lastUsedAgent, lastUsedBackendTarget } = useLastUsedBackendSelection();
     const useProfiles = useSetting('useProfiles') === true;
@@ -77,34 +77,60 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     );
     const directTranscriptsEnabled = useFeatureEnabled('sessions.direct', spawnFeatureScope);
 
+    const [projectionRefreshKey, setProjectionRefreshKey] = React.useState(0);
     const daemonProjection = useDaemonMergedProjectionInputs({
         sections: ['agentsById', 'settingsById', 'familiesById.pluginUi', 'resourcesById'],
         machineId,
         serverId,
         enabled: machineId !== null,
+        refreshKey: projectionRefreshKey,
     });
     const projectionInputs = daemonProjection.phase === 'ready' ? daemonProjection.inputs : null;
+    const projectionFailed = daemonProjection.phase === 'error';
+    const acpReadFailed = acpCatalog?.catalog.status === 'unavailable' && acpCatalog.catalog.reason === 'unreachable';
+    const retryAgentCatalog = React.useCallback(() => {
+        if (acpReadFailed) void refreshAcpCatalog();
+        if (projectionFailed) setProjectionRefreshKey(key => key + 1);
+    }, [acpReadFailed, projectionFailed, refreshAcpCatalog]);
+    // Retained declarations name stale picker rows. Capability and launch facts still come from the fresh projection.
+    const catalogInputs = projectionInputs ?? (
+        daemonProjection.phase === 'loading' || (projectionFailed && (
+            daemonProjection.failureReason === 'transport-unavailable'
+            || daemonProjection.failureReason === 'transport-error'
+            || daemonProjection.failureReason === 'timeout'
+        )) ? daemonProjection.inputs : null
+    );
     const pluginUiProjection = projectionInputs?.pluginUiProjection ?? null;
     const localizePluginText = usePluginLocalizedTextResolver({ projection: pluginUiProjection, locale: preferredLanguage });
 
-    const backendEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
+    const backendEntries = React.useMemo(() => {
+        const catalogOptions = {
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
             acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
-            mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById ?? null,
-            mergedBackendProjectionById: projectionInputs?.mergedBackendProjectionById ?? null,
-            ...(projectionInputs?.discoveredBackendIds === undefined
-                ? {}
-                : { discoveredBackendIds: projectionInputs.discoveredBackendIds }),
-        }), [acpCatalog, backendEnabledByTargetKey, projectionInputs]);
-    const settings = useAgentUiSettings({ agentIds: backendEntries.map(entry => entry.agentId), machineId, domain: 'transcriptStorage' });
+        };
+        const readEntries = (inputs: typeof projectionInputs, retained: boolean) => getResolvedBackendCatalogEntries({
+            ...catalogOptions,
+            ...(retained ? { retainedAcpCatalogRecord: acpCatalog?.data } : {}),
+            mergedProviderProjectionById: inputs?.mergedProviderProjectionById ?? null,
+            mergedBackendProjectionById: inputs?.mergedBackendProjectionById ?? null,
+            ...(inputs?.discoveredBackendIds === undefined ? {} : { discoveredBackendIds: inputs.discoveredBackendIds }),
+        });
+        const current = readEntries(projectionInputs, false);
+        const acpRetained = acpCatalog?.data && acpCatalog.catalog.status !== 'ready' && acpCatalog.catalog.status !== 'partial';
+        if (catalogInputs === projectionInputs && !acpRetained) return { current, retained: [] };
+        const currentKeys = new Set(current.map(entry => entry.backendTargetKey));
+        const retained = readEntries(catalogInputs, true).filter(entry => !currentKeys.has(entry.backendTargetKey));
+        return { current, retained };
+    }, [acpCatalog, backendEnabledByTargetKey, catalogInputs, projectionInputs]);
+    const settings = useAgentUiSettings({ agentIds: backendEntries.current.map(entry => entry.agentId), machineId, domain: 'transcriptStorage' });
     // Readiness already produced for this Machine (installed, signed in or a
     // connected default): observed only, so an unopened control never probes.
     const machineAgents = useObservedMachineAgents({ serverId, machineId }).agents;
-    const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
-        const options: SessionAuthoringAgentTargetOption[] = [];
-        for (const entry of backendEntries) {
+    const { agentTargets, retainedAgentTargets } = React.useMemo(() => {
+        const agentTargets: SessionAuthoringAgentTargetOption[] = [];
+        for (const entry of backendEntries.current) {
             const capabilities = projectionInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities;
             if (requireWorkspaceWriteDenial && !supportsAgentWorkspaceWriteDenial(capabilities?.sessions)) continue;
             // A configured backend with no machine projection has no resolvable
@@ -144,7 +170,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             const readiness = machineAgent && !machineAgent.stale
                 ? resolveMachineAgentExecutionStateV1({ inventoryState: machineAgent.state }) : undefined;
             const noTools = capabilities?.tools?.noTools;
-            options.push({
+            agentTargets.push({
                 pickerEntry: entry,
                 ...(noTools === undefined ? {} : { noTools }),
                 ...(capabilities?.connectedToNativeSwitchUnsupported
@@ -184,8 +210,22 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
                     }),
             });
         }
-        return options;
-    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineAgents, machineId, projectionInputs, requireWorkspaceWriteDenial, settings]);
+        const retainedAgentTargets: SessionAuthoringAgentTargetOption[] = [];
+        for (const entry of backendEntries.retained) {
+            const capabilities = catalogInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities;
+            if (requireWorkspaceWriteDenial && !supportsAgentWorkspaceWriteDenial(capabilities?.sessions)) continue;
+            const target = resolveAgentExecutionTargetForBackendTarget({
+                backendTarget: stripBackendTargetSourceKind(entry.backendTarget),
+                daemonMergedProjectionInputs: catalogInputs,
+            });
+            if (!target) continue;
+            retainedAgentTargets.push({
+                id: entry.backendTargetKey, label: entry.title, target, agentId: entry.agentId,
+                pickerEntry: entry,
+            });
+        }
+        return { agentTargets, retainedAgentTargets };
+    }, [backendEntries, catalogInputs, directTranscriptsEnabled, localizePluginText, machineAgents, machineId, projectionInputs, requireWorkspaceWriteDenial, settings]);
 
     /**
      * Which Agent New Session would preselect here, resolved by that same owner
@@ -268,6 +308,8 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
 
     return React.useMemo<SessionAuthoringControlFacts>(() => ({
         agentTargets,
+        ...(retainedAgentTargets.length > 0 ? { retainedAgentTargets } : {}),
+        ...(projectionFailed || acpReadFailed ? { retryAgentCatalog } : {}),
         agentPickerContext: { machineId, serverId, directory },
         contextualDefaultAgentTarget,
         profiles,
@@ -279,5 +321,5 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         windowsTerminalAvailable,
         connectedServices,
         ...(mcp === undefined ? {} : { mcp }),
-    }), [agentTargets, connectedServices, contextualDefaultAgentTarget, directory, machineId, machineName, mcp, profiles, profilesLoading, profilesUnavailableReason, serverId, targetIsWindows, useProfiles, windowsTerminalAvailable]);
+    }), [acpReadFailed, agentTargets, connectedServices, contextualDefaultAgentTarget, directory, machineId, machineName, mcp, profiles, profilesLoading, profilesUnavailableReason, projectionFailed, retainedAgentTargets, retryAgentCatalog, serverId, targetIsWindows, useProfiles, windowsTerminalAvailable]);
 }

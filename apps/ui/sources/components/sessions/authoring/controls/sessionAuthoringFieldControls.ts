@@ -240,6 +240,9 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
  */
 export type SessionAuthoringControlFacts = Readonly<{
     agentTargets?: readonly SessionAuthoringAgentTargetOption[];
+    /** Last-known rows for display. Only agentTargets is eligible for selection. */
+    retainedAgentTargets?: readonly SessionAuthoringAgentTargetOption[];
+    retryAgentCatalog?: () => void;
     agentPickerContext?: Readonly<{ machineId: string | null; serverId: string | null; directory: string | null }>;
     /**
      * The Agent the canonical New Session resolver would preselect for this
@@ -484,17 +487,19 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
     switch (field) {
         case 'agentTarget': {
             const targets = facts.agentTargets ?? [];
-            if (targets.length === 0) return unavailable(field, 'owned_by_host');
-            const selectedOption = selectedAgentTarget;
+            const retainedTargets = facts.retainedAgentTargets ?? [];
+            if (targets.length === 0 && retainedTargets.length === 0) return unavailable(field, 'owned_by_host');
+            const selectedOption = selectedAgentTarget ?? findSessionAuthoringAgentTargetOption(retainedTargets, values.agentTarget);
             return {
                 field,
                 kind: 'options',
                 title: fieldTitle,
-                options: targets.map((option) => ({
-                    id: option.id,
-                    label: option.label,
-                    ...(option.subtitle === undefined ? {} : { subtitle: option.subtitle }),
-                })),
+                options: [
+                    ...targets.map(({ id, label, subtitle }) => ({
+                        id, label, ...(subtitle === undefined ? {} : { subtitle }),
+                    })),
+                    ...retainedTargets.map(({ id, label }) => ({ id, label, disabled: true, subtitle: t('common.unavailable') })),
+                ],
                 selectedOptionId: selectedOption?.id ?? SESSION_AUTHORING_NONE_OPTION_ID,
                 // Nothing selected, or an authored Agent this Machine does not
                 // offer: either way there is no Agent, and reading that as the

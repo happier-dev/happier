@@ -1,5 +1,6 @@
 import { SessionAuthoringEngineDetail } from './SessionAuthoringEngineDetail';
 import { readTeamCredentialProviderModelSelection, replaceProviderModelCredentialBinding } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import * as React from 'react';
 import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
@@ -16,6 +17,7 @@ import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '@/
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
 
 const EMPTY_TARGETS: NonNullable<SessionAuthoringControlFacts['agentTargets']> = [];
+const ENGINE_CATALOG_UNAVAILABLE = 'session-authoring-engine-catalog-unavailable';
 
 /** The Session engine picker, adapted only at its controlled authoring writer. */
 export function useSessionAuthoringEnginePicker(params: Readonly<{
@@ -23,6 +25,8 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
     facts?: SessionAuthoringControlFacts;
     /** The allowed engines for staging changes to existing Sessions. */
     engineOptions?: readonly SessionAuthoringFieldOption[];
+    /** Failed reads of the contributing Machines, when the host intersects several catalogs. */
+    catalogRetries?: readonly (() => void)[];
     disabled?: boolean;
     onChangeFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
     roleSelection?: RolesRailPickerOptionParams;
@@ -36,27 +40,52 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
     latest.current = params;
     const selectedKey = params.values.agentTarget ? buildBackendTargetKeyV2(params.values.agentTarget) : null;
     const catalogTargets = params.facts?.agentTargets ?? EMPTY_TARGETS;
+    const retainedTargets = params.facts?.retainedAgentTargets ?? EMPTY_TARGETS;
     const engineOptions = React.useMemo(() => params.engineOptions
         && new Map(params.engineOptions.map(option => [option.id, option])), [params.engineOptions]);
-    const targets = React.useMemo(() => engineOptions
-        ? catalogTargets.filter(option => engineOptions.has(option.id)) : catalogTargets, [catalogTargets, engineOptions]);
+    const targets = React.useMemo(() => {
+        const allTargets = retainedTargets.length > 0 ? [...catalogTargets, ...retainedTargets] : catalogTargets;
+        return engineOptions ? allTargets.filter(option => engineOptions.has(option.id)) : allTargets;
+    }, [catalogTargets, engineOptions, retainedTargets]);
     const settings = useAgentUiSettings({ agentIds: targets.map(target => target.agentId).filter((id): id is string => Boolean(id)),
         machineId: params.facts?.agentPickerContext?.machineId, domain: 'runtime' });
     const selected = targets.find(option => buildBackendTargetKeyV2(option.target) === selectedKey);
+    const catalogRetries = params.catalogRetries;
+    const retryAgentCatalog = params.facts?.retryAgentCatalog;
+    const catalogFailure = React.useMemo<AgentInputChipPickerOption | null>(() => {
+        const retries = catalogRetries ?? (retryAgentCatalog ? [retryAgentCatalog] : []);
+        if (retries.length === 0) return null;
+        const title = `${t('workflows.page.sections.agentTitle')} · ${t('common.unavailable')}`;
+        return {
+            id: ENGINE_CATALOG_UNAVAILABLE,
+            label: title,
+            view: true,
+            closeOnSelectImmediate: false,
+            renderDetailContent: () => <SurfaceStateCard testID={ENGINE_CATALOG_UNAVAILABLE} kind="error"
+                size="line" layout="inline" title={title}
+                action={{ testID: `${ENGINE_CATALOG_UNAVAILABLE}:action`, label: t('common.retry'),
+                    onPress: () => { for (const retry of retries) retry(); } }} />,
+        };
+    }, [catalogRetries, retryAgentCatalog]);
     const context = params.facts?.agentPickerContext;
     const options = React.useMemo<readonly AgentInputChipPickerOption[]>(() => buildSessionAgentPickerOptions({
         entries: targets.flatMap(option => option.pickerEntry ? [option.pickerEntry] : []),
-        leadingOptions: params.roleSelection ? [buildRolesRailPickerOption(params.roleSelection)] : [],
+        leadingOptions: [...(params.roleSelection ? [buildRolesRailPickerOption(params.roleSelection)] : []),
+            ...(catalogFailure ? [catalogFailure] : [])],
         identityScope: { machineId: context?.machineId ?? null, serverId: context?.serverId ?? null, current: true },
         resolvePresentation: entry => {
             const option = engineOptions?.get(entry.backendTargetKey);
             if (option?.disabled) return { subtitle: option.subtitle, disabled: true, muted: false };
+            if (retainedTargets.some(target => target.id === entry.backendTargetKey)) {
+                return { subtitle: t('common.unavailable'), disabled: true, muted: false };
+            }
             return { subtitle: entry.subtitle ?? undefined, disabled: params.disabled === true, muted: false };
         },
         resolveBehavior: ({ entry }) => {
             const fieldOption = engineOptions?.get(entry.backendTargetKey);
             if (fieldOption?.disabled) return {};
             const option = targets.find(target => target.id === entry.backendTargetKey)!;
+            if (retainedTargets.some(target => target.id === entry.backendTargetKey)) return {};
             const readSelection = (): SessionAgentPickerSelection => {
                 const values = latest.current.values;
                 const matches = values.agentTarget !== undefined && values.agentTarget !== null
@@ -121,7 +150,7 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                 }} />,
             };
         },
-    }), [targets, engineOptions, context, params.disabled, params.roleSelection, settings, params.values.teamCredentialBindings, params.values.modelSelection,
+    }), [targets, retainedTargets, engineOptions, context, params.disabled, params.roleSelection, catalogFailure, settings, params.values.teamCredentialBindings, params.values.modelSelection,
         params.values.acpSessionModeId, params.values.sessionConfigOptionOverrides]);
     const onSelect = React.useCallback((id: string) => {
         options.find(option => option.id === id)?.onSelectImmediate?.();

@@ -242,10 +242,16 @@ function BulkSessionComposer(
     () => (sharedAgentTarget ? undefined : { label: mixedLabel, applyTiming: t('agentInput.model.applyTimingNextMessage') }),
     [mixedLabel, sharedAgentTarget],
   );
+  const engineCatalogRetries = React.useMemo(() => {
+    if (!composer.agentSwitchingEnabled) return [];
+    return [...new Set(controlTargets.targets?.flatMap(target => target.facts?.retryAgentCatalog
+      ? [target.facts.retryAgentCatalog] : []) ?? [])];
+  }, [composer.agentSwitchingEnabled, controlTargets.targets]);
   const enginePicker = useSessionAuthoringEnginePicker({
     values: composer.selection,
     facts: engineControl.kind === 'options' ? leadFacts : undefined,
     engineOptions: engineControl.kind === 'options' ? engineControl.options : undefined,
+    catalogRetries: engineCatalogRetries,
     disabled: engineControl.kind !== 'options',
     onChangeFields: changeEngineFields,
     mixedSelection: engineMixedSelection,
@@ -269,7 +275,7 @@ function BulkSessionComposer(
   const engineAgentType =
     enginePicker.agentId ??
     (composer.selection.agentTarget ? undefined : (sharedAgentOption?.agentId ?? sharedBundledAgentId ?? undefined));
-  const engineOpens = engineControl.kind === 'options' && enginePicker.options.length > 0;
+  const engineOpens = enginePicker.options.length > 0;
   // The row the picker opens on: the pending choice, else the one Agent every target runs; none while they differ.
   const sharedEngineOptionId =
     engineControl.kind === 'options' &&
