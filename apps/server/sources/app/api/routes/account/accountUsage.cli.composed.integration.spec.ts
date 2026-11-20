@@ -133,7 +133,7 @@ describe('usage.query CLI HTTP → Account routes → SQLite accounting', () => 
         expect(denied.ok, JSON.stringify(denied)).toBe(true);
         const deniedSlice = UsageQueryBatchResultSchema.parse(denied.ok ? denied.result : undefined).results[0]!;
         expect(deniedSlice.accounting).toBeUndefined();
-        expect(deniedSlice.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'unsupported' }));
+        expect(deniedSlice.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'error', errorCode: 'denied' }));
         current = false;
         expect(await executor.execute('usage.query', { queries: [all] }, { surface: 'cli', serverId: 'usage-home' }))
             .toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
