@@ -221,7 +221,6 @@ type Copy = Readonly<{
       alreadyLinked: string;
       linkRefusedRow: string;
       platformLinkRefusedTitle: (p: Readonly<{ platform: string }>) => string;
-      platformAlreadyLinked: (p: Readonly<{ platform: string }>) => string;
       platformLinkRefused: (p: Readonly<{ platform: string }>) => string;
     }>;
   }>;
@@ -463,7 +462,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Already linked',
         linkRefusedRow: 'Couldn’t link it',
         platformLinkRefusedTitle: ({ platform }) => `Couldn’t link the ${platform} project`,
-        platformAlreadyLinked: ({ platform }) => `That ${platform} project is already linked to another environment. The environment is saved; nothing else changed. Open it to choose another project.`,
         platformLinkRefused: ({ platform }) => `The environment is saved; the ${platform} project wasn’t linked. Open the environment to try again.`,
       },
     },
@@ -686,7 +684,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Ja vinculat',
         linkRefusedRow: 'No s’ha pogut vincular',
         platformLinkRefusedTitle: ({ platform }) => `No s’ha pogut vincular el projecte de ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Aquest projecte de ${platform} ja està vinculat a un altre entorn. L’entorn s’ha desat; no ha canviat res més. Obre’l per triar un altre projecte.`,
         platformLinkRefused: ({ platform }) => `L’entorn s’ha desat; el projecte de ${platform} no s’ha vinculat. Obre l’entorn per tornar-ho a provar.`,
       },
     },
@@ -909,7 +906,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Bereits verknüpft',
         linkRefusedRow: 'Konnte nicht verknüpft werden',
         platformLinkRefusedTitle: ({ platform }) => `${platform}-Projekt konnte nicht verknüpft werden`,
-        platformAlreadyLinked: ({ platform }) => `Dieses ${platform}-Projekt ist bereits mit einer anderen Umgebung verknüpft. Die Umgebung ist gespeichert; sonst hat sich nichts geändert. Öffne sie, um ein anderes Projekt zu wählen.`,
         platformLinkRefused: ({ platform }) => `Die Umgebung ist gespeichert; das ${platform}-Projekt wurde nicht verknüpft. Öffne die Umgebung, um es erneut zu versuchen.`,
       },
     },
@@ -1132,7 +1128,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Ya vinculado',
         linkRefusedRow: 'No se pudo vincular',
         platformLinkRefusedTitle: ({ platform }) => `No se pudo vincular el proyecto de ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Ese proyecto de ${platform} ya está vinculado a otro entorno. El entorno está guardado; no cambió nada más. Ábrelo para elegir otro proyecto.`,
         platformLinkRefused: ({ platform }) => `El entorno está guardado; el proyecto de ${platform} no se vinculó. Abre el entorno para intentarlo de nuevo.`,
       },
     },
@@ -1355,7 +1350,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Déjà lié',
         linkRefusedRow: 'Impossible de le lier',
         platformLinkRefusedTitle: ({ platform }) => `Impossible de lier le projet ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Ce projet ${platform} est déjà lié à un autre environnement. L’environnement est enregistré ; rien d’autre n’a changé. Ouvrez-le pour choisir un autre projet.`,
         platformLinkRefused: ({ platform }) => `L’environnement est enregistré ; le projet ${platform} n’a pas été lié. Ouvrez l’environnement pour réessayer.`,
       },
     },
@@ -1578,7 +1572,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Già collegato',
         linkRefusedRow: 'Impossibile collegarlo',
         platformLinkRefusedTitle: ({ platform }) => `Impossibile collegare il progetto ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Questo progetto ${platform} è già collegato a un altro ambiente. L’ambiente è salvato; nient’altro è cambiato. Aprilo per scegliere un altro progetto.`,
         platformLinkRefused: ({ platform }) => `L’ambiente è salvato; il progetto ${platform} non è stato collegato. Apri l’ambiente per riprovare.`,
       },
     },
@@ -1801,7 +1794,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'リンク済み',
         linkRefusedRow: 'リンクできませんでした',
         platformLinkRefusedTitle: ({ platform }) => `${platform} プロジェクトをリンクできませんでした`,
-        platformAlreadyLinked: ({ platform }) => `この ${platform} プロジェクトは別の環境にリンク済みです。環境は保存されました。ほかに変更はありません。環境を開いて別のプロジェクトを選んでください。`,
         platformLinkRefused: ({ platform }) => `環境は保存されましたが、${platform} プロジェクトはリンクされませんでした。環境を開いてもう一度お試しください。`,
       },
     },
@@ -2024,7 +2016,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Już połączony',
         linkRefusedRow: 'Nie udało się połączyć',
         platformLinkRefusedTitle: ({ platform }) => `Nie udało się połączyć projektu ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Ten projekt ${platform} jest już połączony z innym środowiskiem. Środowisko jest zapisane; nic więcej się nie zmieniło. Otwórz je, aby wybrać inny projekt.`,
         platformLinkRefused: ({ platform }) => `Środowisko jest zapisane; projekt ${platform} nie został połączony. Otwórz środowisko, aby spróbować ponownie.`,
       },
     },
@@ -2247,7 +2238,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Já vinculado',
         linkRefusedRow: 'Não foi possível vincular',
         platformLinkRefusedTitle: ({ platform }) => `Não foi possível vincular o projeto do ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Esse projeto do ${platform} já está vinculado a outro ambiente. O ambiente foi salvo; nada mais mudou. Abra-o para escolher outro projeto.`,
         platformLinkRefused: ({ platform }) => `O ambiente foi salvo; o projeto do ${platform} não foi vinculado. Abra o ambiente para tentar novamente.`,
       },
     },
@@ -2470,7 +2460,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: 'Уже привязан',
         linkRefusedRow: 'Не удалось привязать',
         platformLinkRefusedTitle: ({ platform }) => `Не удалось привязать проект ${platform}`,
-        platformAlreadyLinked: ({ platform }) => `Этот проект ${platform} уже привязан к другому окружению. Окружение сохранено; больше ничего не изменилось. Откройте его, чтобы выбрать другой проект.`,
         platformLinkRefused: ({ platform }) => `Окружение сохранено; проект ${platform} не привязан. Откройте окружение, чтобы повторить попытку.`,
       },
     },
@@ -2689,7 +2678,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: '已关联',
         linkRefusedRow: '无法关联',
         platformLinkRefusedTitle: ({ platform }) => `无法关联 ${platform} 项目`,
-        platformAlreadyLinked: ({ platform }) => `该 ${platform} 项目已关联到另一个环境。环境已保存；其他内容未更改。打开环境以选择其他项目。`,
         platformLinkRefused: ({ platform }) => `环境已保存；${platform} 项目未关联。打开环境以重试。`,
       },
     },
@@ -2908,7 +2896,6 @@ export const newAppTranslations: Readonly<
         alreadyLinked: '已連結',
         linkRefusedRow: '無法連結',
         platformLinkRefusedTitle: ({ platform }) => `無法連結 ${platform} 專案`,
-        platformAlreadyLinked: ({ platform }) => `此 ${platform} 專案已連結到另一個環境。環境已儲存；其他內容未變更。開啟環境以選擇其他專案。`,
         platformLinkRefused: ({ platform }) => `環境已儲存；${platform} 專案未連結。開啟環境以重試。`,
       },
     },

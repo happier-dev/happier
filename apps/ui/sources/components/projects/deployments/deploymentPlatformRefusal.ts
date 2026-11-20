@@ -21,16 +21,14 @@ export function describeDeploymentPlatformRefusal(
 }> {
   const { platform } = input;
   if (input.resource === 'existing') {
-    const alreadyLinked = input.code === 'provider_scope_already_linked';
+    // The reason (already linked or otherwise) is the shared recovery owner's sentence for the refusal code.
     return {
       title: t('newApp.deploy.plan.platformLinkRefusedTitle', { platform }),
-      description: alreadyLinked
-        ? t('newApp.deploy.plan.platformAlreadyLinked', { platform })
-        : t('newApp.deploy.plan.platformLinkRefused', { platform }),
-      row: alreadyLinked
+      description: t('newApp.deploy.plan.platformLinkRefused', { platform }),
+      row: input.code === 'provider_scope_already_linked'
         ? t('newApp.deploy.plan.alreadyLinked')
         : t('newApp.deploy.plan.linkRefusedRow'),
-      specific: alreadyLinked,
+      specific: false,
     };
   }
   // The platform answered 409 to the project it was asked to create: its name is taken (Vercel, Cloudflare Pages).
