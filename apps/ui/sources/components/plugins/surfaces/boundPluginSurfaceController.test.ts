@@ -153,14 +153,17 @@ beforeEach(() => {
         machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
 });
 
-it('keeps a Can-use plugin view readable while withdrawing live Action methods', () => {
+it.each(['own', 'parent'] as const)('keeps a Can-use plugin view readable while withdrawing live Action methods (%s binding)', bindingOwner => {
     const previous = storage.getState();
     onTestFinished(() => storage.setState(previous));
     const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
         access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
     storage.setState({ machineListByServerId: { [FACTS.serverId]: [shared] }, machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
-    const controller = createBoundPluginSurfaceController({ facts: FACTS });
-    onTestFinished(() => controller.dispose());
+    const parent = bindingOwner === 'parent' ? createBoundPluginSurfaceController({ facts: FACTS }) : null;
+    const controller = createBoundPluginSurfaceController({ facts: parent
+        ? { ...FACTS, machineId: null, executionOrigin: null, parentLifetime: parent }
+        : FACTS });
+    onTestFinished(() => { controller.dispose(); parent?.dispose(); });
     expect(controller.installedMethods).toContain('readResource');
     expect(controller.installedMethods).toContain('context');
     expect(controller.installedMethods).not.toContain('executeAction');

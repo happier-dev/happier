@@ -6657,7 +6657,7 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
-    it.each(['parent', 'unadmitted', 'child'] as const)('keeps a cold Task Account read on its admitted shared Machine (%s binding)', async bindingOwner => {
+    it.each(['parent', 'unadmitted', 'child'] as const)('keeps a nested Account Action on its admitted own or managed shared Machine (%s binding)', async bindingOwner => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -6688,7 +6688,7 @@ describe('plugin-surface action branch selection', () => {
         let relayed = 0;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'granted-task-controller',
-            ...(bindingOwner === 'child' ? {} : { custodian: { accountId: 'another-account', displayName: 'Machine owner' } }),
+            ...(bindingOwner === 'child' ? {} : { custodian: { accountId: 'another-account', displayName: 'Machine owner' }, sharedMachineRole: 'manage' }),
             actionId: 'action.invoke', tokenEpoch: 0, execute: async (value, context) => {
                 relayed++;
                 const request = PluginUiExecuteActionRequestV1Schema.parse(value);

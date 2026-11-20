@@ -2,6 +2,7 @@ import { projectExternalActionMachineRuntimeDemandV1, readExternalActionMachineR
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
     bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
@@ -96,6 +97,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     serverIdentityId: string;
     accountId: string;
     custodian?: Readonly<{ accountId: string; displayName: string }>;
+    sharedMachineRole?: MachineAccessRoleV1;
     machineId: string;
     installationId?: string;
     actionId: ActionId;
@@ -179,7 +181,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             access: { custodian: { accountId: params.accountId, displayName: 'Test Account' },
                 role: 'manage' as const, resourceMode: 'e2ee' as const, accessState: 'ready' as const },
         } : {}),
-        ...(params.custodian ? { access: { custodian: params.custodian, role: 'use' as const,
+        ...(params.custodian ? { access: { custodian: params.custodian, role: params.sharedMachineRole ?? 'use',
             resourceMode: codec ? 'e2ee' as const : 'plain' as const, accessState: 'ready' as const } } : {}),
         installationPublicKey: encodeBase64(installation.publicKey, 'base64'),
     };

@@ -1089,7 +1089,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // Navigation/context remain useful without lending retained data authority.
     const canManageActions = (): boolean => {
         const facts = readActionInputFacts();
-        return !facts.machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), facts.serverId, facts.machineId));
+        const target = facts.machineId ? facts : resolveDaemonBinding(facts);
+        return !target?.machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), target.serverId, target.machineId));
     };
     const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => {
         if ((method === 'executeAction' || method === 'admitAction'
