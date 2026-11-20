@@ -998,6 +998,8 @@ describe('TeamSettingsScreen defaults for members', () => {
         harness.answer(serverId, TEAM_POLICY_PATH, { body: team });
 
         const screen = await renderNewMembers(serverId);
+        await waitForTestId(screen, 'team-new-members-defaults-otherAgents:header');
+        await screen.pressByTestIdAsync('team-new-members-defaults-otherAgents:header');
         await waitForTestId(screen, 'team-new-members-defaults-agent:claude:header');
         await screen.pressByTestIdAsync('team-new-members-defaults-agent:claude:header');
         await waitForTestId(screen, 'team-new-members-defaults-agent:claude:permission');
@@ -1017,17 +1019,17 @@ describe('TeamSettingsScreen defaults for members', () => {
         });
     });
 
-    it('explains read-only defaults and leaves unset rows inert', async () => {
+    it('explains read-only defaults and omits unset Agent choices', async () => {
         const serverId = await addHomeWithTeam(teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: false, managePolicy: false }),
         }));
 
         const screen = await renderNewMembers(serverId);
-        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-new-members-defaults');
         expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.readOnlyTeam');
-        // Nothing is set for Claude, so its read-only row is a value that opens nothing.
-        expect(screen.tree.root.findAll((node) => node.props.testID === 'team-new-members-defaults-agent:claude:header'
-            && typeof node.props.onPress === 'function')).toHaveLength(0);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).not.toContain('team-new-members-defaults-otherAgents:header');
+        expect(ids).not.toContain('team-new-members-defaults-agent:claude:header');
     });
 
     it('shows members\' defaults to a viewer who cannot change them as values, with the reason', async () => {

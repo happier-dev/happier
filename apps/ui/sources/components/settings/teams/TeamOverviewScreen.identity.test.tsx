@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 
-import { collectRenderedTestIds, createSessionListRenderableSessionFixture, flushHookEffects, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, flushHookEffects, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
-import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -76,7 +77,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-    setScreenSharingPrivacyActive(false);
     standardCleanup();
 });
 
@@ -90,81 +90,40 @@ describe('TeamOverviewScreen Team identity', () => {
         await waitForTestId(screen, 'team-overview-setup-invite-action');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-overview-invite');
     });
-    it('shows only the lab slice of retained Team sessions and opens each on its exact Home', async () => {
-        const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ viewRoster: true }) });
-        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-        const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
-        const features = createRootLayoutFeaturesResponse();
-        expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
-        expect(tryWriteServerEnabledBitInPlace(features, 'teams', true)).toBe(true);
-        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        harness.answer(serverId, '/v1/features', { body: features });
-        harness.answer(serverId, '/v1/features/authenticated', { body: features });
-        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
-        const { storage } = await import('@/sync/domains/state/storage');
-        const { buildSessionListFilterQueryHomes, resolveSessionListViewContextDefaults } = await import('@/components/sessions/shell/search/sessionListViewFilters');
-        const { createTeamAddress } = await import('@/sync/domains/teams/teamAddress');
-        const address = createTeamAddress(serverId, 'team-1');
-        if (!address) throw new Error('team_fixture_address_invalid');
-        const { defaults } = resolveSessionListViewContextDefaults({ kind: 'team', team: address }, [serverId], 'all');
-        const [home] = buildSessionListFilterQueryHomes(defaults, { storage: 'active', includeInactive: !storage.getState().settings.hideInactiveSessions, mountedHomeServerIds: [serverId] });
-        if (!home) throw new Error('team_query_fixture_invalid');
-        const screen = await renderOverview(serverId);
-        await waitForTestId(screen, 'team-overview-identity');
-        const rows = ['session-a', 'session-b', 'session-c'].map((id, index) => createSessionListRenderableSessionFixture({ id, active: true, updatedAt: 30 - index, activeAt: 30 - index, metadata: { path: '/project', name: id } }));
-        await (await import('react-test-renderer')).act(async () => {
-            storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'replace' });
-            storage.getState().commitSessionListQueryMembership(home.queryKey, { serverId, accountId: 'account-ada', sessionIds: rows.map((row) => row.id), lastKnown: true });
-        });
-        await waitForTestId(screen, 'team-overview-session:session-a');
-        const ids = collectRenderedTestIds(screen.tree.toJSON());
-        expect(ids).toContain('team-overview-session:session-b');
-        expect(ids).not.toContain('team-overview-session:session-c');
-        expect(ids).not.toContain('team-overview-sessions-empty');
-        await (await import('react-test-renderer')).act(async () => {
-            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
-            storage.getState().setSessionTagAssignmentsOptimistic(serverId, 'session-a', ['private']);
-            setScreenSharingPrivacyActive(true);
-        });
-        const privateIds = collectRenderedTestIds(screen.tree.toJSON());
-        expect(privateIds).not.toContain('team-overview-session:session-a');
-        expect(privateIds).toContain('team-overview-session:session-c');
-        await (await import('react-test-renderer')).act(async () => setScreenSharingPrivacyActive(false));
-        await screen.pressByTestIdAsync('team-overview-session:session-a');
-        expect(routerPush).toHaveBeenLastCalledWith(`/session/session-a?serverId=${encodeURIComponent(serverId)}`);
-    });
-    it('renders the shared-sessions reader state without inventing an empty list', async () => {
-        const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ viewRoster: true }) });
-        const screen = await renderOverview(serverId);
-        await waitForTestId(screen, 'team-overview-identity');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-overview-sessions-state');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-overview-sessions');
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-overview-sessions-empty');
-    });
-
     it.each([false, true])('mounts Team content and its readers only with viewTeam=%s', async (viewTeam) => {
         const serverId = await addHome({
             viewerRole: 'member',
             capabilities: teamCapabilitiesFixture({ viewTeam, viewRoster: viewTeam, leave: true }),
         }, { credentialResourcesEnabled: true });
+        const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, {
+            v: 1,
+            teamId: 'team-1',
+        });
+        harness.answer(serverId, summary.path, {
+            body: { teamId: 'team-1', kinds: [{ kind: 'sessions', status: 'available', count: 2 }] },
+        });
         const screen = await renderOverview(serverId);
         await waitForTestId(screen, 'team-overview-leave');
         await flushHookEffects();
 
         if (viewTeam) {
+            await waitForTestId(screen, 'team-overview-shared:sessions');
             await vi.waitFor(() => {
-                expect(harness.requestsFor('/v1/teams/credential-resources/list').length).toBeGreaterThan(0);
                 expect(harness.requestsFor('/v1/teams/members/list').length).toBeGreaterThan(0);
             });
+            expect(harness.requestsFor(summary.path)).toHaveLength(1);
         } else {
-            expect(harness.requests.filter(({ path }) => path.startsWith('/v2/sessions') || path.startsWith('/v1/sessions'))).toHaveLength(0);
             expect(harness.requests.filter(({ path }) => path.startsWith('/v1/teams/') && path !== TEAM_GET_PATH)).toHaveLength(0);
         }
+        expect(harness.requests.filter(({ path }) =>
+            path.startsWith('/v2/sessions') || path.startsWith('/v1/sessions'),
+        )).toHaveLength(0);
+        expect(harness.requestsFor('/v1/teams/credential-resources/list')).toHaveLength(0);
 
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids).toContain('team-overview-identity');
         expect(ids).toContain('team-overview-home');
-        expect(ids.includes('team-overview-sessions')).toBe(viewTeam);
+        expect(ids.includes('team-overview-shared:sessions')).toBe(viewTeam);
         expect(ids.includes('team-overview-members')).toBe(viewTeam);
         expect(ids.includes('team-overview-groups')).toBe(viewTeam);
         expect(ids).not.toContain('team-overview-setup');
@@ -260,22 +219,6 @@ describe('TeamOverviewScreen Team identity', () => {
         expect(ids).toContain('team-overview-home');
         // Nothing fabricates an image URL when the Home published none.
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('logo.png');
-    });
-
-    it('opens the ordinary Team Sessions destination with its exact Home-qualified address', async () => {
-        const serverId = await addHome({
-            name: 'Acme',
-            logo: null,
-            capabilities: teamCapabilitiesFixture({}),
-        });
-        const screen = await renderOverview(serverId);
-        await waitForTestId(screen, 'team-overview-sessions');
-
-        screen.tree.root.findByProps({ testID: 'team-overview-sessions' }).props.onPress();
-
-        expect(routerPush).toHaveBeenCalledWith(
-            `/teams/team-1/sessions?serverId=${encodeURIComponent(serverId)}`,
-        );
     });
 
     it('shows owner-required recovery and routes an authorized Home administrator to the roster', async () => {
