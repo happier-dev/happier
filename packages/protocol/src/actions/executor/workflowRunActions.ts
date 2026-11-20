@@ -76,10 +76,6 @@ import { areServerProfileIdentifiersEquivalent } from '../../features/payload/ca
 import { FollowPolicyV1Schema, type FollowPolicyV1 } from '../../sessions/follow/sessionFollowPolicyV1.js';
 import { readWorkflowCurrentInvocationAncestryV1, readWorkflowInvocationMembersV1 } from '../../workflows/workflowInvocationMembersV1.js';
 
-function hasFailedAutomaticCheckChild(run: WorkflowRunSummaryV1): boolean {
-  return run.stepProgress?.destinations?.some(destination => destination.observation?.lifecycle === 'failed') === true;
-}
-
 export type WorkflowAccountRunEncryption = AvailableAutomationAccountEncryptionV1;
 
 type RunActionId = Extract<WorkflowActionIdV1, `workflow.run.${string}`>;
@@ -3199,26 +3195,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (failure !== undefined) throw failure;
         }
         if (raw.observation === 'changed') continue;
-        let automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
-        if (automaticRun?.state === 'interrupted') {
-          // Wait summaries omit private root progress. Open the exact Run's
-          // existing root observation before classifying a failed check.
-          const snapshot = await getSnapshot(args.input.runId, args.context.signal);
-          const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census: snapshot.keyCensus });
-          if (resolved.kind !== 'available') throw workflowError(resolved.reason);
-          const { stepProgress, stepProgressCurrentness } = openRootProgress(args.input.runId, snapshot.rootProgress,
-            resolved.encryption, snapshot.keyCensus.ownerAccountId);
-          automaticRun = { ...snapshot.run, stepProgress, stepProgressCurrentness };
-          stored = { ...raw, run: automaticRun };
-        }
+        const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
         const run = automaticRun ?? record(raw.run);
         const pendingCombinedSettlement = combined !== undefined && run.state !== 'interrupted' && (run.workflowCustodyState !== 'settled'
             || !(typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state)));
-        // An automatic check owns a single settled observation. A failed leaf
-        // is durable evidence even when its parent Run is interrupted before
-        // the server can publish the ordinary terminal projection; expose it
-        // to the approval continuation as a failed check. Other interrupted
-        // Runs remain unavailable and therefore retain the refusal path.
+        // The Run owner decides failure; interrupted checks remain unavailable.
         const automaticCheckTerminal = automaticCheck !== undefined
           && (run.state === 'interrupted' || typeof run.state === 'string' && isTerminalAutomationRunStateV3(run.state));
         // A passive observer does not settle when a condition or terminal state
@@ -3255,8 +3236,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       }
       const { resultEnvelope: _ignored, keyCensus: _keyCensus, ...base } = raw;
       const automaticRun = automaticCheck ? WorkflowRunSummaryV1Schema.parse(raw.run) : undefined;
-      const automaticCheckFailedChild = automaticRun?.state === 'interrupted' && hasFailedAutomaticCheckChild(automaticRun);
-      const automaticObservation = automaticRun && { state: automaticCheckFailedChild ? 'failed' as const : automaticRun.state,
+      const automaticObservation = automaticRun && { state: automaticRun.state,
         ...(automaticRun.errorCode === undefined ? {} : { errorCode: automaticRun.errorCode }) };
       if (typeof raw.resultEnvelope !== 'string') return automaticObservation ?? WorkflowActionOutputSchemasV1[args.actionId].parse(base);
       const census = WorkflowRunRecipientCensusResponseV1Schema.parse(raw.keyCensus);

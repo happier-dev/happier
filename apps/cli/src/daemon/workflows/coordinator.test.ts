@@ -2604,6 +2604,33 @@ describe('workflow coordinator', () => {
     expect(executeStep).not.toHaveBeenCalled();
   });
 
+  it.each(['preparation', 'execution', 'result'] as const)('settles before-Action Agent %s failures identically after reconstruction', async failure => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
+      prepareStep: async () => failure === 'preparation'
+        ? { failure: { kind: 'failed' as const, code: 'agent_unavailable' } } : {},
+      executeStep: async params => {
+        await params.beforeInputAdmission();
+        await params.onInputAccepted({ kind: 'session', sessionId: 'check-session', localInputId: 'check-input' });
+        return failure === 'execution' ? { kind: 'failed', code: 'provider_failed' }
+          : { kind: 'completed', result: 'not-a-decision' };
+      },
+    });
+    const check = { ...step('check'), result: { kind: 'decision' as const, decisions: ['continue', 'stop'] } };
+    const run = { runId: `before-agent-${failure}`, definition: definition([check]), inputs: {}, executionTarget, authorization,
+      automationCause: AutomationRunCauseSchema.parse({
+        kind: 'trigger', triggerId: 'agent-check', triggerRevision: 1, triggerKind: 'action',
+        occurrenceKey: 'A'.repeat(43), occurredAt: 1,
+        evidence: { actionId: 'deployments.deploy', requestId: 'original-action', phase: 'before', machineId: workspace.machineId },
+      }),
+    };
+    const reason = failure === 'preparation' ? 'agent_unavailable' : failure === 'execution' ? 'provider_failed' : 'invalid_result_contract';
+    expect(await coordinator.run(run)).toEqual({ state: 'failed', reason });
+    expect(store.list().find(row => row.blockId === check.id)).toMatchObject({ lifecycle: 'failed', reason,
+      ...(failure === 'result' ? { reasonMessage: 'not_json' } : {}) });
+    expect(await coordinator.run(run)).toEqual({ state: 'failed', reason });
+  });
+
   it('fails closed when the Session result violates the authored result contract', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({

@@ -729,7 +729,7 @@ function hasDefinitiveFailedSessionStartup(execution: WorkflowProgressEnvelopeV1
   return failed !== undefined && readWorkflowSessionStartupError(failed).code !== 'project_requester_home_unavailable';
 }
 
-function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFailure | undefined {
+function persistedFailure(record: WorkflowCoordinatorInvocation, automationCause?: AutomationRunCause): WorkflowLeafFailure | undefined {
   const code = record.reason ?? record.lifecycle;
   switch (record.lifecycle) {
     case 'cancelled':
@@ -750,6 +750,12 @@ function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFa
     case 'failed':
       if (code === 'invalid_reference_scope' || code === 'missing_reference') {
         return new WorkflowLeafFailure('failed', code);
+      // Before-Action checks settle one admitted observation. Ordinary Workflows
+      // retain the failed invocation for a person's explicit recovery instead.
+      if (automationCause?.kind === 'trigger' && automationCause.triggerKind === 'action'
+        && automationCause.evidence.phase === 'before') {
+        return new WorkflowLeafFailure('failed', code, true);
+      }
       }
       // A persisted definitive leaf failure remains collectable after process
       // reconstruction. The authored parent policy decides whether that fact
@@ -1270,7 +1276,7 @@ async function executeBodyFrame(params: Readonly<{
     ? [...params.blocks, params.owner.repetition.evaluator] : params.blocks;
   params.frame.scope = params.scope;
   if (existing) {
-    const failure = persistedFailure(existing);
+    const failure = persistedFailure(existing, params.context.automationCause);
     if (failure) throw failure;
   }
   if (existing?.lifecycle === 'completed' && existing.containerResult !== undefined) return;
@@ -1357,7 +1363,7 @@ async function ensureAndCommitContainer(
   const key = existing?.key ?? initialKey;
   if (existing?.lifecycle === 'completed' && existing.containerResult !== undefined) return;
   if (existing) {
-    const failure = persistedFailure(existing);
+    const failure = persistedFailure(existing, context.automationCause);
     if (failure) throw failure;
     if (existing.lifecycle === 'superseded') {
       throw new WorkflowLeafFailure('interrupted', existing.reason ?? 'retry_not_current');
@@ -1774,7 +1780,7 @@ async function executeWaitBlock(
     ...(leaf.result ? { resultContract: leaf.result } : {}) }, context);
   if (row.lifecycle === 'waiting_for_review') row = await awaitReviewedInvocation(row, context);
   if (holdReadiness(row) === 'generate') throw new WorkflowLeafFailure('interrupted', 'continuation_unavailable');
-  const failure = persistedFailure(row);
+  const failure = persistedFailure(row, context.automationCause);
   if (failure) throw failure;
   if (row.lifecycle !== 'completed') throw new WorkflowRuntimeInterruption();
 }
@@ -1865,7 +1871,7 @@ async function executeActionBlock(
   let pendingApproval = row?.execution?.kind === 'action'
     ? ActionApprovalRequestCreatedResultSchema.safeParse(row.execution.output) : null;
   let approvalHold = pendingApproval?.success === true;
-  if (row && !setupConsentHold) { const failure = persistedFailure(row); if (failure) throw failure; }
+  if (row && !setupConsentHold) { const failure = persistedFailure(row, context.automationCause); if (failure) throw failure; }
   const frozen = context.materializedLeaves.find((candidate) => candidate.sourceKey === context.sourceKey
     && candidate.blockId === leaf.id && candidate.kind === 'action');
   const actionId = frozen?.actionId;
@@ -1896,7 +1902,7 @@ async function executeActionBlock(
     // An admitted Action keeps its failed/uncertain leaf for exact invocation recovery,
     // just like an admitted Session step; terminal Run failure forbids retry.
     const parentState = row.execution?.kind === 'action'
-      ? persistedFailure(row)!.state : state;
+      ? persistedFailure(row, context.automationCause)!.state : state;
     throw new WorkflowLeafFailure(parentState, code, collectable);
   };
   let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
@@ -2358,7 +2364,7 @@ async function executeStepBlock(
   }
   if (existing) {
     const failure = conversationBinding.kind === 'origin_session' && existing.lifecycle === 'cancel_requested'
-      ? undefined : persistedFailure(existing);
+      ? undefined : persistedFailure(existing, context.automationCause);
     if (failure) throw failure;
     if (existing.lifecycle === 'superseded') {
       throw new WorkflowLeafFailure('interrupted', existing.reason ?? 'retry_not_current');
@@ -2552,7 +2558,7 @@ async function executeStepBlock(
           await awaitReviewedInvocation(row, context);
           return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
         }
-        await context.deps.store.commitFact({
+        const failed = await context.deps.store.commitFact({
           key,
           lifecycle: preparedStep.failure.kind,
           reason: preparedStep.failure.code,
@@ -2560,7 +2566,7 @@ async function executeStepBlock(
         });
         nativeTerminalCommitted = preparedStep.failure.kind === 'failed';
         throw new WorkflowLeafFailure(
-          'interrupted',
+          persistedFailure(failed, context.automationCause)?.state ?? 'interrupted',
           preparedStep.failure.code,
           preparedStep.failure.kind === 'failed',
         );
@@ -2806,7 +2812,7 @@ async function executeStepBlock(
             await awaitReviewedInvocation(row, context);
             return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
           }
-          await context.deps.store.commitFact({
+          const failed = await context.deps.store.commitFact({
             key,
             lifecycle: 'failed',
             reason: error.code,
@@ -2827,6 +2833,8 @@ async function executeStepBlock(
           nativeTerminalCommitted = true;
           releaseAdmission();
         });
+          throw new WorkflowLeafFailure(persistedFailure(failed, context.automationCause)!.state,
+            error.code, error.collectable, error.resultFailureReason);
         await awaitReviewedInvocation(row, context);
         return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
       }
@@ -2887,18 +2895,10 @@ async function executeStepBlock(
           ? 'cancel_requested' : current?.lifecycle ?? 'admitting', reason: execution.code });
       throw new WorkflowLeafFailure('interrupted', execution.code);
     }
-    // A definitively failed original startup owns no Workflow input to reattach. Preserve
-    // its definitive failure through reconstruction and settle parent custody;
-    // failures of an already-admitted native input retain ordinary recovery.
-    const state = execution.kind === 'failed' && hasDefinitiveFailedSessionStartup(durableExecution) ? 'failed'
-      : execution.kind === 'failed' || execution.kind === 'needs_attention'
-      || (execution.kind === 'outcome_uncertain' && durableExecution !== undefined)
-      ? 'interrupted'
-      : execution.kind;
     const reason = failStopClosure
       ? failStopCausalReason(context.signal)
       : execution.code;
-    await context.deps.store.commitFact({
+    const failed = await context.deps.store.commitFact({
       key,
       lifecycle: failStopClosure ? 'cancelled' : execution.kind,
       reason,
@@ -2918,7 +2918,7 @@ async function executeStepBlock(
       throw context.signal.reason;
     }
     throw new WorkflowLeafFailure(
-      state,
+      persistedFailure(failed, context.automationCause)?.state ?? 'interrupted',
       execution.code ?? execution.kind,
       execution.kind === 'failed',
     );

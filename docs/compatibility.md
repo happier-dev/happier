@@ -20,6 +20,20 @@ without the field. The inspected 0.2 frontier at `24731ff73c` has no Session
 readiness contract. Earlier strict 0.3 development readers require matching
 sources. There is no persisted format change.
 
+## Workflow terminal failure codes (unreleased 0.3)
+
+The installed daemon's Workflow storage transition accepts optional `errorCode`
+from failed coordinator settlement. The server retains that content-free code in
+the existing Run field and exposes it through existing Run summary reads. Command
+output and authored failure messages remain in their existing private envelopes.
+Before-Action checks classify definitive Action failures at the coordinator;
+consumers read the settled Run state and code together.
+Requests without the code remain valid, and no stored-data migration is needed.
+Matching development daemon and server sources reload together because earlier
+strict storage routes reject the added request field. The inspected `../0.2`
+frontier `24731ff73c0e032af6ee6b1347b0fceef947949b` has no Workflow storage route;
+no released-client adapter or wire epoch change is added.
+
 ## Applied parent Connected Service reads (unreleased 0.3)
 
 The daemon and Session runner may return a closed `reason` on an unavailable

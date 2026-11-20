@@ -1,6 +1,11 @@
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
+import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';
+import { createCoordinatorWorkspaceResolver } from '@/daemon/workflows/resolveWorkflowWorkspace';
+import { createGitWorkflowWorkspaceTestDependencies } from '@/daemon/workflows/workflowWorkspace.testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
@@ -78,6 +83,44 @@ describe('CLI command Action host', () => {
             externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: process.cwd() } },
         })).resolves.toMatchObject({ ok: false, errorCode: 'command_failed', details: { exitCode: 7, stdout: 'partial', stderr: 'refused' } });
     });
+
+    it.skipIf(process.platform === 'win32').each(['before', 'after', 'manual'] as const)(
+        'settles a definitive shell failure for a %s check while retaining ordinary Workflow recovery', async phase => {
+            const { deps, context, machineId } = await createLocalCommandDeps();
+            const directory = await realpath(process.cwd());
+            const projectWorkspace = { machineId, directory, checkoutRootPath: await realpath('../..') };
+            const store = createInMemoryWorkflowCoordinatorStore();
+            const coordinator = createTestWorkflowCoordinator({ store,
+                resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace,
+                    scm: createGitWorkflowWorkspaceTestDependencies() }),
+                executeStep: async () => { throw new Error('Shell checks have no Agent step'); },
+                action: { executor: createActionExecutor(deps),
+                    buildContext: async () => ({ ...context, authority: 'account_automation', bypassApprovals: true,
+                        externalActionTarget: { kind: 'machine', machineId, project: projectWorkspace } }),
+                    observeRun: async () => { throw new Error('A finite command has no child Run'); } },
+            });
+            const automationCause = phase === 'manual' ? undefined : AutomationRunCauseSchema.parse({
+                kind: 'trigger', triggerId: 'shell-check', triggerRevision: 1, triggerKind: 'action',
+                occurrenceKey: 'A'.repeat(43), occurredAt: 1,
+                evidence: { actionId: 'deployments.deploy', requestId: 'original-action', phase,
+                    ...(phase === 'after' ? { status: 'succeeded' } : {}), machineId },
+            });
+            const run = { runId: 'shell-check-run',
+                definition: { version: 1 as const, inputs: [], defaults: {}, blocks: [{ kind: 'action' as const,
+                    id: 'check', actionId: 'machines.command.run', input: {
+                        command: { kind: 'literal' as const, value: 'printf partial; printf refused >&2; exit 7' },
+                    } }] }, inputs: {}, executionTarget: { kind: 'session' as const },
+                authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const },
+                ...(automationCause ? { automationCause } : {}),
+            };
+            const expected = { state: phase === 'before' ? 'failed' : 'interrupted', reason: 'command_failed' };
+            expect(await coordinator.run(run)).toEqual(expected);
+            expect(store.list().find(row => row.blockId === 'check')).toMatchObject({ lifecycle: 'failed',
+                reason: 'command_failed', result: { exitCode: 7, stdout: 'partial', stderr: 'refused' } });
+            // Reconstruction must reach the same settlement from the retained leaf.
+            expect(await coordinator.run(run)).toEqual(expected);
+        },
+    );
 
     it('refuses an incomplete or mismatched machine workspace before running anything', async () => {
         const { deps, context, machineId } = await createLocalCommandDeps();

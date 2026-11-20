@@ -2284,7 +2284,7 @@ export async function recordWorkflowRunOriginInputWithdrawn(params: Readonly<{
     });
 }
 
-export async function transitionWorkflowRun(params: Readonly<{ accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number; state: WorkflowRunState; checkpointEnvelope: string; resultEnvelope?: string | null; custodyState?: WorkflowCustodyState; discussionRound?: WorkflowDiscussionRoundProgressV1; invocationTransitions?: readonly Readonly<{ id: string; expectedLifecycle: WorkflowInvocationLifecycleV1; lifecycle: WorkflowInvocationLifecycleV1; expectedContentRevision: bigint }>[]; accountCurrentness: AutomationAccountCurrentnessWitnessV1 }>) {
+export async function transitionWorkflowRun(params: Readonly<{ accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number; state: WorkflowRunState; errorCode?: string | null; checkpointEnvelope: string; resultEnvelope?: string | null; custodyState?: WorkflowCustodyState; discussionRound?: WorkflowDiscussionRoundProgressV1; invocationTransitions?: readonly Readonly<{ id: string; expectedLifecycle: WorkflowInvocationLifecycleV1; lifecycle: WorkflowInvocationLifecycleV1; expectedContentRevision: bigint }>[]; accountCurrentness: AutomationAccountCurrentnessWitnessV1 }>) {
     return await inTx(async (tx) => {
         if (!Number.isSafeInteger(params.parentAttempt) || params.parentAttempt < 0) throw new WorkflowRunServiceError("invalid_input");
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId, params.discussionRound?.discussionId);
@@ -2395,6 +2395,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
                 ? { workflowCustodyState: "settled", revision: { increment: 1 } }
                 : {
                     state: params.state,
+                    ...(params.state === "failed" && params.errorCode !== undefined ? { errorCode: params.errorCode } : {}),
                     workflowCheckpointEnvelope: storedCheckpoint.value,
                     workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes,
                     ...(storedResult !== undefined ? { resultEnvelope: storedResult.value, resultEnvelopeBytes: storedResult.bytes } : {}),

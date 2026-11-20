@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
+import { ActionIdSchema, AutomationRunCauseSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -654,18 +654,26 @@ describe('workflow Action leaves', () => {
     expect(starts).toBe(workDepth === 4 || !allowModelOverride ? 0 : 1);
     if (workDepth === 4 || !allowModelOverride) expect(store.list()[0]?.execution).toBeUndefined();
   });
-  it('validates typed Action output against the frozen schema rather than a live replacement', async () => {
+  it.each(['manual', 'before'] as const)('settles %s Action schema failures consistently from fresh and retained output', async phase => {
     const executor = createTestActionExecutor({ sessionGoalSet: async () => ({ ok: true }) });
     const store = createInMemoryWorkflowCoordinatorStore();
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent'); },
       resolveWorkspace: async () => ({ ok: true, workspace }),
       action: { executor, buildContext: async () => ({ surface: 'cli' }), observeRun: async () => { throw new Error('No runs'); } } });
     const sidecar = frozen(goal);
-    expect(await coordinator.run({ runId: 'schema-drift', definition: definition([goal]), inputs: {}, executionTarget,
+    const run = { runId: 'schema-drift', definition: definition([goal]), inputs: {}, executionTarget,
+      ...(phase === 'before' ? { automationCause: AutomationRunCauseSchema.parse({
+        kind: 'trigger', triggerId: 'schema-check', triggerRevision: 1, triggerKind: 'action',
+        occurrenceKey: 'A'.repeat(43), occurredAt: 1,
+        evidence: { actionId: 'deployments.deploy', requestId: 'original-action', phase: 'before', machineId: workspace.machineId },
+      }) } : {}),
       authorization, originSessionId: 'origin', materializedLeaves: [{ ...sidecar, actionContract: {
         ...sidecar.actionContract!, outputSchema: { type: 'object', required: ['acceptedAnswer'] },
-      } }] })).toMatchObject({ state: 'interrupted', reason: 'schema_mismatch' });
+      } }] };
+    const expected = { state: phase === 'before' ? 'failed' : 'interrupted', reason: 'schema_mismatch' };
+    expect(await coordinator.run(run)).toMatchObject(expected);
     expect(store.list().find((row) => row.blockId === goal.id)).toMatchObject({ lifecycle: 'failed', reason: 'schema_mismatch' });
+    expect(await coordinator.run(run)).toMatchObject(expected);
   });
   it('uses isolated inline Workflow frames for repeated children with colliding ids', async () => {
     let writes = 0;

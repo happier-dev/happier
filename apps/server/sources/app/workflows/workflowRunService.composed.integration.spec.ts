@@ -1506,6 +1506,33 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
+    it.each(["command_failed", undefined])("retains an optional failed Workflow code through authenticated storage (%s)", async (errorCode) => {
+        const seeded = await seedPendingAdmission();
+        const installationId = await readMachineInstallationId(seeded.machineId);
+        const keyPair = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: seeded.machineId }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+        const parent = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } });
+        const path = "/v3/automations/runs/workflow-storage";
+        const body = { operation: "transition", publisherMachineId: seeded.machineId, runId: seeded.runId,
+            parentAttempt: 1, expectedRevision: parent.revision, accountCurrentness: await accountCurrentness(seeded.accountId),
+            state: "failed", checkpointEnvelope: parent.workflowCheckpointEnvelope!,
+            ...(errorCode === undefined ? {} : { errorCode }) };
+        const { app, headers } = await createReviewStorageApp(seeded.accountId);
+        try {
+            const response = await app.inject({ method: "POST", url: path, payload: body, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: seeded.machineId, installationId, path, body }) } });
+            expect(response.statusCode, response.body).toBe(200);
+            const run = WorkflowRunSummaryV1Schema.parse(response.json());
+            expect(run).toMatchObject({ id: seeded.runId, state: "failed" });
+            expect(run.errorCode).toBe(errorCode);
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId }, select: { errorCode: true } }))
+                .toEqual({ errorCode: errorCode ?? null });
+            const reopened = await getWorkflowRun({ accountId: seeded.accountId, runId: seeded.runId });
+            expect(reopened.run.errorCode).toBe(errorCode);
+        } finally { await app.close(); }
+    });
+
     it("projects committed transition attention for Follow without a second Run read", async () => {
         const seeded = await seedPendingAdmission(true);
         for (const held of [false, true]) {

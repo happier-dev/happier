@@ -3019,9 +3019,9 @@ describe('shared Account workflow run owner', () => {
       .resolves.toMatchObject({ observation: 'not_matched_terminal', run: { state: 'cancelled' } });
   });
 
-  it('projects a failed child from an interrupted automatic check for D14 override', async () => {
+  it.each(['failed', 'interrupted'] as const)('uses the authoritative %s automatic check state without reopening failed-child progress', async state => {
     const snapshot = runSnapshot();
-    const interruptedRun = { ...snapshot.run, state: 'interrupted' as const };
+    const observedRun = { ...snapshot.run, state };
     const root = storedRootInvocation(snapshot);
     const progress = WorkflowProgressEnvelopeV1Schema.parse({
       ...root.progress,
@@ -3037,9 +3037,13 @@ describe('shared Account workflow run owner', () => {
         v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
         recordId: root.index.id, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
       }, progress })) };
+    let privateProgressReads = 0;
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
-      if (operation.operation === 'wait') return { observation: 'waiting', run: interruptedRun };
-      if (operation.operation === 'get') return { ...snapshot, run: interruptedRun, rootProgress };
+      if (operation.operation === 'wait') return { observation: state === 'failed' ? 'terminal' : 'waiting', run: observedRun };
+      if (operation.operation === 'get') {
+        privateProgressReads += 1;
+        return { ...snapshot, run: observedRun, rootProgress };
+      }
       throw new Error(`unexpected_storage_operation:${operation.operation}`);
     } }));
     await expect(owner.waitAutomaticCheck({
@@ -3047,7 +3051,8 @@ describe('shared Account workflow run owner', () => {
         workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait',
         onFailure: 'ask', runId },
       context: { surface: 'agent', authority: 'present_user' },
-    })).resolves.toMatchObject({ state: 'failed' });
+    })).resolves.toMatchObject({ state });
+    expect(privateProgressReads).toBe(0);
   });
 
   it('keeps an interrupted automatic check unavailable without failed-child evidence', async () => {
