@@ -73,6 +73,28 @@ describe('repository scope snapshot publication and reuse', () => {
         vi.restoreAllMocks();
     });
 
+    it('offers Start only for an admitted managed workspace whose provider reports it stopped', async () => {
+        const rootPath = '/managed-stopped-repository';
+        const scope = { serverId: 'exact-home', machineId: 'stopped-controller', rootPath,
+            workspace: { v: 2, kind: 'managed', serverId: 'exact-home', workspaceId: 'stopped-project', managedId: 'guest',
+                controller: { machineId: 'stopped-controller', installationId: 'install' }, rootPath } } as const;
+        const syncer = new ScmStatusSync();
+        const readError = () => storage.getState().getWorkspaceScmSnapshotError(scope);
+        const refresh = () => syncer.getWorkspaceSync(scope).invalidateAndAwait();
+
+        machineRpc.mockResolvedValueOnce({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'managed_power_required' });
+        await refresh();
+        expect(readError()).toMatchObject({ errorCode: 'managed_power_required', nextAction: { kind: 'start_workspace' } });
+        expect(storage.getState().getWorkspaceScmSnapshotError({
+            serverId: scope.serverId, machineId: scope.machineId, rootPath,
+        })).toBeNull();
+
+        machineRpc.mockResolvedValueOnce({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'workspace_target_unavailable' });
+        await refresh();
+        expect(readError()).toMatchObject({ errorCode: 'BACKEND_UNAVAILABLE' });
+        expect(readError()).not.toHaveProperty('nextAction');
+    });
+
     it.each([undefined, 'exact-home'])('preserves refresh failure identity on Home %s through real repository publication', async (serverId) => {
         const machine = createMachineFixture({ id: 'r297-machine' });
         const base = createSessionFixture();

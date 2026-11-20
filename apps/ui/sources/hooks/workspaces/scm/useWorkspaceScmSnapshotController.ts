@@ -5,15 +5,18 @@ import { useSetting, useWorkspaceScmSnapshot, useWorkspaceScmSnapshotError, useW
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useWorkspaceScmSlotLacksList } from '@/sync/store/scmHooks';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import type { ProjectScmSnapshotError } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
 import {
     normalizeWorkspaceScopeBase,
+    tryBuildWorkspaceCacheKey,
     type WorkspaceScopeBase,
 } from '@/sync/domains/workspaces/workspaceScope';
 
 export type WorkspaceScmSnapshotControllerError = Readonly<{
     message: string;
     errorCode: string | null;
+    nextAction?: ProjectScmSnapshotError['nextAction'];
 }>;
 
 export type UseWorkspaceScmSnapshotControllerResult = Readonly<{
@@ -26,15 +29,6 @@ export type UseWorkspaceScmSnapshotControllerResult = Readonly<{
     loadingMore: boolean;
 }>;
 
-function normalizeScope(input: WorkspaceScopeBase | null): WorkspaceScopeBase | null {
-    if (!input) return null;
-    return normalizeWorkspaceScopeBase({
-        serverId: input.serverId,
-        machineId: input.machineId,
-        rootPath: input.rootPath,
-    });
-}
-
 /**
  * `detail: 'summary'`: the caller reads counts, branch and worktrees only (headers, Checkouts); it
  * is answered with the shared counts unless a list consumer of the same workspace is presented.
@@ -46,7 +40,8 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const summaryOnly = options?.detail === 'summary';
     const entriesPageSize = options?.entriesPageSize;
     const waitingForLayout = !summaryOnly && entriesPageSize === null;
-    const normalizedScope = React.useMemo(() => normalizeScope(scope), [scope?.machineId, scope?.rootPath, scope?.serverId]);
+    const normalizedScope = React.useMemo(() => scope ? normalizeWorkspaceScopeBase(scope) : null,
+        [scope?.machineId, scope?.rootPath, scope?.serverId, scope?.workspace]);
     const listSnapshot = useWorkspaceScmSnapshot(summaryOnly || waitingForLayout ? null : normalizedScope, entriesPageSize ?? undefined);
     const summarySnapshot = useWorkspaceScmSummarySnapshot(summaryOnly ? normalizedScope : null);
     const slotLacksList = useWorkspaceScmSlotLacksList(summaryOnly || waitingForLayout ? null : normalizedScope, entriesPageSize ?? undefined);
@@ -62,18 +57,12 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const error = React.useMemo<WorkspaceScmSnapshotControllerError | null>(() => {
         if (unreachable) return { message: t('errors.daemonUnavailableBody'), errorCode: 'machine_offline' };
         if (!snapshotError) return null;
-        const code =
-            typeof snapshotError === 'object'
-            && snapshotError !== null
-            && 'errorCode' in snapshotError
-            && typeof (snapshotError as { errorCode?: unknown }).errorCode === 'string'
-                ? ((snapshotError as { errorCode: string }).errorCode)
-                : null;
         return {
             message: snapshotError.message,
-            errorCode: code,
+            errorCode: snapshotError.errorCode ?? null,
+            ...(snapshotError.nextAction ? { nextAction: snapshotError.nextAction } : {}),
         };
-    }, [unreachable, snapshotError?.message, (snapshotError as { errorCode?: unknown } | null | undefined)?.errorCode]);
+    }, [unreachable, snapshotError]);
 
     const refresh = React.useCallback(async () => {
         if (!normalizedScope || unreachable || waitingForLayout) return;
@@ -107,9 +96,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     // A failed read does not retry here; the slot and presentation edge are unchanged.
     const readsList = !summaryOnly && !waitingForLayout && presented && !unreachable && slotLacksList;
     const wasPresented = React.useRef(presented);
-    const initKey = normalizedScope
-        ? `${normalizedScope.serverId}:${normalizedScope.machineId}:${normalizedScope.rootPath}`
-        : '';
+    const initKey = normalizedScope ? tryBuildWorkspaceCacheKey(normalizedScope) ?? '' : '';
     const didInitKeyRef = React.useRef<string>('');
     React.useEffect(() => {
         const returned = presented && !wasPresented.current;

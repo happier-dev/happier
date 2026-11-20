@@ -85,7 +85,8 @@ export class ScmStatusSync {
         }, ...(workspace && snapshot?.repo.isRepo && snapshot.repo.rootPath ? {
             watch: (callbacks: ScmAutoRefreshWatchCallbacks) => {
                 const watch = watchMachineScmWorkspaceChanges(workspace.machineId, {
-                    serverId: workspace.serverId, directory: workspace.rootPath, ...callbacks,
+                    serverId: workspace.serverId, directory: workspace.workspace?.rootPath ?? workspace.rootPath,
+                    workspace: workspace.workspace, ...callbacks,
                 });
                 return () => watch.dispose();
             },
@@ -94,8 +95,9 @@ export class ScmStatusSync {
     });
 
     retainAutoRefresh(demand: ScmAutoRefreshDemand): () => void {
+        const managed = 'scope' in demand && demand.scope.workspace;
         // Apply the incumbent repository work budget once, when visible polling demand is admitted.
-        const intervalMs = demand.intervalMs > 0
+        const intervalMs = managed ? 0 : demand.intervalMs > 0
             ? Math.max(demand.intervalMs, readScmAutoRefreshProjectMinIntervalMs()) : demand.intervalMs;
         const release = this.autoRefresh.retain({ ...demand, intervalMs });
         return () => {
@@ -196,15 +198,26 @@ export class ScmStatusSync {
         this.publishWorkspaceFailure(scope, projectKey, reason);
     }
 
-    private readWorkspaceWatchFailure(projectKey: string): ProjectScmSnapshotError | null {
+    private readWorkspaceWatchFailure(scope: WorkspaceScopeBase, projectKey: string): ProjectScmSnapshotError | null {
         const reason = this.autoRefresh.getUnavailable(projectKey);
         if (!reason || isRpcMethodNotFoundResult({ errorCode: reason.code })) return null;
-        return { message: reason.message, at: Date.now(), errorCode: reason.code };
+        return this.projectWorkspaceFailure(scope, reason);
     }
 
-    private publishWorkspaceFailure(scope: WorkspaceScopeBase, projectKey: string, reason: ScmWorkspaceWatchUnavailable): void {
+    private projectWorkspaceFailure(scope: WorkspaceScopeBase, reason: ScmWorkspaceWatchUnavailable,
+        actionErrorCode = reason.code): ProjectScmSnapshotError {
+        const stopped = scope.workspace !== undefined && actionErrorCode === 'managed_power_required';
+        return {
+            message: reason.message, at: Date.now(),
+            errorCode: stopped ? actionErrorCode : reason.code,
+            ...(stopped ? { nextAction: { kind: 'start_workspace' } } : {}),
+        };
+    }
+
+    private publishWorkspaceFailure(scope: WorkspaceScopeBase, projectKey: string, reason: ScmWorkspaceWatchUnavailable,
+        actionErrorCode?: string): void {
         const state = storage.getState();
-        const error = { message: reason.message, at: Date.now(), errorCode: reason.code };
+        const error = this.projectWorkspaceFailure(scope, reason, actionErrorCode);
         state.updateWorkspaceScmSnapshotError(scope, error);
         for (const { sessionId, serverId } of this.getProjectSessions(projectKey)) {
             state.updateSessionProjectScmSnapshotError(sessionId, error, serverId);
@@ -253,6 +266,7 @@ export class ScmStatusSync {
                 ? await scmRepositoryService.fetchSnapshotForSession(legacy.sessionId, requestOptions)
                 : await scmRepositoryService.fetchSnapshotForMachinePath({
                     serverId: scope.serverId, machineId: scope.machineId, path: scope.rootPath,
+                    ...(scope.workspace ? { workspace: scope.workspace } : {}),
                     ...requestOptions,
                 });
             const append = requestedPage && (requestedPage.path || requestedPage.cursor !== undefined);
@@ -294,7 +308,7 @@ export class ScmStatusSync {
                 }
             }
             // A successful read settles the error to the watch's unavailability, if any, in one publication.
-            const settledError = this.readWorkspaceWatchFailure(activeKey);
+            const settledError = this.readWorkspaceWatchFailure(scope, activeKey);
             const status = snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null;
             const publications = [...refs.values()]
                 .filter(ref => snapshotChanged || !state.getSessionProjectScmSnapshot(ref.sessionId, ref.serverId))
@@ -334,7 +348,7 @@ export class ScmStatusSync {
             if (signatureChanged) await clearSearchCacheForProject([...refs.values()], canonicalScope);
         } catch (error) {
             const failure = scmFallbackError(error, { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
-            this.publishWorkspaceFailure(scope, activeKey, { code: failure.errorCode, message: failure.error });
+            this.publishWorkspaceFailure(scope, activeKey, { code: failure.errorCode, message: failure.error }, failure.actionErrorCode);
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) this.projectAutoRefreshSuspended.add(activeKey);
             reportScmStatusSyncError({ projectKey: activeKey, error });
         } finally {

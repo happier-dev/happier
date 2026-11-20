@@ -11,6 +11,7 @@ export type MachineScmWorkspaceWatch = Readonly<{ dispose(): void }>;
 export function watchMachineScmWorkspaceChanges(machineId: string, options: Readonly<{
     serverId: string;
     directory: string;
+    workspace?: ScmWorkspaceWatchRequest['workspace'];
     onChange(): void;
     onReady?(): void;
     onUnavailable(reason: ScmWorkspaceWatchUnavailable): void;
@@ -30,7 +31,8 @@ export function watchMachineScmWorkspaceChanges(machineId: string, options: Read
     async function request(input: ScmWorkspaceWatchRequest): Promise<ScmWorkspaceWatchResponse> {
         try {
             const raw = await machineRpcWithServerScope<unknown, ScmWorkspaceWatchRequest>({ machineId, serverId: options.serverId,
-                method: RPC_METHODS.SCM_WORKSPACE_WATCH, payload: input, signal: controller.signal, operationTimeoutMs: null });
+                method: RPC_METHODS.SCM_WORKSPACE_WATCH, payload: options.workspace ? { ...input, workspace: options.workspace } : input,
+                signal: controller.signal, operationTimeoutMs: null });
             if (isRpcMethodNotFoundResult(raw)) return { status: 'unavailable', reason: {
                 code: RPC_ERROR_CODES.METHOD_NOT_FOUND, message: 'Workspace watching is unavailable on this Machine' } };
             const parsed = ScmWorkspaceWatchResponseSchema.safeParse(raw);

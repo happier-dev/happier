@@ -36,11 +36,7 @@ import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/sn
 /**
  * Unique project identifier based on machine ID and path
  */
-export interface ProjectKey {
-    serverId: string;
-    machineId: string;
-    rootPath: string;
-}
+export type ProjectKey = WorkspaceScopeBase;
 
 /** A native workspace change can alter file bytes while Git status and line counts stay equal. */
 export type ScmSnapshotPublicationOptions = Readonly<{ contentChanged?: boolean }>;
@@ -116,6 +112,7 @@ export type ProjectScmSnapshotError = Readonly<{
     message: string;
     at: number;
     errorCode?: string;
+    nextAction?: Readonly<{ kind: 'start_workspace' }>;
 }>;
 
 /**
@@ -193,11 +190,7 @@ class ProjectManager {
      * Generate a unique key string from machine ID and path
      */
     private getProjectKeyString(key: ProjectKey): string {
-        return tryBuildWorkspaceCacheKey({
-            serverId: key.serverId,
-            machineId: key.machineId,
-            rootPath: key.rootPath,
-        }) ?? '';
+        return tryBuildWorkspaceCacheKey(key) ?? '';
     }
 
     /**
@@ -504,7 +497,7 @@ class ProjectManager {
         // The same failure observed again is not a change; it keeps the first observation and publishes nothing.
         const previous = project.scmSnapshotError ?? null;
         if (previous === error || previous && error && previous.message === error.message
-            && previous.errorCode === error.errorCode) return false;
+            && previous.errorCode === error.errorCode && previous.nextAction?.kind === error.nextAction?.kind) return false;
         project.scmSnapshotError = error;
         project.updatedAt = Date.now();
         this.publishScmSnapshotChange(project.key);

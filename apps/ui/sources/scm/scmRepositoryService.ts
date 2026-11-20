@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/protocol/scm';
 import { SCM_WORKTREES_ENRICHMENT_MAX_PATHS } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import type { ScmCapabilities, ScmStatus, ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { sessionScmStatusSnapshot } from '@/sync/ops/sessionScm';
@@ -248,13 +249,17 @@ function normalizeScmSnapshotResponseOrThrow(input: {
     }
     if (!response.success) {
         const message = response.error || 'Failed to fetch source-control status snapshot';
-        const err = new Error(message) as Error & { scmErrorCode?: string; diagnosticDetail?: string };
-        if (typeof (response as { errorCode?: unknown }).errorCode === 'string') {
-            err.scmErrorCode = (response as { errorCode?: string }).errorCode;
+        const err: Error & { scmErrorCode?: string; diagnosticDetail?: string } =
+            'actionErrorCode' in response && typeof response.actionErrorCode === 'string'
+                ? new RpcError(message, response.actionErrorCode)
+                : new Error(message);
+        if (typeof response.errorCode === 'string') {
+            err.scmErrorCode = response.errorCode;
         }
         // UI transport failures already logged their original exception at the failure point.
-        const detail = (response as { diagnosticDetail?: unknown }).diagnosticDetail;
-        if (typeof detail === 'string') err.diagnosticDetail = detail;
+        if ('diagnosticDetail' in response && typeof response.diagnosticDetail === 'string') {
+            err.diagnosticDetail = response.diagnosticDetail;
+        }
         throw err;
     }
 
@@ -666,6 +671,7 @@ export class ScmRepositoryService {
         machineId: string;
         path: string;
         homeDir?: string | null;
+        workspace?: WorkspaceScopeBase['workspace'];
         includeWorktreeStatus?: boolean;
         /** Absent: the full changed-file list. 'summary': counts only. 'facts': root, branch, worktrees. */
         detail?: ScmSnapshotDetail;
@@ -692,12 +698,14 @@ export class ScmRepositoryService {
                 ...(held?.listRevision ? { knownListRevision: held.listRevision } : {}),
             };
             const serverId = typeof input.serverId === 'string' ? input.serverId.trim() : '';
-            const response = serverId
+            const response = input.workspace
+                ? await machineScmStatusSnapshot(request.machineId, snapshotRequest, { workspace: input.workspace })
+                : serverId
                 ? await machineScmStatusSnapshot(request.machineId, snapshotRequest, { serverId })
                 : await machineScmStatusSnapshot(request.machineId, snapshotRequest);
             const snapshot = held?.listRevision && isUnchangedListResponse(response) ? held : normalizeScmSnapshotResponseOrThrow({
                 response,
-                projectKey: resolveCanonicalScmProjectKey({
+                projectKey: input.workspace ? request.repoIdentityKey : resolveCanonicalScmProjectKey({
                     fallbackProjectKey: `${request.machineId}:${request.resolvedPath}`,
                     machineId: request.machineId,
                     snapshot: readSuccessfulSnapshot(response) ?? null,
@@ -705,7 +713,7 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
-            if (lifetime) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
+            if (lifetime && !input.workspace) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
                 scope: { serverId: serverId || lifetime.scope.serverId, machineId: request.machineId, rootPath: request.resolvedPath } });
             return snapshot;
         }, {
@@ -733,6 +741,7 @@ export class ScmRepositoryService {
         machineId: string;
         path: string;
         homeDir?: string | null;
+        workspace?: WorkspaceScopeBase['workspace'];
         includeWorktreeStatus?: boolean;
         /** A poorer reader ('summary', 'facts') is answered by the richest cached level first. */
         detail?: ScmSnapshotDetail;
