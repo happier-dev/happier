@@ -60,7 +60,8 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
                 || carrier.transport.schemaVersion !== machine.resource!.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
             const native = createManagedNativeBootstrapIO({ resource: machine.resource! }, invoke);
             const { home: guestHome } = await resolveManagedNativeGuestStartup(carrier, request => native.exec(request), io?.signal);
-            if (!guestHome && machine.enrollmentIdentity?.kind !== 'guestProcess') return power;
+            // Enrollment can fall back to the installed CLI's process when the
+            // native guest has no service manager. The daemon owns start idempotency.
             await startManagedNativeGuestDaemon({ native,
                 channel: input.guestStartup.channel, guestHome, signal: io?.signal,
                 binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',

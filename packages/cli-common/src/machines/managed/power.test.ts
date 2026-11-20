@@ -127,14 +127,21 @@ describe('shared admitted native power', () => {
         expect(JSON.stringify(projected)).not.toContain(privateText);
     });
 
-    it('starts guest-process carriers without a provider-owned persistent home through the same installed CLI', async () => {
+    it.each([
+        { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const } },
+        { preset: { id: 'team-preset', revision: 2, contentEncryptionMode: 'e2ee' as const } },
+    ])('starts enrolled native guests without a provider-owned persistent home (%j)', async source => {
         let command: unknown;
+        let running = false;
         await executeManagedMachinePowerIntent({
-            machine: { ...machine, enrolledMachineId: 'same-machine', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } },
+            machine: { ...machine, ...source, enrolledMachineId: 'same-machine' },
             guestStartup: { channel: 'dev', transport: { kind: 'native', exec: 'exec', putFile: 'put-file' } },
             invoke: async (role, body): Promise<JsonValue> => {
-                if (role === 'power') return { kind: 'confirmed' };
-                if (role === 'inspect') return { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' };
+                if (role === 'power') {
+                    running = true;
+                    return { kind: 'confirmed' };
+                }
+                if (role === 'inspect') return { observedAt: 1, availability: 'present', power: running ? 'running' : 'stopped', storage: 'retained' };
                 if (role === 'bootstrap') return { kind: 'native', transport: { contributionRef: machine.resource!.contributionRef, schemaVersion: 1 } };
                 command = body;
                 return { stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
