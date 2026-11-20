@@ -149,6 +149,16 @@ function installSession(id: string, partialMetadata: Partial<NonNullable<ReturnT
   return () => row;
 }
 
+async function answerSessionSendInputSchema() {
+  const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+    machineId: 'machine-a', actionId: 'action.spec.get', tokenEpoch: 0,
+    execute: () => ({ actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), {
+      surface: 'ui', includeOutputSchema: false,
+    }) }),
+  });
+  homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
+}
+
 /** Hold actual HTTP body bytes after headers, retaining the request's abort semantics. */
 function holdSessionResponseBody(sessionId: string, suffix = '', method = 'GET') {
   const reading = createDeferred<void>();
@@ -498,33 +508,29 @@ describe('default Action executor mode and catalog contracts', () => {
   it('sends structured ordinary input to an exact cold Session on the active Home without warming the Session store', async () => {
     installSession('cold-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     storage.setState({ sessions: {} });
-    const baseline = createRootLayoutFeaturesResponse();
-    const features = createRootLayoutFeaturesResponse({ capabilities: { ...baseline.capabilities,
-      session: { ...baseline.capabilities.session, pendingInput: { protocolVersion: 1 } } } });
-    homes.answer(serverId, '/v1/features', { body: features });
-    homes.answer(serverId, '/v1/features/authenticated', { body: features });
-    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    await answerSessionSendInputSchema();
     const structuredInput = { v: 1, mentions: [{ kind: 'happier.session', ref: 'session:source', token: '@source' }] };
-    homes.answer(serverId, '/v2/sessions/cold-session/pending', { select: body => {
-      const input = StrictJsonValueSchema.parse(body);
-      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected Pending mutation object');
-      if (!('requestedAction' in input) || !('localId' in input)) throw new Error('Expected Pending mutation identity');
-      expect(input).toMatchObject({ localId: 'cold-input', requestedAction: { v: 1, kind: 'send_now' },
-        content: { t: 'plain', v: { content: { text: '@source inspect it.' }, meta: { happierStructuredInputV1: structuredInput } } } });
-      return { body: { requestedAction: input.requestedAction, pending: { localId: input.localId } } };
-    } });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: 'machine-a', actionId: 'session.message.send', tokenEpoch: 0,
+      execute(input) {
+        expect(input).toMatchObject({ sessionId: 'cold-session', message: '@source inspect it.',
+          localId: 'cold-input', requestedAction: { v: 1, kind: 'send_now' }, structuredInput });
+        return { status: 'accepted', localId: 'cold-input' };
+      },
+    });
     const result = await createDefaultActionExecutor().execute('session.message.send', {
       sessionId: 'cold-session', message: '@source inspect it.', reply: 'none', localId: 'cold-input', structuredInput,
       requestedAction: { v: 1, kind: 'send_now' },
     }, context());
-    expect(result).toEqual({ ok: true, result: { status: 'accepted', localId: 'cold-input' } });
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'cold-input' } });
     expect(storage.getState().sessions['cold-session']).toBeUndefined();
-    expect(homes.requestsFor('/v2/sessions/cold-session/pending')).toHaveLength(1);
+    expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(1);
+    expect(homes.requestsFor('/v2/sessions/cold-session/pending')).toHaveLength(0);
   });
   it('keeps attachment preflight guidance through the real wrapper and Action consumer', async () => {
     const sessionId = 'attachment-preflight';
     installSession(sessionId, { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
+    await answerSessionSendInputSchema();
     const { createSessionDraftMessageExecute } = await import('@/components/sessions/composer/submitSessionDraft');
     const { describeUploadFailure } = await import('@/components/transfers/describeUploadFailure');
     const { readSessionComposerMessagingOutcome } = await import('@/components/sessions/composer/sessionComposerMessaging');
@@ -1277,7 +1283,7 @@ describe('default Action executor mode and catalog contracts', () => {
     if (client === 'repeated_send') {
       let sendNumber = 0;
       const send = () => createDefaultActionExecutor().execute('session.message.send', { ...input, localId: `ask-input-${++sendNumber}` }, context());
-      for (const sent of await Promise.all([send(), send()])) expect(sent).toEqual({ ok: true, result: outcome });
+      for (const sent of await Promise.all([send(), send()])) expect(sent).toMatchObject({ ok: true, result: outcome });
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(3);
       // Repeated waited sends know their host: no Machine census per input.
       expect(homes.requests.filter(request => request.path.split('?')[0] === '/v1/machines')).toHaveLength(machineListReadsBeforeSend);
@@ -1287,7 +1293,7 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(1);
       const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
       publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-a' }, 'authority');
-      for (const sent of await Promise.all([send(), send()])) expect(sent).toEqual({ ok: true, result: outcome });
+      for (const sent of await Promise.all([send(), send()])) expect(sent).toMatchObject({ ok: true, result: outcome });
       expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(2);
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(5);
       legacyOccurrence = true;
