@@ -499,7 +499,7 @@ describe('Workflow inputs through real Action option resolution', () => {
             .rejects.toMatchObject({ code: 'stale_surface' });
         expect(onChangeValues.mock.calls).toEqual(outcome === 'selected' ? [[{ repository: review }]] : []);
         expect(rpc.action).toHaveBeenCalledWith({ consumer: { kind: 'workflow', workflow }, fieldPath: 'repository',
-            optionsSourceId: `plugin-input:${repositoryInputTypeRef.pluginId}/repository`, draftInput: {} });
+            optionsSourceId: `plugin-input:${repositoryInputTypeRef.pluginId}/repository`, draftInput: { sessionId: null } });
     });
 
     it('reads Workflow Action block options once on open and again only when a declared operand changes', async () => {
