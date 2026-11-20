@@ -5,6 +5,8 @@ import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/Execution
 import type { createUsageObservationPublisher } from '../createUsageObservationPublisher';
 import type { NativeUsageCaptureAuthority, NativeUsageCaptureSource, NativeUsageCaptureStore } from './nativeUsageCaptureState';
 import { AsyncLock } from '@/utils/lock';
+import { isProvenPreDispatchConnectionFailure } from '@/api/client/classifyServerEndpointError';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 import { deriveNativeUsageAccountingIdentity } from './nativeUsageAccountingIdentity';
 import type { NativeUsageSourceDescriptor } from './nativeUsageSourceDiscovery';
 import { isDeepStrictEqual } from 'node:util';
@@ -396,7 +398,15 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 });
                 const current = requireSource(sourceId);
                 if (previous.consented || previous.pending.length !== current.pending.length) input.onSourceSettled?.();
-                return await input.deleteHistory(current, range);
+                try {
+                    return await input.deleteHistory(current, range);
+                } catch (error) {
+                    const status = readHttpStatus(error);
+                    if (status === 400 || status === 401 || status === 403 || status === 404
+                        || isProvenPreDispatchConnectionFailure(error)) throw error;
+                    // Home may have committed this scoped delete before the acknowledgement was lost.
+                    throw new Error('usage_source_mutation_outcome_unknown', { cause: error });
+                }
             });
         },
         async flushPending() {

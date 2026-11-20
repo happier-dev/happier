@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { UsageEventIngestRequestSchema, ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { UsageSourceResultV1Schema, UsageSourcesListV1Schema, parseUsageSourceActionResult } from '@happier-dev/protocol/usage/usageSources';
+import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-pi/manifest';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
@@ -62,6 +63,8 @@ describe('native source Machine RPC with real capture custody', () => {
       let retireWhenConsented: string | undefined;
       const published: unknown[] = [];
       const deleted: unknown[] = [];
+      const deleteCaller = new AbortController();
+      const deleteCustody: unknown[] = [];
       const publisher = createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://server.test',
         emitUsageEvent: () => null, // Authenticated HTTP is the boundary; codec, publication and custody remain real.
         postJson: async (request: Parameters<NonNullable<Parameters<typeof createUsageObservationPublisher>[0]['postJson']>>[0]) => { if (!(supported)) throw Object.assign(new Error('Not found'), { response: { status: 404 } }); return await (async request => { published.push(request.body); return { ok: true }; })(request); },
@@ -82,8 +85,14 @@ describe('native source Machine RPC with real capture custody', () => {
         // File-event delivery is an OS boundary; no internal source service is mocked.
         subscribeSource: async () => ({ dispose() {} }),
         deleteHistory: async (source, dateRange) => {
+          const beforeDelete = await store.load();
+          deleteCustody.push(beforeDelete.sources.find(row => row.sourceId === source.sourceId));
           deleted.push({ machineId: authority.machineId, sourceRootKey: source.sourceId, dateRange });
-          return { success: true, deletedEventCount: 1 };
+          if (deleted.length === 1) {
+            deleteCaller.abort();
+            throw new Error('Home committed the deletion and the acknowledgement was lost');
+          }
+          return { success: true, deletedEventCount: 0 };
         },
       });
       // The transport registrar erases request generics; handlers validate their raw payload themselves.
@@ -138,10 +147,17 @@ describe('native source Machine RPC with real capture custody', () => {
       expect(replacement).toMatchObject({ root: { kind: 'override', path: overrideDir }, consent: 'disabled' });
       expect(replacement.sourceId).not.toBe(discovered.sourceId);
       expect(UsageSourcesListV1Schema.parse(await call('usage.sources.get', selected)).sources[0]?.pendingCount).toBe(1);
-      expect(await call('usage.sources.history.delete', { ...selected, dateRange: { startMs: observedAt, endMs: observedAt } }))
-        .toEqual({ success: true, deletedEventCount: 1 });
-      expect(deleted).toEqual([{ machineId: 'machine', sourceRootKey: discovered.sourceId, dateRange: { startMs: observedAt, endMs: observedAt } }]);
-      expect((await store.load()).sources.find(row => row.sourceId === discovered.sourceId)?.pending).toEqual([]);
+      const action = createUsageSourceActionPort({ serverId: target.serverId, assertCurrent() {},
+        rpc: request => call(request.actionId, request.input, { ...context, signal: deleteCaller.signal }) });
+      const deletion = { ...selected, dateRange: { startMs: observedAt, endMs: observedAt } };
+      const unacknowledged = await action({ actionId: 'usage.sources.history.delete', input: deletion }, { surface: 'cli' });
+      expect(deleteCustody).toMatchObject([{ consented: false, pending: [] }]);
+      expect(unacknowledged).toMatchObject({ ok: false, errorCode: 'usage_source_mutation_outcome_unknown' });
+      expect(UsageSourcesListV1Schema.parse(await call('usage.sources.get', selected)).sources[0])
+        .toMatchObject({ consent: 'disabled', pendingCount: 0 });
+      expect(await call('usage.sources.history.delete', deletion)).toEqual({ success: true, deletedEventCount: 0 });
+      const expectedDelete = { machineId: 'machine', sourceRootKey: discovered.sourceId, dateRange: deletion.dateRange };
+      expect(deleted).toEqual([expectedDelete, expectedDelete]);
       supported = true; retireWhenConsented = replacement.sourceId;
       const late = await call('usage.sources.consent.set', { ...target, sourceId: replacement.sourceId, enabled: true });
       expect(late).toMatchObject({ ok: false, errorCode: 'usage_source_mutation_acknowledged_scope_retired',

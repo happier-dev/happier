@@ -75,6 +75,9 @@ export function registerMachineUsageSourceRpcHandlers(params: NativeUsageSourceR
         if ('source' in admitted) return { source: { ...admitted.source, serverId: input.serverId } };
         return admitted;
       } catch (error) {
+        if (error instanceof Error && error.message === 'usage_source_mutation_outcome_unknown') {
+          return failure(error.message);
+        }
         if (context.signal.aborted) return failure('cancelled');
         // Only owner-authored, content-free conditions cross the RPC boundary.
         if (error instanceof Error) {
