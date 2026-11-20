@@ -75,6 +75,7 @@ import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
 import { DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
+import { describeDeploymentPlatformRefusal } from './deploymentPlatformRefusal';
 import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import { DeploymentReviewPreviewForAccount } from './DeploymentReviewPreview';
@@ -566,10 +567,11 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Create): the stepped Review keeps its plan and says what exists, row by row, instead of the generic progress list.
     const platformRefusal = stepped && prepared && onPlatform && platformTarget && partial?.phase === 'target'
       && refusal?.kind === 'refused' ? refusal : null;
-    const platformCause = platformRefusal?.failure?.failureCause;
-    // The platform answered 409 to the project it was asked to create: its name is taken (Vercel, Cloudflare Pages).
-    const platformNameTaken = platformProvider?.kind === 'create' && platformCause !== undefined
-      && (platformCause.httpStatus === 409 || platformCause.errorCode === 'conflict');
+    // Create and link-existing refusals are named by what was asked of the platform (taken name, already linked).
+    const platformRefusalCopy = platformRefusal && platformTarget ? describeDeploymentPlatformRefusal({
+      platform: platformTarget.title, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create',
+      code: platformRefusal.code, ...(platformRefusal.failure?.failureCause ? { cause: platformRefusal.failure.failureCause } : {}),
+    }) : null;
     // The shared deployment failure presenter gives the reason (any refusal but a taken name) and the technical details.
     const platformOutcome = platformRefusal?.failure ? presentActionFailureOutcome(platformRefusal.failure, 'deployment') : null;
     const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure && !platformRefusal
@@ -593,13 +595,13 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t('projects.deployments.createApprovalTitle')}
               description={t('projects.deployments.createApprovalBody')}
             />
-          ) : platformRefusal && platformTarget ? (
+          ) : platformRefusal && platformRefusalCopy ? (
             <AttentionBanner
               testID="project-deployments.draft.refused"
               tone="danger"
-              title={t('newApp.deploy.plan.platformRefusedTitle', { platform: platformTarget.title })}
-              description={platformNameTaken ? t('newApp.deploy.plan.platformNameTaken', { platform: platformTarget.title })
-                : platformOutcome?.reason ?? t('newApp.deploy.plan.platformRefused', { platform: platformTarget.title })}
+              title={platformRefusalCopy.title}
+              description={platformRefusalCopy.specific ? platformRefusalCopy.description
+                : platformOutcome?.reason ?? platformRefusalCopy.description}
               details={platformOutcome ? platformOutcome.technicalDetails.map(line => `${line.label}: ${line.value}`) : [platformRefusal.code]}
             />
           ) : refusal && refusal.kind === 'refused' ? (
@@ -624,7 +626,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         : { kind: 'machine', machine: machineName(chosen.id) },
       answered: refusal !== null,
       refused: refusal?.kind === 'refused' && !platformRefusal,
-      ...(platformRefusal ? { platformRefused: { status: platformNameTaken ? t('newApp.deploy.plan.nameTaken') : t('newApp.deploy.plan.refusedRow') } } : {}),
+      ...(platformRefusalCopy ? { platformRefused: { status: platformRefusalCopy.row } } : {}),
     } : null;
     // The account this platform acts through, once Configure has named it: Review says which of its plans it is on.
     const platformAccount = onPlatform ? readPreparedPlatformAccount(platformProvider) : null;
