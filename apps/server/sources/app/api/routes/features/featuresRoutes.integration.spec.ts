@@ -181,10 +181,10 @@ describe("featuresRoutes", () => {
         descriptorContinuityDir = await mkdtemp(join(tmpdir(), "features-descriptor-"));
     });
 
-    it('publishes the server-proven host fact only to an authenticated Account', async () => {
+    it.each(['personal-home', 'generic', undefined])('publishes the observed host fact only to an authenticated Account (relay purpose %s)', async (purpose) => {
         const { featuresRoutes } = await import('./featuresRoutes');
         const known = { kind: 'known' as const, machineName: 'Studio', platform: 'darwin' as const, mobility: 'stationary' as const };
-        resetEnv({ HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home' });
+        resetEnv({ HAPPIER_MANAGED_RELAY_PURPOSE: purpose });
         const makeRoute = (path: string) => createRouteTestBuilder({
             method: 'GET',
             path,
@@ -215,23 +215,6 @@ describe("featuresRoutes", () => {
             expect(accountResponse.statusCode, accountResponse.body).toBe(200);
             expect(accountResponse.json().homeHostFact).toEqual(known);
         });
-
-        resetEnv({ HAPPIER_MANAGED_RELAY_PURPOSE: 'generic' });
-        expect((await authenticatedRoute.invoke({ headers: { authorization: 'Bearer account' } })).response)
-            .not.toHaveProperty('homeHostFact');
-        const genericProbe = vi.fn(async () => known);
-        const genericRoute = createRouteTestBuilder({
-            method: 'GET', path: '/v1/features/authenticated', registerRoutes(app) {
-                app.authenticate.mockImplementation(async (request: any) => {
-                    request.userId = 'account_1';
-                    request.authTokenKind = 'account';
-                });
-                featuresRoutes(app as any, { resolveHomeHostFact: genericProbe });
-            },
-        });
-        expect((await genericRoute.invoke({ headers: { authorization: 'Bearer account' } })).response)
-            .not.toHaveProperty('homeHostFact');
-        expect(genericProbe).not.toHaveBeenCalled();
     });
 
     it('serves unknown immediately while host detection is pending or fails', async () => {

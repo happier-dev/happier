@@ -4977,8 +4977,11 @@ retained resource. Resize consumes that resource and size, not a preset launch.
 
 Local acquire/rebuild role inputs can carry the transient `guestHome` fact:
 the selected application origin, controller-resolved IP addresses and optional
-Home/controller host identities from the daemon's existing Home observation. The
-controller uses the existing Home carrier policy and OS resolver; these addresses
+Home/controller host identities from the daemon's existing Home observation. In
+unreleased 0.3 development source, every Home publishes its OS-observed
+`homeHostFact` through authenticated Features independently of its relay purpose.
+The fact stays unknown while detection is pending or when the host is inconclusive.
+The controller uses the existing Home carrier policy and OS resolver; these addresses
 are not settings or retained resource identity. At realization, the image-only
 provider compares the host identities through the canonical hostname helper.
 Matching hosts use Docker/Podman host networking. On Lima, a failed bridge DNS

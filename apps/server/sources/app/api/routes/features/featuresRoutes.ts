@@ -28,7 +28,6 @@ import { isAuthEmailDeliveryReady } from '@/app/auth/email/resolveAuthEmailDeliv
 import { isRestrictedAuthTokenKind } from '@/app/api/utils/apiTokenRouteAdmission';
 import { captureFastifyExceptionForSentry } from '@/app/monitoring/sentry';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
-import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
 import { registerServerGuestCliPayloadRoutes } from '@/app/runtime/serverGuestCliPayload';
 
 export function featuresRoutes(app: Fastify, params: Readonly<{
@@ -44,18 +43,11 @@ export function featuresRoutes(app: Fastify, params: Readonly<{
     const featuresRateLimit = resolveApiHotEndpointRateLimit(process.env, "features");
     const hostFactAbort = new AbortController();
     let currentHomeHostFact: HomeHostFact = { kind: 'unknown' };
-    let hostFactProbeStarted = false;
-    const isPersonalHome = () => isPersonalHomeRuntimePurpose(process.env.HAPPIER_MANAGED_RELAY_PURPOSE);
-    const startHomeHostFactProbe = () => {
-        if (!isPersonalHome() || hostFactProbeStarted) return;
-        hostFactProbeStarted = true;
-        void (params.resolveHomeHostFact ?? readHomeHostFact)(hostFactAbort.signal).then(
-            (fact) => { currentHomeHostFact = fact; },
-            () => { currentHomeHostFact = { kind: 'unknown' }; },
-        );
-    };
     app.addHook('onClose', () => hostFactAbort.abort());
-    startHomeHostFactProbe();
+    void (params.resolveHomeHostFact ?? readHomeHostFact)(hostFactAbort.signal).then(
+        (fact) => { currentHomeHostFact = fact; },
+        () => { currentHomeHostFact = { kind: 'unknown' }; },
+    );
     const sendFeaturesResponse = async (
         request: FastifyRequest,
         reply: FastifyReply,
@@ -154,8 +146,7 @@ export function featuresRoutes(app: Fastify, params: Readonly<{
             && !isRestrictedAuthTokenKind(request.authTokenKind)
             ? 'authenticated'
             : 'public';
-        if (effectiveDescriptorVisibility === 'authenticated') startHomeHostFactProbe();
-        const homeHostFact = effectiveDescriptorVisibility === 'authenticated' && isPersonalHome()
+        const homeHostFact = effectiveDescriptorVisibility === 'authenticated'
             ? currentHomeHostFact
             : undefined;
         // Request-time read: the descriptor always reflects the current
