@@ -154,3 +154,11 @@ it('keeps a folder search failure visible with its reason', async () => {
   expect(screen.findByTestId('team-setup-clones-failed')).not.toBeNull();
   expect(screen.getTextContent()).toContain('ENOENT: no such directory');
 });
+
+it('ends a finished setup on another-machine instead of a disabled Set up button', async () => {
+  const onSetUpAnother = vi.fn();
+  const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1' }, canRun: false, onSetUpAnother }));
+  expect(screen.findByTestId('team-setup-run')).toBeNull();
+  await screen.pressByTestIdAsync('team-setup-another-run');
+  expect(onSetUpAnother).toHaveBeenCalledOnce();
+});

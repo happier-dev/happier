@@ -137,9 +137,18 @@ export async function openTeamSetupFirstTask(params: Readonly<{
     machineId: string;
     prompt: string;
 }>): Promise<ActionExecuteResult> {
-    return params.executeAction('session.authoring.open', { seed: {
-        prompt: params.prompt,
-        placement: { kind: 'exactTarget', serverId: params.project.workspace.serverId,
+    return params.executeAction('session.authoring.open', buildTeamSetupFirstTaskInput(params), params.context);
+}
+
+/** The composer seed for one opened checkout; a blank prompt opens an empty draft (the seed owner refuses blank text). */
+export function buildTeamSetupFirstTaskInput(params: Readonly<{
+    project: Extract<OpenProjectResultV1, { kind: 'opened' }>;
+    machineId: string;
+    prompt: string;
+}>) {
+    return { seed: {
+        ...(params.prompt.trim() ? { prompt: params.prompt } : {}),
+        placement: { kind: 'exactTarget' as const, serverId: params.project.workspace.serverId,
             machineId: params.machineId, directory: params.project.directory },
-    } }, params.context);
+    } };
 }

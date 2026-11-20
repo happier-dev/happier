@@ -145,9 +145,14 @@ export function TeamSetupHeader(props: Readonly<{
   context: Pick<TeamSectionContext, 'team' | 'address' | 'homeName'>;
   lead: boolean;
   preview?: boolean;
+  /** Once setup finished, the page says where it finished instead of promising what will run. */
+  doneOn?: string | null;
 }>) {
   const { team, address, homeName } = props.context;
-  const title = t('teams.join.setUpForTeam', { team: team.name });
+  const done = props.doneOn !== undefined;
+  const title = done
+    ? t('teams.join.setupPage.doneTitle', { machine: props.doneOn ?? t('teams.join.setupPage.yourMachine') })
+    : t('teams.join.setUpForTeam', { team: team.name });
   // The Team's identity line, as every Team page draws it (which Team, on which Home); "Suggested by"
   // joins it only while there is a setup to suggest.
   const facts = teamPageHeaderMeta({ pageTitle: title, teamName: team.name, homeName });
@@ -156,11 +161,11 @@ export function TeamSetupHeader(props: Readonly<{
       testID="team-setup-header"
       alwaysShowTitle
       title={title}
-      description={props.lead
+      description={props.lead && !done
         ? t(props.preview ? 'teams.join.setupPage.previewLead' : 'teams.join.setupPage.lead', { team: team.name })
         : undefined}
       leading={<TeamHeaderAvatar address={address} team={team} />}
-      meta={props.lead ? [...facts, { key: 'suggested', text: t('teams.join.setupPage.suggestedBy', { team: team.name }) }] : facts}
+      meta={props.lead && !done ? [...facts, { key: 'suggested', text: t('teams.join.setupPage.suggestedBy', { team: team.name }) }] : facts}
     />
   );
 }
@@ -383,6 +388,8 @@ function TeamSetupPlanPage(
       ?? suggestedTask.sourceName,
     onOpen: () => { void openTask(taskProject, suggestedTask.markdown); },
   } : null, [openTask, repositories, suggestedTask, taskProject]);
+  // A finished setup leaves its rows' results in place; choosing another Machine starts a new review.
+  const setUpAnother = React.useCallback(() => setRun({ kind: 'idle' }), []);
   const startSession = React.useCallback((project: OpenedProject) => { void openTask(project, ''); }, [openTask]);
 
   const sourcesState = resources.sources.state;
@@ -428,7 +435,8 @@ function TeamSetupPlanPage(
 
   return (
     <TeamSetupPageView
-      header={<TeamSetupHeader context={context} lead preview={props.preview} />}
+      header={<TeamSetupHeader context={context} lead preview={props.preview}
+        {...(run.kind === 'done' ? { doneOn: machineName ?? null } : {})} />}
       preview={props.preview ? {
         onClose: () => router.back(),
         presetSetup: presetValue?.setup,
@@ -465,6 +473,7 @@ function TeamSetupPlanPage(
       onStartSession={startSession}
       presetChange={presetChange}
       clones={clones}
+      onSetUpAnother={setUpAnother}
     />
   );
 }
@@ -508,6 +517,8 @@ export function TeamSetupPageView(
     /** The Machine owner found the Team's preset newer than what this Machine applied. */
     presetChange: Readonly<{ revision: number; onReview: () => void }> | null;
     clones: TeamSetupExistingClones;
+    /** After Done, the rail offers the same setup on another Machine instead of a spent button. */
+    onSetUpAnother?: () => void;
     /** Preview as a member: a new member's own machine stands in for the selector, and nothing runs. */
     preview?: Readonly<{
       onClose: () => void;
@@ -550,6 +561,25 @@ export function TeamSetupPageView(
         </BareSectionContent>
       </ItemGroup>
     </>
+  ) : run.kind === 'done' ? (
+    <ItemGroup testID="team-setup-another">
+      <Item
+        testID="team-setup-another-machine"
+        icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
+        title={t('teams.join.setupPage.anotherMachine')}
+        subtitle={t('teams.join.setupPage.anotherMachineDescription', { team: teamName })}
+        showChevron={false}
+        rightElement={props.onSetUpAnother ? (
+          <RoundButton
+            testID="team-setup-another-run"
+            size="small"
+            display="secondary"
+            title={t('teams.join.setupPage.anotherMachineAction')}
+            onPress={props.onSetUpAnother}
+          />
+        ) : undefined}
+      />
+    </ItemGroup>
   ) : (
     <>
       <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} />
