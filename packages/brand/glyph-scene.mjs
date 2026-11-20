@@ -155,6 +155,13 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
     const sine = Math.sin(-rotate), cosine = Math.cos(-rotate);
     const sample = { palette, light, reveal, spin, glow, breath: 0, reach: 7, bandStrength: 0.35, detail: 1.4 };
     const edge = Math.hypot(...cell) / (R * dpr);
+    const shadeAt = (x, y, i, j) => shadePlanetDot(x * cosine - y * sine, x * sine + y * cosine, i, j, sample);
+    const sideLight = (x, y, distance) => distance < 1 ? 1
+        : ((x < 0 ? halo.left : halo.right) * x * x + (y < 0 ? halo.top : halo.bottom) * y * y) / (distance * distance);
+    const latticeInk = (rgb) => {
+        const peak = Math.max(rgb[0], rgb[1], rgb[2]);
+        for (let c = 0; c < 3; c++) dot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - rgb[c]) * 1.4, 0, 255)) : rgb[c];
+    };
     const ink = [0, 0, 0], dot = [0, 0, 0];
     const faint = soft ? 0.85 : 0.3;
     const add = (x, y, glyph, colour, alpha) => {
@@ -175,34 +182,47 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
             const fx = (x - cx) / R;
             const distance = Math.hypot(fx, fy);
             if (distance > haloReach) continue;
-            const shade = shadePlanetDot(fx * cosine - fy * sine, fx * sine + fy * cosine, i, j, sample);
+            const shade = shadeAt(fx, fy, i, j);
             const appearance = (assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2)) * fadeBetween(assembly, 0, 0.12);
             const n = j * cols + i;
             const inside = distance < 1;
             if (distance <= 1 + edge) {
-                rgba[n * 4] = shade.rgb[0];
-                rgba[n * 4 + 1] = shade.rgb[1];
-                rgba[n * 4 + 2] = shade.rgb[2];
+                // Extend the phone's surface ink into the texture samples straddling the limb.
+                // The painter clips the circle after filtering. Halo ink here would bleed back into the body.
+                let bodyRgb = shade.rgb;
+                if (soft && !inside) {
+                    const limbSample = (1 - 0.5 / (R * dpr)) / distance;
+                    bodyRgb = shadeAt(fx * limbSample, fy * limbSample, i, j).rgb;
+                }
+                rgba.set(bodyRgb, n * 4);
                 cells.wash[n] = glyphWash * appearance;
             }
-            const sides = inside ? 1 : ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (distance * distance || 1);
-            const amount = shade.light * sides;
-            if (amount < 0.04) continue;
+            const amount = shade.light * sideLight(fx, fy, distance);
+            // A phone cell crossing the circle contains surface and halo dots. Sample them at their own
+            // positions so the density transition follows the limb at the lattice pitch.
+            const crossesLimb = soft && Math.abs(distance - 1) <= edge / 2;
+            if (amount < 0.04 && !crossesLimb) continue;
             const base = appearance * foot;
-            // The lattice: dots on a fixed 4 px pitch, each lit when the cell's light passes its ordered dither.
-            const peak = Math.max(shade.rgb[0], shade.rgb[1], shade.rgb[2]);
-            for (let c = 0; c < 3; c++) dot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - shade.rgb[c]) * 1.4, 0, 255)) : shade.rgb[c];
+            latticeInk(shade.rgb);
             const left = i * cell[0] / dpr, top = j * cell[1] / dpr;
             const dotAlpha = Math.round(255 * clamp(base * faint));
             if (dotAlpha > 0) {
                 for (let dy = Math.ceil(top / latticePitch - 0.5); (dy + 0.5) * latticePitch < top + cell[1] / dpr; dy++) {
                     for (let dx = Math.ceil(left / latticePitch - 0.5); (dx + 0.5) * latticePitch < left + cell[0] / dpr; dx++) {
-                        if (BAYER[(dy & 3) * 4 + (dx & 3)] + 0.02 >= amount) continue;
-                        add((dx + 0.5) * latticePitch * dpr, (dy + 0.5) * latticePitch * dpr, glyphLatticeTile, dot, dotAlpha);
+                        const dotX = (dx + 0.5) * latticePitch, dotY = (dy + 0.5) * latticePitch;
+                        const threshold = BAYER[(dy & 3) * 4 + (dx & 3)] + 0.02;
+                        if (crossesLimb) {
+                            const x = (dotX - cx) / R, y = (dotY - cy) / R;
+                            const sample = shadeAt(x, y, dx, dy);
+                            const dotLight = sample.light * sideLight(x, y, Math.hypot(x, y));
+                            if (dotLight < 0.04 || dotLight <= threshold) continue;
+                            latticeInk(sample.rgb);
+                        } else if (amount <= threshold) continue;
+                        add(dotX * dpr, dotY * dpr, glyphLatticeTile, dot, dotAlpha);
                     }
                 }
             }
-            if (!inside) continue;
+            if (!inside || amount < 0.04) continue;
             glyphInk(shade.rgb, theme, palette.background, ink);
             cells.light[n] = amount;
             cells.base[n] = base;

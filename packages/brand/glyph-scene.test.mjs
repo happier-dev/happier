@@ -42,6 +42,40 @@ test('the default planet ink is full-colour across signed-out poses', () => {
     }
 });
 
+test('the phone body texture carries surface ink through the circle clip', () => {
+    const geometry = welcomePlanetPose('welcome', { width: view.w, height: view.h }, { phone: true });
+    const layers = [planetGlyphLayer({ geometry, soft: true })];
+    for (const dpr of [2, 3]) {
+        for (const theme of ['light', 'dark']) {
+            const { body, grid } = glyphFrame({ view, dpr, theme, layers });
+            const column = Math.floor(body.disc.cx / grid.cell[0]);
+            const outerRow = Math.floor((body.disc.cy - body.disc.R) / grid.cell[1] - 0.5);
+            const inner = ((outerRow + 1) * grid.cols + column) * 4;
+            const outer = inner - grid.cols * 4;
+            assert.equal(body.rgba[outer + 3], body.rgba[inner + 3], 'only the circle clips the wash');
+            const channelJump = Math.max(...[0, 1, 2].map(channel => Math.abs(body.rgba[outer + channel] - body.rgba[inner + channel])));
+            assert.ok(channelJump < 45, `${theme} at ${dpr}×: the body must not interpolate into halo ink (${channelJump})`);
+        }
+    }
+});
+
+test('phone lattice dots just outside the limb retain the sparse halo density', () => {
+    const geometry = welcomePlanetPose('welcome', { width: view.w, height: view.h }, { phone: true });
+    const { sprites } = glyphFrame({
+        view, dpr: 2, theme: 'dark', layers: [planetGlyphLayer({ geometry, soft: true })],
+    });
+    let haloDots = 0;
+    let surfaceDots = 0;
+    for (let i = 0; i < sprites.glyph.length; i++) {
+        if (sprites.glyph[i] !== glyphLatticeTile) continue;
+        const radius = Math.hypot(sprites.at[i * 2] / 2 - geometry.cx, sprites.at[i * 2 + 1] / 2 - geometry.cy);
+        const depth = geometry.R - radius;
+        if (depth >= -4 && depth < 0) haloDots++;
+        if (depth >= 0 && depth < 4) surfaceDots++;
+    }
+    assert.ok(haloDots < surfaceDots / 2, `dense surface dots leaked outside the limb: ${haloDots} vs ${surfaceDots}`);
+});
+
 test('the launch planet breathes on a slow cycle while its outer digits orbit', async () => {
     const { createLoadingPlanetScene, loadingPlanetSize } = await import('./glyph-scene.mjs');
     const sample = createLoadingPlanetScene();
