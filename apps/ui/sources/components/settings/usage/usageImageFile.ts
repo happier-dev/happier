@@ -52,7 +52,8 @@ export async function captureUsageViewPng(node: unknown, authority: UsageImageAu
     if (Platform.OS === 'web') {
         const viewShotWeb = (await import('react-native-view-shot/src/RNViewShot.web')).default;
         assertImageCurrent(authority);
-        const dataUri: string = await viewShotWeb.captureRef(node, { format: 'png', quality: 1, result: 'data-uri' });
+        const dataUri = await viewShotWeb.captureRef(node as Parameters<typeof viewShotWeb.captureRef>[0],
+            { format: 'png', quality: 1, result: 'data-uri' });
         assertImageCurrent(authority);
         const prefix = 'data:image/png;base64,';
         if (!dataUri.startsWith(prefix)) throw new Error('usage_image_capture_invalid');
