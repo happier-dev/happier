@@ -16,6 +16,9 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createMachineInstallationIdentityFixture } from '../../../../../packages/tests/src/testkit/machineIdentity';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
+import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 const sessionMachineId = 'b08d44db-2e4e-4b4a-bab9-2c8612406c62';
 const controllerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
@@ -80,8 +83,63 @@ function prepareFrom(machineId: string, current = false) {
         requestId: 'health-request',
       },
     });
-  return { run, isCallerCurrent };
+  return { run, isCallerCurrent, prepare, token };
 }
+
+describe('native Session command workspace admission', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(['current workspace', 'missing workspace', 'another Machine'] as const)(
+    'signs only the authenticated caller workspace for a native command (%s)', async shape => {
+      const { prepare, token } = prepareFrom(sessionMachineId, true);
+      const sessionId = 'agent-session';
+      const actionId = 'machines.command.run';
+      const machineId = shape === 'another Machine' ? controllerMachineId : sessionMachineId;
+      // Home HTTP is the boundary; Session metadata opening, workspace
+      // selection, native admission and the installation signer stay real.
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        switch (new URL(String(url)).pathname) {
+          case '/v1/account/profile': return { status: 200, data: { id: 'owner' } };
+          case '/v1/account/encryption/currentness':
+            return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+          case `/v2/sessions/${sessionId}`:
+            return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
+              encryptionMode: 'plain', share: null,
+              metadata: JSON.stringify({ machineId, ...(shape === 'missing workspace' ? {} : { path: '/workspace' }),
+                permissionMode: 'default' }),
+            }) } };
+          default: throw new Error(`Unexpected Home GET ${url}`);
+        }
+      });
+      const minted: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>[] = [];
+      vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        expect(new URL(String(url)).pathname).toBe(bindExternalActionExecutionAuthorizationHttpPathV1(actionId));
+        minted.push(ExternalActionExecutionAuthorizationRequestV1Schema.parse(body));
+        // Home refuses the effect after observing the exact signed proposal.
+        return { status: 403, data: { error: 'credential_scope_denied' } };
+      });
+      const execute = createDaemonSessionAccountActionExecutor({
+        serverId: 'srv_home', serverHttpBaseUrl: 'https://home.invalid', token, machineId: sessionMachineId,
+        credentials: { token, encryption: null }, readAccountEncryptionMode: async () => 'plain',
+        prepareExternalActionAuthorization: prepare,
+        createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+      });
+      const result = await execute({ kind: 'action.execute', actionId, input: { command: 'echo checked' },
+        requestId: 'native-command', surface: 'agent',
+        witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+          agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } },
+      }, { sessionId, isCurrent: async () => true });
+      if (shape === 'current workspace') {
+        expect(minted, JSON.stringify(result)).toMatchObject([{ machineId: sessionMachineId,
+          envelope: { target: { kind: 'machine', machineId: sessionMachineId,
+            project: { machineId: sessionMachineId, directory: '/workspace' } } } }]);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      } else {
+        expect(minted, JSON.stringify(result)).toEqual([]);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      }
+    });
+});
 
 describe('createDaemonSessionAccountActionAuthorizationPreparer deployment read placement', () => {
   afterEach(() => vi.restoreAllMocks());

@@ -346,9 +346,10 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     try {
       const credentials = params.credentials;
       const scmWorkspace = operation.actionId.startsWith('scm.') ? operation.scmWorkspace : undefined;
+      const needsCallerWorkspace = operation.actionId === 'workflow.run.start' || operation.actionId === 'machines.command.run';
       const workflowTarget = scmWorkspace ? { kind: 'machine' as const,
         machineId: scmWorkspace.machineId, project: scmWorkspace }
-        : operation.actionId === 'workflow.run.start' && credentials
+        : needsCallerWorkspace && credentials
         ? await readRequesterHomeWithinActionLifetime(async () => !await authority.isCurrent() ? undefined
           : await runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => resolveCliActionCallerWorkflowTarget({
           credentials, context,
@@ -356,7 +357,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           resolveTransportForSession: (sessionId, signal) => resolveSessionTransportContext({ reason: 'session-action', credentials,
             idOrPrefix: sessionId, ...(signal ? { signal } : {}) }),
         })), authority.signal) : undefined;
-      if (operation.actionId === 'workflow.run.start' && !workflowTarget) return refuse('external_authorization_preparation_failed');
+      if (needsCallerWorkspace && !workflowTarget) return refuse('external_authorization_preparation_failed');
       const prepare = params.prepareExternalActionAuthorization;
       external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc
         // The admitted owner uses the CLI's captured Account data provider.
