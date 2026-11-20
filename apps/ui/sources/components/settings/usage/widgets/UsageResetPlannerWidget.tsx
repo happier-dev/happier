@@ -79,6 +79,16 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
   const width = presentation?.geometry?.width ?? null;
   const lanes = !tile && width !== null && width >= HAPPIER_DATA_METRICS.laneSideLabelMinWidthPx;
   const [expanded, setExpanded] = React.useState(false);
+  const [retainedWallets, setRetainedWallets] = React.useState<ReadonlySet<string>>(() => new Set());
+  const retainWallet = React.useCallback((accountKey: string, retain: boolean) => {
+    setRetainedWallets(previous => {
+      if (previous.has(accountKey) === retain) return previous;
+      const next = new Set(previous);
+      if (retain) next.add(accountKey);
+      else next.delete(accountKey);
+      return next;
+    });
+  }, []);
   const refresh = plans.refresh;
   const settle = React.useCallback(() => { void refresh(); }, [refresh]);
   // A scoped Session keeps its private queued-message list. The Account view uses metadata only.
@@ -98,7 +108,7 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
     );
   }
   const withCredits = projection.accounts.filter(
-    (account) => (account.recoveryCredits?.availableCount ?? 0) > 0,
+    (account) => (account.recoveryCredits?.availableCount ?? 0) > 0 || retainedWallets.has(account.key),
   );
   const waiting = projection.accounts.flatMap((account) =>
     account.read?.waitingWork.status === 'available'
@@ -165,6 +175,8 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
                   snapshotFetchedAtMs={account.observedAtMs}
                   now={nowMs}
                   onApplied={settle}
+                  recoveryCreditsObservedAtMs={account.stale || !account.recoveryCredits ? null : account.observedAtMs}
+                  onRetainRow={(retain) => retainWallet(account.key, retain)}
                 />
                 {advice ? (
                   <Text testID={`${props.testID}.wallet.${account.accountId}.advice`} style={[styles.listEvent, text.detail]}>

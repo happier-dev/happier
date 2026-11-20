@@ -1,3 +1,5 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema, type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1, type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -17,10 +19,18 @@ function failure(
     errorCode: string,
     error: unknown = errorCode,
     receipt?: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+    diagnostic: unknown = error,
 ): ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 {
+    const carrier = diagnostic && typeof diagnostic === 'object' ? diagnostic : null;
+    const failureCause = ActionFailureCauseV1Schema.safeParse(carrier && 'failureCause' in carrier ? carrier.failureCause : undefined);
+    const disposition = readRpcRequestDisposition(diagnostic);
+    const reportedEffect = carrier && 'effectAttempted' in carrier ? carrier.effectAttempted : undefined;
+    const effectAttempted = typeof reportedEffect === 'boolean' ? reportedEffect : disposition === 'notSent' ? false : undefined;
     return {
         ok: false,
-        errorCode,
+        errorCode: effectAttempted !== false && disposition === 'outcomeUnknown' ? 'outcome_unknown' : errorCode,
+        ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+        ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
         error: sanitizeEndpointErrorMessage(error) ?? t('common.error'),
         ...(receipt ? { receipt } : {}),
     };
@@ -119,7 +129,7 @@ export async function connectedServiceQuotaRecoveryCreditConsume(params: Readonl
         if (!parsed.success) return failure('invalid_response');
         const service = parseQualifiedPluginContributionKey(request.data.serviceId);
         const currentServer = getActiveServerSnapshot();
-        if (service && parsed.data.receipt
+        if (service && parsed.data.receipt && parsed.data.receipt.status !== 'unknown_after_timeout'
             && currentServer.serverId === serverBasis.serverId
             && currentServer.generation === serverBasis.generation
             && (params.serverId == null || params.serverId === serverBasis.serverId)) {
@@ -128,7 +138,7 @@ export async function connectedServiceQuotaRecoveryCreditConsume(params: Readonl
                 serverBasis,
             });
         }
-        if (!parsed.data.ok) return failure(parsed.data.errorCode, parsed.data.error, parsed.data.receipt);
+        if (!parsed.data.ok) return failure(parsed.data.errorCode, parsed.data.error, parsed.data.receipt, parsed.data);
         return parsed.data;
     } catch (error) {
         return failure(

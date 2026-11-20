@@ -23,6 +23,7 @@ import type {
     ProviderAccountUsageRecordId,
 } from '@happier-dev/protocol/connect/account-usage-primitives';
 
+import { AccountUsageResetStatus, AccountUsageResetWait } from './AccountUsageResetStatus';
 import { useAccountUsageResetAction } from './useAccountUsageResetAction';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -97,6 +98,8 @@ export const AccountUsageResetsLine = React.memo(function AccountUsageResetsLine
     now: number;
     /** After a reset is applied: read the account again so its meters show the fresh window. */
     onApplied: () => void;
+    recoveryCreditsObservedAtMs?: number | null;
+    onRetainRow?: (retain: boolean) => void;
     /**
      * A caller-owned "Use one" (a session that signs in on its own consumes its resets through the
      * session's path); when present it replaces the connected-account consume.
@@ -105,26 +108,34 @@ export const AccountUsageResetsLine = React.memo(function AccountUsageResetsLine
     testID?: string;
 }>) {
     const summary = summarizeConnectedServiceQuotaRecoveryCredits(props.recoveryCredits, props.now);
-    if (!summary) return null;
+    const [retainRow, setRetainRow] = React.useState(false);
+    const { onRetainRow } = props;
+    const retain = React.useCallback((value: boolean) => {
+        setRetainRow(value);
+        onRetainRow?.(value);
+    }, [onRetainRow]);
+    if (!summary && !retainRow) return null;
     const legacyServiceId = ConnectedServiceIdSchema.safeParse(props.legacyServiceId);
-    return (
-        <ResetsLineView
+    if (!props.action && legacyServiceId.success && props.accountId) {
+        return <ConnectedAccountResetsLine
             {...props}
             summary={summary}
-            legacyServiceId={legacyServiceId.success ? legacyServiceId.data : null}
-        />
-    );
+            onRetainRow={retain}
+            legacyServiceId={legacyServiceId.data}
+            accountId={props.accountId}
+        />;
+    }
+    return summary ? <ResetsLineView summary={summary} now={props.now} action={props.action} testID={props.testID} /> : null;
 });
 
-const ResetsLineView = React.memo(function ResetsLineView(props: Readonly<{
+type ResetsLineProps = Readonly<{
     summary: NonNullable<ReturnType<typeof summarizeConnectedServiceQuotaRecoveryCredits>>;
-    legacyServiceId: ConnectedServiceId | null;
-    accountId: string | null;
-    action?: AccountUsageResetsAction;
-    snapshotFetchedAtMs: number | null;
     now: number;
-    onApplied: () => void;
     testID?: string;
+}>;
+
+const ResetsLineView = React.memo(function ResetsLineView(props: ResetsLineProps & Readonly<{
+    action?: AccountUsageResetsAction;
 }>) {
     const { theme } = useUnistyles();
     const { summary } = props;
@@ -148,42 +159,36 @@ const ResetsLineView = React.memo(function ResetsLineView(props: Readonly<{
                     pending={props.action.pending}
                     onPress={props.action.onUse}
                 />
-            ) : props.legacyServiceId && props.accountId ? (
-                <UseOneButton
-                    testID={props.testID ? `${props.testID}:use` : undefined}
-                    legacyServiceId={props.legacyServiceId}
-                    accountId={props.accountId}
-                    providerCreditId={summary.providerCreditId}
-                    snapshotFetchedAtMs={props.snapshotFetchedAtMs}
-                    onApplied={props.onApplied}
-                />
             ) : null}
         </View>
     );
 });
 
-/** "Use one": mounted only on an account that has a reset, so only those rows resolve a machine. */
-const UseOneButton = React.memo(function UseOneButton(props: Readonly<{
+/** Resolve a machine only while the account has a reset to offer. */
+const ConnectedAccountResetsLine = React.memo(function ConnectedAccountResetsLine(props: Omit<ResetsLineProps, 'summary'> & Readonly<{
+    summary: ResetsLineProps['summary'] | null;
     legacyServiceId: ConnectedServiceId;
     accountId: string;
-    providerCreditId: string | null;
     snapshotFetchedAtMs: number | null;
     onApplied: () => void;
-    testID?: string;
+    recoveryCreditsObservedAtMs?: number | null;
+    onRetainRow?: (retain: boolean) => void;
 }>) {
-    const action = useAccountUsageResetAction({
-        legacyServiceId: props.legacyServiceId,
-        accountId: props.accountId,
-        snapshotFetchedAtMs: props.snapshotFetchedAtMs,
-        onApplied: props.onApplied,
-    });
-    return (
-        <UseOnePressable
-            testID={props.testID}
-            pending={action.pending}
-            onPress={() => { void action.use(props.providerCreditId); }}
-        />
-    );
+    const action = useAccountUsageResetAction(props);
+    if (action.cancelWait) return <AccountUsageResetWait testID={props.testID} onCancel={action.cancelWait} />;
+    if (action.outcome) return <AccountUsageResetStatus
+        testID={props.testID} outcome={action.outcome} pending={action.pending} onCheck={action.check}
+    />;
+    const { summary } = props;
+    return summary ? <ResetsLineView
+        summary={summary}
+        now={props.now}
+        testID={props.testID}
+        action={{
+            pending: action.pending,
+            onUse: () => { void action.use(summary.providerCreditId); },
+        }}
+    /> : null;
 });
 
 const UseOnePressable = React.memo(function UseOnePressable(props: Readonly<{

@@ -345,9 +345,17 @@ import { formatUsageLimitRecoveryOperationError } from "@/components/sessions/us
 import { buildSessionUsageLimitRecoveryOperationFailureAlert, type SessionUsageLimitRecoveryOperationFailureResult } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryOperationFailureAlert";
 import { handleReadyUsageLimitRecoveryResult } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryReadyResult";
 import { normalizeSessionUsageLimitRecoveryOperationResultV1, SessionUsageLimitRecoveryOperationResultV1Schema, type SessionUsageLimitRecoveryOperationResultV1 as SessionUsageLimitRecoveryOperationResult } from "@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1";
-import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from "@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc";
+import { presentConnectedServiceQuotaFreshness } from '@/sync/domains/connectedServices/presentConnectedServiceQuotaFreshness';
+import { AccountUsageResetStatus, AccountUsageResetWait } from "@/components/settings/connectedServices/usage/AccountUsageResetStatus";
 import { quietQuotaGaugeForSessionFailure } from "@/sync/domains/connectedServices/connectedServiceQuotaGauge";
-import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from "@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation";
+import {
+    getConnectedServiceQuotaRecoveryCreditCheckInput,
+    hasNewRecoveryCreditObservation,
+    readFreshRecoveryCreditObservationTime,
+    readConnectedServiceQuotaRecoveryCreditActionPresentation,
+    resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey,
+    type UnconfirmedAccountUsageReset,
+} from "@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation";
 import { useSessionProviderUsage } from "@/components/sessions/usage/useSessionProviderUsage";
 import type { ComposerAgentContinuationIntentV1, SessionAgentTransitionResultV1 } from "@happier-dev/protocol/sessions/agentTransition";
 import { Icon, type IconName } from "@/components/ui/icons/Icon";
@@ -1926,8 +1934,38 @@ export function useSessionComposerController({
         recoveryCredits: usageLimitRecoveryCredits,
         applyRecoveryCreditSnapshot,
     } = sessionProviderUsage;
-    const canConsumeSessionResetCredit = canConsumeRuntimeResetCredit
-        || Boolean(connectedServiceQuotaProfileIdentity && connectedServiceQuotaProfileKey);
+    const [presentedAccountUsageReset, setPresentedAccountUsageReset] = React.useState<Readonly<{
+        caller: typeof sessionViewCaller;
+        profileKey: string;
+        machineId: string;
+        previousObservationAtMs: number | null;
+        outcome: UnconfirmedAccountUsageReset;
+    }> | null>(null);
+    const lastConnectedQuotaObservationAtMs = connectedServiceQuotaSnapshot?.fetchedAt ?? null;
+    const newestConnectedQuotaObservationAtMs = React.useRef(lastConnectedQuotaObservationAtMs);
+    React.useLayoutEffect(() => { newestConnectedQuotaObservationAtMs.current = lastConnectedQuotaObservationAtMs; }, [lastConnectedQuotaObservationAtMs]);
+    const currentAccountUsageReset = presentedAccountUsageReset?.caller === sessionViewCaller
+        && presentedAccountUsageReset.profileKey === connectedServiceQuotaProfileKey ? presentedAccountUsageReset : null;
+    const accountUsageResetQuotaUpdated = currentAccountUsageReset !== null && hasNewRecoveryCreditObservation(
+        readFreshRecoveryCreditObservationTime({
+            ...presentConnectedServiceQuotaFreshness(connectedServiceQuotaSnapshot, Date.now()),
+            recoveryCredits: connectedServiceQuotaSnapshot?.recoveryCredits,
+        }),
+        currentAccountUsageReset.previousObservationAtMs,
+    );
+    const accountUsageResetOutcome = accountUsageResetQuotaUpdated ? null : currentAccountUsageReset?.outcome ?? null;
+    const accountUsageResetUnconfirmed = accountUsageResetOutcome !== null;
+    React.useEffect(() => {
+        if (accountUsageResetQuotaUpdated) setPresentedAccountUsageReset(null);
+    }, [accountUsageResetQuotaUpdated]);
+    const [accountUsageResetWait, setAccountUsageResetWait] = React.useState<Readonly<{
+        caller: typeof sessionViewCaller;
+        controller: AbortController;
+    }> | null>(null);
+    const activeAccountUsageResetWait = accountUsageResetWait?.caller === sessionViewCaller ? accountUsageResetWait : null;
+    const accountUsageResetWaiting = activeAccountUsageResetWait !== null;
+    const canConsumeSessionResetCredit = !accountUsageResetUnconfirmed
+        && (canConsumeRuntimeResetCredit || Boolean(connectedServiceQuotaProfileIdentity && connectedServiceQuotaProfileKey));
     // Runtime facts come from the live runtime source: the shell Session keeps its identity across a turn's activity.
     const baseUsageLimitRecoveryPresentation = React.useMemo(() => buildSessionUsageLimitRecoveryPresentation({
         machineReachable: isMachineReachable,
@@ -2253,6 +2291,7 @@ export function useSessionComposerController({
         providerCreditId?: string | null;
         snapshotFetchedAtMs: number | null;
     }>): Promise<boolean> => {
+        if (accountUsageResetUnconfirmed || accountUsageResetWaiting) return false;
         // This operation keeps the presentation it started under: a later show must not revive it.
         const callerSignal = sessionViewCaller.signal;
         const targetMachineId = controlMachineTarget?.machineId
@@ -2271,21 +2310,38 @@ export function useSessionComposerController({
             return false;
         }
 
+        const waiter = new AbortController();
+        const cancellation = mergeAbortSignals([callerSignal, waiter.signal]);
+        setAccountUsageResetWait({ caller: sessionViewCaller, controller: waiter });
         const execution = await executeRecoveryAction('connectedServices.quota.reset', {
             machineId: targetMachineId,
             serviceId: serviceId.data,
             profileId: params.profileRef.profileId,
             sourceSnapshotFetchedAtMs: params.snapshotFetchedAtMs,
             ...(params.providerCreditId ? { providerCreditId: params.providerCreditId } : {}),
-        }, { defaultSessionId: sessionId, signal: callerSignal });
+        }, { defaultSessionId: sessionId, signal: cancellation.signal }).finally(() => {
+            cancellation.dispose();
+            setAccountUsageResetWait(current => current?.controller === waiter ? null : current);
+        });
         if (callerSignal.aborted) return false;
-        if (!execution.ok) {
-            await Modal.alert(t('common.error'), execution.error || execution.errorCode);
+        const { outcome, failure, result } = readConnectedServiceQuotaRecoveryCreditActionPresentation(execution);
+        setPresentedAccountUsageReset(outcome?.kind === 'unknown' ? {
+            caller: sessionViewCaller, profileKey: params.profileKey, machineId: targetMachineId,
+            previousObservationAtMs: newestConnectedQuotaObservationAtMs.current, outcome,
+        } : null);
+        if (outcome?.kind === 'unknown') return false;
+        if (outcome?.kind === 'used') {
+            applyRecoveryCreditSnapshot(params.profileKey, result?.ok ? result.snapshot ?? null : null);
+            return true;
+        }
+        if (failure) {
+            if (waiter.signal.aborted && (failure.effectAttempted === false || failure.errorCode === 'cancelled'
+                || failure.errorCode === 'action_account_scope_changed')) return false;
+            await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('errors.operationFailed')));
             return false;
         }
-        const result = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.parse(execution.result);
-        if (!result.ok) {
-            await Modal.alert(t('common.error'), result.error || result.errorCode);
+        if (!result?.ok) {
+            await Modal.alert(t('common.error'), t('errors.operationFailed'));
             return false;
         }
         const noticeKey = resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(result.receipt.status);
@@ -2293,6 +2349,8 @@ export function useSessionComposerController({
         applyRecoveryCreditSnapshot(params.profileKey, result.snapshot ?? null);
         return true;
     }, [
+        accountUsageResetUnconfirmed,
+        accountUsageResetWaiting,
         applyRecoveryCreditSnapshot,
         controlMachineTarget?.machineId,
         machineId,
@@ -2505,6 +2563,26 @@ export function useSessionComposerController({
         usageLimitRecoverySettings.customResumePrompt,
     ]);
     const [providerUsageRecoveryCreditPending, setProviderUsageRecoveryCreditPending] = React.useState(false);
+    const checkAccountUsageReset = React.useCallback(async () => {
+        if (!accountUsageResetUnconfirmed || !currentAccountUsageReset || providerUsageRecoveryCreditPending || !connectedServiceQuotaProfileIdentity) return;
+        const signal = sessionViewCaller.signal;
+        if (signal.aborted) return;
+        const legacyServiceId = ConnectedServiceIdSchema.safeParse(connectedServiceQuotaProfileIdentity.serviceId);
+        if (!legacyServiceId.success) return;
+        const input = getConnectedServiceQuotaRecoveryCreditCheckInput(
+            legacyServiceId.data, connectedServiceQuotaProfileIdentity.profileId, currentAccountUsageReset.machineId,
+        );
+        if (!input) return;
+        setProviderUsageRecoveryCreditPending(true);
+        try {
+            await executeRecoveryAction('connectedServices.quota.refresh', input, { defaultSessionId: sessionId, signal });
+        } finally {
+            setProviderUsageRecoveryCreditPending(false);
+        }
+    }, [
+        accountUsageResetUnconfirmed, connectedServiceQuotaProfileIdentity, currentAccountUsageReset, executeRecoveryAction,
+        providerUsageRecoveryCreditPending, sessionId, sessionViewCaller,
+    ]);
     const handleProviderUsageRecoveryCreditPress = React.useCallback(async () => {
         if (!providerUsageGauge?.recoveryCreditSummary) return;
         if (providerUsageRecoveryCreditPending) return;
@@ -2563,7 +2641,7 @@ export function useSessionComposerController({
         baseUsageLimitRecoveryPresentation?.issueFingerprint,
         usageLimitRecoveryPresentation,
     ]);
-    const providerUsageRecoveryCreditAction = providerUsageGauge?.recoveryCreditSummary
+    const providerUsageRecoveryCreditAction = !accountUsageResetUnconfirmed && providerUsageGauge?.recoveryCreditSummary
         && (providerUsageConnectedServiceQuotaProfileRef || canConsumeRuntimeResetCredit)
         ? handleProviderUsageRecoveryCreditPress
         : undefined;
@@ -6031,6 +6109,20 @@ export function useSessionComposerController({
                                 onPress: () => handleUsageLimitRecoveryAction(action.kind),
                             })),
                         ]}
+                    />
+                </ComposerAuxiliaryFrame>
+            ) : null}
+            {activeAccountUsageResetWait ? (
+                <ComposerAuxiliaryFrame>
+                    <AccountUsageResetWait testID="session-account-usage-reset" onCancel={() => activeAccountUsageResetWait.controller.abort()} />
+                </ComposerAuxiliaryFrame>
+            ) : accountUsageResetOutcome ? (
+                <ComposerAuxiliaryFrame>
+                    <AccountUsageResetStatus
+                        outcome={accountUsageResetOutcome}
+                        pending={providerUsageRecoveryCreditPending}
+                        onCheck={checkAccountUsageReset}
+                        testID="session-account-usage-reset"
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}

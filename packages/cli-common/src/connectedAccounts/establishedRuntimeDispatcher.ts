@@ -178,13 +178,17 @@ async function invokeCurrentConnectedAccountCallback(
                     if (!facet) return null;
                     if (operation.kind === 'recoveryCredits.read') return await facet.read(context, options);
                     if (!operation.request.idempotencyKey.trim()) throw new Error('Recovery credit idempotency key is required');
-                    return await facet.consume(Object.freeze({
+                    const result = await facet.consume(Object.freeze({
                         idempotencyKey: operation.request.idempotencyKey.trim(),
                         ...(operation.request.providerLimitIds === undefined ? {} : { providerLimitIds: Object.freeze([...operation.request.providerLimitIds]) }),
                         ...(operation.request.providerCreditId?.trim()
                             ? { providerCreditId: operation.request.providerCreditId.trim() }
                             : {}),
                     }), context, options);
+                    // The invocation's abort fence still owns publication. The admitted debit may
+                    // already have happened, so preserve its disposition for the receipt owner.
+                    if (input.signal?.aborted && result) operation.onLateResult?.(result.status);
+                    return result;
                 }, quotaLeafUnavailable);
             }
             case 'refresh':

@@ -1,12 +1,17 @@
 import * as React from 'react';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useConnectedServiceRecoveryCreditMachineTarget } from '@/hooks/server/connectedServices/useConnectedServiceRecoveryCreditMachineTarget';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
-import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
+import {
+    getConnectedServiceQuotaRecoveryCreditCheckInput,
+    hasNewRecoveryCreditObservation,
+    readConnectedServiceQuotaRecoveryCreditActionPresentation,
+    resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey,
+    type UnconfirmedAccountUsageReset,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { readMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readSelectedMachineAdministrationTarget } from '@/sync/domains/machines/administration/selectionPreferences';
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -17,8 +22,13 @@ import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected
 
 export type AccountUsageResetAction = Readonly<{
     pending: boolean;
-    /** Applies one usage reset (the given provider credit, or the next one), then refreshes the account. */
-    use: (providerCreditId: string | null) => Promise<void>;
+    /** Ends the caller's wait. An issued provider request can still complete. */
+    cancelWait?: () => void;
+    outcome: UnconfirmedAccountUsageReset | null;
+    /** Applies one usage reset and returns the shared Action's settlement. */
+    use: (providerCreditId: string | null) => Promise<ActionExecuteResult | undefined>;
+    /** Requests a quota refresh. A later usage publication replaces the temporary status. */
+    check: () => Promise<void>;
 }>;
 
 /**
@@ -36,17 +46,43 @@ export function useAccountUsageResetAction(params: Readonly<{
     machineId?: string | null;
     snapshotFetchedAtMs: number | null;
     onApplied: () => void;
+    recoveryCreditsObservedAtMs?: number | null;
+    /** Keep the invoked row visible if its credit inventory changes before the result. */
+    onRetainRow?: (retain: boolean) => void;
 }>): AccountUsageResetAction {
     const activeServer = useActiveServerSnapshot();
-    const { execute, isCurrent } = useMountedActionExecution(activeServer.serverId);
+    const { binding, execute, isCurrent } = useMountedActionExecution(activeServer.serverId);
     const sessionMachineId = useConnectedServiceRecoveryCreditMachineTarget({
         serviceId: params.legacyServiceId,
         profileId: params.accountId,
     });
-    const [pending, setPending] = React.useState(false);
-    const { legacyServiceId, accountId, snapshotFetchedAtMs, onApplied, machineId: admittedMachineId } = params;
+    const [activity, setActivity] = React.useState<AbortController | 'checking' | null>(null);
+    const pending = activity !== null;
+    const cancelWait = React.useCallback(() => {
+        if (activity && activity !== 'checking') activity.abort();
+    }, [activity]);
+    const [presented, setPresented] = React.useState<Readonly<{
+        binding: typeof binding;
+        legacyServiceId: ConnectedServiceId;
+        accountId: string;
+        machineId: string;
+        previousObservationAtMs: number | null;
+        outcome: UnconfirmedAccountUsageReset;
+    }> | null>(null);
+    const { legacyServiceId, accountId, snapshotFetchedAtMs, recoveryCreditsObservedAtMs, onApplied, onRetainRow, machineId: admittedMachineId } = params;
+    const newestObservationAtMs = React.useRef(snapshotFetchedAtMs);
+    React.useLayoutEffect(() => { newestObservationAtMs.current = snapshotFetchedAtMs; }, [snapshotFetchedAtMs]);
+    const current = presented?.binding === binding && presented?.legacyServiceId === legacyServiceId
+        && presented.accountId === accountId ? presented : null;
+    const quotaUpdated = current !== null && hasNewRecoveryCreditObservation(recoveryCreditsObservedAtMs, current.previousObservationAtMs);
+    const outcome = quotaUpdated ? null : current?.outcome ?? null;
+    React.useEffect(() => {
+        if (!quotaUpdated) return;
+        setPresented(null);
+        onRetainRow?.(false);
+    }, [onRetainRow, quotaUpdated]);
     const use = React.useCallback(async (providerCreditId: string | null) => {
-        if (pending) return;
+        if (pending || outcome?.kind === 'unknown') return;
         const state = storage.getState();
         const selected = readSelectedMachineAdministrationTarget(
             state.settings.machineAdministrationTargetsLocalV1,
@@ -65,7 +101,11 @@ export function useAccountUsageResetAction(params: Readonly<{
             await Modal.alert(t('common.error'), t('connectedServices.quota.recoveryCreditMachineUnavailable'));
             return;
         }
-        setPending(true);
+        const waiter = new AbortController();
+        setActivity(waiter);
+        onRetainRow?.(true);
+        setPresented(null);
+        let nextOutcome: UnconfirmedAccountUsageReset | null = null;
         try {
             const execution = await execute('connectedServices.quota.reset', {
                 machineId,
@@ -73,31 +113,46 @@ export function useAccountUsageResetAction(params: Readonly<{
                 profileId: accountId,
                 sourceSnapshotFetchedAtMs: snapshotFetchedAtMs,
                 ...(providerCreditId ? { providerCreditId } : {}),
-            });
-            if (!execution.ok) {
-                if (isCurrent() && execution.errorCode !== 'cancelled' && !isActionApprovalDeclinedErrorCode(execution.errorCode)) {
-                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(execution, t('errors.operationFailed')));
+            }, { signal: waiter.signal });
+            if (!isCurrent()) return execution;
+            const { outcome, failure, result } = readConnectedServiceQuotaRecoveryCreditActionPresentation(execution);
+            nextOutcome = outcome?.kind === 'unknown' ? outcome : null;
+            if (outcome?.kind === 'used') {
+                onApplied();
+            } else if (outcome?.kind === 'unknown') {
+                return execution;
+            } else if (failure) {
+                if (failure.errorCode !== 'cancelled' && !isActionApprovalDeclinedErrorCode(failure.errorCode)) {
+                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('errors.operationFailed')));
                 }
-                return;
+            } else if (result?.ok) {
+                const noticeKey = resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(result.receipt.status);
+                if (noticeKey) await Modal.alert(t('common.info'), t(noticeKey));
+                onApplied();
+            } else {
+                await Modal.alert(t('common.error'), t('errors.operationFailed'));
             }
-            const parsed = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.safeParse(execution.result);
-            if (!parsed.success) {
-                if (isCurrent()) await Modal.alert(t('common.error'), t('errors.operationFailed'));
-                return;
-            }
-            const result = parsed.data;
-            if (!result.ok) {
-                if (isCurrent()) {
-                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('errors.operationFailed')));
-                }
-                return;
-            }
-            const noticeKey = resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(result.receipt.status);
-            if (noticeKey && isCurrent()) await Modal.alert(t('common.info'), t(noticeKey));
-            onApplied();
+            return execution;
         } finally {
-            setPending(false);
+            setActivity(null);
+            if (nextOutcome && isCurrent()) setPresented({
+                binding, legacyServiceId, accountId, machineId,
+                previousObservationAtMs: newestObservationAtMs.current,
+                outcome: nextOutcome,
+            });
+            else onRetainRow?.(false);
         }
-    }, [accountId, activeServer, admittedMachineId, execute, isCurrent, legacyServiceId, onApplied, pending, sessionMachineId, snapshotFetchedAtMs]);
-    return { pending, use };
+    }, [accountId, activeServer, admittedMachineId, binding, execute, isCurrent, legacyServiceId, onApplied, onRetainRow, outcome, pending, sessionMachineId, snapshotFetchedAtMs]);
+    const check = React.useCallback(async () => {
+        if (pending || !outcome || !current || !isCurrent()) return;
+        const input = getConnectedServiceQuotaRecoveryCreditCheckInput(legacyServiceId, accountId, current.machineId);
+        if (!input) return;
+        setActivity('checking');
+        try {
+            await execute('connectedServices.quota.refresh', input);
+        } finally {
+            setActivity(null);
+        }
+    }, [accountId, current, execute, isCurrent, legacyServiceId, outcome, pending]);
+    return { pending, outcome, use, check, ...(activity && activity !== 'checking' ? { cancelWait } : {}) };
 }

@@ -9,6 +9,7 @@ import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark'
 import { presentConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
 import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 import { AccountUsageResetsLine } from '../usage/AccountUsageFacts';
+import { readFreshRecoveryCreditObservationTime } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import {
     ConnectedAccountIndexActions,
     ConnectedAccountSignInAction,
@@ -84,6 +85,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
                     legacyServiceId={props.legacyServiceId}
                     accountId={props.accountId}
                     snapshotFetchedAtMs={facts.fetchedAt}
+                    recoveryCreditsObservedAtMs={readFreshRecoveryCreditObservationTime(facts)}
                     now={props.now}
                     onApplied={() => facts.refresh?.()}
                 />

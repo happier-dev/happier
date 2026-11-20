@@ -11466,16 +11466,23 @@ another debit path. Automatic requests carry the current exhausted provider-limi
 identities and check them against fresh provider usage and grant applicability.
 Manual requests use the same provider preflight. Named recovery keys include the
 quota observation for later legitimate uses; explicit caller keys remain opaque.
-The daemon loopback follows the quota operation's deadline. After issuance the
-transport classifies a timeout, abort or socket loss as an unknown outcome.
-Proven connection failure before dispatch and cancellation before issuance
-leave the effect unattempted. When a provider acknowledgement is lost, the consume
-owner makes one qualified quota read if it has an exact grant ID. A matching redeemed grant confirms that the grant was
-used. An empty inventory or an aggregate count cannot settle that receipt.
-An unsettled receipt holds further manual and automatic reset attempts for the
-profile for the life of the daemon. Definitive automatic no-effect refusals allow
-a waiting manual request or a request for another exhausted allowance to re-enter
-the same consume owner after settlement.
+The daemon loopback follows the quota operation's deadline. Once the request
+issues, stopping the wait leaves the effect running and returns an unknown
+outcome. A proven connection failure or cancellation before dispatch leaves the
+effect unattempted. The consume owner makes one qualified quota read after a lost
+provider acknowledgement when it has the exact grant ID. A redeemed grant or a
+definitive late acknowledgement can settle the same receipt.
+
+Check uses the existing quota refresh request and fetches inventory without
+redeeming another grant. A fresh observation can settle the exact held grant. A
+matching available grant establishes that it was still unused at the time of
+the read. A later provider acknowledgement can confirm the debit on the same
+receipt. A missing grant confirms use while its recorded availability window is
+still open and the read accounts for every
+available grant. Expired grants may simply be unavailable. An aggregate-only
+attempt or an inventory read that failed leaves the receipt uncertain. Unsettled
+receipts hold manual and automatic attempts for the profile. Once the owner
+settles the receipt, later attempts use the normal admission rules.
 
 Inventory status and count remain the sole action authority. Optional
 `recoveryCreditDetails` supplies saved quantities, applicability and reasons to the

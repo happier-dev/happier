@@ -36,6 +36,8 @@ export type ConnectedAccountRuntimeQuotaBase = Readonly<{
     subscription?: ProviderAccountSubscriptionV1;
     limits: readonly unknown[];
 }>;
+type ConnectedAccountRecoveryCreditConsumeStatus = 'consumed' | 'already_consumed' | 'not_available' | 'nothing_to_reset';
+
 /** The host supplies its existing context and quota projection; no SDK dependency flows back into this owner. */
 export interface ConnectedAccountEstablishedRuntime<Context extends object, TQuota extends ConnectedAccountRuntimeQuotaBase = ConnectedAccountRuntimeQuotaBase> {
     readonly recoveryCredits?: Readonly<{
@@ -45,7 +47,7 @@ export interface ConnectedAccountEstablishedRuntime<Context extends object, TQuo
                 & Partial<Pick<ConnectedServiceQuotaRecoveryCreditV1, 'kind' | 'title' | 'description' | 'providerResetType' | 'appliesToProviderLimitId' | 'grantedAtMs' | 'expiresAtMs' | 'redeemStartedAtMs' | 'redeemedAtMs'>>)[];
         }>>;
         consume(request: Readonly<{ idempotencyKey: string; providerCreditId?: string; providerLimitIds?: readonly string[] }>, context: Context,
-            options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ status: 'consumed' | 'already_consumed' | 'not_available' | 'nothing_to_reset' }>>;
+            options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ status: ConnectedAccountRecoveryCreditConsumeStatus }>>;
     }>;
     enrichCredentialContext?(context: Context & Readonly<{ operation: Readonly<{ operationId: string; configurationRevision: string }>; stagedCredentials: ConnectedAccountCredentialStore }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountHealthResult | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>>;
     refresh(context: Context & Readonly<{ operation: Readonly<{ operationId: string; configurationRevision: string }>; stagedCredentials: ConnectedAccountCredentialStore }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountHealthResult | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>>;
@@ -63,7 +65,12 @@ export type ConnectedAccountRuntimeEstablishedOperation =
     | Readonly<{ kind: 'quota' }>
     | Readonly<{ kind: 'recoveryCredits.read' }>
     | Readonly<{ kind: 'revoke' }>
-    | Readonly<{ kind: 'recoveryCredits.consume'; request: Readonly<{ idempotencyKey: string; providerCreditId?: string; providerLimitIds?: readonly string[] }> }>
+    | Readonly<{
+        kind: 'recoveryCredits.consume';
+        request: Readonly<{ idempotencyKey: string; providerCreditId?: string; providerLimitIds?: readonly string[] }>;
+        /** Private to the admitted host. Preserve the debit result after the operation stops waiting. */
+        onLateResult?: (status: ConnectedAccountRecoveryCreditConsumeStatus) => void;
+    }>
     | Readonly<{ kind: 'materialize'; request: ConnectedAccountMaterializationRequest; existingFiles?: Readonly<Record<string, Uint8Array>> }>;
 export type ConnectedAccountRuntimeEstablishedTarget = Readonly<{
     account: QualifiedConnectedAccountRef; expectedCredentialRevision: string; expectedRuntimeConfigurationRevision: string;

@@ -52,6 +52,8 @@ import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import type { ConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
 import { projectConnectedAccountSubscriptionFacts } from '../model/resolveConnectedAccountAccessMode';
 import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
+import { readFreshRecoveryCreditObservationTime } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
+import { AccountUsageResetStatus, AccountUsageResetWait } from '../usage/AccountUsageResetStatus';
 import { useAccountUsageResetAction } from '../usage/useAccountUsageResetAction';
 import { useConnectedAccountPinnedMeters } from '../usage/useConnectedAccountPinnedMeters';
 import { UsageMeterRow, UsageMeterStack } from '../usage/UsageMeterRow';
@@ -317,17 +319,19 @@ export const AccountDetailResetsSectionView = React.memo(function AccountDetailR
     now: number;
     pending: boolean;
     onUse: ((providerCreditId: string | null) => void) | null;
+    outcome?: React.ReactNode;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
     const rows = buildQuotaResetRows(props.recoveryCredits, props.now, ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER, props.recoveryCreditDetails);
-    if (rows.length === 0) return null;
+    if (rows.length === 0 && !props.outcome) return null;
     const testID = props.testID ?? 'account-detail-resets';
     return (
         <ItemGroup
             title={t('connectedServicesCollection.usageResetsTitle')}
             description={t('connectedServicesCollection.usageResetsDescription')}
         >
+            {props.outcome}
             {rows.map((row) => {
                 const expires = row.expiresAtMs === null ? null : new Date(row.expiresAtMs).toLocaleDateString([], { day: 'numeric', month: 'short' });
                 const detailLines = [
@@ -405,7 +409,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         creditsOnly: snapshot ? isConnectedAccountQuotaCreditsOnly(snapshot.meters, now) : false,
     };
     return (
-        <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut && props.machineId !== null ? (
+        <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut ? (
                 <LiveResetsSection
                     legacyServiceId={props.legacyServiceId}
                     accountId={props.account.accountId}
@@ -414,6 +418,9 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
                     recoveryCreditDetails={facts.recoveryCreditDetails}
                     limitMeters={facts.limitMeters}
                     fetchedAt={facts.fetchedAt}
+                    recoveryCreditsObservedAtMs={readFreshRecoveryCreditObservationTime({
+                        ...presentConnectedServiceQuotaFreshness(snapshot, now), recoveryCredits: facts.recoveryCredits,
+                    })}
                     onApplied={retry}
                     now={now}
                 />
@@ -429,6 +436,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
     recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1;
     limitMeters?: readonly ConnectedServiceQuotaMeterV1[];
     fetchedAt: number | null;
+    recoveryCreditsObservedAtMs: number | null;
     onApplied: () => void;
     now: number;
 }>) {
@@ -437,6 +445,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
         accountId: props.accountId,
         machineId: props.machineId,
         snapshotFetchedAtMs: props.fetchedAt,
+        recoveryCreditsObservedAtMs: props.recoveryCreditsObservedAtMs,
         onApplied: props.onApplied,
     });
     return (
@@ -446,7 +455,14 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
             limitMeters={props.limitMeters}
             now={props.now}
             pending={action.pending}
-            onUse={(creditId) => { void action.use(creditId); }}
+            onUse={props.machineId === null || action.outcome || action.cancelWait ? null : (creditId) => { void action.use(creditId); }}
+            outcome={action.cancelWait ? <AccountUsageResetWait testID="account-detail-resets" onCancel={action.cancelWait} />
+                : action.outcome ? <AccountUsageResetStatus
+                testID="account-detail-resets"
+                outcome={action.outcome}
+                pending={action.pending}
+                onCheck={action.check}
+            /> : undefined}
         />
     );
 });

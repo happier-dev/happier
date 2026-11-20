@@ -4321,13 +4321,14 @@ describe('SessionView (direct sessions)', () => {
     expect(sessionUsageLimitConsumeResetCreditSpy).not.toHaveBeenCalled();
   });
 
-  it.each(['rejected', 'transport_error'] as const)('settles checking and preserves retry after Apply reset %s', async (failure) => {
+  it.each(['rejected', 'transport_error'] as const)('settles Apply reset %s with the corresponding recovery action', async (failure) => {
     featureEnabledState['connectedServices.quotas'] = true;
     featureEnabledState['sessions.usageLimitRecovery'] = true;
     installConnectedServiceWorkProfileRecoveryCreditSession();
+    const observedAtMs = Date.now() - 1_000;
     quotaSnapshotsState.current = {
       'openai-codex/work': buildOpenAiCodexWorkQuotaSnapshot({
-        fetchedAt: 2_000,
+        fetchedAt: observedAtMs,
         used: 82,
         recoveryCredits: {
           kind: 'usage_limit_resets',
@@ -4343,6 +4344,38 @@ describe('SessionView (direct sessions)', () => {
 
     await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit'));
     await settleDirectSessionView();
+
+    if (failure === 'transport_error') {
+      const check = screen.findByTestId('session-account-usage-reset:check');
+      expect(check).toBeTruthy();
+      expect(modalAlertSpy).not.toHaveBeenCalled();
+      expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
+      expect(findProviderUsageRecoveryAction(screen)).toBeUndefined();
+
+      await pressTestInstanceAsync(check);
+      await settleDirectSessionView();
+
+      expect(actionExecuteSpy).toHaveBeenCalledWith('connectedServices.quota.refresh', {
+        machineId: 'machine-1',
+        account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+      }, expect.anything());
+      expect(externalRpcRequests.filter(({ method }) =>
+        method === RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME,
+      )).toHaveLength(1);
+      expect(screen.findByTestId('session-account-usage-reset:check')).toBeTruthy();
+      quotaSnapshotsState.current = {
+        'openai-codex/work': buildOpenAiCodexWorkQuotaSnapshot({
+          fetchedAt: observedAtMs + 1,
+          used: 10,
+          recoveryCredits: { kind: 'usage_limit_resets', availableCount: 0, credits: [] },
+        }),
+      };
+      await updateSessionViewAndSettle(screen, { routeServerId: 'server-route-1' });
+      expect(screen.findByTestId('session-account-usage-reset:check')).toBeNull();
+      expect(screen.findByTestId('session-account-usage-reset:used')).toBeNull();
+      expect(findProviderUsageRecoveryAction(screen)).toBeUndefined();
+      return;
+    }
 
     expect(modalAlertSpy).toHaveBeenCalled();
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();

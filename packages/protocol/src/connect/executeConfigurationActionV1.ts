@@ -13,6 +13,7 @@ import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './confi
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { PluginDiagnosticDataV1Schema } from '../daemon/pluginContributionIntrospection.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
+import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { AccountProfileSchema } from '../account/profile.js';
 import { deriveAccountHealth, worstAccountHealth } from './accountHealth.js';
 import {
@@ -717,8 +718,14 @@ export async function executeConnectedServiceConfigurationActionV1(
       // Private reads and group-response projections retain their currentness checks.
       return { applied: true };
     }
-    case 'connectedServices.quota.reset':
-      return await host.resetQuota(inputs[actionId].parse(input));
+    case 'connectedServices.quota.reset': {
+      const response = await host.resetQuota(inputs[actionId].parse(input));
+      const parsed = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.safeParse(response);
+      if (!parsed.success || parsed.data.ok || !parsed.data.receipt) return response;
+      const { idempotencyKey, providerCreditId, status } = parsed.data.receipt;
+      return { ...parsed.data, details: { receipt: { idempotencyKey, status,
+        ...(providerCreditId === undefined ? {} : { providerCreditId }) } } };
+    }
     case 'connectedServices.quota.refresh': {
       const { account, machineId } = inputs[actionId].parse(input);
       if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };

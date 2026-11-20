@@ -136,6 +136,7 @@ export async function emitWithAckCancellable<T>(params: Readonly<{
   socket: SocketRpcSocket; event: string; payload: unknown;
   timeoutMs?: number | null; signal?: AbortSignal; requestId?: string; onIssued?: () => void;
   waitForResultOnCancel?: boolean;
+  cancelIssuedRequest?: false;
 }>): Promise<T> {
   let issued = false;
   try {
@@ -154,7 +155,9 @@ export async function emitWithAckCancellable<T>(params: Readonly<{
     return await issueSocketRpcCallWithCancellation<T>({
       signal: params.signal, requestId: params.requestId, onIssued: params.onIssued,
       waitForResultOnCancel: params.waitForResultOnCancel,
-      emitCancel: (requestId) => { params.socket.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId }); },
+      ...(params.cancelIssuedRequest === false ? {} : {
+        emitCancel: (requestId: string) => { params.socket.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId }); },
+      }),
       issue: () => {
         const release = params.socket.retain?.();
         let result: Promise<unknown>;
@@ -222,6 +225,9 @@ export async function callSocketRpc<R>(params: Readonly<{
   try {
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     const timeoutMs = SocketRpcTimeoutMsSchema.parse(params.timeoutMs);
+    // Leaving this wait does not withdraw an admitted irreversible debit.
+    const waitOnly = params.target.kind === 'machine' && params.method === RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME;
+    const waitForResultOnCancel = !waitOnly && params.waitForResultOnCancel;
     const answeringClient = params.answeringClient === undefined ? undefined
       : SocketRpcAnsweringClientV1Schema.parse(params.answeringClient);
     if (answeringClient && params.target.kind !== 'machine') throw new Error('Answering-client routing requires a Machine continuation');
@@ -296,14 +302,17 @@ export async function callSocketRpc<R>(params: Readonly<{
       // requestId also opts into cancellation custody. Ordinary calls need an
       // observational identity without changing their disconnect semantics.
       ...(requestId ? { requestId } : { traceId: createSocketRpcRequestId() }),
-      ...(params.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
+      ...(waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
       ...(params.onContinuation ? { continuation: true } : {}),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(authorization ? { authorization } : {}),
       ...(externalActionExecution ? { externalActionExecution } : {}),
       ...(params.transportResponseEnvelopeVersion === undefined ? {} : { transportResponseEnvelopeVersion: params.transportResponseEnvelopeVersion }),
     };
-    const ack = await emitWithAckCancellable({ ...params, event: SOCKET_RPC_EVENTS.CALL, payload, requestId });
+    const ack = await emitWithAckCancellable({
+      ...params, event: SOCKET_RPC_EVENTS.CALL, payload, requestId, waitForResultOnCancel,
+      ...(waitOnly ? { cancelIssuedRequest: false } : {}),
+    });
     acknowledged = true;
     params.onResponse?.(ack);
     const result = await socketRpcCodec.decodeResult(params.content, ack, callId);

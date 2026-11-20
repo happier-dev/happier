@@ -780,6 +780,31 @@ it('cancels an issued call and marks the unresolved outcome', async () => {
   expect(readRpcRequestDisposition(error)).toBe('outcomeUnknown');
   expect((await cancelled).requestId).toMatch(/^rpc_/);
 });
+it('stops waiting for an issued quota reset while the remote effect retains its reply', async () => {
+  const socket = await setup();
+  const controller = new AbortController();
+  const cancellations: string[] = [];
+  let acknowledge!: (value: unknown) => void;
+  const issued = new Promise<void>(resolve => server.sockets.sockets.forEach(remote => {
+    remote.on('rpc-cancel', packet => cancellations.push(packet.requestId));
+    remote.on('observe-cancellations', (_payload, ack) => ack(cancellations));
+    remote.once('rpc-call', (_payload, ack) => { acknowledge = ack; resolve(); });
+  }));
+  const reset = callSocketRpc({ socket, target: { kind: 'machine', id: 'm' },
+    method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME,
+    params: { idempotencyKey: 'same-debit' }, content: { mode: 'plain' }, timeoutMs: null, signal: controller.signal })
+    .catch((error: unknown) => error);
+  await issued;
+  controller.abort();
+  const failure = await reset;
+  expect(failure).toMatchObject({ code: 'SOCKET_RPC_ABORTED' });
+  expect(readRpcRequestDisposition(failure)).toBe('outcomeUnknown');
+  // Ordered on the same real socket after the abort, so it also observes any preceding CANCEL.
+  const remoteCancellations = await socket.emitWithAck('observe-cancellations', {});
+  acknowledge({ ok: true, result: { ok: true, snapshot: null, receipt: { idempotencyKey: 'same-debit', status: 'consumed' } } });
+  expect(remoteCancellations).toEqual([]);
+});
+
 it.each([null, 10_000])('retains the issued acknowledgement after opt-in cancellation (%s)', async timeoutMs => {
   const socket = await setup();
   const controller = new AbortController();
