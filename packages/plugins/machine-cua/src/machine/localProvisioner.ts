@@ -93,7 +93,7 @@ export function createCuaLocalProvisioner(native: CuaNativeClient, localId: CuaL
             const options = await this.options({ runtimeId: launch.runtimeId, imageId: launch.imageId, size: launch.size });
             const selected = projectMachineProvisionerSelectionV1({ options, launchSchema: CuaLocalLaunchV1Schema.jsonSchema,
                 selection: { size: options.dimensions.size[0]?.id, image: launch.imageId, location: launch.runtimeId } });
-            if (selected.kind !== 'ready') return { kind: 'rejected', code: 'invalid_request' };
+            if (selected.kind !== 'ready') return { kind: 'rejected', code: selected.unavailableReason?.code ?? 'invalid_request' };
             const recovery = localAcquireOperation(localId, launch, managedId);
             try {
                 const created = await leaf.create(launch, name, launch.size.diskBytes, signal);

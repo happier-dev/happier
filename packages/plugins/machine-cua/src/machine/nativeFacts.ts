@@ -17,6 +17,7 @@ const doctorSchema = z.object({
     backends: z.array(z.object({ backend: z.string(), ready: z.boolean(), provisionable: z.boolean() })),
     qemu: z.object({ version }),
     container: z.object({ reachable: z.boolean(), gvisor: z.boolean(), runtimes: z.array(z.string()) }),
+    vz: z.optional(z.nullable(z.object({ gateway: z.optional(z.nullable(z.string())) }))),
 });
 // Qualified OCI references only: never disclose native endpoint URLs, userinfo,
 // query strings, commands or arbitrary diagnostic text as an image choice.
@@ -33,6 +34,7 @@ type UnknownReason = Extract<CuaNativeOutcome<unknown>, { kind: 'unknown' }>['re
 export type CuaNativeFact<T> = Readonly<{ kind: 'known'; value: T }> | Readonly<{ kind: 'unknown'; reason: UnknownReason }>;
 export type CuaNativeRuntimeFact = Readonly<{
     id: CuaLocalLaunchV1['runtimeId']; ready: boolean; provisionable: boolean; version?: string;
+    unavailableReason?: typeof qemuGatewayUnavailable;
 }>;
 export type CuaNativeDoctorFacts = Readonly<{
     host: z.infer<typeof doctorSchema>['host']; runtimes: readonly CuaNativeRuntimeFact[];
@@ -46,6 +48,11 @@ export type CuaNativeImageFacts = Readonly<{
 
 function known<T>(value: T): CuaNativeFact<T> { return { kind: 'known', value }; }
 function unknown(reason: UnknownReason): Readonly<{ kind: 'unknown'; reason: UnknownReason }> { return { kind: 'unknown', reason }; }
+const qemuGatewayUnavailable = {
+    code: 'cua_qemu_gateway_unavailable',
+    status: 'Cua QEMU needs the cua-netgw network gateway',
+} as const;
+
 function runtimeVersion(value: string | null | undefined) {
     // QEMU prints a whole --version line. Export the numeric version only,
     // never paths, environment values or other native free-form output.
@@ -62,8 +69,13 @@ function projectDoctor(value: unknown): CuaNativeFact<CuaNativeDoctorFacts> {
     const managed = backend('managed');
     const containerReady = container?.ready === true && report.container.reachable;
     const qemuVersion = runtimeVersion(report.qemu.version);
+    // Cua 0.27.5's macOS doctor uses netgw::bin() for vz.gateway, the same
+    // executable lookup that secure QEMU creation uses. QEMU's own ready bit
+    // only checks the QEMU tools. The gateway path stays private.
+    const qemuNeedsGateway = qemu?.ready === true && report.host.os === 'macos' && !report.vz?.gateway;
     return known({ host: report.host, runtimes: [
-        { id: 'qemu', ready: qemu?.ready === true, provisionable: qemu?.provisionable === true,
+        { id: 'qemu', ready: qemu?.ready === true && !qemuNeedsGateway, provisionable: qemu?.provisionable === true,
+            ...(qemuNeedsGateway ? { unavailableReason: qemuGatewayUnavailable } : {}),
             ...(qemuVersion ? { version: qemuVersion } : {}) },
         { id: 'runc', ready: containerReady, provisionable: false },
         { id: 'gvisor', ready: (containerReady && report.container.gvisor && report.container.runtimes.includes('runsc')) || managed?.ready === true,
@@ -114,8 +126,9 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
         async check(signal?: AbortSignal): Promise<MachineProvisionerCheckResultV1> {
             const doctor = await readDoctor(signal);
             if (doctor.kind === 'unknown') return { available: false, code: 'native_facts_unknown' };
-            return doctor.value.runtimes.some((runtime) => runtime.ready)
-                ? { available: true } : { available: false, code: 'native_runtime_unavailable' };
+            if (doctor.value.runtimes.some(runtime => runtime.ready)) return { available: true };
+            const reason = doctor.value.runtimes.find(runtime => runtime.unavailableReason)?.unavailableReason;
+            return { available: false, ...(reason ?? { code: 'native_runtime_unavailable' }) };
         },
         async options(signal?: AbortSignal, input: CuaLocalOptionsQueryV1 = {}, localId: 'local-sandbox' | 'local-space' = 'local-sandbox'): Promise<MachineProvisionerOptionsResultV1> {
             const selectors = CuaLocalOptionsQueryV1Schema.parse(input);
@@ -166,12 +179,16 @@ export function createCuaNativeFacts(native: CuaNativeClient) {
                                     ? { size: { ...sizeIdentity, diskBytes } } : {}) },
                         };
                     }),
-                    location: runtimes.map(runtimeId => ({ id: runtimeId, title: runtimeId,
-                        assignments: [{ path: 'runtimeId', value: runtimeId }],
-                        // Native readiness cannot qualify a missing detached guest-daemon carrier.
-                        available: runtimeId !== 'gvisor' && doctor.value.runtimes.some(value => value.id === runtimeId && value.ready),
-                        nativeFacts: { location: { id: runtimeId, title: runtimeId } },
-                    })),
+                    location: runtimes.map(runtimeId => {
+                        const runtime = doctor.value.runtimes.find(value => value.id === runtimeId);
+                        return { id: runtimeId, title: runtimeId,
+                            assignments: [{ path: 'runtimeId', value: runtimeId }],
+                            // Native readiness cannot qualify a missing detached guest-daemon carrier.
+                            available: runtimeId !== 'gvisor' && runtime?.ready === true,
+                            ...(runtime?.unavailableReason ? { unavailableReason: runtime.unavailableReason } : {}),
+                            nativeFacts: { location: { id: runtimeId, title: runtimeId } },
+                        };
+                    }),
                 },
                 constraints: runtimes.map(runtimeId => ({ when: { dimension: 'location' as const, optionIds: [runtimeId] },
                     requires: { dimension: 'image' as const, optionIds: selectedImages.filter(image => image.runtimeIds.includes(runtimeId)

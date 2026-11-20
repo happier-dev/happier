@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCuaNativeClient } from './nativeClient.js';
 import { createCuaNativeFacts } from './nativeFacts.js';
+import { createCuaLocalProvisioner } from './localProvisioner.js';
 import { CuaLocalLaunchV1Schema } from './schemas.js';
 import { projectMachineProvisionerSelectionV1, type MachineProvisionerOptionsResultV1,
     type MachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -49,7 +50,7 @@ function harness(report: unknown = doctor, images: unknown = [image]) {
         throw new Error('Unexpected native effect or credential read');
     });
     const native = createCuaNativeClient({ exec: { run }, executable: { kind: 'systemTool', id: 'cua' } });
-    return { argv, run, facts: createCuaNativeFacts(native) };
+    return { argv, run, native, facts: createCuaNativeFacts(native) };
 }
 
 function selected(options: MachineProvisionerOptionsResultV1, selection: MachineProvisionerSelectionV1 = {}) {
@@ -59,6 +60,32 @@ function selected(options: MachineProvisionerOptionsResultV1, selection: Machine
 }
 
 describe('Cua native read facts', () => {
+    it.each([
+        ['aarch64', 'arm64', 'local-sandbox'],
+        ['x86_64', 'amd64', 'local-space'],
+    ] as const)('qualifies %s macOS QEMU for %s images before creating a %s', async (hostArch, imageArch, localId) => {
+        // The pinned CLI's clean macOS doctor found QEMU but returned a null gateway.
+        const cleanReport = { ...doctor,
+            host: { os: 'macos', arch: hostArch, kvm: false, accel: { x86_64: 'tcg', aarch64: 'hvf' } },
+            backends: doctor.backends.map(backend => ({ ...backend, ready: backend.backend === 'qemu' })),
+            container: { ...doctor.container, reachable: false }, vz: { gateway: null },
+        };
+        const diskBytes = 21474836480;
+        const images = [{ ...image, sizes: { digest, platforms: [{ arch: imageArch, disk: diskBytes }] } }];
+        const selectors = { runtimeId: 'qemu' as const, imageId: image.ref, size: { cpu: 2, memoryBytes: 4 * 1024 ** 3, diskBytes } };
+        const clean = createCuaLocalProvisioner(harness(cleanReport, images).native, localId, 0);
+        const repaired = createCuaLocalProvisioner(harness({ ...cleanReport, vz: { gateway: '/private/cua-netgw' } }, images).native, localId, 0);
+
+        expect(await repaired.check()).toEqual({ available: true });
+        const repairedOptions = await repaired.options(selectors);
+        expect(selected(repairedOptions)).toMatchObject({ kind: 'ready' });
+        expect(JSON.stringify(repairedOptions)).not.toContain('/private/cua-netgw');
+
+        expect(await clean.check()).toMatchObject({ available: false, code: 'cua_qemu_gateway_unavailable' });
+        expect(selected(await clean.options(selectors))).toMatchObject({ kind: 'unavailable', code: 'cua_qemu_gateway_unavailable' });
+        expect(await clean.acquire({ on: 'local', ...selectors }, 'fresh')).toEqual({ kind: 'rejected', code: 'cua_qemu_gateway_unavailable' });
+    });
+
     it.each([['x86_64', 'amd64', 'x64'], ['aarch64', 'arm64', 'arm64']] as const)(
         'supplies the actual Linux image build target on %s hosts', async (hostArch, imageArch, targetArch) => {
             const report = { ...doctor, host: { ...doctor.host, arch: hostArch } };
