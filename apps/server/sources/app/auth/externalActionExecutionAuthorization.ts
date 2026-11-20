@@ -1647,7 +1647,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
-        reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
+        reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, deploymentReferenceServices, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
 }
@@ -2033,9 +2033,13 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
 
+    // The reference owner already approved this exact Machine codec read
+    // under the signed Environment child. All other annotations match the effect.
+    const mismatchedReviewedChild = proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data
+        && !childPurpose.deploymentReferenceServices ? proof.reviewedChild : undefined;
     const admittedFiniteOperation = readAdmittedFiniteOperationPrincipal(binding, undefined, acceptedDeployment || undefined);
     if (acceptedDeployment) {
-        if (proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data) return refuse('reviewed_child');
+        if (mismatchedReviewedChild) return refuse('reviewed_child');
         const principal = admittedFiniteOperation;
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
@@ -2065,9 +2069,9 @@ async function verifyCommon(
                     && isAccountActionHttpOperation(effectActionId.data, proof)) : null;
     // Effect-family admission already decided this relationship. The signed
     // annotation identifies that admitted effect; it does not grant another one.
-    if (proof.reviewedChild && proof.reviewedChild.actionId !== effectActionId.data
-        && actionMaterialAdmission?.admittedReviewedChildActionId !== proof.reviewedChild.actionId
-        && actionBrokerAdmission?.admittedReviewedChildActionId !== proof.reviewedChild.actionId) {
+    if (mismatchedReviewedChild
+        && actionMaterialAdmission?.admittedReviewedChildActionId !== mismatchedReviewedChild.actionId
+        && actionBrokerAdmission?.admittedReviewedChildActionId !== mismatchedReviewedChild.actionId) {
         return refuse('reviewed_child');
     }
     if (createPreparationAdmission?.child && !proof.reviewedChild) return refuse('reviewed_child');
