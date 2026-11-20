@@ -337,6 +337,11 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               actionId: buildQualifiedPluginContributionKey(action),
               input: approved.input,
               expectedApprovalReplayPlacement: replayPlacement,
+              // The decision owner already claimed this Ask. The gate binds
+              // its stored fingerprint to the operands about to execute.
+              requestCurrentIntent: async () => ({
+                status: 'approved', fingerprint: approved.subjectFingerprint, artifactId,
+              }),
               approvalContext: { ...replayContext,
                 ...(input.createFileDownloadPublisher ? { prepareFileDownload: input.createFileDownloadPublisher(replayContext) } : {}),
               },

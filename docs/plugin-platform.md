@@ -2572,6 +2572,11 @@ selects the existing live approval waiter even when no confidential value is
 present, so executable operands are not made durable replay input. These fields
 are part of the contributed declaration and its canonical host projection.
 
+In 0.3 development, the admitting daemon claims a confirmed durable target-Action
+Ask, then supplies its stored subject fingerprint to the existing current-intent
+gate. The gate compares it with the exact operands being replayed. The Ask and
+its execution receipt stay with the durable decision owner.
+
 In unreleased 0.3 source, the Protocol Action invoker also owns cancellation
 settlement. Once a non-read handler starts, cancellation still reaches its IO
 signal, while the invoker awaits the handler's exact success, native failure or

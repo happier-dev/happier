@@ -811,7 +811,8 @@ export async function executeContributedAction(params: Readonly<{
     // back for a digest-bound re-press. Never a self-approval Artifact.
     const requestCurrentIntent = ownPressChild
       ? async (): Promise<TargetActionCurrentIntentResult> => ({ status: 'unavailable', code: 'action_interactive_review_required' })
-      : params.requestCurrentIntent
+      // Durable replay already acquired placement and holds the confirmed Ask.
+      : params.requestCurrentIntent && !replayPlacement
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
           const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
           // Declared live custody, confidential input and Account hosts without

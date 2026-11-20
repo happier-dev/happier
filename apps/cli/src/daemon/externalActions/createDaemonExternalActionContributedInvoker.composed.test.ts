@@ -2427,6 +2427,80 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     }
   });
 
+  it.each(['approve', 'reject', 'mismatched fingerprint'] as const)(
+    'settles a CLI remote write from its app Ask (%s)', async scenario => {
+      const pluginId = 'acme.cli-review';
+      const localId = 'github/pull-request/close';
+      const artifactId = 'cli-close-approval';
+      const input = { localRef: { localKey: 'pull/6186' } };
+      let stored: TargetActionApprovalRequestV1 | null = null;
+      const effects: unknown[] = [];
+      const runtime = createExternalActionRuntime('global', pluginId,
+        undefined, undefined, undefined, undefined, undefined, 'writesRemote', undefined,
+        { localId, surfaces: ['cli'], onInput: value => effects.push(value) });
+      const acquireRuntimeRegistryLease = async (): Promise<PluginRuntimeRegistryLease> => ({
+        registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {},
+      });
+      const read = async () => stored;
+      const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease,
+        requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+          create: async request => { stored = request; return { artifactId }; }, read,
+        }),
+      });
+      const replay = createDaemonExternalActionContributedApprovalReplay({
+        credentials: { token: 'fixture', encryption: null }, acquireRuntimeRegistryLease,
+        isApprovalExecutionOriginCurrent: async () => true,
+        targetActionApprovals: {
+          targetActionApprovalsGet: read,
+          targetActionApprovalsUpdate: async ({ request }) => {
+            stored = TargetActionApprovalRequestV1Schema.parse(request);
+            return { ok: true };
+          },
+        },
+      });
+      const executor = createActionExecutor({ invokeContributedAction: invoke, approvalsGet: read, targetActionApprovalReplay: replay });
+      const action = { action: { pluginId, localId }, input };
+      const cliContext = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: 'server-external', serverIdentityId: 'srv_home', runtimeAccountId: 'account-1',
+        executionRunTargetMachineId: 'machine-local' } as const;
+      const appContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'account-1' } as const;
+      try {
+        const headless = createActionExecutor({
+          invokeContributedAction: createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease }),
+        });
+        await expect(headless.execute('action.invoke', action, cliContext)).resolves.toMatchObject({
+          ok: false, errorCode: 'plugin_action_current_intent_unavailable',
+        });
+        await expect(executor.execute('action.invoke', action, cliContext)).resolves.toMatchObject({
+          ok: true, result: { kind: 'approval_request_created', artifactId },
+        });
+        const opened = TargetActionApprovalRequestV1Schema.parse(await read());
+        expect(opened).toMatchObject({ status: 'open', requestedSurface: 'cli', input });
+        expect(effects).toEqual([]);
+        if (scenario === 'mismatched fingerprint') {
+          stored = { ...opened, subjectFingerprint: '0'.repeat(64) };
+        }
+        const decision = { artifactId, decision: scenario === 'reject' ? 'reject' : 'approve' } as const;
+        const result = await executor.execute('approval.request.decide', decision, appContext);
+        const status = scenario === 'approve' ? 'executed' : scenario === 'reject' ? 'rejected' : 'failed';
+        if (scenario === 'mismatched fingerprint') {
+          expect(result, JSON.stringify(result)).toMatchObject({
+            ok: false, errorCode: 'plugin_action_current_intent_mismatch', effectAttempted: false,
+          });
+        } else {
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status } });
+        }
+        await expect(executor.execute('approval.request.decide', decision, appContext)).resolves.toMatchObject({
+          ok: true, result: { status },
+        });
+        expect(effects).toEqual(scenario === 'approve' ? [input] : []);
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
+
   it('returns a deferred generic approval artifact for an API Ask-first contributed Action', async () => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
@@ -2953,9 +3027,11 @@ describe('createDaemonExternalActionContributedInvoker', () => {
           artifactId: string;
           request: TargetActionApprovalRequestV1;
         }>) => {
-          if (args.artifactId !== 'approval-api-exact-1') {
+          if (args.artifactId !== 'approval-api-exact-1' || !persisted) {
             return { ok: false as const, errorCode: 'not_found', error: 'artifact_not_found' };
           }
+          const transition = admitTargetActionApprovalTransition(persisted, args.request);
+          if (!transition.ok) return transition;
           persisted = args.request;
           return { ok: true as const };
         },
@@ -3027,14 +3103,15 @@ describe('createDaemonExternalActionContributedInvoker', () => {
 
       if (changedAuthority) {
         if (!currentApproval.executionOriginV1) throw new Error('Expected the admitting authority');
-        persisted = { ...currentApproval, executionOriginV1: {
-          ...currentApproval.executionOriginV1, authority: 'account_automation',
-        } };
-        await expect(replay({ artifactId: 'approval-api-exact-1', decision: 'approve' }))
-          .resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_current_intent_mismatch' });
-        expect(persisted).toMatchObject({ status: 'failed', execution: { ok: false } });
+        await expect(targetActionApprovals.targetActionApprovalsUpdate({
+          artifactId: 'approval-api-exact-1',
+          request: {
+            ...currentApproval, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 },
+            executionOriginV1: { ...currentApproval.executionOriginV1, authority: 'account_automation' },
+          },
+        })).resolves.toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+        expect(persisted).toBe(currentApproval);
         expect(actionInvocations).toBe(0);
-        return;
       }
 
       await expect(replay({
