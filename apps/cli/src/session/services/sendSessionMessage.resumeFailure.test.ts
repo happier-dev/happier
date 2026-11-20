@@ -113,6 +113,30 @@ describe('a message send after Stop', () => {
   };
   const transport = () => vi.fn(async (_method: string, _request: unknown) => ({ type: 'success', sessionId }));
 
+  it('refuses a Send before writing Pending when a foreign host requires a separate Resume', async () => {
+    heldStop();
+    const readSession = http.get.getMockImplementation();
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
+        id: 'machine-1', managedMachineRef: null, metadata: null, metadataVersion: 0,
+        daemonState: null, daemonStateVersion: 0, seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
+        access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'use',
+          resourceMode: 'plain', accessState: 'ready' },
+      } } };
+      return readSession?.(url);
+    });
+    const account = Buffer.from(JSON.stringify({ sub: 'member', session: 'paired-terminal' })).toString('base64url');
+    const credentials = { token: `header.${account}.signature`, encryption: null };
+    const result = await sendSessionMessage({
+      credentials, idOrPrefix: sessionId, message: 'Pick this back up', localId: 'member-after-stop',
+      wait: false, timeoutMs: 1000, explicitMessageSend: true, executionAuthority: 'present_user',
+      inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli'),
+    });
+    expect(http.post).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, code: 'admission_rejected',
+      admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } });
+  });
+
   it.each(['account', 'managed_account', 'cli', 'present_user', 'automation'] as const)('%s send resumes through the Resume authority, once', async source => {
     const stop = heldStop();
     const machineResumeTransport = transport();

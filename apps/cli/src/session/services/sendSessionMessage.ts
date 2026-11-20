@@ -41,6 +41,7 @@ import {
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
+import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import {
   enqueuePendingQueueV2MessageViaHttp,
@@ -2051,6 +2052,17 @@ export async function sendSessionMessage(
         admissionResult: { status: 'rejected', code: 'session_input_machine_binding_unavailable' } };
       if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',
         admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
+      if (targetMachineId && usesAccountPending && shouldResumeInactiveSession && crossesStopHold
+        && !params.machineResumeTransport && !params.spawnSession) {
+        // Ordinary foreign runtimes need the separate requester Resume route to clear Stop.
+        const machine = await readPublishedMachineRow(targetMachineId, params.credentials, { signal: params.signal }).catch(() => null);
+        const cancelled = cancelledBeforeAdmission(params.signal, true);
+        if (cancelled) return cancelled;
+        if (!machine || machine.managedMachineRef === null && machine.access
+          && machine.access.custodian.accountId !== readAccountIdFromToken(params.credentials.token)) {
+          return { ok: false, code: 'admission_rejected', admissionResult: rejectedProtectedInputBeforeAdmission('admission_rejected') };
+        }
+      }
       enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
         token: params.credentials.token,
         sessionId,
