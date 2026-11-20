@@ -18,6 +18,13 @@ export function machineSetupTargetUnavailable(branch: MachineSetupTargetUnavaila
 
 export type MachineSetupInstallation = Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }>;
 
+/** Project the Home's candidate-copy refusal at the Machine preset Review boundary. */
+function presetReviewCode(code: ReturnType<typeof ManagedErrorV1Schema.parse>['code']): string {
+  if (code === 'request_conflict') return 'plan_changed';
+  if (code === 'preset_archived' || code === 'preset_not_found') return 'required_fact_unavailable';
+  return code;
+}
+
 /** Plan and Apply certify copies at the same Home route and signing boundary. */
 export async function requestMachineSetupHome(input: Readonly<{
   runtime: NonNullable<Awaited<ReturnType<ApiMachineClient['resolveMachineSetupRuntime']>>>;
@@ -27,6 +34,7 @@ export async function requestMachineSetupHome(input: Readonly<{
   actionId: 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.remove';
   path: string;
   body: unknown;
+  presetReview?: boolean;
   signal?: AbortSignal;
 }>): Promise<unknown> {
   if (!await input.runtime.isCustodyCurrent()) throw Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' });
@@ -39,11 +47,13 @@ export async function requestMachineSetupHome(input: Readonly<{
   });
   if (response.status < 200 || response.status >= 300) {
     const managed = ManagedErrorV1Schema.safeParse(response.data);
+    if (managed.success) {
+      const code = input.presetReview ? presetReviewCode(managed.data.code) : managed.data.code;
+      throw Object.assign(createHttpStatusError(response.status, code, code), { ok: false, errorCode: code, error: code });
+    }
     const external = ExternalActionHttpErrorSchema.safeParse(response.data);
-    const failure: ActionExecuteFailure = managed.success
-      ? { ok: false, errorCode: managed.data.code, error: managed.data.code }
-      : external.success ? projectExternalActionHttpFailureV1(external.data)
-        : { ok: false, errorCode: 'machine_setup_request_failed', error: 'machine_setup_request_failed' };
+    const failure: ActionExecuteFailure = external.success ? projectExternalActionHttpFailureV1(external.data)
+      : { ok: false, errorCode: 'machine_setup_request_failed', error: 'machine_setup_request_failed' };
     throw Object.assign(createHttpStatusError(response.status, failure.error, failure.errorCode), failure);
   }
   return response.data;

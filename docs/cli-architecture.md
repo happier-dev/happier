@@ -3536,6 +3536,10 @@ archived. Already admitted creation keeps its exact captured setup snapshot.
 Preset mutations authorize once after locking the mutation Accounts; an admitted
 save may finish when access is withdrawn, and the next mutation re-reads access.
 Audience locking and revision comparison still protect publication.
+For an explicit Machine preset Review, Plan and Apply project the Home's
+candidate-copy refusal through the same Machine setup boundary. A superseded
+revision returns `plan_changed`. An archived or inaccessible candidate returns
+`required_fact_unavailable` and leaves the existing attachment in place.
 These are development schema/CRUD contracts, not a claim that the setup-only
 editor or the complete live journey has been verified.
 

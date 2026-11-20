@@ -50,6 +50,34 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(fixture.rootLaunches).toEqual([]);
     expect(fixture.metadataWrites).toEqual([]);
   });
+  it.each([
+    { homeCode: 'request_conflict', reviewCode: 'plan_changed' },
+    { homeCode: 'preset_archived', reviewCode: 'required_fact_unavailable' },
+    { homeCode: 'preset_not_found', reviewCode: 'required_fact_unavailable' },
+  ])('keeps the attached copy when a preset Review returns $reviewCode', async ({ homeCode, reviewCode }) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const presetId = 'attached-preset';
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0, sources: [
+      { kind: 'accountPreset', presetId, presetRevision: 1, contentEncryptionMode: 'plain', setup: {} },
+      { kind: 'direct', setup: {} },
+    ], exclusions: [] });
+    const attached = await fixture.client.getMachineSetupDesiredSnapshot();
+    const candidatePreset = { presetId, presetRevision: 2 };
+    const home = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+      expect(body).toEqual({ ...target, candidatePreset });
+      return { status: 409, data: { code: homeCode } };
+    });
+    onTestFinished(() => home.mockRestore());
+    const result = await fixture.createExecutor(fixture.credentials).execute('machines.setup.plan', {
+      ...target, mode: 'effects', candidatePreset,
+    }, fixture.context('machines.setup.plan'));
+    expect(result).toMatchObject({ ok: false, errorCode: reviewCode, error: reviewCode,
+      failureCause: { phase: 'machines.setup.plan', httpStatus: 409 } });
+    expect(await fixture.client.getMachineSetupDesiredSnapshot()).toEqual(attached);
+    expect(nativeTerminal.launches).toEqual([]);
+  });
   it('preserves network failure codes when preset Plan cannot reach Home', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
     const home = vi.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('Connection reset'), { code: 'ECONNRESET' }));

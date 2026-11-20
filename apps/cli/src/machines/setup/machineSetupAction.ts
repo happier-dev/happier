@@ -177,6 +177,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
       const request = async (copy: HomeSetupCopyRequest) => await requestMachineSetupHome({ runtime, context,
         installation: params.installation!, homeId: params.homeId, actionId: 'machines.setup.plan',
         path: '/v1/machines/setup/resolve', body: { homeId: input.homeId, machineId: input.machineId, ...copy },
+        presetReview: candidatePreset !== undefined,
         ...(lifetime ? { signal: lifetime } : {}) });
       if ('sources' in body) return { runtime, admitted: await resolveHomeMachineSetupCopies(body.sources,
         context.externalActionExecutionAuthorization?.binding.managedContinuation !== undefined, request) };
@@ -363,9 +364,10 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
     const custodianAccountId = readAccountIdFromToken(runtime.credentials.token);
     if (!custodianAccountId || admission && admission.custodianAccountId !== custodianAccountId) return fail('credential_unavailable');
     const requesterAccountId = admission?.actorAccountId ?? custodianAccountId;
-    const request = async (path: string, body: unknown, requestSignal?: AbortSignal): Promise<unknown> => {
+    const request = async (path: string, body: unknown, requestSignal?: AbortSignal, presetReview = false): Promise<unknown> => {
       return requestMachineSetupHome({ runtime, context, installation: params.installation, homeId: params.homeId,
-        actionId: mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply', path, body, ...(requestSignal ? { signal: requestSignal } : {}) });
+        actionId: mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply', path, body, presetReview,
+        ...(requestSignal ? { signal: requestSignal } : {}) });
     };
     const run = async (operation: ProjectSetupOperationContext): Promise<ActionExecuteResult> => {
       const operationId = operation.operationAcceptance?.operationId ?? operation.actionRequestId;
@@ -418,7 +420,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           const resolved = await resolveHomeMachineSetupCopies(actionSourcesForHome(wireSources, retained),
             managedContinuation !== undefined, async body => await request('/v1/machines/setup/resolve', {
               homeId: input.homeId, machineId: input.machineId, ...body,
-            }, cancellationSignal));
+            }, cancellationSignal, input.candidatePreset !== undefined));
           const opened = await resolveLocalMachineSetupSources({ sources: wireSources, resolved,
             hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
             signal: cancellationSignal, ...(retained ? { retained } : {}) });
