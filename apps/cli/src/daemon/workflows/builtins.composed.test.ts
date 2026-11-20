@@ -442,7 +442,7 @@ function harness(fixtures: Fixtures = {}) {
     materializeReview: input => materializeWorkflowSessionReview({ ...input,
       context: context({ runId: input.params.runId, authorization: input.params.authorization }),
       comments: nativeDeps.reviewCommentAction!, workspace: { machineId: workspace.machineId, path: workspace.directory },
-      agentId: 'session-agent',
+      agentId: 'session-agent', serverId: 'home',
     }),
     prepareConversation: async (params) => {
       sessionStep = params;

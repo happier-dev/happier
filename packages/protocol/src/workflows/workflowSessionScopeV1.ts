@@ -11,6 +11,13 @@ export const WorkflowSessionScopeV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type WorkflowSessionScopeV1 = z.infer<typeof WorkflowSessionScopeV1Schema>;
 
+/** Shared correspondence for host-authored Action and Session invocation proofs. */
+export function createWorkflowActionRequestIdV1(params: Readonly<{
+  runId: string; logicalInvocationId: string; attempt: string | number;
+}>): string {
+  return `${params.runId}/${params.logicalInvocationId}/${params.attempt}`;
+}
+
 /** The coordinator's existing run/logical-invocation/attempt correspondence. */
 export function readWorkflowActionInvocationV1(runId: string, actionRequestId: string | undefined):
   Readonly<{ logicalInvocationId: string; attempt: string }> | null {

@@ -20,7 +20,7 @@ it.each(['complete', 'partial'] as const)('publishes a restored Session review a
         result: { kind: 'final_text', text: rawText } }),
     },
     materializeReview: input => materializeWorkflowSessionReview({ ...input, context: { surface: 'agent' },
-      agentId: 'actual-agent', workspace: { machineId: 'machine', path: '/repo' },
+      agentId: 'actual-agent', serverId: 'actual-home', workspace: { machineId: 'machine', path: '/repo' },
       comments: async () => { throw new Error('Empty findings do not publish a comment'); },
     }),
   });

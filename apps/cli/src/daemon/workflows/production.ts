@@ -2235,7 +2235,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
             const agentId = resolveAgentIdFromSessionMetadata(owner.metadata);
             if (!agentId) return { kind: 'failed', code: 'review_engine_unavailable' };
             return await materializeWorkflowSessionReview({ ...input, context, comments: services.comments,
-              workspace: { machineId: owner.machineId, path: input.params.workspace.directory }, agentId });
+              workspace: { machineId: owner.machineId, path: input.params.workspace.directory }, agentId,
+              serverId: params.execution.serverIdentityId ?? params.execution.serverId });
           },
           ...(params.execution.sessionInput ? { sessionInput: params.execution.sessionInput } : {}),
           ...(params.execution.originSessionInput ? { originSessionInput: params.execution.originSessionInput } : {}),

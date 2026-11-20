@@ -4,6 +4,7 @@ import type { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { ReviewPreparedRoundV1Schema, ReviewSessionInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ReviewCommentWorkspaceV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
 
 import { normalizeParsedReviewContent } from '@/agent/reviews/normalize/normalizeStrictJsonReviewOutput';
 import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
@@ -24,6 +25,7 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
   comments: NonNullable<ActionExecutorDeps['reviewCommentAction']>;
   workspace: ReviewCommentWorkspaceV1;
   agentId: string;
+  serverId: string;
 }>): Promise<WorkflowStepExecutionResult> {
   const selection = input.params.input.values.map(value => ReviewSessionInputV1Schema.safeParse(value))
     .find(result => result.success);
@@ -45,7 +47,12 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
     reviewerId: selection.data.reviewerId, agentId: input.agentId, cwd: input.workspace.path, intentInput,
   }, findings: content.findings, reviewedFingerprint: null, review: reviewRound,
     ...(comparison ? { comparison } : {}),
-    ...(input.context.reviewCommentPrincipal?.workflowScope ? { workflowScope: input.context.reviewCommentPrincipal.workflowScope } : {}),
+    workflowScope: {
+      actionRequestId: createWorkflowActionRequestIdV1({ runId: input.params.runId,
+        logicalInvocationId: input.params.invocation.logicalInvocationRecordId, attempt: input.params.invocation.attempt }),
+      invocationId: input.params.invocationRecordId ?? input.params.invocation.logicalInvocationRecordId,
+      sessions: [{ serverId: input.serverId, sessionId: input.sessionId }],
+    },
   });
   const materialization = materialized.status === 'materialized' ? { kind: 'complete' as const }
     : { kind: materialized.status, errorCode: materialized.failures[0]?.errorCode ?? 'review_comment_request_failed' };

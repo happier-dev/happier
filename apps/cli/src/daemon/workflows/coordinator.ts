@@ -24,6 +24,7 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
+import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
 import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
 import { readWorkflowProjectSetupConsentHold } from './stepExecution';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -1962,7 +1963,8 @@ async function executeActionBlock(
     workspace = actionWorkspace;
     input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId, input });
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
-    const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
+    const actionRequestId = createWorkflowActionRequestIdV1({ runId: context.runId,
+      logicalInvocationId: row.logicalInvocationRecordId ?? row.recordId, attempt: row.attempt });
     const invocationRecordId = row.recordId;
     const admittedStartDepth = readWorkflowAcceptedActionStartDepthV1({ machineId: actionWorkspace.machineId,
       workspaceTarget: { project: actionWorkspace }, workDepth: context.workDepth }, selected);
