@@ -944,7 +944,11 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.some((request) => request.method !== 'GET')).toBe(false);
   });
 
-  it('keeps a confirmed summary ref but never repeats an approve whose answer was lost', async () => {
+  it.each([
+    { boundary: 'raw transport loss', error: new Error('simulated approval response loss'), outcome: 'uncertain' },
+    { boundary: 'host reported answer loss', error: new PluginError({ code: 'outcome_unknown' }), outcome: 'uncertain' },
+    { boundary: 'credential refusal before dispatch', error: new PluginError({ code: 'credential_unavailable' }), outcome: 'failed' },
+  ] as const)('keeps a confirmed summary ref without repeating approve after $boundary', async ({ error, outcome }) => {
     let notesReads = 0;
     const transport = createStubGitlabTransport({
       respond: (request) => {
@@ -959,7 +963,7 @@ describe('gitlab/merge-request/submit-review', () => {
         if (request.method === 'POST' && request.url === DRAFTS_URL) return { status: 201, body: { id: 82 } };
         if (request.method === 'PUT' && request.url === `${DRAFTS_URL}/82/publish`) return { status: 200, body: {} };
         if (request.method === 'POST' && request.url === `${ITEM_URL}/approve`) {
-          throw new Error('simulated approval response loss');
+          throw error;
         }
         return undefined;
       },
@@ -980,7 +984,7 @@ describe('gitlab/merge-request/submit-review', () => {
     }), transport.context);
     expect(result).toMatchObject({
       kind: 'settled',
-      publication: { verdict: { outcome: { kind: 'uncertain', externalRef: '92' } } },
+      publication: { verdict: { outcome: { kind: outcome, externalRef: '92' } } },
     });
     expect(transport.requests.filter((request) => request.url.endsWith('/approve'))).toHaveLength(1);
   });

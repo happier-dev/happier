@@ -26,6 +26,7 @@
  */
 
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { admitGitlabItemInvocation } from '../admission.js';
@@ -268,7 +269,8 @@ const ANSWER_LOST_FAILURE_CODES: ReadonlySet<string> = new Set([
 export function gitlabWriteAnswerLost(
   result: Extract<GitlabRequestResult, Readonly<{ kind: 'failed' }>>,
 ): boolean {
-  return result.status === undefined && ANSWER_LOST_FAILURE_CODES.has(result.failure.code);
+  return result.status === undefined && (ANSWER_LOST_FAILURE_CODES.has(result.failure.code)
+    || isActionOutcomeUnknownErrorCodeV1(result.failure.code));
 }
 
 /** A definitive write failure keeps the provider response distinct from a local refusal. */
