@@ -124,7 +124,8 @@ type DeploymentMachineRole = Extract<DeploymentFailure, { error: 'machine_unavai
 export async function admitDeploymentMachineInTx(tx: Tx, owner: ProjectSourceOwnerV1, machineId: string,
     role: DeploymentMachineRole, installationId?: string,
 ): Promise<DeploymentFailure | null> {
-    return admitDeploymentMachinesInTx(tx, owner, [{ machineId, role, installationId }]);
+    const placement = await admitDeploymentMachinesInTx(tx, owner, [{ machineId, role, installationId }]);
+    return placement.ok ? null : placement;
 }
 
 type DeploymentMachineInput = Readonly<{ machineId: string; installationId?: string; role?: DeploymentMachineRole }>;
@@ -186,9 +187,10 @@ export async function readDeploymentDefinitionMachinesInTx(tx: Tx,
     ];
 }
 
+/** Receipt capture consumes the installations from the same read that admitted their placements. */
 export async function admitDeploymentMachinesInTx(tx: Tx, owner: ProjectSourceOwnerV1,
     inputs: readonly Readonly<{ machineId: string; role: DeploymentMachineRole; installationId?: string }>[],
-): Promise<DeploymentFailure | null> {
+) {
     const machineIds = [...new Set(inputs.map(input => input.machineId))];
     const access = await resolveMachinePrincipalAccessForMachinesInTx(tx, { principal: owner, machineIds });
     const machines = new Map<string, Readonly<{ installationId: string | null; revokedAt: Date | null; replacedByMachineId: string | null }>>();
@@ -197,13 +199,20 @@ export async function admitDeploymentMachinesInTx(tx: Tx, owner: ProjectSourceOw
             select: { id: true, installationId: true, revokedAt: true, replacedByMachineId: true } });
         rows.forEach(row => machines.set(row.id, row));
     }
-    const failed = inputs.filter(input => {
+    const placements = new Map<string, Readonly<{ machineId: string; installationId: string }>>();
+    const failed: DeploymentMachineInput[] = [];
+    for (const input of inputs) {
         const machine = machines.get(input.machineId);
-        return !access.get(input.machineId) || !machine || machine.revokedAt
+        if (!access.get(input.machineId) || !machine || machine.revokedAt
             || machine.replacedByMachineId || !machine.installationId
-            || (input.installationId !== undefined && machine.installationId !== input.installationId);
-    });
+            || (input.installationId !== undefined && machine.installationId !== input.installationId)) {
+            failed.push(input);
+        } else {
+            placements.set(input.machineId, { machineId: input.machineId, installationId: machine.installationId });
+        }
+    }
     const first = failed[0];
     return unavailableDeploymentMachines(failed,
-        first && !access.get(first.machineId) ? sourceMachineAccessMissing : undefined);
+        first && !access.get(first.machineId) ? sourceMachineAccessMissing : undefined)
+        ?? { ok: true as const, placements };
 }

@@ -59,12 +59,11 @@ export function readDeploymentExecutionBindingFromRequest(request: FastifyReques
     return readDeploymentExecutionEffectFromRequest(request)?.binding ?? null;
 }
 
-/** Resolve capture identities; receipt admission admits these alongside target Machines in one set. */
-export async function resolveDeploymentAcceptedIdentityInTx(tx: Tx, input: Readonly<{
+/** Bind the signed controller to this Environment before placement admission. */
+export async function admitDeploymentAcceptedControllerInTx(tx: Tx, input: Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1; actorAccountId: string; serverId: string;
     operation: 'deploy' | 'rollback' | 'promote' | 'teardown';
-    environment: Readonly<{ id: string; controllerMachineId: string; buildMachineId: string | null }>;
-    target: AcceptedTarget;
+    environment: Readonly<{ id: string; controllerMachineId: string }>;
 }>) {
     const { binding, environment } = input;
     if (binding.accountId !== input.actorAccountId || binding.serverIdentityId !== input.serverId
@@ -75,13 +74,7 @@ export async function resolveDeploymentAcceptedIdentityInTx(tx: Tx, input: Reado
     }
     if ((binding.actionId === 'deployments.templates.instantiate' || binding.actionId === 'deployments.environments.create')
         && await readTemplateDeploymentEnvironmentIdInTx(tx, binding) !== environment.id) return deploymentFailure('deployment_access_denied');
-    const requiresBuilder = input.operation !== 'teardown' && isOwnServerDeploymentTarget(input.target);
-    const builder = requiresBuilder && environment.buildMachineId
-        ? await tx.machine.findUnique({ where: { id: environment.buildMachineId }, select: { id: true, installationId: true } }) : null;
-    if (requiresBuilder && !builder?.installationId) return deploymentFailure('deployment_access_denied');
-    const identity: AcceptedIdentity = { controller: { machineId: binding.machineId, installationId: binding.installationId },
-        ...(builder?.installationId ? { builder: { machineId: builder.id, installationId: builder.installationId } } : {}) };
-    return { ok: true as const, identity };
+    return { ok: true as const, controller: { machineId: binding.machineId, installationId: binding.installationId } };
 }
 
 /** Accepted custody is independent of subsequent Environment edits and receipt replay. */

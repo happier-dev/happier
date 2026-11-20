@@ -113,10 +113,10 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
             actionId: deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, environmentId: routing.input.environmentId,
             deploymentId: routing.deploymentId,
             targetLinkId: routing.targetLinkId, machineId: routing.machineId, installationId: routing.installationId });
-        if (!selected?.ok || await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
+        if (!selected?.ok || !(await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
             { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },
             { machineId: routing.machineId, installationId: routing.installationId, role: 'target' },
-        ])) return null;
+        ])).ok) return null;
         if (routing.candidateContent && await admitDeploymentStoredContentInTx(tx, binding.accountId,
             loaded.admission.owner, routing.candidateContent, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, 'read')) return null;
         const destination = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
@@ -241,17 +241,17 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         const capturedHolder = capturedMachines.some(machine => machine?.machineId === archiveOrigin.holderMachineId
             && machine.installationId === archiveOrigin.holderInstallationId);
         // A holder outside this job's captured placements is a new admission.
-        if (!found || !capturedHolder && await admitDeploymentMachinesInTx(tx, owner, [{ machineId: archiveOrigin.holderMachineId,
-            installationId: archiveOrigin.holderInstallationId, role: 'target' }])) return null;
+        if (!found || !capturedHolder && !(await admitDeploymentMachinesInTx(tx, owner, [{ machineId: archiveOrigin.holderMachineId,
+            installationId: archiveOrigin.holderInstallationId, role: 'target' }])).ok) return null;
     } else {
         // Origin-free reads are only the existing installed setup roles, not archive-holder discovery.
         const selected = preparation
             ? [routing.machineId, environment.row.controllerMachineId, environment.row.buildMachineId].includes(machineId)
             : capturedMachines.some(machine => machine?.machineId === machineId);
         if (!selected
-            || preparation && await admitDeploymentMachinesInTx(tx,
+            || preparation && !(await admitDeploymentMachinesInTx(tx,
                 'admission' in environment ? environment.admission.owner : environment.owner,
-                [{ machineId, role: 'target' }])) return null;
+                [{ machineId, role: 'target' }])).ok) return null;
     }
     const machine = await tx.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({ accountId: true, installationId: true,
         metadata: true, daemonState: true, dataEncryptionKey: true,
@@ -327,12 +327,13 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
             if (routing.kind !== 'domainDns' && await admitDeploymentStoredContentInTx(tx, binding.accountId, loaded.admission.owner,
                 routing.input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, 'read')) return false;
         }
-        return !await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
+        const placements = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
             { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },
             { machineId: routing.machineId, installationId: routing.installationId, role: 'target' },
             ...(routing.kind === 'domainDiscover' && routing.input.telemetryMachineId
                 ? [{ machineId: routing.input.telemetryMachineId, role: 'telemetry' as const }] : []),
         ]);
+        return placements.ok;
     }
     if (routing.kind !== 'prepare' && routing.kind !== 'review') return readAcceptedDeploymentChildInTx(tx, binding, routing);
     if (preparationScope?.environment === 'template'
@@ -365,12 +366,12 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     // placement and revision. Its new operands are admitted by the read owner.
     if (routing.kind === 'review' && retainedReview) return loaded.row.revision === routing.input.expectedRevision;
     if (!loaded.row.controllerMachineId) return false;
-    const denied = await admitDeploymentMachinesInTx(tx, owner, [
+    const placements = await admitDeploymentMachinesInTx(tx, owner, [
         { machineId: loaded.row.controllerMachineId, role: 'controller',
             ...(loaded.row.controllerMachineId === binding.machineId ? { installationId: binding.installationId } : {}) },
         { machineId: routing.machineId, installationId: routing.installationId, role: routing.kind === 'prepare' && !preparesTeardown || !member ? 'build' : 'target' },
     ]);
-    if (denied) return false;
+    if (!placements.ok) return false;
     if (routing.kind === 'prepare') return loaded.row.revision === routing.expectedRevision;
     if (routing.promotion) {
         const promotion = routing.promotion;

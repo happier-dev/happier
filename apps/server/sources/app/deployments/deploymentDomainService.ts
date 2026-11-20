@@ -447,10 +447,10 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         || loaded.row.edgeMachineId && !input.placements.some(item => item.machineId === loaded.row.edgeMachineId)) {
         return deploymentFailure('deployment_conflict');
     }
-    const machineFailure = membership ? null : await admitDeploymentMachinesInTx(tx, owner,
+    const placements = membership ? null : await admitDeploymentMachinesInTx(tx, owner,
         [...input.placements.map(item => ({ ...item, role: 'target' as const })),
             ...(input.telemetryMachineId ? [{ machineId: input.telemetryMachineId, role: 'telemetry' as const }] : [])]);
-    if (machineFailure) return machineFailure;
+    if (placements && !placements.ok) return placements;
     const contentFailure = membership ? null : await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
     const keys = new Map<string, string>();

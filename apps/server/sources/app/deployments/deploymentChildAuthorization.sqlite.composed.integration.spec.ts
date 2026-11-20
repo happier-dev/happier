@@ -8680,6 +8680,53 @@ describe('deployment children retain their controller Action authority', () => {
         }, 'deploy', {}, f.authorization.binding))).toMatchObject({ ok: false, error: 'deployment_unavailable' });
     });
 
+    it.each(['admitted', 'revoked', 'replaced', 'without-source-access', 'teardown'] as const)(
+        'captures the builder only from admitted placement (%s)', async scenario => {
+            const f = await fixture('team');
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'failed' } });
+            if (scenario === 'revoked' || scenario === 'replaced') {
+                await db.machine.update({ where: { id: f.builder.id }, data: scenario === 'revoked'
+                    ? { revokedAt: new Date() } : { replacedByMachineId: f.outsider.id } });
+            }
+            if (scenario === 'without-source-access' || scenario === 'teardown') {
+                await db.machineGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
+            }
+            const teardown = scenario === 'teardown';
+            const operation = teardown ? 'teardown' : 'deploy';
+            const actionOperationId = crypto.randomUUID();
+            const input = { ...f.admissionInput, ...await f.content('deployment-receipt.v1'),
+                expectedRevision: f.environmentRevision, requestKey: crypto.randomUUID(), actionOperationId };
+            const binding = { ...f.authorization.binding, requestId: actionOperationId,
+                actionId: teardown ? 'deployments.teardown' as const : 'deployments.deploy' as const };
+            const builderReads: string[] = [];
+            const stop = observeSqliteRequests({ before: query => {
+                if (query.model !== 'Machine' || !query.args || typeof query.args !== 'object') return;
+                const where: unknown = Reflect.get(query.args, 'where');
+                const select: unknown = Reflect.get(query.args, 'select');
+                if (where && typeof where === 'object' && select && typeof select === 'object'
+                    && Reflect.get(select, 'installationId') === true) {
+                    const id: unknown = Reflect.get(where, 'id');
+                    const ids: unknown = id && typeof id === 'object' ? Reflect.get(id, 'in') : undefined;
+                    if (id === f.builder.id || Array.isArray(ids) && ids.includes(f.builder.id)) builderReads.push(query.action);
+                }
+            } });
+            const result = await inTx(tx => createDeploymentInTx(tx, f.account.id, input, operation, {}, binding)).finally(stop);
+            const receipt = await db.deployment.findUnique({ where: { environmentId_requestKey: {
+                environmentId: f.environment.id, requestKey: input.requestKey,
+            } } });
+            if (scenario === 'admitted' || teardown) {
+                expect(result).toMatchObject({ ok: true, deploymentId: receipt?.id });
+                expect(receipt).toMatchObject({ acceptedBuildMachineId: teardown ? null : f.builder.id,
+                    acceptedBuildInstallationId: teardown ? null : f.builder.installationId });
+            } else {
+                expect(result).toMatchObject({ ok: false, error: 'machine_unavailable', role: 'build', machineIds: [f.builder.id],
+                    ...(scenario === 'without-source-access' ? { diagnostic: { reason: 'source_machine_access_missing' } } : {}) });
+                expect(receipt).toBeNull();
+            }
+            expect(builderReads).toEqual(teardown ? [] : ['findMany']);
+        },
+    );
+
     it.each(['member', 'build'] as const)('checks an accepted %s child with one job lookup and no requester or Team evaluation', async kind => {
         const f = await fixture('team');
         const job = kind === 'member' ? f.job : DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'build', actionId: 'deployments.deploy',

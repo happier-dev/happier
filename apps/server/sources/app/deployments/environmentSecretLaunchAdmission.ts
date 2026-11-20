@@ -277,8 +277,8 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
         ...(managedDataLinks.length ? [{ machineId: loaded.row.controllerMachineId, role: 'controller' as const }] : []),
         ...domainDestinations.domains.flatMap(domain => domain.placements.map(placement => ({ machineId: placement.machineId,
             installationId: placement.installationId, role: 'target' as const })))];
-    const denied = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, recipients);
-    if (denied) return denied;
+    const placements = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, recipients);
+    if (!placements.ok) return placements;
     const keys = new Map<string, { machineId: string; installationId: string; publicKey: string }>();
     for (const ids of portableQueryChunks({ values: [...new Set(recipients.map(recipient => recipient.machineId))], bindingsPerValue: 1 })) {
         const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } },

@@ -92,7 +92,7 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
             savedSecretRevisions: [...revisions].map(([resourceId, expectedRevision]) => ({ resourceId, expectedRevision })),
         })) return false;
     }
-    if (await admitDeploymentMachinesInTx(tx, input.owner, machines)) return false;
+    if (!(await admitDeploymentMachinesInTx(tx, input.owner, machines)).ok) return false;
     if ((await admitDeploymentStoredContentsInTx(tx, actorAccountId, input.owner, inputs)).some(Boolean)) return false;
     for (const artifactId of new Set(references.map(reference => reference.contentArtifactId))) {
         if (!await recipientsReadyInTx(tx, actorAccountId, artifactId, audience)) return false;

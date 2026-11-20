@@ -20,7 +20,7 @@ import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 import { readDeploymentDomainInventoryInTx, prepareDeploymentTeardownDomainsInTx } from './deploymentDomainService';
 import { admitDeploymentPendingInTx } from './deploymentPendingService';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { resolveDeploymentAcceptedIdentityInTx, createDeploymentAcceptedExecution,
+import { admitDeploymentAcceptedControllerInTx, createDeploymentAcceptedExecution,
     deploymentAcceptedExecutionColumns, deploymentInProgressStates, isOwnServerDeploymentTarget, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
@@ -153,18 +153,20 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     if (!link || link.revision !== input.expectedTargetLinkRevision
         || link.deletedAt && !isRetainedTeardownTarget(operation, loaded.row, link)) return deploymentFailure('deployment_conflict');
     const requiresBuilder = operation !== 'teardown' && isOwnServerDeploymentTarget(link);
-    const accepted = executionBinding ? await resolveDeploymentAcceptedIdentityInTx(tx, {
+    const buildMachineId = requiresBuilder ? loaded.row.buildMachineId : null;
+    const accepted = executionBinding ? await admitDeploymentAcceptedControllerInTx(tx, {
         binding: executionBinding, actorAccountId, serverId: input.serverId, operation,
-        environment: loaded.row, target: link,
+        environment: loaded.row,
     }) : null;
     if (accepted && !accepted.ok) return accepted;
+    if (accepted && requiresBuilder && !buildMachineId) return deploymentFailure('deployment_access_denied');
     const busy = await tx.deployment.findFirst({ where: { environmentId: input.environmentId, state: { in: deploymentInProgressStates() } }, select: { id: true } });
     const pendingInput = operation === 'deploy' && 'whenBusy' in input && input.whenBusy === 'supersede' ? input : undefined;
     if (busy && !pendingInput) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
         href: `/deployments/environments/${encodeURIComponent(input.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
     if ((!pendingInput && loaded.row.revision !== input.expectedRevision)
         || (operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== input.targetLinkId)) return deploymentFailure('deployment_conflict');
-    if (requiresBuilder && !loaded.row.buildMachineId) return deploymentFailure('deployment_conflict');
+    if (requiresBuilder && !buildMachineId) return deploymentFailure('deployment_conflict');
     const teardownMachines = 'reason' in input && input.machines ? input.machines : link.machines.map(member => member.machineId);
     const selectiveTeardown = operation === 'teardown' && isOwnServerDeploymentTarget(link)
         && loaded.row.runtimeTargetLinkId === link.id && teardownMachines.length < link.machines.length;
@@ -185,16 +187,15 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
             return deploymentFailure('deployment_conflict');
         }
     }
-    const machineFailure = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
-        { machineId: loaded.row.controllerMachineId, role: 'controller', installationId: accepted?.ok ? accepted.identity.controller.installationId : undefined },
-        ...(requiresBuilder && loaded.row.buildMachineId ? [{ machineId: loaded.row.buildMachineId, role: 'build' as const,
-            installationId: accepted?.ok ? accepted.identity.builder?.installationId : undefined }] : []),
+    const admittedMachines = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
+        { machineId: loaded.row.controllerMachineId, role: 'controller', installationId: accepted?.controller.installationId },
+        ...(buildMachineId ? [{ machineId: buildMachineId, role: 'build' as const }] : []),
         ...(link.machineId && link.installationId
             ? [{ machineId: link.machineId, installationId: link.installationId, role: 'target' as const }] : []),
         ...link.machines.filter(machine => operation !== 'teardown' || teardownMachines.includes(machine.machineId))
             .map(machine => ({ machineId: machine.machineId, installationId: machine.installationId, role: 'target' as const })),
     ]);
-    if (machineFailure) return machineFailure;
+    if (!admittedMachines.ok) return admittedMachines;
     const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, input,
         DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
@@ -237,7 +238,9 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during receipt admission');
     const admittedEnvironment = await tx.deploymentEnvironment.findUniqueOrThrow({ where: { id: loaded.row.id }, select: { revision: true } });
-    const acceptedExecution = accepted?.ok ? createDeploymentAcceptedExecution(accepted.identity) : null;
+    const builder = buildMachineId ? admittedMachines.placements.get(buildMachineId) : undefined;
+    const acceptedExecution = accepted ? createDeploymentAcceptedExecution({ controller: accepted.controller,
+        ...(builder ? { builder } : {}) }) : null;
     const row = await tx.deployment.create({ data: {
         environmentId: loaded.row.id, targetLinkId: link.id, operation, state: 'queued', requestKey: input.requestKey,
         requestedByAccountId: actorAccountId, actionOperationId: input.actionOperationId,

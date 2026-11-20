@@ -1519,7 +1519,8 @@ describe('current Source deployment authority', () => {
         expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations)))
             .toMatchObject({ ok: false, error: 'machine_unavailable' });
         await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: machine.id } });
-        expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations))).toBeNull();
+        expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations)))
+            .toMatchObject({ ok: true, placements: new Map([[machine.id, { machineId: machine.id, installationId: machine.installationId }]]) });
         const resourceId = crypto.randomUUID();
         const secret = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: creator.id, resourceId,
             displayName: 'Used Team secret', kind: 'token', encryptionMode: 'plain', teamGrants: [team.id],
@@ -1530,7 +1531,7 @@ describe('current Source deployment authority', () => {
             .toMatchObject({ ok: true, admission: { owner: { kind: 'team', teamId: team.id }, canManage: true } });
         expect(await inTx(tx => resolveDeploymentEnvironmentAdmissionInTx(tx, creator.id, input)))
             .toMatchObject({ ok: false, error: 'deployment_unavailable' });
-        expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations))).toBeNull();
+        expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations))).toMatchObject({ ok: true });
         const resources = await inTx(tx => readSavedSecretResourcesForPrincipalInTx(tx, admitted.admission.owner, [resourceId]));
         expect(resources).toMatchObject([{ revision: 1, materialStatus: 'ready', capabilities: { use: true } }]);
         expect(JSON.stringify(resources)).not.toContain('never-in-use-facts');
