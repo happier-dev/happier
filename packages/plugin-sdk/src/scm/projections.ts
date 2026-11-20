@@ -372,9 +372,8 @@ export type ScmOperationReconciliation =
     | { kind: 'remote_ref'; remote: string; branch?: string; expectedOid?: string }
     | { kind: 'pull_request'; head: string; base?: string; providerId?: string; repository?: string; url?: string };
 
-export type ScmOperationNextAction =
-    | { kind: 'refresh' | 'retry' | 'resolve_conflicts' | 'continue' | 'skip' | 'abort' | 'reconcile_index' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'authenticate' }
-    | { kind: 'open_url'; url: string };
+import type { ScmOperationNextAction } from '@happier-dev/protocol/scm';
+export type { ScmOperationNextAction } from '@happier-dev/protocol/scm';
 
 /** Preserve each schema arm as an object rather than an intersection carrier. */
 type ScmShape<T> = T extends object ? { [K in keyof T]: T[K] } : T;
