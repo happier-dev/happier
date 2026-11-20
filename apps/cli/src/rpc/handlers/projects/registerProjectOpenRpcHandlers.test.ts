@@ -52,7 +52,10 @@ import { createProjectSetupTrustRowCipher } from '@/workspaces/projectSetup/proj
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { openProject, materializeProjectSyncOnSource } from '@/workspaces/activation/openProject';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { Duplex } from 'node:stream';
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
+import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { promisify } from 'node:util';
 import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import { createGithubRepositoryProvisioningAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback';
@@ -198,7 +201,13 @@ describe('Project Open RPC', () => {
   });
   afterEach(() => { nativeBoundary.reset(); nativeSyncFiles.source = ''; vi.restoreAllMocks(); vi.unstubAllGlobals(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
 
-  it.each(['plain', 'e2ee'] as const)('opens an ordinary Account folder with admitted Home projections across a saved profile alias (%s)', async mode => {
+  const projectOpenHolder = resolveSessionHolderExecutablePath();
+  const projectOpenHelper = resolveProcessCustodySupportExecutable('linux');
+  const savedProfileCases = [
+    { mode: 'plain', managed: false }, { mode: 'e2ee', managed: false }, { mode: 'plain', managed: true },
+  ] as const;
+  it.for(savedProfileCases)('opens an admitted Account folder across a saved Home profile (mode=$mode, managed=$managed)', async ({ mode, managed }, { skip }) => {
+    if (managed && (process.platform !== 'linux' || !projectOpenHolder || !projectOpenHelper)) skip();
     const root = await mkdtemp(join(tmpdir(), 'happier-open-account-binding-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     const profileId = 'ordinary-owner-local-profile';
@@ -244,13 +253,32 @@ describe('Project Open RPC', () => {
       callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account',
         machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => true };
+    const destination = { managedId: 'attached-guest', controller: { machineId: 'machine', installationId: 'installation' } };
+    const lifetime = new AbortController();
+    onTestFinished(() => lifetime.abort());
     const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: profileId, serverHttpBaseUrl: 'https://ordinary-owner.example',
-      machineId: 'machine', accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must not borrow login credentials'); } });
+      machineId: 'machine', accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must not borrow login credentials'); },
+      ...(managed ? { openManagedProjectWorkspace: async request => {
+        expect(request.workspace).toEqual({ ...destination, serverId: homeId, rootPath: root });
+        expect(request.requesterAccountId).toBe('account');
+        return { lifetime: lifetime.signal, holderPath: projectOpenHolder!, helperPath: projectOpenHelper!,
+          openChannel: ([executable, ...args]) => {
+            const child = spawn(executable!, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+            return Duplex.from({ readable: child.stdout, writable: child.stdin });
+          } };
+      } } : {}), });
     const input = { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root },
-      materialization: { kind: 'attach' } };
+      materialization: { kind: 'attach', ...(managed ? { targetManaged: destination } : {}) } };
     const opened = await handler(input, context);
-    expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened', directory: root, setup: 'notRequired' });
-    expect(rows.some(row => row.key.kind === 'workspace-ref')).toBe(true);
+    expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened', directory: root, setup: 'notRequired',
+      ...(managed ? { workspace: { kind: 'managed', ...destination, serverId: homeId, rootPath: root } } : {}) });
+    const accepted = rows.find(row => row.key.kind === 'workspace-ref');
+    expect(accepted).toBeDefined();
+    if (managed && accepted?.content) {
+      const payload = cipher.open(accepted.key, accepted.content);
+      expect(payload.value).toMatchObject({ v: 2, kind: 'managed', ...destination, serverId: homeId, rootPath: root });
+      expect(payload.value).not.toHaveProperty('machineId');
+    }
     current = false;
     post.mockClear();
     const diagnostic = vi.spyOn(logger, 'warnLocalFile');
