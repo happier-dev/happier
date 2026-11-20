@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { bindContextualActionToolInput } from './actionToolContext.js';
+import { getActionSpec } from './actionSpecs.js';
 import { ApprovalRequestSchema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import { ReviewCommentV1Schema } from '../reviews/comments/v1.js';
@@ -539,11 +541,14 @@ describe('createActionExecutor (review comments)', () => {
     const selected = { reviewId: 'review', commentIds: [root.id] };
     const expected = { ok: true, result: { items: [root], cursor: null } };
     await expect(executor.execute('reviews.comments.list', selected, { surface: 'ui' })).resolves.toEqual(expected);
-    await expect(executor.execute('reviews.comments.list', selected, context)).resolves.toEqual(expected);
-    await expect(executor.execute('reviews.comments.list', { reviewId: 'review' }, context)).resolves.toEqual(expected);
-    await expect(executor.execute('reviews.comments.list', { ...selected, sessionId: 'session-1' }, context))
+    // Include the real tool binder: its advertised default must not narrow an explicit Review.
+    const toolInput = (input: unknown) => bindContextualActionToolInput({ actionId: 'reviews.comments.list', input,
+      context, contextualDefaults: getActionSpec('reviews.comments.list').contextualDefaults });
+    await expect(executor.execute('reviews.comments.list', toolInput(selected), context)).resolves.toEqual(expected);
+    await expect(executor.execute('reviews.comments.list', toolInput({ reviewId: 'review' }), context)).resolves.toEqual(expected);
+    await expect(executor.execute('reviews.comments.list', toolInput({ ...selected, sessionId: 'session-1' }), context))
       .resolves.toEqual({ ok: true, result: { items: [], cursor: null } });
-    await expect(executor.execute('reviews.comments.list', { runId: 'run-1' }, context))
+    await expect(executor.execute('reviews.comments.list', toolInput({ runId: 'run-1' }), context))
       .resolves.toEqual({ ok: true, result: { items: [legacy], cursor: null } });
     const beforeRefusal = reads;
     await expect(executor.execute('reviews.comments.list', selected, { ...context, defaultSessionId: 'other-session' }))

@@ -6,7 +6,6 @@ import { type ActionContextualDefaults } from '../contextualDefaults.js';
 export const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'session.needs_you.raise',
   'reviews.comments.create',
-  'reviews.comments.list',
   'browser.recording.attachToComposer',
   'localServices.inventory.list',
   'localServices.inventory.refresh',
