@@ -7404,8 +7404,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // The canonical Action input schema admitted this value before dispatch.
         const triggerConsent = data.triggerConsent as z.infer<typeof ApprovalRequestDecideInputSchema>['triggerConsent'];
         const withdrawal = isApprovalWithdrawalDecisionV1(data.decision);
-        const delegatedHostDecision = !withdrawal && resolveHostStampedAuthority(ctx) !== 'present_user'
-          && (ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli') && !ctx.externalActionCredential;
+        const delegatedHostDecision = resolveHostStampedAuthority(ctx) !== 'present_user'
+          && (ctx.surface === 'agent' || ctx.surface === 'mcp' || (ctx.surface === 'cli' && !withdrawal))
+          && !ctx.externalActionCredential;
         // Decisions cannot request another approval. Only an explicit persisted
         // waiver delegates ordinary decisions; bypass/replay hints never do.
         if (delegatedHostDecision && (!ctx.actionsSettings
