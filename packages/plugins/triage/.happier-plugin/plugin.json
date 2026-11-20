@@ -387589,6 +387589,96 @@
     "hooks": [],
     "inputTypes": [
       {
+        "id": "issue-source/sentry-issues",
+        "options": {
+          "resource": "options/issue-source/sentry-issues"
+        },
+        "semantic": "triageConfiguredSource",
+        "title": "Source",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 36,
+          "minLength": 36,
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        }
+      },
+      {
+        "id": "issue-investigation/sentry-issues",
+        "options": {
+          "resource": "options/issue-investigation/sentry-issues"
+        },
+        "semantic": "triageConfiguredInvestigation",
+        "title": "Configured investigation",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        }
+      },
+      {
+        "id": "issue-source/posthog-error-tracking",
+        "options": {
+          "resource": "options/issue-source/posthog-error-tracking"
+        },
+        "semantic": "triageConfiguredSource",
+        "title": "Source",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 36,
+          "minLength": 36,
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        }
+      },
+      {
+        "id": "issue-investigation/posthog-error-tracking",
+        "options": {
+          "resource": "options/issue-investigation/posthog-error-tracking"
+        },
+        "semantic": "triageConfiguredInvestigation",
+        "title": "Configured investigation",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        }
+      },
+      {
+        "id": "issue-source/exceptions",
+        "options": {
+          "resource": "options/issue-source/exceptions"
+        },
+        "semantic": "triageConfiguredSource",
+        "title": "Source",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 36,
+          "minLength": 36,
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        }
+      },
+      {
+        "id": "issue-investigation/exceptions",
+        "options": {
+          "resource": "options/issue-investigation/exceptions"
+        },
+        "semantic": "triageConfiguredInvestigation",
+        "title": "Configured investigation",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "type": "string"
+        }
+      },
+      {
         "id": "pull-request-comparison",
         "picker": "comparison-picker",
         "semantic": "scmPullRequestComparison",
@@ -415994,6 +416084,90 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-source/sentry-issues",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-investigation/sentry-issues",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-source/posthog-error-tracking",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-investigation/posthog-error-tracking",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-source/exceptions",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
+      {
+        "contentType": "application/json",
+        "execution": {
+          "account": {
+            "artifactId": "triage-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "id": "options/issue-investigation/exceptions",
+        "kind": "config",
+        "scope": "global",
+        "source": "dynamic"
+      },
       {
         "contentType": "application/json",
         "execution": {
