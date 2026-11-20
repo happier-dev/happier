@@ -939,10 +939,16 @@ export const DeploymentEnvironmentDraft = React.memo(
               compact={props.phone}
               onChange={setRef}
             />
-            {!onPlatform && props.lifetime && source?.repository ? <>
-              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="prepare" />
-              <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" />
-            </> : null}
+            {/* The agent entries are one row of What runs: its title says what they do, the two entries are its buttons,
+                beneath it on a phone (DESIGN-ACCEPT-2 C7: they were two centred sparkle links under Branch). */}
+            {!onPlatform && props.lifetime && source?.repository ? (
+              <Item testID="project-deployments.draft.agent" title={t('projects.deployments.preparation.askAgent')}
+                showChevron={false} accessoryLayout={props.phone ? 'stacked' : 'adaptive'}
+                rightElement={<View style={styles.agentEntries}>
+                  <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="prepare" emphasis="secondary" />
+                  <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" emphasis="secondary" />
+                </View>} />
+            ) : null}
             </>}
           </ItemGroup>}
           {props.copyFrom && copyChoices ? (
@@ -1174,6 +1180,7 @@ const styles = StyleSheet.create((theme) => ({
   machineCard: { gap: theme.space.s4 },
   machineFacts: { flexDirection: 'row', gap: theme.space.s16, paddingTop: theme.space.s8 },
   machineFactValues: { flex: 1, minWidth: 0 },
+  agentEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
 }));
 
 /**

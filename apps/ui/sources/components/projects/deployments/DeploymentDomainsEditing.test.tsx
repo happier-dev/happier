@@ -884,6 +884,8 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
     try {
       expect(signals).toHaveLength(1);
       expect(screen.findByTestId(`${id}.ingress.zones.cancel`)).not.toBeNull();
+      // One indicator while a read runs: the loading line with Cancel, not a disabled Find beside it (R7 nit).
+      expect(screen.findByTestId(`${id}.ingress.zones.read`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.cancel`);
       expect(signals[0]!.aborted).toBe(true);
       await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull());

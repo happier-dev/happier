@@ -277,8 +277,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       </FieldItem> : null}
       {/* A search, not a refresh glyph: a disabled refresh arrow reads as a stuck spinner (JOURNEY-OPUS-88 F2). */}
       {/* The Find actions start on the fields' leading edge, not centred between fields (PAGE-ACCEPT R6-D3). */}
-      <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')} style={styles.find}
-        icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
+      {/* While a read runs, its loading line with Cancel is the one indicator; Find returns when it settles. */}
+      {reading === 'zones' ? null : <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
+        style={styles.find} icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} />}
       {zonesNeed ? (
         <Text testID={`${id}.zones.needs`} variant="meta" style={styles.needs}>{zonesNeed}</Text>
       ) : null}
@@ -288,7 +289,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           <ValueFieldSelect testID={`${id}.zone`} label={t('projects.deployments.domainIngressZone')}
             items={currentZones.zones.map(zone => ({ id: zone.zoneId, title: zone.name }))} selectedId={zoneId || null}
             onSelect={setZoneChoice} placeholder={t('projects.deployments.domainIngressChooseZone')}
-            disabled={props.busy || currentZones.zones.length === 0} />
+            disabled={props.busy || currentZones.zones.length === 0} fill />
           {currentZones.zones.length === 0 ? <Text>{t('projects.deployments.domainIngressZonesEmpty')}</Text> : null}
         </FieldItem>
       ) : explicitZone ? (
@@ -299,9 +300,9 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       ) : currentZones?.kind === 'unavailable' && reading !== 'zones' ? <SurfaceStateCard testID={`${id}.zones.error`} size="line" kind="error"
         title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail}
         action={{ label: t('common.retry'), testID: `${id}.zones.retry`, onPress: () => { void inspect('zones'); } }} /> : null}
-      {!zonesOnly && zoneId ? (
+      {!zonesOnly && zoneId && reading !== 'tunnels' ? (
         <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')} style={styles.find}
-          icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
+          icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} />
       ) : null}
       {!zonesOnly && zoneId ? readState('tunnels') : null}
       {!zonesOnly && currentTunnels?.kind === 'ready' ? (
@@ -309,7 +310,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           <ValueFieldSelect testID={`${id}.tunnel`} label={t('projects.deployments.domainIngressTunnel')}
             items={currentTunnels.options.map((option, index) => ({ id: String(index), title: option.label }))}
             selectedId={tunnelChoice} onSelect={setTunnelChoice} placeholder={t('projects.deployments.domainIngressChoose')}
-            disabled={props.busy || currentTunnels.options.length === 0} />
+            disabled={props.busy || currentTunnels.options.length === 0} fill />
           {currentTunnels.options.length === 0 ? <Text>{t('projects.deployments.domainIngressEmpty')}</Text> : null}
         </FieldItem>
       ) : !zonesOnly && currentTunnels?.kind === 'unavailable' && reading !== 'tunnels' ? <SurfaceStateCard testID={`${id}.tunnels.error`} size="line" kind="error"
