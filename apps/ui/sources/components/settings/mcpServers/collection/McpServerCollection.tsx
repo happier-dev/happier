@@ -27,7 +27,7 @@ import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsO
 import { useReachMachines } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { useOpenMcpAddModal } from '../add/useOpenMcpAddModal';
-import { usePluginMcpServerItems } from './usePluginMcpServerItems';
+import { PluginMcpServerItemsContext } from './usePluginMcpServerItems';
 import type { McpPluginItemMetadataV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import {
     buildMcpServerCollection,
@@ -94,7 +94,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         // detail's banner, never a third copy on the row.
         ...machineFactsOf(row),
     })])), [rows, signInOf, savedSecretCatalog, machineFactsOf]);
-    const pluginItems = usePluginMcpServerItems();
+    const pluginItems = React.useContext(PluginMcpServerItemsContext);
     const plugins = React.useMemo(() => {
         const normalizedQuery = query.trim().toLocaleLowerCase();
         return pluginItems
@@ -102,7 +102,8 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             .slice()
             .sort((a, b) => (a.title ?? a.name).localeCompare(b.title ?? b.name));
     }, [pluginItems, query]);
-    const total = settings.servers.length;
+    const total = settings.servers.length + pluginItems.length;
+    const collectionCount = serverCount === null ? null : total;
 
     // Status and Runs on (P8): held row facts only, read through the MCP adapter's registry.
     const statusOf = React.useCallback((row: McpServerCollectionRow) => statuses.get(row.server.id) ?? null, [statuses]);
@@ -251,7 +252,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                     action={{ label: t('common.retry'), onPress: () => { void reload(); } }}
                 />
             ) : null}
-            {serverCount === 0 && !loading && !unavailable && !draftOpen ? (
+            {collectionCount === 0 && !loading && !unavailable && !draftOpen ? (
                 rail ? (
                     <EmptyState
                         testID="settings.mcpServers.empty"
@@ -272,7 +273,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             // The rail names itself; a phone's page has its page header above the list.
             {...(rail ? {
                 title: t('settings.mcpServers'),
-                count: serverCount,
+                count: collectionCount,
                 // The filter button sits in the search well once the list has a search field (lab `sfcols:mcpFilter`).
                 headerAction: total > 0 && !searchable ? <>{filter.filterButton}{addMenu}</> : addMenu,
             } : {})}
@@ -308,10 +309,10 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         <SettingsCollectionPage
             testID="settings.mcpServers.page"
             headerTestID="settings.mcpServers.header"
-            count={serverCount}
+            count={collectionCount}
             actions={total > 0 ? <>{searchable ? null : filter.filterButton}{addMenu}</> : loading ? addMenu : undefined}
         >
-            {total > 0 || loading ? <McpServersHomeSummary /> : null}
+            {settings.servers.length > 0 || loading ? <McpServersHomeSummary /> : null}
             {list}
         </SettingsCollectionPage>
     );

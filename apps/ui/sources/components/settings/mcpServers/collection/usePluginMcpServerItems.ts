@@ -10,6 +10,8 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 const NONE: readonly McpPluginItemMetadataV1[] = [];
 
+export const PluginMcpServerItemsContext = React.createContext(NONE);
+
 /**
  * Read declarations through the shared MCP Actions. Detail asks for one server;
  * the collection asks for the metadata list.

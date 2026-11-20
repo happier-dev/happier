@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
@@ -35,6 +36,7 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -81,6 +83,7 @@ const {
 const settingsState: { value: McpServersSettingsV1 } = {
     value: { v: 1, strictMode: false, servers: [], bindings: [] },
 };
+let pluginProjection: ReturnType<typeof DaemonContributionRegistryProjectionDescribeResponseSchema.parse> | undefined;
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -232,6 +235,7 @@ afterEach(async () => {
 
 describe('MCP servers collection and tools', () => {
     beforeEach(async () => {
+        pluginProjection = undefined;
         resetMcpServersCommonModuleMockState();
         installMcpServersScreenMocks();
         routerPushSpy.mockReset();
@@ -304,6 +308,9 @@ describe('MCP servers collection and tools', () => {
                     await testResponseGate?.promise;
                     const result = runtimeMissing ? missingRuntimeTestReceipt : successfulTestReceipt;
                     return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, request.callId) };
+                }
+                if (pluginProjection && method.includes(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)) {
+                    return { ok: true, result: await socketRpcCodec.encodeResponse(content, pluginProjection, request.callId) };
                 }
                 return { ok: true, result: await socketRpcCodec.encodeResponse(content,
                     method.includes(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT)
@@ -925,6 +932,46 @@ describe('MCP servers collection and tools', () => {
             .toBe('capabilities.mcpHome.newTitle');
         expect(screen.findByTestId('mcp.home.browse')).not.toBeNull();
         expect(screen.findByTestId('mcp.home.paste')).not.toBeNull();
+    });
+
+    it('opens an installed plugin MCP server from Settings when the Account has no saved servers', async () => {
+        settingsState.value = { v: 1, strictMode: false, servers: [], bindings: [] };
+        catalogRevision += 1;
+        await refreshCatalogFixture();
+        const { useMcpServersSettings } = await import('./useMcpServersSettings');
+        const settings = await renderHook(() => useMcpServersSettings());
+        await vi.waitFor(() => expect(settings.getCurrent()).toMatchObject({ serverCount: 0, loading: false }));
+        pluginProjection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1,
+            projection: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+                installedPackagesById: { 'acme.mcp-fixture': { id: 'acme.mcp-fixture', displayName: 'Fixture plugin',
+                    version: '1.0.0', enabled: true, source: { kind: 'path', locator: '/plugins/acme.mcp-fixture' } } },
+                familiesById: { mcp: { family: 'mcp', entriesById: {
+                    'server:acme.mcp-fixture/tools': { id: 'server:acme.mcp-fixture/tools', pluginId: 'acme.mcp-fixture',
+                        localId: 'tools', contributionKind: 'server', title: 'Fixture tools', kind: 'dynamic' },
+                } } },
+            },
+        });
+        const { McpSettingsLayout } = await import('./McpSettingsLayout');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const replace = vi.fn();
+        const screen = await renderSettingsView(
+            <DestinationInstanceHost tabId="mcp-settings" ref={{ kind: 'settings', params: { pageId: 'mcp' } }}
+                pathname="/settings/mcp" focused visible navigation={{ push: () => {}, replace, back: () => {} }}>
+                <McpSettingsLayout />
+            </DestinationInstanceHost>,
+        );
+        const stage = screen.root.findAll(node => node.props.testID === 'settings-mcp-layout' && typeof node.props.onLayout === 'function')[0]!;
+        await act(async () => stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1280, height: 800 } } }));
+        const pluginServerId = 'plugin:acme.mcp-fixture/tools';
+        const row = `mcp.server.plugin.${pluginServerId}`;
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('settings.mcpServers.rail')).not.toBeNull();
+            expect(screen.findByTestId(row)).not.toBeNull();
+            expect(screen.findByTestId('settings.mcpServers.empty')).toBeNull();
+        });
+        await screen.pressByTestIdAsync(row);
+        await vi.waitFor(() => expect(replace).toHaveBeenCalledWith(mcpServerRoute(pluginServerId)));
     });
 
     it('lists each server with where it applies, flags one that applies nowhere, and adds in the collection', async () => {
