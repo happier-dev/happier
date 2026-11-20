@@ -193,4 +193,99 @@ test.describe('Project Open recovery and native Form authoring', () => {
       await expect(page.getByTestId('project-scripts-screen.script:journey-task')).toBeVisible({ timeout: 120_000 });
     } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
   });
+
+  test('TS.A.environment imports names into personal Scripts and retains them across reload', async ({ page }) => {
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await signIn(page);
+      const root = join(workspaceDir, 'personal-form');
+      const manifestPath = join(root, '.happier', 'project.json');
+      const repositoryBytes = '{"version":1}\n';
+      const name = 'PROJECT_SETUP_PERSONAL_NAME';
+      const sampleValue = 'fixture-example-value';
+      await mkdir(join(root, '.happier'), { recursive: true });
+      await writeFile(manifestPath, repositoryBytes);
+      await writeFile(join(root, '.env.example'), `${name}=${sampleValue}\n`);
+      await openFolder(page, root);
+      await page.getByTestId('projects.open.submit').click();
+      await expect(page.getByTestId('project-shell-header.checkout')).toBeVisible();
+      const edit = page.getByTestId('project-scripts-screen.edit');
+      const personal = page.getByTestId('project-manifest-editor.target:personal');
+      const imported = page.getByTestId(`project-manifest-editor.environment:${name}`);
+      await page.getByTestId('project-shell-header.pages-scripts').click();
+      await expect(edit).toBeVisible();
+      const scriptsUrl = page.url();
+      await edit.click();
+      await personal.click();
+      await page.getByTestId('project-manifest-editor.environment.import').click();
+      await expect(imported).toBeVisible();
+      await expect(page.getByTestId('project-manifest-editor')).not.toContainText(sampleValue);
+      const save = page.getByTestId('project-manifest-editor.save');
+      await expect(save).toBeEnabled();
+      await save.click();
+      await expect(page.getByTestId('project-manifest-editor')).toHaveCount(0);
+      expect(await readFile(manifestPath, 'utf8')).toBe(repositoryBytes);
+
+      // Remove the import source before reopening, so only the saved personal setup
+      // can supply this name to the new UI client.
+      await writeFile(join(root, '.env.example'), '');
+      await gotoDomContentLoadedWithRetries(page, scriptsUrl);
+      await edit.click();
+      await personal.click();
+      await expect(imported).toBeVisible();
+      await expect(page.getByTestId('project-manifest-editor')).not.toContainText(sampleValue);
+      expect(await readFile(manifestPath, 'utf8')).toBe(repositoryBytes);
+    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
+  });
+
+  test('TS.E.projectRetry shows ordered daemon step results in the shared checklist', async ({ page }) => {
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      await signIn(page);
+      const root = join(workspaceDir, 'retry-checklist');
+      await mkdir(join(root, '.happier'), { recursive: true });
+      await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({ version: 1, workspace: { setup: [
+        { kind: 'command', command: 'printf first >> first-effects' },
+        { kind: 'command', command: 'test -f allow-second && printf second >> second-effects' },
+      ] } }));
+      await openFolder(page, root);
+      await page.getByTestId('projects.open.submit').click();
+      await expect(page.getByTestId('project-shell-header.checkout')).toBeVisible();
+      await page.getByTestId('project-shell-header.pages-scripts').click();
+      const setup = 'project-scripts-screen.setup';
+      const runSetup = page.getByTestId(`${setup}.run`);
+      await expect(runSetup).toBeVisible();
+      const scriptsUrl = page.url();
+      await runSetup.click();
+      await page.getByTestId(`${setup}.review.scope:untilChanged`).click();
+      await page.getByTestId(`${setup}.review.run`).click();
+      await expect(page.getByTestId(`${setup}.failed`)).toBeVisible();
+      expect(await readFile(join(root, 'first-effects'), 'utf8')).toBe('first');
+
+      await gotoDomContentLoadedWithRetries(page, `${baseUrl}/inbox?view=updates`);
+      await page.getByTestId(/^inbox\.action-operation\.[^.]+$/).filter({ hasText: /failed/i }).click();
+      const checklist = page.getByTestId('action-operation-detail');
+      const titles = checklist.getByTestId(/-row-.+-title$/);
+      await expect(titles).toHaveCount(2);
+      await expect(titles.nth(0)).toContainText('first-effects');
+      await expect(titles.nth(1)).toContainText('allow-second');
+      const firstRow = await titles.nth(0).getAttribute('data-testid');
+      const secondRow = await titles.nth(1).getAttribute('data-testid');
+      if (!firstRow || !secondRow) throw new Error('Project step checklist row test IDs are unavailable');
+      await expect(checklist.getByTestId(firstRow.replace(/-title$/, ''))).toContainText(/\b(done|succeeded)\b/i);
+      await expect(checklist.getByTestId(secondRow.replace(/-title$/, ''))).toContainText(/\b(error|failed)\b/i);
+
+      await writeFile(join(root, 'allow-second'), 'allow');
+      await gotoDomContentLoadedWithRetries(page, scriptsUrl);
+      await runSetup.click();
+      await expect.poll(async () => {
+        try { return await readFile(join(root, 'second-effects'), 'utf8'); }
+        catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+          throw error;
+        }
+      }).toBe('second');
+      expect(await readFile(join(root, 'first-effects'), 'utf8')).toBe('first');
+    } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
+  });
 });

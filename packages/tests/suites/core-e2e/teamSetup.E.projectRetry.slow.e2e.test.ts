@@ -12,6 +12,7 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionListActionResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { decodeTerminalStreamBytesFrame, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -86,14 +87,14 @@ async function sessions() {
   } })).sessions;
 }
 
-it('TS.E.projectRetry repeats no confirmed command after failure and requires review for changed inputs', async () => {
+it('TS.E.projectRetry answers a live command and retries only the unconfirmed suffix', async () => {
   const root = join(testDir, 'project');
   await mkdir(join(root, '.happier'), { recursive: true });
   execFileSync('git', ['init', '--quiet', root]);
   execFileSync('git', ['-C', root, 'config', 'remote.origin.url', 'https://github.com/happier-dev/project-retry.git']);
   // These authored shell commands are actual finite processes on the Linux test host.
   const manifest = { version: 1, workspace: { setup: [
-    { kind: 'command', command: 'printf first >> first-effects' },
+    { kind: 'command', command: 'printf "Choose setup value: "; read -r value && printf "%s" "$value" >> first-effects' },
     { kind: 'command', command: 'sh init-second.sh' },
   ] } };
   const executable = join(root, 'init-second.sh');
@@ -140,6 +141,32 @@ it('TS.E.projectRetry repeats no confirmed command after failure and requires re
   const reviewedEffectDigest = review!.setupReview!.reviewedEffectDigest;
   await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: accepted.operationId,
     expectedEffectDigest: reviewedEffectDigest, consentScope: 'untilChanged' }, true);
+  // Read the terminal attached by the running step, as an operator would on
+  // re-opening the retained operation. The command must receive the answer.
+  let terminalId: string | undefined;
+  await waitFor(async () => {
+    const running = await observe(accepted.operationId);
+    if (running.domainRef?.kind === 'projectCommand') {
+      terminalId = running.domainRef.steps?.find(step => step.index === 0 && step.state === 'running')?.terminalId;
+    }
+    return terminalId !== undefined;
+  }, { context: 'Project setup first step terminal', failFast: true });
+  if (!terminalId) throw new Error('Project setup first step did not expose a terminal');
+  const terminal = { serverId: workspace.serverId, machineId, terminalId };
+  let offset = 0;
+  let output = '';
+  await waitFor(async () => {
+    const stream = TerminalStreamReadResponseSchema.parse(await action('machines.terminal.read', {
+      ...terminal, byteOffset: offset, holdForOutput: true,
+    }));
+    if (!stream.ok) throw new Error(`Project setup terminal read refused: ${stream.code}`);
+    offset = stream.nextByteOffset;
+    output += stream.frames.filter(frame => frame.t === 'bytes')
+      .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)).toString('utf8')).join('');
+    return output.includes('Choose setup value:');
+  }, { context: 'Project setup prompt', failFast: true });
+  await action('machines.terminal.write', { ...terminal, event: { t: 'text', text: 'first' } });
+  await action('machines.terminal.write', { ...terminal, event: { t: 'key', key: 'enter' } });
   const failed = await settle(accepted.operationId);
   expect(failed).toMatchObject({ state: 'failed', error: { errorCode: 'project_setup_step_failed' } });
   expect(await readFile(join(root, 'first-effects'), 'utf8')).toBe('first');
