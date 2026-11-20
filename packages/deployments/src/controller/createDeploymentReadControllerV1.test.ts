@@ -25,7 +25,6 @@ function networkBoundary() {
         readEnvironment: vi.fn<DeploymentReadTransportV1['readEnvironment']>().mockResolvedValue({ ok: true, value: environmentDetail }),
         listHistory: vi.fn<DeploymentReadTransportV1['listHistory']>().mockResolvedValue({ ok: true, value: { ok: true, items: [createDeploymentReceiptHeaderV1()], nextCursor: null } }),
         readReceipt: vi.fn<DeploymentReadTransportV1['readReceipt']>().mockResolvedValue({ ok: true, value: receiptDetail }),
-        observeReceipts: vi.fn<NonNullable<DeploymentReadTransportV1['observeReceipts']>>().mockResolvedValue({ ok: true, value: [] }),
     } satisfies DeploymentReadTransportV1;
     return { environment, environmentDetail, receipt, receiptDetail, transport };
 }
@@ -70,7 +69,6 @@ describe('deployment demand read controller', () => {
             expect(environment.getSnapshot().value).toHaveProperty('builtInUrls', null);
             expect(base.transport.readEnvironment).toHaveBeenCalledTimes(1);
             expect(base.transport.readReceipt).toHaveBeenCalledTimes(3);
-            expect(base.transport.observeReceipts).not.toHaveBeenCalled();
         } finally { receipt.release(); environment.release(); controller.retire(); }
     });
     it('retains database growth in the page owner and does no native reads while hidden', async () => {
@@ -170,7 +168,6 @@ describe('deployment demand read controller', () => {
         await lease.refresh();
         expect(read).toHaveBeenCalledTimes(3);
         expect(base.transport.readEnvironment).toHaveBeenCalledTimes(0);
-        expect(base.transport.observeReceipts).toHaveBeenCalledTimes(0);
         expect(observeDomainHealth).toHaveBeenCalledTimes(0);
         expect(observeEnvironmentHealth).toHaveBeenCalledTimes(0);
         lease.release(); controller.retire();
@@ -800,8 +797,7 @@ describe('deployment demand read controller', () => {
         const running = { ...receiptDetail, deployment: createDeploymentReceiptHeaderV1({ ...receiptDetail.deployment,
             state: 'running', settledAtMs: undefined }) };
         transport.readReceipt.mockResolvedValue({ ok: true, value: { ...running, cancellable: true } });
-        // The UI transport has no native observation port; this fact must not open another reader.
-        const controller = createDeploymentReadControllerV1({ scope, transport: { ...transport, observeReceipts: undefined } });
+        const controller = createDeploymentReadControllerV1({ scope, transport });
         const lease = controller.acquireReceipt(environment.id, receiptDetail.deployment.id, active);
         try {
             await lease.refresh();
@@ -923,7 +919,7 @@ describe('deployment demand read controller', () => {
             items: [{ environment, title, currentDeployment: detail.deployment }], nextCursor: null,
         } }));
         transport.readReceipt.mockImplementation(async () => ({ ok: true, value: detail }));
-        const controller = createDeploymentReadControllerV1({ scope, transport: { ...transport, readActivity, observeReceipts: undefined } });
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...transport, readActivity } });
         const page = controller.acquireCollection({}, active);
         const badge = controller.acquireActivity(active);
         const receipt = controller.acquireReceipt(environment.id, detail.deployment.id, active);
@@ -1302,40 +1298,30 @@ describe('deployment demand read controller', () => {
         lease.release(); controller.retire();
     });
 
-    it('keeps 100 settled history rows dormant and batches only demanded unsettled ids per target', async () => {
+    it('lists 100 retained receipts without opening any and refreshes only the demanded receipt on push', async () => {
         const { environment, transport } = networkBoundary();
-        const settled = Array.from({ length: 100 }, (_, i) => createDeploymentReceiptHeaderV1({ id: `settled-${i}`, environmentId: environment.id, state: 'succeeded' }));
-        transport.listHistory.mockResolvedValue({ ok: true, value: { ok: true, items: settled, nextCursor: null } });
-        const running = ['a', 'b'].map(id => createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id, environmentId: environment.id, state: 'running', targetLinkId: 'target' }) }));
-        const unknown = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'unknown', environmentId: environment.id, state: 'outcome_unknown' }) });
-        const settledDetails = settled.map(deployment => createDeploymentReceiptDetailV1({ deployment }));
-        transport.readReceipt.mockImplementation(async (_scope, _environmentId, id) => ({ ok: true,
-            value: running.find(row => row.deployment.id === id) ?? settledDetails.find(row => row.deployment.id === id) ?? unknown,
+        const settled = Array.from({ length: 100 }, (_, i) => createDeploymentReceiptHeaderV1({
+            id: `settled-${i}`, environmentId: environment.id, state: 'succeeded',
         }));
-        transport.observeReceipts.mockResolvedValue({ ok: true, value: structuredClone(running) });
+        transport.listHistory.mockResolvedValue({ ok: true, value: { ok: true, items: settled, nextCursor: null } });
+        const pending = createDeploymentReceiptHeaderV1({ id: 'running', environmentId: environment.id, state: 'running' });
+        transport.readReceipt.mockResolvedValue({ ok: true, value: createDeploymentReceiptDetailV1({ deployment: pending }) });
         const controller = createDeploymentReadControllerV1({ scope, transport });
         const history = controller.acquireHistory(environment.id, {}, active);
         await history.refresh();
         expect(history.getSnapshot().value?.items).toHaveLength(100);
-        const openedSettled = settled.map(row => controller.acquireReceipt(environment.id, row.id, active));
-        await Promise.all(openedSettled.map(lease => lease.refresh()));
-        expect(transport.observeReceipts).not.toHaveBeenCalled();
-        expect(openedSettled.every(lease => lease.getSnapshot().value?.deployment.state === 'succeeded')).toBe(true);
-        const dormant = controller.acquireReceipt(environment.id, unknown.deployment.id, active);
-        await dormant.refresh();
-        expect(transport.observeReceipts).not.toHaveBeenCalled();
-        const first = controller.acquireReceipt(environment.id, 'a', active);
-        const second = controller.acquireReceipt(environment.id, 'b', active);
-        await Promise.all([first.refresh(), second.refresh()]);
-        await Promise.resolve();
-        expect(transport.observeReceipts).toHaveBeenCalledTimes(1);
-        expect(transport.observeReceipts.mock.calls[0]?.[1]).toBe('target');
-        expect(transport.observeReceipts.mock.calls[0]?.[2]).toEqual(['a', 'b']);
-        first.setDemand(hidden);
-        second.release();
-        controller.invalidate({ environmentId: environment.id, deploymentId: 'a' });
-        await first.refresh();
-        expect(transport.observeReceipts).toHaveBeenCalledTimes(1);
+        expect(transport.readReceipt).not.toHaveBeenCalled();
+
+        const running = controller.acquireReceipt(environment.id, pending.id, active);
+        await running.refresh();
+        expect(transport.readReceipt).toHaveBeenCalledTimes(1);
+        transport.readReceipt.mockResolvedValue({ ok: true, value: createDeploymentReceiptDetailV1({
+            deployment: { ...pending, revision: pending.revision + 1, state: 'succeeded' },
+        }) });
+        controller.invalidate({ environmentId: environment.id, deploymentId: pending.id });
+        await running.refresh();
+        expect(running.getSnapshot().value?.deployment.state).toBe('succeeded');
+        expect(transport.readReceipt.mock.calls.map(([, , id]) => id)).toEqual([pending.id, pending.id]);
         controller.retire();
     });
 
@@ -1426,34 +1412,6 @@ describe('deployment demand read controller', () => {
         controller.retire();
     });
 
-    it('isolates a failed target batch and aborts an observation when its demand closes', async () => {
-        const { environment, transport } = networkBoundary();
-        const a = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'a', environmentId: environment.id, targetLinkId: 'target-a', state: 'running' }) });
-        const b = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'b', environmentId: environment.id, targetLinkId: 'target-b', state: 'running' }) });
-        transport.readReceipt.mockImplementation(async (_scope, _environment, id) => ({ ok: true, value: id === 'a' ? a : b }));
-        let resolveObservation!: (value: Awaited<ReturnType<NonNullable<DeploymentReadTransportV1['observeReceipts']>>>) => void;
-        transport.observeReceipts.mockImplementation(async (_scope, target) => target === 'target-a'
-            ? { ok: false, failure: { code: 'plugin_unavailable', retryable: false } }
-            : new Promise(resolve => { resolveObservation = resolve; }));
-        const controller = createDeploymentReadControllerV1({ scope, transport });
-        const first = controller.acquireReceipt(environment.id, a.deployment.id, active);
-        const second = controller.acquireReceipt(environment.id, b.deployment.id, active);
-        await Promise.all([first.refresh(), second.refresh()]);
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(first.getSnapshot().failure?.code).toBe('plugin_unavailable');
-        expect(second.getSnapshot().failure).toBeNull();
-        const observation = transport.observeReceipts.mock.calls.find(call => call[1] === 'target-b')!;
-        second.setDemand(hidden);
-        expect(observation[3].signal.aborted).toBe(true);
-        const previous = second.getSnapshot();
-        resolveObservation({ ok: true, value: [createDeploymentReceiptDetailV1({ ...b, deployment: { ...b.deployment, state: 'succeeded', revision: b.deployment.revision + 1 } })] });
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(second.getSnapshot()).toBe(previous);
-        controller.retire();
-    });
-
     it.each(['reconnect', 'explicit'] as const)('supersedes a stalled read on %s recovery without awaiting or disclosing its late response', async mode => {
         const { environment, environmentDetail, transport } = networkBoundary();
         let resolveStalled!: (value: Awaited<ReturnType<DeploymentReadTransportV1['readEnvironment']>>) => void;
@@ -1519,7 +1477,6 @@ describe('deployment demand read controller', () => {
             await vi.advanceTimersByTimeAsync(60_000);
             expect(transport.readEnvironment).toHaveBeenCalledTimes(1);
             expect(transport.readReceipt).toHaveBeenCalledTimes(1);
-            expect(transport.observeReceipts).not.toHaveBeenCalled();
             expect(vi.getTimerCount()).toBe(0);
             controller.retire();
         } finally { vi.useRealTimers(); }

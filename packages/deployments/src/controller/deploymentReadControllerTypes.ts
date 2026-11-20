@@ -128,8 +128,6 @@ export type DeploymentReadTransportV1 = Readonly<{
     readEnvironment(scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<unknown>>;
     listHistory(scope: DeploymentReadScopeV1, environmentId: string, query: DeploymentHistoryQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<unknown>>;
     readReceipt(scope: DeploymentReadScopeV1, environmentId: string, deploymentId: string, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<unknown>>;
-    /** One finite observation of demanded running ids, grouped by their actual target. No page poll. */
-    observeReceipts?(scope: DeploymentReadScopeV1, targetLinkId: string, deploymentIds: readonly string[], options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<readonly unknown[]>>;
     /** One shared, demand-bound subscription to the existing Machine Services Resource. */
     observeEnvironmentHealth?(scope: DeploymentReadScopeV1, detail: DeploymentEnvironmentReadDetailV1,
         publish: (feed: DeploymentEnvironmentHealthFeedV1, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void, options: DeploymentReadOptionsV1): () => void;

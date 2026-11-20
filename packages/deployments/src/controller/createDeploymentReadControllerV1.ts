@@ -3,7 +3,7 @@ import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1S
 import { createDeploymentProjectionV1 } from '../projection/deploymentStore.js';
 import { deriveDeploymentMemberVersionsV1 } from '../projection/deploymentStepProjection.js';
 import { selectDeploymentRuntimeTargetLinkV1 } from '../projection/deploymentSelectors.js';
-import { isDeploymentReadDemandActiveV1, isDeploymentReceiptObservationEligibleV1 } from './deploymentObservationDemand.js';
+import { isDeploymentReadDemandActiveV1 } from './deploymentObservationDemand.js';
 import { createDeploymentReadPageLease } from './deploymentReadPageLease.js';
 import { createDeploymentReadFactLeaseV1 } from './deploymentReadFactLease.js';
 import { projectDeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
@@ -38,7 +38,6 @@ type Entry = {
     demands: Set<{ current: DeploymentReadDemandV1; consumeHealth: boolean }>;
     abort: AbortController | undefined;
     request: Promise<void> | undefined;
-    observation: Observation | undefined;
     healthObservation: DeploymentEnvironmentHealthObservationV1 | undefined;
     nextCursor: string | null;
     dirty: boolean;
@@ -47,7 +46,6 @@ type Entry = {
     /** A wake arrived while both reads were in flight: read once more after they settle. */
     rereadWhenSettled: boolean;
 };
-type Observation = { abort: AbortController; entries: Set<Entry> };
 const invalidResponse: DeploymentReadFailureV1 = { code: 'invalid_response', retryable: false };
 const unavailable: DeploymentReadFailureV1 = { code: 'deployment_read_failed', retryable: true };
 const retiredSnapshot: DeploymentReadSnapshotV1<never> = { status: 'unavailable', value: null, failure: { code: 'authority_changed', retryable: false } };
@@ -68,9 +66,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
 }>): DeploymentReadControllerV1 {
     const scope = Object.freeze({ ...suppliedScope });
     const entries = new Map<string, Entry>();
-    const observationDemand = new Set<Entry>();
     const observeCollectionHealth = transport.observeEnvironmentCollectionHealth;
-    let observationQueued = false;
     let retired = false;
     const active = (entry: Entry) => !retired && [...entry.demands].some(demand => isDeploymentReadDemandActiveV1(demand.current));
     const syncHealthObservation = (entry: Entry, collectionWasActive?: boolean) => {
@@ -89,14 +85,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         if (value === null) stopDeploymentEnvironmentHealthObservationV1(entry);
         if (entry.resource.kind === 'receipt' && value === null) refreshMemberVersions(entry.resource.environmentId!);
     }
-    function stopObservation(entry: Entry) {
-        observationDemand.delete(entry);
-        const batch = entry.observation;
-        if (!batch) return;
-        entry.observation = undefined;
-        batch.entries.delete(entry);
-        if (batch.entries.size === 0) batch.abort.abort();
-    }
     function stopRead(entry: Entry) {
         entry.rereadWhenSettled = false;
         if (entry.request) entry.dirty = true;
@@ -114,7 +102,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
      */
     function pauseRead(entry: Entry) {
         entry.rereadWhenSettled = false;
-        stopObservation(entry);
     }
     function receipt(entry: Entry): DeploymentReceiptDetailV1 | null {
         return entry.resource.kind === 'receipt' ? entry.projection.getSnapshot().value as DeploymentReceiptDetailV1 | null : null;
@@ -230,55 +217,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         syncHealthObservation(entry);
         if (entry.resource.kind === 'receipt') refreshMemberVersions(entry.resource.environmentId!);
     }
-    function queueObservation(entry: Entry) {
-        const value = receipt(entry);
-        if (!transport.observeReceipts || !active(entry) || !value || !isDeploymentReceiptObservationEligibleV1(value.deployment.state)) return;
-        observationDemand.add(entry);
-        if (observationQueued) return;
-        observationQueued = true;
-        // Gather this turn's ready ids before crossing the network boundary.
-        queueMicrotask(flushObservations);
-    }
-    function flushObservations() {
-        observationQueued = false;
-        const targets = new Map<string, Entry[]>();
-        for (const entry of observationDemand) {
-            const value = receipt(entry);
-            if (!active(entry) || !value || !isDeploymentReceiptObservationEligibleV1(value.deployment.state)) continue;
-            const target = value.deployment.targetLinkId;
-            const group = targets.get(target) ?? [];
-            group.push(entry);
-            targets.set(target, group);
-        }
-        observationDemand.clear();
-        for (const [target, demanded] of targets) {
-            const batch: Observation = { abort: new AbortController(), entries: new Set(demanded) };
-            for (const entry of demanded) { stopObservation(entry); entry.observation = batch; }
-            void observe(target, batch);
-        }
-    }
-    async function observe(target: string, batch: Observation) {
-        try {
-            const response = await transport.observeReceipts!(scope, target, [...batch.entries].map(entry => entry.resource.deploymentId!), { signal: batch.abort.signal });
-            if (retired || batch.abort.signal.aborted) return;
-            if (!response.ok) {
-                for (const entry of batch.entries) if (active(entry)) fail(entry, response.failure);
-                return;
-            }
-            const values = response.value.map(value => DeploymentReceiptDetailV1Schema.safeParse(value));
-            for (const entry of batch.entries) {
-                if (!active(entry)) continue;
-                const value = values.find(parsed => parsed.success && parsed.data.deployment.id === entry.resource.deploymentId);
-                if (!value?.success || value.data.deployment.environmentId !== entry.resource.environmentId || value.data.deployment.targetLinkId !== target) {
-                    fail(entry, invalidResponse);
-                } else publishValue(entry, value.data);
-            }
-        } catch {
-            if (!retired && !batch.abort.signal.aborted) for (const entry of batch.entries) if (active(entry)) fail(entry, unavailable);
-        } finally {
-            for (const entry of batch.entries) if (entry.observation === batch) entry.observation = undefined;
-        }
-    }
     function refresh(entry: Entry, supersede = false): Promise<void> {
         if (!active(entry)) return Promise.resolve();
         if (entry.request && !supersede) return entry.request;
@@ -288,7 +226,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             entry.overlap = undefined;
             stopDeploymentEnvironmentHealthObservationV1(entry);
         }
-        stopObservation(entry);
         const abort = new AbortController();
         entry.abort = abort;
         if (entry.projection.getSnapshot().value === null) entry.projection.publish({ status: 'loading', value: null, failure: null });
@@ -319,7 +256,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 try { value = entry.resource.admit(response.value); }
                 catch { fail(entry, invalidResponse); return; }
                 publishValue(entry, value);
-                queueObservation(entry);
             } catch {
                 if (!current() || (entry.abort === abort && entry.overlap)) return;
                 settle();
@@ -344,7 +280,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         if (!active(entry)) return Promise.resolve();
         if (!entry.request) return refresh(entry);
         if (entry.overlap) { entry.rereadWhenSettled = true; return entry.overlap.request; }
-        stopObservation(entry);
         const abort = new AbortController();
         const overlap: NonNullable<Entry['overlap']> = { abort, request: Promise.resolve() };
         entry.overlap = overlap;
@@ -355,7 +290,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         let entry = entries.get(resource.key);
         if (!entry) {
             entry = { resource, projection: createDeploymentProjectionV1(), demands: new Set(), abort: undefined, request: undefined,
-                observation: undefined, healthObservation: undefined,
+                healthObservation: undefined,
                 nextCursor: null, dirty: true, overlap: undefined, rereadWhenSettled: false };
             entries.set(resource.key, entry);
         }
@@ -590,7 +525,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     : resource.environmentId === hint.environmentId && (hint.deploymentId === undefined
                         ? resource.kind === 'environment' || resource.kind === 'domains'
                         : resource.kind === 'history' || (resource.kind === 'receipt' && resource.deploymentId === hint.deploymentId)));
-                if (affected) { entry.dirty = true; stopObservation(entry); void revalidate(entry); }
+                if (affected) { entry.dirty = true; void revalidate(entry); }
             }
         },
         invalidateSavedSecrets(resourceIds) {
@@ -606,7 +541,6 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     return reference.kind === 'shared_resource' && (ids === undefined || ids.has(reference.resourceId));
                 })) continue;
                 entry.dirty = true;
-                stopObservation(entry);
                 void revalidate(entry);
             }
         },
@@ -618,11 +552,10 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             if (retired) return;
             retired = true;
             for (const entry of entries.values()) {
-                stopRead(entry); stopObservation(entry);
+                stopRead(entry);
                 stopDeploymentEnvironmentHealthObservationV1(entry);
                 entry.projection.publish(retiredSnapshot);
             }
-            observationDemand.clear();
         },
     };
     return controller;

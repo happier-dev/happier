@@ -48,15 +48,41 @@ describe('New app registry gallery', () => {
   });
 });
 
-async function starterHome(serverUrl: string, catalogResponse?: Promise<Response>) {
+async function starterHome(serverUrl: string, catalogResponse?: Promise<Response>, onRead?: () => void) {
   const catalog = JSON.parse(readFileSync(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8'));
   return createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
     key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{
       id: 'starter-catalog', title: 'Project starters', format: 'happier-catalog', kinds: ['starter'],
       url: serverUrl + '/starters.json', enabled: true, addedAt: 0,
     }] },
-  }, 'updated', { handleRequest: async path => path === '/starters.json' ? catalogResponse ?? Response.json(catalog) : null });
+  }, 'updated', { handleRequest: async path => {
+    if (path !== '/starters.json') return null;
+    onRead?.();
+    return catalogResponse ?? Response.json(catalog);
+  } });
 }
+
+it('reads starters only when the gallery opens and keeps the deep-linked starter for configuration', async () => {
+  const reads = vi.fn();
+  const fixture = await starterHome('https://new-app-starter-demand.test', undefined, reads);
+  const screen = await renderScreen(<NewAppScreen onClose={() => {}} startOn="describe" starterId="static-website" />);
+  try {
+    expect(screen.findByTestId('newApp.auto.description')).toBeTruthy();
+    await flushHookEffects({ cycles: 8 });
+    expect(reads).not.toHaveBeenCalled();
+
+    await screen.pressByTestIdAsync('newApp.back');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(false));
+    expect(reads).toHaveBeenCalledTimes(1);
+    await screen.pressByTestIdAsync('newApp.continue');
+    expect(screen.findByTestId('newApp.details')).toBeTruthy();
+    await flushHookEffects({ cycles: 8 });
+    expect(reads).toHaveBeenCalledTimes(1);
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
 
 it('names the failed app catalog without saying visible catalog apps are hidden', async () => {
   const { deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');

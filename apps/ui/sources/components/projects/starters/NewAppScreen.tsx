@@ -179,14 +179,17 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [query, setQuery] = React.useState('');
   // A pasted repository link is read by Your code, not searched for: starters and the catalog stay as they were.
   const search = isRepositoryAddressCandidate(query) ? '' : query.trim();
-  const { read: starterCatalog, items: starters, state: starterState } =
-    useDeploymentStarterList({ query: search }, { presented: true }, machines.length > 0);
-
   const [step, setStep] = React.useState<Step>(props.suggestion || props.startOn === 'describe' ? 'auto' : 'start');
+  // Keep the selected starter available when its gallery stops reading or a search hides its tile.
+  const [pickedStarter, setPickedStarter] = React.useState<RegistryCatalogItemSummary | null>(null);
+  const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(props.suggestion ?? null);
+  const resolvingSuggestedStarter = step === 'describe' && pickedStarter === null
+    && appliedSuggestion?.recommendation.source.kind === 'starter';
+  const { read: starterCatalog, items: starters, state: starterState } =
+    useDeploymentStarterList({ query: search }, { presented: step === 'start' || resolvingSuggestedStarter }, machines.length > 0);
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
   const auto = useNewAppAutoSuggestions({ serverId: scope?.serverId ?? null, active: step === 'auto',
     initial: props.suggestion ? { description: props.suggestion.description, chosen: props.suggestion } : null });
-  const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(props.suggestion ?? null);
   // The open questions round's answers (journey-deploy F2): the step owns them, the footer sends them.
   const [questionAnswers, setQuestionAnswers] = React.useState<TransientQuestionAnswerState | null>(null);
   // Adjust (journey-deploy autoAdjust) is a view of the cards: it holds only while a chosen setup is shown.
@@ -225,8 +228,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setPastedRepository(null);
     }
   }, []);
-  // The chosen starter stays chosen while a search hides its tile.
-  const [pickedStarter, setPickedStarter] = React.useState<RegistryCatalogItemSummary | null>(null);
   const chooseStarter = React.useCallback((next: string | null) => {
     setStarterId(next);
     setPickedStarter(next ? starters.find((candidate) => candidate.itemId === next) ?? null : null);
@@ -282,6 +283,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const starter =
     starters.find((candidate) => candidate.itemId === starterId)
     ?? (pickedStarter?.itemId === starterId ? pickedStarter : null);
+  React.useEffect(() => {
+    if (resolvingSuggestedStarter && starter) setPickedStarter(starter);
+  }, [resolvingSuggestedStarter, starter]);
   const effectiveMachineId =
     machineId ??
     (machines.some((candidate) => candidate.id === thisComputerMachineId)
@@ -611,6 +615,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               startDeploy({ kind: 'repository', projectSourceId: codeSourceId });
               return;
             }
+            setPickedStarter(starter);
             setStep('describe');
           },
           testID: 'newApp.continue',
