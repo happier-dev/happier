@@ -149,17 +149,17 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const pickerBinding = bindingHook.getCurrent().picker.binding!;
         const held = createDeferred<void>();
         let available = true;
-        harness.answer(serverId, '/v1/actions/machines.provisioners.check', { async select(value) {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            await held.promise;
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId,
-                execution: { ok: true, result: available ? { available: true } : { available: false, code: 'lima_2_required' } } } };
-        } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select(value) {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: createMachineProvisionerOptionsFixture() } } };
-        } });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'controller', installationId: 'installation', actionId: 'machines.provisioners.check', tokenEpoch: 0,
+            execute: async () => {
+                await held.promise;
+                return available ? { available: true } : { available: false, code: 'lima_2_required' };
+            },
+        });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'controller', installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: () => createMachineProvisionerOptionsFixture(),
+        });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const { readManagedConfiguration } = await import('./readManagedConfiguration');
         const { refreshManagedProvisionerAvailability } = await import('./managedProvisionerAvailability');
@@ -199,17 +199,14 @@ describe('managed configurator uses the exact Home Action front door', () => {
         await waitForHomeGovernance(() => expect(bindingHook.getCurrent().binding).not.toBeNull());
         const binding = bindingHook.getCurrent().binding!;
         const qualifiers: unknown[] = [];
-        harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select(value) {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            qualifiers.push(request.input);
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId,
-                execution: { ok: true, result: { available: true } } } };
-        } });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select(value) {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
-                execution: { ok: true, result: createMachineProvisionerOptionsFixture() } } };
-        } });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'host', installationId: 'installation', actionId: 'machines.provisioners.check', tokenEpoch: 0,
+            execute: input => { qualifiers.push(input); return { available: true }; },
+        });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'host', installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: () => createMachineProvisionerOptionsFixture(),
+        });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const { readManagedConfiguration } = await import('./readManagedConfiguration');
         const nativeInput = { homeId, controller: { machineId: 'host', installationId: 'installation' },
@@ -240,11 +237,11 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const details = { kind: 'managedNative', nativeCause } as const;
         const failureCause = { phase: 'machines.provisioners.options', errorClass: 'ManagedMachineControllerError',
             errorCode: 'credential_scope_denied', httpStatus: null } as const;
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'action_failed', error: 'action_failed', details, failureCause } } };
-        } });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'host', installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: () => null,
+            failure: () => ({ errorCode: 'action_failed', error: 'action_failed', details, failureCause }),
+        });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_failed_options');
         const input = { homeId: 'srv_failed_options', controller: { machineId: 'host', installationId: 'installation' },
@@ -300,13 +297,13 @@ describe('managed configurator uses the exact Home Action front door', () => {
     it('reads a legacy controller catalog through strict native Action admission without inventing combinations', async () => {
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://legacy-options.example', serverIdentityId: 'srv_legacy_options', accountId: 'owner', currentAccount: true });
         const price = { amount: '0.005', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 };
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: envelope.requestId, execution: { ok: true, result: {
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'host', installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: () => ({
                 choices: [{ id: 'first', title: 'First complete launch', launch: { cpu: 2, image: 'linux' }, prices: [price] },
                     { id: 'second', title: 'Second complete launch', launch: { cpu: 4, image: 'windows' }, available: false }],
-            } } } };
-        } });
+            }),
+        });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_legacy_options');
         const result = await client.read('machines.provisioners.options', { homeId: 'srv_legacy_options', controller: { machineId: 'host', installationId: 'installation' },
@@ -325,12 +322,14 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const respondAfter = new Promise<void>(resolve => { release = resolve; });
         let issue!: () => void;
         const issued = new Promise<void>(resolve => { issue = resolve; });
-        harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            issue();
-            return { respondAfter, body: { v: 1, actionId: 'machines.provisioners.options', requestId: envelope.requestId,
-                execution: { ok: true, result: createMachineProvisionerOptionsFixture({ code: 'provider_unavailable', nativeCause }) } } };
-        } });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            machineId: 'host', installationId: 'installation', actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: async () => {
+                issue();
+                await respondAfter;
+                return createMachineProvisionerOptionsFixture({ code: 'provider_unavailable', nativeCause });
+            },
+        });
         const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
         const client = createManagedProvisionerClient({ serverId, accountId: 'owner' }, 'srv_native_options');
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
