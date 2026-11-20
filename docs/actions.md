@@ -407,6 +407,12 @@ fan out those operands with the ordinary Action policies. See
 [existing-Session field application](agent-transition.md#existing-session-field-application)
 for how Compose plans those operations.
 
+To retry from an agent, use the failed addresses from the fan-out result as
+the next explicit Session selector, grouped by Home and Action operands. For
+an engine switch, read the current Agent first and send a transition only if
+the target still needs to switch. If message admission was ambiguous, reuse
+the original message identity (`localId`, or the plugin’s `idempotencyKey`).
+
 Fan-out runs concurrently across Machines and in selection order within each
 Machine, using the Machine id in the authorized Session status projection.
 If any target has unknown Machine placement, its whole Home runs sequentially.
