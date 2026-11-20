@@ -486,16 +486,16 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         const context = input.request.context;
         const signal = context.signal && host.signal ? AbortSignal.any([context.signal, host.signal])
             : context.signal ?? host.signal ?? new AbortController().signal;
+        signal.throwIfAborted();
+        const authorization = context.externalActionExecutionAuthorization;
+        if (authorization && !authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
+        if (authorization && !authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
+        if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuseDeploymentAuthorization('requester_authorization_missing');
         let released = false;
         const assertCurrent = async () => {
             signal.throwIfAborted();
             if (released) return refuse('deployment_source_unavailable');
-            const authorization = context.externalActionExecutionAuthorization;
-            if (authorization && !authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
-            if (authorization && !authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
-            if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuseDeploymentAuthorization('requester_authorization_missing');
         };
-        await assertCurrent();
         await host.assertInstalledCurrent?.();
         await recheck();
         const deploymentRoot = await resolveOwnServerDeploymentRootForHost(configuration.happyHomeDir, host.serverId);

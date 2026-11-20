@@ -393,8 +393,9 @@ describe('own-server installed host acquisition', () => {
                     originalActionEnvelope: fixture.envelope, operationAcceptance: { operationId: 'operation', accept() {} } } };
             const installedReadsBeforeAcquisition = installedReads;
             let acquired: Pick<Awaited<ReturnType<typeof runtime.acquire>>, 'exec' | 'nativeIo' | 'release' | 'assertCurrent'>;
-            let reacquire: () => Promise<unknown>;
+            let reacquire: () => Promise<Pick<typeof acquired, 'release' | 'assertCurrent'>>;
             let cwd: string;
+            const projectionReads = { account: 0, http: 0 };
             if (nativePath === 'retention') {
                 if (!runtime.acquireRetention) throw new Error('Installed retention runtime is unavailable');
                 // Constructed owner-guard input: exact header/source retirement
@@ -405,8 +406,27 @@ describe('own-server installed host acquisition', () => {
                     settledTargetLinkRevision: 1, settledDeploymentRevision: 1, activeDeploymentId: 'deployment',
                 } as const;
                 const admitRetention = async () => { retentionAdmissions++; operationSignal.throwIfAborted(); };
-                reacquire = () => runtime.acquireRetention!(retentionInput, admitRetention);
-                const retained = await runtime.acquireRetention(retentionInput, admitRetention);
+                const authorization = prepared.authorization;
+                const acquire = (context: OwnServerDeploymentRuntimeRequest['context']) => runtime.acquireRetention!({
+                    ...retentionInput, request: { ...retentionInput.request, context },
+                }, admitRetention);
+                const withoutAuthorization = { ...runtimeRequest.context, externalActionExecutionAuthorization: undefined,
+                    externalActionCredential: { accountId: fixture.root.binding.accountId, principalId: 'principal', credentialId: 'credential',
+                        grant: { v: 1 as const, actions: { families: [], ids: [] }, targets: { sessions: [], machines: [] },
+                            approve: false, origins: [], models: null, permissionModes: null, create: null } } };
+                for (const invalid of [withoutAuthorization,
+                    { ...runtimeRequest.context, externalActionExecutionAuthorization: { ...authorization, requesterAccountProjection: undefined } },
+                    { ...runtimeRequest.context, externalActionExecutionAuthorization: { ...authorization, requesterHttpProjection: undefined } },
+                ]) await expect(acquire(invalid)).rejects.toMatchObject({ code: 'action_forbidden' });
+                expect(installedReads).toBe(installedReadsBeforeAcquisition);
+                expect(retentionAdmissions).toBe(0);
+
+                reacquire = () => acquire(runtimeRequest.context);
+                const retained = await acquire({ ...runtimeRequest.context, externalActionExecutionAuthorization: {
+                    ...authorization,
+                    get requesterAccountProjection() { projectionReads.account++; return authorization.requesterAccountProjection; },
+                    get requesterHttpProjection() { projectionReads.http++; return authorization.requesterHttpProjection; },
+                } });
                 acquired = retained;
                 cwd = retained.deploymentRoot;
                 await mkdir(cwd, { recursive: true });
@@ -441,6 +461,7 @@ describe('own-server installed host acquisition', () => {
                 await acquired.assertCurrent();
                 await acquired.assertCurrent();
                 expect(retentionAdmissions).toBe(nativePath === 'retention' ? 1 : 0);
+                if (nativePath === 'retention') expect.soft(projectionReads).toEqual({ account: 1, http: 1 });
                 // Installed credential storage is the OS boundary. Admitted
                 // local custody does not reopen it at each source/command guard.
                 expect.soft(installedReads - installedReadsAfterAcquisition).toBe(0);
@@ -479,7 +500,14 @@ describe('own-server installed host acquisition', () => {
                 } finally { await retained.release(); }
                 expect.soft(homeReads).toBe(readsBeforeCommands);
                 expect(await docker.readInvocations()).toHaveLength(2);
+                if (nativePath === 'retention') {
+                    vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(fixture.installed);
+                    const released = await reacquire();
+                    await released.release();
+                    await expect(released.assertCurrent()).rejects.toMatchObject({ code: 'deployment_source_unavailable' });
+                }
                 operation.abort();
+                if (nativePath === 'retention') await expect(acquired.assertCurrent()).rejects.toMatchObject({ name: 'AbortError' });
                 // Do not pass a command signal: the acquired runtime must
                 // retain the receiving operation's cancellation itself.
                 await expect(acquired.exec.run({ executable: tool.executable, cwd,
