@@ -4,6 +4,9 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 
+import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
+
 import { StepMotionLayer } from './StepMotionLayer';
 import { runStepMove, StepMotionStage } from './StepMotionStage';
 
@@ -12,6 +15,13 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+// jsdom has no WebGL context. The real stage and scene still prepare every DOM effect.
+vi.mock('@/components/atmosphere/glyph/GlyphSurface', () => ({
+    GlyphSurface: ({ onReady }: GlyphSurfaceProps) => {
+        React.useEffect(() => { onReady?.('ready'); }, [onReady]);
+        return null;
+    },
+}));
 
 function pointerDown(node: HTMLElement, id: number) {
     const event = new MouseEvent('pointerdown', { bubbles: true });
@@ -89,6 +99,60 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         container.remove();
         window.matchMedia = previousMatchMedia;
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
+        vi.unstubAllGlobals();
+    }
+});
+
+it('clears the outgoing Home copy on its own dissolve effect', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    setReducedMotionPreferenceOverride(false);
+    const previousAnimate = HTMLElement.prototype.animate;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 40, 280, 420));
+    const frozenEffects: Array<ReturnType<typeof collectEffect>> = [];
+    function collectEffect(frames: Keyframe[], duration: number) {
+        return { frames, duration, animation: { onfinish: null as (() => void) | null, cancel() {} } };
+    }
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+        configurable: true,
+        value(this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
+            const effect = collectEffect(frames, Number(options.duration));
+            if (this.style.position === 'fixed' && this.getAttribute('aria-hidden') === 'true') frozenEffects.push(effect);
+            return effect.animation;
+        },
+    });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Journey() {
+        const [home, setHome] = React.useState(false);
+        return <StepMotionStage>{home ? (
+            <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer>
+        ) : (
+            <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => runStepMove({
+                layer: 'workflow', kind: 'home', commit: () => setHome(true),
+            })}>Create account</button></StepMotionLayer>
+        )}</StepMotionStage>;
+    }
+    try {
+        await act(async () => root.render(<Journey />));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        await act(async () => container.querySelector('button')!.click());
+        const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
+        expect(copy?.isConnected).toBe(true);
+        expect(container.querySelector('button')).toBeNull();
+        expect(frozenEffects).toHaveLength(1);
+        const [dissolve] = frozenEffects;
+        expect(dissolve.frames[0]?.opacity).toBe(1);
+        expect(dissolve.frames.at(-1)?.opacity).toBe(0);
+        expect(dissolve.duration).toBeLessThan(1_050);
+        dissolve.animation.onfinish?.();
+        expect(copy?.isConnected).toBe(false);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        rect.mockRestore();
+        Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
+        setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }
 });

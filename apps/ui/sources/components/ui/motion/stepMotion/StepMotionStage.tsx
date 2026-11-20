@@ -187,9 +187,9 @@ function createStepMotionStage(
         const durationMs = duration * 1000;
         const delayMs = animation.epoch - performance.now();
         const cleanups: Array<() => void> = [];
-        const animate = (node: HTMLElement, keyframes: Keyframe[]) => {
-            const effect = node.animate(keyframes, { duration: durationMs, delay: delayMs, fill: 'both' });
-            cleanups.push(() => effect.cancel());
+        const animate = (node: HTMLElement, keyframes: Keyframe[], duration = durationMs) => {
+            const effect = node.animate(keyframes, { duration, delay: delayMs, fill: 'both' });
+            cleanups.push(() => { effect.onfinish = null; effect.cancel(); });
             return effect;
         };
         const building = animation.grammar === 'home' || animation.grammar === 'opening';
@@ -213,9 +213,14 @@ function createStepMotionStage(
             }
             if (!building && focal && element.contains(focal)) animate(focal, frames.map(frame => ({ opacity: frame.focal })));
         };
-        const paintOutgoingWeb = (element: HTMLElement, region: StepAnchor['rect'], pressed?: HTMLElement | null) => {
+        const paintOutgoingWeb = (element: HTMLElement, region: StepAnchor['rect'], pressed?: HTMLElement | null, onCleared?: () => void) => {
             const fold = building ? region : animation.grammar === 'fold' ? sourceRect : undefined;
-            animate(element, frames.map(frame => ({ opacity: frame.leave, clipPath: leaveClip(frame.leaveFront, region, fold) })));
+            const clearFrame = onCleared ? frames.findIndex(frame => frame.leave === 0) : -1;
+            const lastFrame = clearFrame > 0 ? clearFrame : intervals;
+            const dissolve = animate(element, frames.slice(0, lastFrame + 1).map(frame => ({
+                opacity: frame.leave, clipPath: leaveClip(frame.leaveFront, region, fold),
+            })), durationMs * lastFrame / intervals);
+            if (onCleared) dissolve.onfinish = onCleared;
             if (pressed && !building) animate(pressed, frames.map(frame => ({ opacity: frame.pressed })));
         };
         if (web?.animate) {
@@ -233,13 +238,7 @@ function createStepMotionStage(
         };
         if (freeze?.clone) {
             if (reversing) paintIncomingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.webFocal);
-            else paintOutgoingWeb(freeze.clone, freeze.rect, freeze.control);
-            if (!reversing) {
-                const disappearAt = frames.findIndex(frame => frame.leave === 0) / (frames.length - 1);
-                const clear = freeze.clone.animate([{ opacity: 1 }, { opacity: 1 }], { duration: durationMs * disappearAt, delay: delayMs });
-                clear.onfinish = releaseFreeze;
-                cleanups.push(() => { clear.onfinish = null; clear.cancel(); });
-            }
+            else paintOutgoingWeb(freeze.clone, freeze.rect, freeze.control, releaseFreeze);
         }
 
         const finish = (outcome: StepBuildResult) => {
