@@ -458,6 +458,32 @@ it('keeps a saved monitor address hidden until person reveal and copies only its
   expect((await page.getAllByRole('button')).some(button => button.name === 'Copy GET command')).toBe(false);
 });
 
+it.each([
+  { kind: 'uptime-kuma', label: 'Monitor ID', config: { monitorId: '7' }, value: '7', next: '8',
+    editedConfig: { monitorId: '8' } },
+  { kind: 'gatus', label: 'Endpoint name', config: { endpointGroup: 'production', endpointName: 'Shop' }, value: 'Shop', next: 'Store',
+    editedConfig: { endpointGroup: 'production', endpointName: 'Store' } },
+] as const)('restores the selected saved $kind fields and saves its existing check', async ({ kind, label, config, value, next, editedConfig }) => {
+  const first = { checkId: 'http-check', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' },
+    binding: { kind: 'healthCheck' }, config: { endpoint: 'https://shop.example.test', expectStatus: 200 },
+    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 };
+  const mapping = { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: 100 };
+  const saved = { checkId: 'imported-check', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: kind },
+    binding: { kind: 'healthCheck' }, config: { ...config, ...mapping }, periodMs: 300_000,
+    consecutiveFailuresBeforeAlerting: 2 };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject, checks: [first, saved] } });
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Saved check: http-check' })); });
+  await act(async () => { await page.press(await page.getByRole('menuitemradio', { name: 'imported-check' })); });
+  expect((await page.getByRole('button', { name: 'Saved check: imported-check' })).name).toContain('imported-check');
+  expect(document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)?.value).toBe(value);
+  expect(document.querySelector('input[aria-label="Endpoint"]')).toBeNull();
+  await type(label, next);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Save changes' })); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [first, { ...saved, config: { ...editedConfig, ...mapping } }],
+  }) })]);
+});
+
 it('reveals the heartbeat address only on request and rotates it through the contributed Action', async () => {
   const calls: unknown[] = [];
   const copied: string[] = [];

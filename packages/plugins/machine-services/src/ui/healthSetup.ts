@@ -58,6 +58,22 @@ type Draft = Readonly<{
 const EMPTY: Draft = { kind: 'http', endpoint: '', expectStatus: '200', keyword: '', host: '', port: '', hostname: '',
     recordType: 'A', expectedAnswer: '', graceMs: MINUTE, periodMs: MINUTE, consecutiveFailuresBeforeAlerting: 1 };
 
+function readSavedMonitorDraft(check: Check | undefined): Draft | null {
+    if (!check || !isMonitorCheck(check)) return null;
+    const cadence = {
+        periodMs: check.periodMs,
+        consecutiveFailuresBeforeAlerting: check.consecutiveFailuresBeforeAlerting,
+        ...(check.binding.kind === 'domain' ? { domainCondition: check.binding.condition } : {}),
+    };
+    if (check.kind.localId === 'uptime-kuma') {
+        const config = monitorDefinitions['uptime-kuma'].configSchema.safeParse(check.config);
+        return config.success ? { ...EMPTY, ...cadence, kind: 'uptime-kuma', monitorId: config.data.monitorId } : null;
+    }
+    const config = monitorDefinitions.gatus.configSchema.safeParse(check.config);
+    return config.success ? { ...EMPTY, ...cadence, kind: 'gatus',
+        endpointGroup: config.data.endpointGroup, endpointName: config.data.endpointName } : null;
+}
+
 /** The host hands the prebound draft; an observer, when the host names it, decides loopback in place. */
 function readLaunch(input: unknown): Readonly<{ draft: HealthCheckSetupDraftV1; observerMachineId?: string }> | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
@@ -68,10 +84,14 @@ function readLaunch(input: unknown): Readonly<{ draft: HealthCheckSetupDraftV1; 
     return { draft: draft.data, ...(typeof observer === 'string' && observer.length > 0 ? { observerMachineId: observer } : {}) };
 }
 
-function configFor(draft: Draft): unknown {
+function configFor(draft: Draft, retainedMonitorConfig?: Check['config']): unknown {
     if (draft.contributedKind) return contributedConfigValue(draft.contributedKind.configSchema, draft.contributedDraft);
-    if (draft.kind === 'uptime-kuma') return { monitorId: (draft.monitorId ?? '').trim() };
-    if (draft.kind === 'gatus') return { endpointGroup: draft.endpointGroup ?? '', endpointName: draft.endpointName ?? '' };
+    if (isMonitorKind(draft.kind)) {
+        const retained = retainedMonitorConfig !== null && typeof retainedMonitorConfig === 'object'
+            && !Array.isArray(retainedMonitorConfig) ? retainedMonitorConfig : undefined;
+        return draft.kind === 'uptime-kuma' ? { ...retained, monitorId: (draft.monitorId ?? '').trim() }
+            : { ...retained, endpointGroup: draft.endpointGroup ?? '', endpointName: draft.endpointName ?? '' };
+    }
     const optional = (key: string, value: string) => (value.trim() ? { [key]: value.trim() } : {});
     if (draft.kind === 'tcp') return { host: draft.host.trim(), port: Number(draft.port) };
     if (draft.kind === 'dns') return { hostname: draft.hostname.trim(), recordType: draft.recordType,
@@ -169,8 +189,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     observerMachineId?: string; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
-    const [draft, setDraft] = useState<Draft>(EMPTY);
     const [existing, setExisting] = useState(props.existing);
+    const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
+    const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
+    const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? existing[0];
+    const restoredDraft = selectedCheckId !== null || props.existing.length > 0 ? readSavedMonitorDraft(selectedCheck) : null;
+    const draft = editedDraft ?? restoredDraft ?? EMPTY;
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
         destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
@@ -205,7 +229,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [loadingKinds, setLoadingKinds] = useState(false);
     const [kindsUnavailable, setKindsUnavailable] = useState(false);
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
-    const set = (patch: Partial<Draft>) => { setDraft(current => ({ ...current, ...patch })); setRefusedSave(false); };
+    const set = (patch: Partial<Draft>) => { setEditedDraft(current => ({ ...(current ?? draft), ...patch })); setRefusedSave(false); };
+    const selectSavedCheck = (checkId: string) => {
+        setSelectedCheckId(checkId);
+        setEditedDraft(null);
+        setRefusedSave(false);
+    };
     const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set({ contributedKind: kind,
         contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedDraft: contributedConfigDraft(kind.configSchema) });
     const issues = fieldIssues(draft, t);
@@ -226,7 +255,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         && isValidPluginJsonSchemaValue(draft.contributedValidator, configFor(draft)));
     const monitorKind = !draft.contributedKind && isMonitorKind(draft.kind) ? draft.kind : null;
     const monitorValid = !monitorKind || monitorDefinitions[monitorKind].configSchema.safeParse(configFor(draft)).success;
-    const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: existing,
+    const editedMonitor = editedDraft !== null && monitorKind === restoredDraft?.kind ? selectedCheck : undefined;
+    const savedChecks = editedMonitor ? existing.map(check => check === editedMonitor ? {
+        ...check, config: configFor(draft, check.config),
+        consecutiveFailuresBeforeAlerting: draft.consecutiveFailuresBeforeAlerting,
+    } : check) : existing;
+    const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: savedChecks,
         alerts, investigation: investigationMode === 'auto_start'
             ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
     const canAdd = alerts !== undefined && candidate.success && contributedValid && monitorValid && loopback?.refused !== true && !saving;
@@ -309,7 +343,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SavedHeartbeatControls, { subject: props.subject, checks: existing, signal: props.signal }),
-        h(SavedHealthCheckControls, { subject: props.subject, checks: existing, signal: props.signal }),
+        selectedCheck ? h(SavedHealthCheckControls, { subject: props.subject, checks: existing, check: selectedCheck,
+            onSelect: selectSavedCheck, signal: props.signal }) : null,
         ...existing.flatMap(check => {
             if (!isMonitorCheck(check)) return [];
             const kind = check.kind.localId;
@@ -370,7 +405,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
         existing.length > 0 || props.subject.kind === 'environment' ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
-            disabled: alerts === undefined || !savedCandidate.success || saving, busy: saving, testID: 'health-setup-save',
+            disabled: alerts === undefined || !savedCandidate.success || (editedMonitor !== undefined && !monitorValid) || saving,
+            busy: saving, testID: 'health-setup-save',
             onPress: async () => {
                 if (!savedCandidate.success) return;
                 setSaving(true);

@@ -9,17 +9,15 @@ type Check = HealthCheckSetupInputV1['checks'][number];
 const K = 'machineServices.healthSetup.saved';
 
 /** Finite, person-requested runs use exactly the Action declared by the saved kind. */
-export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckSubjectV1;
-    checks: readonly Check[]; signal: AbortSignal }>): ReactElement | null {
+export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckSubjectV1; check: Check;
+    checks: readonly Check[]; onSelect: (checkId: string) => void; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
-    const [checkId, setCheckId] = useState(props.checks[0]?.checkId ?? '');
     const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
     const [busy, setBusy] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
     const [settled, setSettled] = useState<Readonly<{ checkId: string; result: HealthCheckResultV1 }> | null>(null);
-    if (props.checks.length === 0) return null;
-    const check = props.checks.find(item => item.checkId === checkId) ?? props.checks[0]!;
+    const { check } = props;
     const result = settled?.checkId === check.checkId ? settled.result : null;
     const status = result?.status;
     const heartbeat = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 && check.kind.localId === 'heartbeat';
@@ -33,7 +31,7 @@ export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckS
     return h(Stack, { gap: 'small', testID: 'health-saved-checks' },
         h(Field, { label: t(`${K}.check`, 'Saved check') }, h(Select, { label: t(`${K}.check`, 'Saved check'),
             value: check.checkId, presentation: 'field', options: props.checks.map(item => ({ value: item.checkId,
-                label: item.checkId })), onChange: value => { if (typeof value === 'string') { setCheckId(value); setUnavailable(false); } } })),
+                label: item.checkId })), onChange: value => { if (typeof value === 'string') { props.onSelect(value); setUnavailable(false); } } })),
         result ? h(Text, { value: statusText, tone: status === 'up' ? 'success' : status === 'down' ? 'danger' : 'secondary' }) : null,
         unavailable ? h(Text, { tone: 'secondary', value: t(`${K}.unavailable`,
             'The check could not run. Try again when its Machine is available.') }) : null,
