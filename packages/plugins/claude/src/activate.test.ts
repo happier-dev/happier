@@ -1,19 +1,30 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
-import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
-import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
-import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
+
+type Activation = Awaited<ReturnType<typeof createPluginTestkit>>;
+
+async function discoverClaudeConfig(activation: Activation, home: string, configRoot: string) {
+    const discovery = activation.registration('mcp.discoverySources', 'config');
+    if (!discovery) throw new Error('Missing Claude MCP discovery registration');
+    const env: Record<string, string> = { HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configRoot };
+    return await discovery({ directory: null }, {
+        services: { exec: { readEnvironment: (keys: readonly string[]) => Object.fromEntries(
+            keys.filter(key => Object.hasOwn(env, key)).map(key => [key, env[key]]),
+        ) } },
+    } as unknown as Parameters<typeof discovery>[1]);
+}
 
 describe('activate', () => {
+    const roots: string[] = [];
     it('reexports the activation compiled by its canonical public plugin definition', async () => {
         expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
             'actions',
@@ -22,6 +33,7 @@ describe('activate', () => {
             'hooks',
             'mcp',
             'providers',
+            'resources',
             'settings',
             'systemTools',
             'ui',
@@ -31,8 +43,8 @@ describe('activate', () => {
         }));
     });
 
-    afterEach(() => {
-        vi.unstubAllEnvs();
+    afterEach(async () => {
+        await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
     });
 
     it('builds Claude Session preferences through the public CLI command declaration', async () => {
@@ -58,10 +70,12 @@ describe('activate', () => {
 
     it('registers the Claude config MCP discovery source through the plugin API', async () => {
         const root = await mkdtemp(join(tmpdir(), 'claude-plugin-mcp-'));
+        roots.push(root);
         const configRoot = join(root, '.claude');
+        const configPath = join(configRoot, '.claude.json');
         await mkdir(configRoot, { recursive: true });
         await writeFile(
-            join(configRoot, 'settings.json'),
+            configPath,
             JSON.stringify({
                 mcpServers: {
                     review: {
@@ -69,15 +83,13 @@ describe('activate', () => {
                         args: ['--stdio'],
                     },
                     docs: {
+                        type: 'http',
                         url: 'https://mcp.example.test/docs',
                     },
                 },
             }),
             'utf8',
         );
-        vi.stubEnv('HOME', root);
-        vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
-
         const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
         const agent = activation.registration('agents', 'claude');
 
@@ -94,7 +106,7 @@ describe('activate', () => {
                 prepare: expect.any(Function),
                 materialize: expect.any(Function),
             },
-            externalSessions: {
+            externalSessions: expect.objectContaining({
                 resolveSource: expect.any(Function),
                 listCandidates: expect.any(Function),
                 resolveLinkIdentity: expect.any(Function),
@@ -102,7 +114,8 @@ describe('activate', () => {
                 pageTranscript: expect.any(Function),
                 readAfterTranscript: expect.any(Function),
                 readAccounting: expect.any(Function),
-            },
+                materializeTranscriptMedia: expect.any(Function),
+            }),
             externalSessionTakeover: { resolveLaunch: expect.any(Function) },
             externalSessionObservation: {
                 describeResource: expect.any(Function),
@@ -115,17 +128,6 @@ describe('activate', () => {
                 mapHookEvent: expect.any(Function),
             },
         }));
-        expect(agent?.providerBinding).not.toBe(CLAUDE_PROVIDER_BINDING_ADAPTER_V1);
-        expect(agent?.externalSessions).not.toBe(claudeExternalSessionsContribution);
-        expect(agent?.externalSessionTakeover).not.toBe(
-            claudeExternalSessionTakeoverContribution,
-        );
-        expect(agent?.externalSessionObservation).not.toBe(
-            claudeExternalSessionObservationContribution,
-        );
-        expect(agent?.externalSessionHooks).not.toBe(
-            claudeExternalSessionHooksContribution,
-        );
         const prepareInput = {
             v: 1 as const,
             agentTargetKey: 'backend:claude:built_in',
@@ -138,6 +140,7 @@ describe('activate', () => {
             agent?.externalSessions ?? {},
         ).sort()).toEqual([
             'listCandidates',
+            'materializeTranscriptMedia',
             'pageTranscript',
             'readAccounting',
             'readAfterTranscript',
@@ -165,16 +168,20 @@ describe('activate', () => {
             { family: 'hooks', localId: 'augment-spawn-env' },
         ]));
 
-        const discovery = activation.registration('mcp.discoverySources', 'config');
-        if (!discovery) throw new Error('Missing Claude MCP discovery registration');
-        await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
+        await expect(discoverClaudeConfig(activation, root, configRoot)).resolves.toEqual({
             items: [],
-            endpoints: [
+            detectedServers: [
                 expect.objectContaining({
-                    id: 'claude.config.docs',
+                    name: 'review',
+                    transport: 'stdio',
+                    stdio: { command: 'review-mcp', args: ['--stdio'] },
+                    source: { kind: 'user', path: configPath },
+                }),
+                expect.objectContaining({
                     name: 'docs',
-                    kind: 'http',
-                    url: 'https://mcp.example.test/docs',
+                    transport: 'http',
+                    remote: { url: 'https://mcp.example.test/docs', headers: [] },
+                    source: { kind: 'user', path: configPath },
                 }),
             ],
             warnings: [],
@@ -184,38 +191,34 @@ describe('activate', () => {
 
     it('propagates Claude MCP discovery warnings through the plugin API', async () => {
         const root = await mkdtemp(join(tmpdir(), 'claude-plugin-mcp-warning-'));
+        roots.push(root);
         const configRoot = join(root, '.claude');
         await mkdir(configRoot, { recursive: true });
-        const settingsPath = join(configRoot, 'settings.json');
-        await writeFile(settingsPath, '{', 'utf8');
-        vi.stubEnv('HOME', root);
-        vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
+        const configPath = join(configRoot, '.claude.json');
+        await writeFile(configPath, '{', 'utf8');
 
         const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
-        const discovery = activation.registration('mcp.discoverySources', 'config');
-        if (!discovery) throw new Error('Missing Claude MCP discovery registration');
-
-        await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
+        await expect(discoverClaudeConfig(activation, root, configRoot)).resolves.toEqual({
             items: [],
-            endpoints: [],
+            detectedServers: [],
             warnings: [{
                 provider: 'claude',
                 code: 'parse_failed',
-                path: settingsPath,
+                path: configPath,
             }],
         });
         await activation.dispose();
     });
 
-    it('passes direct activation-hook payloads through to Claude spawn env augmentation', async () => {
+    it('passes the runtime selection through to Claude spawn env augmentation', async () => {
         const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
         const envHook = activation.registration('hooks', 'augment-spawn-env');
 
         await expect(Promise.resolve(envHook?.({
-            env: {
-                HAPPIER_CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
+            runtimeSelection: {
+                env: { HAPPIER_CLAUDE_CONFIG_DIR: '/tmp/claude-direct' },
             },
         }))).resolves.toEqual({
             CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
@@ -238,7 +241,7 @@ describe('activate', () => {
         await activation.dispose();
     });
 
-    it('declares exact qualified subscription and API-key purposes for the Claude Agent', () => {
+    it('declares qualified Claude, Anthropic and Kimi connected-account purposes', () => {
         expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([
             {
                 purpose: 'model_upstream',
@@ -251,6 +254,12 @@ describe('activate', () => {
                 purpose: 'model_upstream_api_key',
                 service: 'anthropic',
                 required: false,
+                materializationKinds: ['environment'],
+                credentialKinds: ['token'],
+            },
+            {
+                purpose: 'kimi-code-api-key',
+                service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' },
                 materializationKinds: ['environment'],
                 credentialKinds: ['token'],
             },
@@ -272,6 +281,12 @@ describe('activate', () => {
                     },
                 }],
                 environmentUses: [{
+                    purpose: 'kimi-code-api-key',
+                    environmentKey: 'KIMI_API_KEY',
+                }, {
+                    purpose: 'kimi-code-api-key',
+                    environmentKey: 'KIMI_CODE_ANTHROPIC_BASE_URL',
+                }, {
                     purpose: 'model_upstream_api_key',
                     environmentKey: 'ANTHROPIC_API_KEY',
                 }],

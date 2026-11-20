@@ -187,7 +187,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
         ],
       }),
       assets: {
-        svgIcon: { assetId: 'claude' },
+        svgIcon: { path: 'assets/agent-mark.svg' },
       },
     }));
     expect(CLAUDE_UI_DESCRIPTOR).not.toHaveProperty('settings');
