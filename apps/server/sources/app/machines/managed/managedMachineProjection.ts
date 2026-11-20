@@ -44,6 +44,18 @@ export function readStoredOpaquePresetLaunch(value: unknown): StoredOpaquePreset
     return { contentEncryptionMode, ...parsed };
 }
 
+/** The Account-owned allocation was written by storeOpaquePresetLaunch. Check its mode before disclosure. */
+export function readAdmittedOpaquePresetLaunch(value: unknown): StoredOpaquePresetLaunch {
+    const launch = value as StoredOpaquePresetLaunch | null;
+    if (launch?.contentEncryptionMode !== 'plain' && launch?.contentEncryptionMode !== 'e2ee') {
+        throw new Error('Expected persisted opaque preset content mode');
+    }
+    const tag = launch.content?.t;
+    if (tag !== 'plain' && tag !== 'encrypted') throw new Error('Expected stored opaque preset content');
+    requireStoredPresetMode(launch.contentEncryptionMode, launch.content);
+    return launch;
+}
+
 export function storeOpaquePresetLaunch(input: Readonly<{
     contentEncryptionMode: 'plain' | 'e2ee';
     content: ManagedMachinePresetEnvelopeV1['content'];
@@ -143,14 +155,14 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
     return { structural, enrollmentIdentity, workspaceAttachment: admission.workspaceAttachment };
 }
 
-/** Project an already selected raw row through the established full stored reader. */
-export function projectManagedMachineFull(row: StoredManagedMachine): ManagedMachineFullV1 {
+/** Compose a raw snapshot. The owning Account's admitted one-off inventory can use it directly. */
+export function projectManagedMachineFull(row: StoredManagedMachine, admission?: 'owned-inventory'): ManagedMachineFullV1 {
     const { structural, enrollmentIdentity, workspaceAttachment } = projectManagedMachineStructural(row);
     const resource = row.resource === null ? undefined : row.resource as ManagedMachineFullV1['resource'];
     const controller = structural.controller;
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
         controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
-    return createStoredReadSchema(ManagedMachineFullV1Schema).parse({
+    const projection = {
         ...structural,
         ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: 'plain' } } : {}),
         ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
@@ -163,16 +175,28 @@ export function projectManagedMachineFull(row: StoredManagedMachine): ManagedMac
         launch: row.launch,
         ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
         ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
-    });
+    };
+    return admission === 'owned-inventory' ? projection as ManagedMachineFullV1
+        : createStoredReadSchema(ManagedMachineFullV1Schema).parse(projection);
 }
 
 /** Project an already selected opaque row without opening its private content. */
-export function projectManagedMachineOpaque(row: StoredManagedMachine): ManagedOpaquePresetMachineV1 {
-    const storedOpaquePreset = readStoredOpaquePresetLaunch(row.launch);
+export function projectManagedMachineOpaque(row: StoredManagedMachine, admittedLaunch?: StoredOpaquePresetLaunch): ManagedOpaquePresetMachineV1 {
+    const storedOpaquePreset = admittedLaunch ?? readStoredOpaquePresetLaunch(row.launch);
     const { structural } = projectManagedMachineStructural(row);
-    return createStoredReadSchema(ManagedOpaquePresetMachineV1Schema).parse({
+    const projection = {
         ...structural,
         ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: storedOpaquePreset.contentEncryptionMode } } : {}),
+    };
+    if (admittedLaunch) {
+        return {
+            ...projection,
+            ...(row.observation !== null ? { observation: row.observation } : {}),
+            ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
+        } as ManagedOpaquePresetMachineV1;
+    }
+    return createStoredReadSchema(ManagedOpaquePresetMachineV1Schema).parse({
+        ...projection,
         ...(row.observation !== null ? { observation: ManagedOpaquePresetObservationV1Schema.parse(row.observation) } : {}),
         ...(row.machineSetup === null ? {} : { machineSetup: ManagedOpaqueMachineSetupStateV1Schema.parse(row.machineSetup) }),
     });

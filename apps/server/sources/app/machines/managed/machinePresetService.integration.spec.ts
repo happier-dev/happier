@@ -1,5 +1,5 @@
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyRequest } from 'fastify';
 import tweetnacl from 'tweetnacl';
@@ -1366,6 +1366,16 @@ describe("Machine preset relational owner", () => {
                 presetContent: { content: sealed.content, recipientEnvelope: expectedEnvelope },
             }]);
             expect(listed.json().machines[0].presetContent).not.toHaveProperty('recipients');
+
+            const ownerEnvelope = sealed.recipients.find(recipient => recipient.accountId === owner)?.envelope;
+            expect(ownerEnvelope).toBeDefined();
+            const ownedList = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/list',
+                headers: { 'x-test-user-id': owner }, payload: { homeId, presetId: id } });
+            expect(ownedList.statusCode, ownedList.body).toBe(200);
+            expect(ManagedListOutputV1Schema.parse(ownedList.json()).machines).toEqual([expect.objectContaining({
+                machine: expect.objectContaining({ id: admitted.machine.id }),
+                presetContent: { content: sealed.content, recipientEnvelope: ownerEnvelope },
+            })]);
         } finally {
             await app.close();
         }

@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 import fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { expect, vi } from 'vitest';
+import * as ed25519 from '@happier-dev/protocol/crypto/ed25519';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { ManagedAdmissionOutputV1Schema, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedMachineReadV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { db } from '@/storage/db';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import * as prisma from '@/storage/prisma';
@@ -258,7 +261,8 @@ export async function exerciseManagedProjectionVolume() {
     registerManagedMachineRoutes(app);
     try {
         const rows: StoredManagedMachine[] = [];
-        const lists: Array<{ count: number; value: Awaited<ReturnType<typeof app.inject>>; queries: QueryMeasurement[] }> = [];
+        const lists: Array<{ count: number; value: Awaited<ReturnType<typeof app.inject>>; queries: QueryMeasurement[];
+            checks: { storedRows: number; wireRows: number; signatures: number } }> = [];
         for (const count of [1, 4, 16]) {
             while (rows.length < count) {
                 rows.push(await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
@@ -266,8 +270,19 @@ export async function exerciseManagedProjectionVolume() {
                     admittedActionRequestId: randomUUID(), admittedInput: {}, launch,
                     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }));
             }
-            lists.push({ count, ...await measure(`list-${count}`, () => app.inject({ method: 'POST',
-                url: '/v1/machines/managed/actions/list', payload: { homeId } })) });
+            const storedRows = vi.spyOn(createStoredReadSchema(ManagedMachineFullV1Schema)._zod, 'run');
+            const wireRows = vi.spyOn(ManagedMachineReadV1Schema._zod, 'run');
+            const signatures = vi.spyOn(ed25519, 'verifyEd25519Signature');
+            try {
+                const read = await measure(`list-${count}`, () => app.inject({ method: 'POST',
+                    url: '/v1/machines/managed/actions/list', payload: { homeId } }));
+                lists.push({ count, ...read, checks: { storedRows: storedRows.mock.calls.length,
+                    wireRows: wireRows.mock.calls.length, signatures: signatures.mock.calls.length } });
+            } finally {
+                signatures.mockRestore();
+                wireRows.mockRestore();
+                storedRows.mockRestore();
+            }
         }
         const create = await measure('create', () => app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: {
             input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: { kind: 'one-off', homeId, controller, launch,
@@ -280,7 +295,12 @@ export async function exerciseManagedProjectionVolume() {
         for (const list of lists) {
             expect(list.value.statusCode, list.value.body).toBe(200);
             expect(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(list.value.json()).machines).toHaveLength(list.count);
+            expect(list.queries.filter(query => query.model === 'managedMachine').reduce((sum, query) => sum + query.rows, 0))
+                .toBe(list.count);
         }
+        expect(lists.map(({ count, checks }) => ({ count, ...checks }))).toEqual(lists.map(({ count }) => ({
+            count, storedRows: 0, wireRows: 0, signatures: 0,
+        })));
         expect(create.value.statusCode, create.value.body).toBe(200);
         expect(ManagedAdmissionOutputV1Schema.parse(create.value.json())).toMatchObject({ replayed: false,
             machine: { allocation: 'unsubmitted', launch } });

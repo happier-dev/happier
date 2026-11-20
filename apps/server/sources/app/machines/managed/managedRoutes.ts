@@ -375,8 +375,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     }));
     app.post(managedMachineActionEndpointPathV1("machines.managed.list"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.list"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.list"] } } }, async (request, reply) => respond(reply, async () => {
         const admitted = request.externalActionDeploymentTargetRetentionAdmission;
-        return admitted?.kind === 'restore-read' ? { machines: admitted.machines }
-            : listManagedMachines({ actorAccountId: request.userId, input: request.body });
+        if (admitted?.kind === 'restore-read') return { machines: admitted.machines };
+        const result = await listManagedMachines({ actorAccountId: request.userId, input: request.body });
+        // The inventory owner has already projected each row for this Account.
+        reply.serializer(JSON.stringify);
+        return result;
     }));
     app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, async () => {
         const binding = request.externalActionExecutionAuthorizationBinding;

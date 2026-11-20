@@ -1,9 +1,9 @@
-import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
+import { hasStoredOpaquePresetEnvelope, isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque, readAdmittedOpaquePresetLaunch } from './managedMachineProjection';
 import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedOpaquePresetResourceDependencyV1, isManagedOpaquePresetResourceDispositionV1, ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { isManagedOpaquePresetMachineV1, redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { projectAdmittedManagedMachinePresetForRecipientV1, projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { Prisma } from '@prisma/client';
@@ -296,6 +296,18 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
         const accessible = rows.filter(row => isManagedMachineCreator(row, params.actorAccountId)
             || role(row));
         return { machines: accessible.map(row => {
+            // The owning Account can consume current snapshots written at managed admission.
+            // Shared rows and retained raw presets still use the checked stored reader.
+            if (row.custodianAccountId === params.actorAccountId) {
+                if (row.presetId === null && !hasStoredOpaquePresetEnvelope(row.launch)) return projectManagedMachineFull(row, 'owned-inventory');
+                if (row.presetRevision !== null && isStoredOpaquePresetMachine(row)) {
+                    const launch = readAdmittedOpaquePresetLaunch(row.launch);
+                    return {
+                        machine: projectManagedMachineOpaque(row, launch),
+                        presetContent: projectAdmittedManagedMachinePresetForRecipientV1({ ...launch, recipientAccountId: params.actorAccountId }),
+                    };
+                }
+            }
             const machine = projectManagedMachine(row);
             const projected = row.custodianAccountId !== params.actorAccountId
                 && (isManagedMachineCreator(row, params.actorAccountId) || role(row) !== 'manage')

@@ -875,7 +875,21 @@ export function createManagedMachinePresetSavedSecretReferenceRewriteV1(
   }
 }
 
-/** Remove the recipient audience from a server response without reinterpreting private content. */
+/** Select one Account's envelope from content and recipients already validated at admission. */
+export function projectAdmittedManagedMachinePresetForRecipientV1(params: Readonly<{
+  content: ManagedMachinePresetStoredContentCarrierV1;
+  recipients: ManagedMachinePresetRecipientsV1;
+  recipientAccountId: string;
+}>): ManagedMachinePresetRecipientProjectionV1 {
+  return {
+    content: params.content,
+    recipientEnvelope: params.content.t === 'encrypted'
+      ? params.recipients.find(recipient => recipient.accountId === params.recipientAccountId)?.envelope ?? null
+      : null,
+  };
+}
+
+/** Validate a caller-supplied carrier before selecting one Account's envelope. */
 export function projectManagedMachinePresetForRecipientV1(params: Readonly<{
   content: unknown;
   recipients: readonly unknown[];
@@ -884,12 +898,7 @@ export function projectManagedMachinePresetForRecipientV1(params: Readonly<{
   const content = ManagedMachinePresetStoredContentCarrierV1Schema.parse(params.content);
   const recipients = ManagedMachinePresetRecipientsV1Schema.parse(params.recipients);
   const recipientAccountId = id().parse(params.recipientAccountId);
-  return ManagedMachinePresetRecipientProjectionV1Schema.parse({
-    content,
-    recipientEnvelope: content.t === 'encrypted'
-      ? recipients.find(recipient => recipient.accountId === recipientAccountId)?.envelope ?? null
-      : null,
-  });
+  return projectAdmittedManagedMachinePresetForRecipientV1({ content, recipients, recipientAccountId });
 }
 
 export type ManagedMachinePresetRecipientRewrapParamsV1 = Readonly<{
