@@ -8,7 +8,7 @@ import {
     SetSessionPinResponseSchema,
     SetSessionTagAssignmentsResponseSchema,
 } from "@happier-dev/protocol";
-import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from "@happier-dev/protocol/artifacts/artifactKindV1";
+import { deriveArtifactStoredKindV1, WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from "@happier-dev/protocol/artifacts/artifactKindV1";
 import { SessionOrganizationChangeHintSchema } from "@happier-dev/protocol/changes";
 import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
 
@@ -51,11 +51,15 @@ describe("session organization mutations on SQLite", () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', agentState: null } });
-        const workflow = (accountId: string) => db.artifact.create({ data: {
-            id: randomUUID(), accountId, kind: WORKFLOW_DEFINITION_ARTIFACT_KIND_V1,
+        const artifact = (accountId: string, kind: string) => db.artifact.create({ data: {
+            id: randomUUID(), accountId, kind: deriveArtifactStoredKindV1({ kind }),
             header: Buffer.alloc(0), body: Buffer.alloc(0), dataEncryptionKey: Buffer.alloc(0),
         } });
-        const [saved, foreign] = await Promise.all([workflow(account.id), workflow(foreignAccount.id)]);
+        const [saved, foreign, otherArtifact] = await Promise.all([
+            artifact(account.id, WORKFLOW_DEFINITION_ARTIFACT_KIND_V1),
+            artifact(foreignAccount.id, WORKFLOW_DEFINITION_ARTIFACT_KIND_V1),
+            artifact(account.id, 'document'),
+        ]);
         const folder = (accountId: string, folderKey: string) => db.sessionOrganizationFolder.create({ data: {
             accountId, folderKey, folderHash: hashSessionOrganizationKey(folderKey),
         } });
@@ -74,6 +78,7 @@ describe("session organization mutations on SQLite", () => {
             url: `/v2/session-organization/folder-assignments/${entityId}`, payload: { entityKind: 'workflow', folderId } });
         try {
             expect((await setSection(foreign.id, first.id)).statusCode).toBe(404);
+            expect((await setSection(otherArtifact.id, first.id)).statusCode).toBe(404);
             expect((await setSection(saved.id, privateFolder.id)).statusCode).toBe(400);
             const placed = await setSection(saved.id, first.id);
             expect(placed.statusCode).toBe(200);

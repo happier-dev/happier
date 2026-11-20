@@ -1,6 +1,6 @@
 import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
-import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { getArtifactTeamResourceStoredKindsV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
@@ -895,7 +895,8 @@ export async function setWorkflowFolderAssignment(params: Readonly<{
     return await inTx(async tx => {
         await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
         const workflow = await tx.artifact.findFirst({
-            where: { id: params.entityId, kind: WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 }, select: { id: true },
+            where: { id: params.entityId, kind: { in: getArtifactTeamResourceStoredKindsV1().workflows } },
+            select: { id: true },
         });
         if (!workflow || !await resolveArtifactAccessInTx(tx, { actorAccountId: params.accountId, artifactId: workflow.id })) {
             return { error: 'workflow-not-found' } as const;
