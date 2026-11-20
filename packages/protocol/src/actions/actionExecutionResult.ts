@@ -337,18 +337,22 @@ export type ActionExecuteResult = Readonly<{
   | ActionExecuteFailure);
 
 /** The complete public Action settlement, including original operation custody. */
-export const ActionExecuteResultSchema = lazyZodSchema(() => z.union([
-  z.strictObject({
-    ok: z.literal(true),
-    result: z.unknown(),
-    operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
-    automationNotices: z.optional(ActionAutomationNoticesV1Schema),
-  }),
-  z.strictObject({
-    ...ActionExecuteFailureSchema.shape,
-    operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
-  }),
-]));
+export function createActionExecuteResultSchema<TSchema extends z.core.$ZodType>(resultSchema: TSchema) {
+  return z.union([
+    z.strictObject({
+      ok: z.literal(true),
+      result: resultSchema,
+      operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
+      automationNotices: z.optional(ActionAutomationNoticesV1Schema),
+    }),
+    z.strictObject({
+      ...ActionExecuteFailureSchema.shape,
+      operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
+    }),
+  ]);
+}
+
+export const ActionExecuteResultSchema = lazyZodSchema(() => createActionExecuteResultSchema(z.unknown()));
 
 /** Failure of confirmation is not proof that an admitted effect did not happen. */
 export const UNEXPECTED_ACTION_FAILURE_CODES_V1 = ['action_not_admitted', 'action_outcome_unknown'] as const;

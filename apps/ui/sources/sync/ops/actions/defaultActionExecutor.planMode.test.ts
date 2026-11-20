@@ -1268,9 +1268,11 @@ describe('default Action executor mode and catalog contracts', () => {
         expect.objectContaining({ target: { serverId, sessionId: 'refused-session' }, requestBound: true, status: 'queued' }),
       ]) });
       expect(retried).toMatchObject({ ok: true, result: { kind: 'fanout', results: expect.arrayContaining([
-        { target: { serverId, sessionId: 'ask-session' }, result: { ok: true, result: outcome } },
-        { target: { serverId, sessionId: 'pass-session' }, result: { ok: true, result: outcome } },
-        { target: { serverId, sessionId: 'refused-session' }, result: { ok: true, result: outcome } },
+        ...['ask-session', 'pass-session', 'refused-session'].map(sessionId => ({
+          target: { serverId, sessionId },
+          result: expect.objectContaining({ ok: true, result: outcome,
+            automationNotices: expect.arrayContaining([expect.objectContaining({ code: 'action_automations_not_checked' })]) }),
+        })),
       ]) } });
       expect(await retry()).toEqual(retried);
       expect(sentTo).toEqual(['refused-session']);

@@ -16,7 +16,7 @@ import { SYNCED_SESSION_AUTHORING_FIELD_IDS_V2, SyncedSessionAuthoringValueV2Sch
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectOpenDraftDocumentV2Schema, type ProjectOpenDraftDocumentV2 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import { ActionResolvedSessionTargetsV1Schema, ActionSessionAddressV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 import { randomUUID as platformRandomUUID } from '@/platform/randomUUID';
@@ -112,10 +112,7 @@ const sessionMessagingDraftCustodySchema = z.strictObject({
     targets: ActionResolvedSessionTargetsV1Schema,
     results: z.array(z.strictObject({
         target: ActionSessionAddressV1Schema,
-        result: z.union([
-            z.strictObject({ ok: z.literal(true), result: SessionMessageSendResultV1Schema }),
-            ActionExecuteFailureSchema,
-        ]),
+        result: createActionExecuteResultSchema(SessionMessageSendResultV1Schema),
     })),
 });
 export type SessionMessagingDraftCustody = z.infer<typeof sessionMessagingDraftCustodySchema>;

@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionListFilterDaemonRuleV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
-import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
+import { createActionExecuteResultSchema } from './actionExecutionResult.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionSessionAddressV1Schema } from './sessionAddressV1.js';
 export { ActionSessionAddressV1Schema, type ActionSessionAddressV1 } from './sessionAddressV1.js';
@@ -85,10 +85,7 @@ function createSessionFanoutSchema<TSchema extends z.core.$ZodType>(singleSchema
     kind: z.literal('fanout'),
     results: z.array(z.strictObject({
       target: ActionSessionAddressV1Schema,
-      result: z.union([
-        z.strictObject({ ok: z.literal(true), result: singleSchema }),
-        ActionExecuteFailureSchema,
-      ]),
+      result: createActionExecuteResultSchema(singleSchema),
     })),
   });
 }
