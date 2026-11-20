@@ -899,7 +899,7 @@ describe('OnboardingWizardSurface', () => {
         }
     });
 
-    it('only marks Happier Cloud as recommended in the relay selection list', async () => {
+    it('offers Happier Cloud without a recommendation badge', async () => {
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -913,7 +913,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         const recommended = 'setupOnboarding.recommendedBadge';
-        expect(relayTileText(screen, 'onboarding-wizard-relay:cloud')).toContain(recommended);
+        expect(relayTileText(screen, 'onboarding-wizard-relay:cloud')).not.toContain(recommended);
         expect(relayTileText(screen, 'onboarding-wizard-relay:remoteComputer')).not.toContain(recommended);
         expect(relayTileText(screen, 'onboarding-wizard-relay:customUrl')).not.toContain(recommended);
     });

@@ -640,7 +640,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 icon: 'link',
                 title: profile.name,
                 subtitle: toServerUrlDisplay(profile.serverUrl),
-                badge: blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined,
+                status: blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined,
                 menuActions: [
                     ...((unavailable || blocked) ? [{
                         id: 'retry',
@@ -682,7 +682,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             icon: fixed.icon,
             title: fixed.title,
             subtitle: fixed.subtitle,
-            badge: cloudBlocked ? t('common.blocked') : cloudUnavailable ? t('common.unreachable') : fixed.badge,
+            status: cloudBlocked ? t('common.blocked') : cloudUnavailable ? t('common.unreachable') : undefined,
             secondaryAction: (cloudUnavailable || cloudBlocked) ? {
                 testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}-retry`,
                 title: t('common.retry'),
@@ -1376,7 +1376,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 if (path.id === 'direct') return buildManualRelayChoiceItem();
                 if (path.id === 'service') return buildRelayChoiceItem({
                     id: 'cloud', title: t('setupOnboarding.relayCloudTitle'),
-                    subtitle: t('setupOnboarding.relayCloudSubtitle'), icon: 'cloud', badge: t('setupOnboarding.recommendedBadge'),
+                    subtitle: t('setupOnboarding.relayCloudSubtitle'), icon: 'cloud',
                 });
                 if (path.place === 'ssh') return buildRelayChoiceItem({
                     id: 'remoteComputer', title: t('addFlows.pathSshTitle'),
