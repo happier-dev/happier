@@ -12,7 +12,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 export type DirectoryHomeEnrollmentResult = HomeLoginContinuationResult;
 type ResumableHomeLoginContinuation =
     | Extract<HomeLoginContinuationResult, { kind: 'approval_required' }>
-    | (Extract<HomeLoginContinuationResult, { kind: 'transport_unavailable' }> & Readonly<{
+    | (Extract<HomeLoginContinuationResult, { kind: 'transport_unavailable' | 'partial_commit' }> & Readonly<{
         resume: () => Promise<HomeLoginContinuationResult>;
         cancel: () => Promise<HomeLoginContinuationResult>;
     }>);
@@ -35,7 +35,7 @@ const listeners = new Set<() => void>();
 
 function isResumable(result: DirectoryHomeEnrollmentResult): result is ResumableHomeLoginContinuation {
     return result.kind === 'approval_required'
-        || (result.kind === 'transport_unavailable' && Boolean(result.resume && result.cancel));
+        || ((result.kind === 'transport_unavailable' || result.kind === 'partial_commit') && Boolean(result.resume && result.cancel));
 }
 
 function publishPending(value: PendingDirectoryHomeEnrollment | null): void {
@@ -94,9 +94,9 @@ export async function finalizeDirectoryHomeEntryIntent(
     }
 }
 
-export async function resumePendingDirectoryHomeEnrollment(): Promise<AccountPostAuthResult | null> {
+export async function resumePendingDirectoryHomeEnrollment(explicit?: PendingDirectoryHomeEnrollment): Promise<AccountPostAuthResult | null> {
     const pending = pendingEnrollment;
-    if (!pending) return null;
+    if (!pending || (explicit !== undefined && explicit !== pending) || (pending.kind === 'partial_commit' && explicit === undefined)) return null;
     if (pendingResume?.pending === pending) return await pendingResume.promise;
     // Publication transfers lifetime ownership from the initiating surface to
     // this service-scoped pending owner. The retained continuation and its

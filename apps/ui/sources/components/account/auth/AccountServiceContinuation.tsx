@@ -2,10 +2,11 @@ import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { SecretKeyEntryForm } from '@/components/account/restore/SecretKeyEntryForm';
 import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEntryForm';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { parseHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
+import { inspectHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
@@ -91,12 +92,13 @@ export function AccountServiceContinuation(props: Readonly<{
     const pending = React.useSyncExternalStore(subscribePendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment);
     const ownsPending = pending?.input.session === props.input.session
         && JSON.stringify(pending.input.intent) === JSON.stringify(props.input.intent);
+    const canPoll = ownsPending && pending?.kind !== 'partial_commit';
     useAccountDirectoryActivePolling(async () => {
-        if (!ownsPending) return 'completed';
+        if (!canPoll) return 'completed';
         const result = await resumePendingDirectoryHomeEnrollment();
         if (result) await props.onResult(result);
         return result?.kind === 'failure' && result.recovery === 'retry_stage' ? 'backoff' : 'completed';
-    }, ownsPending);
+    }, canPoll);
 
     const back = async () => {
         if (ownsPending && pending) await cancelPendingDirectoryHomeEnrollment(pending);
@@ -105,6 +107,9 @@ export function AccountServiceContinuation(props: Readonly<{
     const retry = async (input = props.input) => { await props.onResult(await resumeAccountServicePostAuth(input, props.result)); };
     const material = props.result.kind === 'home_material_required' ? props.result : null;
     const failure = props.result.kind === 'failure' ? props.result : null;
+    const retainedProfile = ownsPending && pending?.kind === 'partial_commit'
+        && failure?.code.source === 'home' && failure.code.code === 'partial_commit'
+        && pending.homeServerIdentityId === failure.targetHomeServerIdentityId ? pending : null;
     const failurePresentation = failure ? describeAccountServiceFailure(failure.code) : null;
     const successful = isCompletedAccountPostAuthResult(props.result);
     const completedHomeServerIdentityId = successful && 'homeServerIdentityId' in props.result
@@ -190,7 +195,7 @@ export function AccountServiceContinuation(props: Readonly<{
         if (generation !== openHomeGenerationRef.current || props.input.signal?.aborted) return 'cancelled';
         // An opened Home lands on the shell showing it. A declined retry
         // ('returned_to_shell') keeps this card, so Open and Back stay available.
-        router.replace('/');
+        resolvePostAuthLanding({ replace: router.replace });
         return 'opened';
     };
     const scanOrPaste: SurfaceStateAction = { label: t('connect.scanExistingHomeQrTitle'), onPress: () => setRecoveryView('scan') };
@@ -275,7 +280,7 @@ export function AccountServiceContinuation(props: Readonly<{
     let content: React.ReactElement;
     if (recoveryView === 'paste') {
         content = <PairingLinkEntryForm onBack={() => setRecoveryView('scan')} onSubmit={async (link) => {
-            if (!parseHomeQrInviteDeepLink(link, target ? { homeServerIdentityId: target, direction: 'trusted_home_displays' } : undefined)) return false;
+            if (!inspectHomeQrInviteDeepLink(link, target ? { homeServerIdentityId: target, direction: 'trusted_home_displays' } : undefined)) return false;
             setPairingLink(link);
             setRecoveryView('scan');
             return true;
@@ -335,8 +340,12 @@ export function AccountServiceContinuation(props: Readonly<{
     } else {
         // One card, one obvious primary: every alternative is the card's own
         // secondary action, never a heavier bare button beneath it.
-        const [action, secondaryAction]: readonly [SurfaceStateAction, SurfaceStateAction?] = restartable
-            ? [{ label: t('settingsAccount.accountServiceOAuth.actions.startAgain'), onPress: refresh.onPress }]
+        const [action, secondaryAction]: readonly [SurfaceStateAction, SurfaceStateAction?] = retainedProfile
+            ? [{ label: t('connect.retryRetainedHome', { home: homeName }), onPress: () => run('retry-retained-home', async () => {
+                const result = await resumePendingDirectoryHomeEnrollment(retainedProfile);
+                if (result) await props.onResult(result);
+            }) }, backAction]
+            : restartable ? [{ label: t('settingsAccount.accountServiceOAuth.actions.startAgain'), onPress: refresh.onPress }]
             : canRetry ? [{ label: t('common.retry'), onPress: () => requestStep({ operation: 'retry' }) }]
             : failure?.recovery === 'reauthenticate_account' && props.onReauthenticate
                 ? [{ label: t('common.continue'), onPress: () => run('reauthenticate', () => props.onReauthenticate!(props.input)) }]

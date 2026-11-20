@@ -838,6 +838,79 @@ describe('Home login approval continuation (explicit target, Home-authoritative)
         expect(result).not.toEqual({ kind: 'failed' });
     });
 
+    it('finishes a retained profile on explicit retry without redeeming the assertion again', async () => {
+        serverProfiles.resetServerProfilesRuntimeForTests();
+        const keyPair = sodium.crypto_box_keypair();
+        const retainedToken = 'retained-home-profile-token';
+        endpointFetchMock.mockResolvedValueOnce(json(200, {
+            v: 1,
+            homeServerIdentityId: 'srv_home_b',
+            sealedHomeTokenBase64Url: sealCredentialPayload(retainedToken, keyPair.publicKey),
+            issuedAtMs: Date.now() - 500,
+            expiresAtMs: Date.now() + 120_000,
+        }));
+        const { MMKV } = await import('react-native-mmkv');
+        const read = MMKV.prototype.getString;
+        const persist = MMKV.prototype.set;
+        let failProfileWrite = false;
+        let rejectedProfileWrite = false;
+        const profileStorageKey = (key: string) => key.endsWith('server-state-v1');
+        const failNextProfileWrite = (key: string) => {
+            if (failProfileWrite && profileStorageKey(key)) {
+                rejectedProfileWrite = true;
+                throw new Error('profile storage unavailable');
+            }
+        };
+        vi.spyOn(MMKV.prototype, 'getString').mockImplementation(function (this: InstanceType<typeof MMKV>, key) {
+            const value = read.call(this, key);
+            // An older serialization gives the final adoption a profile write even when
+            // the authenticated observation already recorded the exact descriptor.
+            return failProfileWrite && profileStorageKey(key) && value ? ` ${value}` : value;
+        });
+        vi.spyOn(MMKV.prototype, 'set').mockImplementation(function (this: InstanceType<typeof MMKV>, key, value) {
+            failNextProfileWrite(key);
+            persist.call(this, key, value);
+        });
+        const afterCredentialWrite = () => {
+            secureStoreWriteObserver = null;
+            failProfileWrite = true;
+            secureStoreDeleteError = new Error('secure store rollback failed');
+        };
+        secureStoreWriteObserver = afterCredentialWrite;
+
+        const outcome: { value?: Awaited<ReturnType<typeof continueHomeLoginEnrollment>> } = {};
+        const removeItem = localStorageHandle!.removeItemMock.getMockImplementation()!;
+        await localStorageHandle!.getItemMock.withImplementation((key) => {
+            const value = localStorageHandle!.store.get(key) ?? null;
+            return failProfileWrite && profileStorageKey(key) && value ? ` ${value}` : value;
+        }, async () => {
+            await localStorageHandle!.setItemMock.withImplementation((key, value) => {
+                failNextProfileWrite(key);
+                localStorageHandle!.store.set(key, value);
+                if (value.includes(retainedToken)) afterCredentialWrite();
+            }, async () => {
+                await localStorageHandle!.removeItemMock.withImplementation((key) => {
+                    if (localStorageHandle!.store.get(key)?.includes(retainedToken)) throw new Error('storage rollback failed');
+                    removeItem(key);
+                }, async () => {
+                    outcome.value = await continueHomeLoginEnrollment({
+                        home: HOME_B, clientSecretKey: keyPair.privateKey, assertion: ASSERTION,
+                    });
+                });
+            });
+        });
+        const result = outcome.value;
+        expect(result).toMatchObject({ kind: 'partial_commit', resume: expect.any(Function) });
+        expect(rejectedProfileWrite).toBe(true);
+        if (result?.kind !== 'partial_commit' || typeof result.resume !== 'function') return;
+        await expectHomeCredential({ token: retainedToken });
+
+        failProfileWrite = false;
+        await expect(result.resume()).resolves.toEqual({ kind: 'enrolled', homeServerIdentityId: 'srv_home_b' });
+        expect(endpointFetchMock).toHaveBeenCalledTimes(1);
+        await expectHomeCredential({ token: retainedToken });
+    });
+
     it('never sends Account Service credentials and never stores a token while approval is still pending', async () => {
         const keyPair = sodium.crypto_box_keypair();
         endpointFetchMock.mockResolvedValue(json(202, {

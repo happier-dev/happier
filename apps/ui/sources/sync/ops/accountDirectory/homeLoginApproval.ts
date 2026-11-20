@@ -23,7 +23,10 @@ import {
 } from '@/auth/enrollment/homeEnrollmentTransport';
 import {
     adoptHomeProfileWithCredentials,
+    finalizeRetainedHomeProfileAdoption,
+    HomeProfileAdoptionPartialCommitError,
     isHomeProfileAdoptionPartialCommitFailure,
+    type AdoptHomeProfileWithCredentialsInput,
     type HomeProfileAdoptionPartialCommitFailure,
 } from '@/sync/domains/server/adoptHomeProfile';
 import {
@@ -68,6 +71,8 @@ export type HomeLoginContinuationResult =
         homeServerIdentityId: string;
         canonicalServerUrl: string;
         error: HomeProfileAdoptionPartialCommitFailure;
+        resume?: () => Promise<HomeLoginContinuationResult>;
+        cancel?: () => Promise<HomeLoginContinuationResult>;
     }>
     | Readonly<{ kind: 'failed'; reason?: 'account_mismatch'; error?: unknown }>;
 
@@ -146,6 +151,39 @@ function createSingleFlightResume(
         result ??= run();
         return result;
     };
+}
+
+function retainPartialCommit(
+    error: HomeProfileAdoptionPartialCommitFailure,
+    adoption: AdoptHomeProfileWithCredentialsInput | undefined,
+    state: HomeLoginCancellationState,
+): Extract<HomeLoginContinuationResult, { kind: 'partial_commit' }> {
+    const result = {
+        kind: 'partial_commit',
+        homeServerIdentityId: error.serverIdentityId,
+        canonicalServerUrl: 'canonicalServerUrl' in error ? error.canonicalServerUrl : error.toCanonicalServerUrl,
+        error,
+    } as const;
+    if (!adoption || isCancelled(state) || !(error instanceof HomeProfileAdoptionPartialCommitError) || !error.canRetry) return result;
+    retainCancellationState(state);
+    const retained: ReturnType<typeof retainPartialCommit> = {
+        ...result,
+        resume: async () => {
+            if (isCancelled(state)) return { kind: 'cancelled' };
+            try {
+                const saved = await finalizeRetainedHomeProfileAdoption(adoption, error);
+                return saved ? { kind: 'enrolled', homeServerIdentityId: error.serverIdentityId } : { kind: 'cancelled' };
+            } catch {
+                // Keep the same credential and exact profile available for another deliberate Retry.
+                return isCancelled(state) ? { kind: 'cancelled' } : retained;
+            }
+        },
+        cancel: async () => {
+            state.cancelled = true;
+            return { kind: 'cancelled' };
+        },
+    };
+    return retained;
 }
 
 function isCancelled(state: HomeLoginCancellationState): boolean {
@@ -366,6 +404,7 @@ export async function continueHomeLoginEnrollment(input: Readonly<{
                     if (!authenticatedDescriptor) {
                         throw new HomeEnrollmentBoundaryError({ kind: 'failed' });
                     }
+                    let adoption: AdoptHomeProfileWithCredentialsInput | undefined;
                     try {
                         const existing = await TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: targetIdentity });
                         if (existing && existing.token !== credential.token) {
@@ -382,7 +421,7 @@ export async function continueHomeLoginEnrollment(input: Readonly<{
                         // Preserve same-Account material, including recoverable inconsistent
                         // bytes. The post-auth owner validates it after authoritative Account
                         // mode lookup; material repair must not discard this fresh bearer.
-                        await adoptHomeProfileWithCredentials({
+                        adoption = {
                             descriptor: authenticatedDescriptor,
                             source: 'account-directory',
                             preserveUserLabel: true,
@@ -390,17 +429,11 @@ export async function continueHomeLoginEnrollment(input: Readonly<{
                             descriptorAuthority: 'current_connection_observation',
                             credentials: { ...existing, token: credential.token },
                             shouldCancel: () => isCancelled(cancellationState),
-                        });
+                        };
+                        await adoptHomeProfileWithCredentials(adoption);
                     } catch (error) {
                         if (isHomeProfileAdoptionPartialCommitFailure(error)) {
-                            throw new HomeEnrollmentBoundaryError({
-                                kind: 'partial_commit',
-                                homeServerIdentityId: error.serverIdentityId,
-                                canonicalServerUrl: 'canonicalServerUrl' in error
-                                    ? error.canonicalServerUrl
-                                    : error.toCanonicalServerUrl,
-                                error,
-                            });
+                            throw new HomeEnrollmentBoundaryError(retainPartialCommit(error, adoption, cancellationState));
                         }
                         if (error instanceof HomeEnrollmentBoundaryError) throw error;
                         throw new HomeEnrollmentBoundaryError({ kind: 'failed' });

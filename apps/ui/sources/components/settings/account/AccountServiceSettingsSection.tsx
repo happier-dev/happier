@@ -588,7 +588,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
     const continueHome = React.useCallback(async (homeServerIdentityId: string, kind: 'link' | 'enroll') => {
         if (!directorySessionBinding || pendingRowActions[homeServerIdentityId]) return;
         if (pendingEnrollment?.serviceKey === serviceKey && pendingEnrollment.homeServerIdentityId === homeServerIdentityId) {
-            const result = await resumePendingDirectoryHomeEnrollment();
+            const result = await resumePendingDirectoryHomeEnrollment(pendingEnrollment);
             if (result) setContinuationResults((current) => ({ ...current, [homeServerIdentityId]: { input: pendingEnrollment.input, result } }));
             return;
         }
@@ -613,7 +613,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
         try {
             const previous = continuationResults[homeServerIdentityId]?.result;
             let result = pendingEnrollment?.homeServerIdentityId === homeServerIdentityId
-                ? await resumePendingDirectoryHomeEnrollment()
+                ? await resumePendingDirectoryHomeEnrollment(pendingEnrollment)
                 : previous?.kind === 'failure' && previous.recovery === 'retry_stage'
                     ? await resumeAccountServicePostAuth(input, previous)
                     : await completeAccountServicePostAuth(input);
@@ -659,7 +659,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             setContinuationResults((current) => ({ ...current, [pendingEnrollment.homeServerIdentityId]: { input: pendingEnrollment.input, result } }));
         }
         return result?.kind === 'failure' && result.recovery === 'retry_stage' ? 'backoff' : 'completed';
-    }, pendingEnrollment?.serviceKey === serviceKey);
+    }, pendingEnrollment?.serviceKey === serviceKey && pendingEnrollment?.kind !== 'partial_commit');
 
     const linkableProfiles = profiles.filter((profile) => {
         const identity = profile.serverIdentityId?.trim() ?? '';
