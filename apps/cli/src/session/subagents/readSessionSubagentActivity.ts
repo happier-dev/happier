@@ -90,7 +90,8 @@ export function createSessionSubagentActivityReads(params: Readonly<{
         subagentsGet: (operand, context) => params.withHome(async () => {
             const result = await read(operand.sessionId, operand.beforeSeq, context, SESSION_SUBAGENTS_GET_ACTION_ID);
             if (!result.ok) return result;
-            const match = result.rows.find(({ row }) => row.operand.toolId === operand.toolId && row.id === operand.entryId);
+            // The parent read scopes the provider tool handle. A headline can rename its row.
+            const match = result.rows.find(({ row }) => row.operand.toolId === operand.toolId);
             if (!match) return null;
             const { row, child } = match;
             if (!child?.transcript.toolMessageRouteId) return { ...row, detail: null };

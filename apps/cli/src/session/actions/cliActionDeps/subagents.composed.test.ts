@@ -31,11 +31,12 @@ function resultRow(id: string, seq: number) {
 
 function useHome(historySize: number, readable = true) {
     const requests: URL[] = [];
-    const record = createSessionRecordFixture({ id: parent, encryptionMode: 'plain', metadata: JSON.stringify({
+    let headlineHandle = 'remote';
+    const readRecord = () => createSessionRecordFixture({ id: parent, encryptionMode: 'plain', metadata: JSON.stringify({
         path: '/workspace', flavor: 'muse', machineId: 'remote-machine',
         [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: { v: 1, backendId: 'muse', updatedAt: 99, activeEntries: [
-            { entryId: buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'workflow', agentId: 'remote' }),
-                kind: 'workflow_agent', title: 'Remote child', status: 'running', startedAt: 90, updatedAt: 99, sidechainId: 'remote' },
+            { entryId: buildAgentActivityEntryId({ kind: 'workflow_agent', runId: 'workflow', agentId: headlineHandle }),
+                kind: 'workflow_agent', title: 'Published child', status: 'running', startedAt: 90, updatedAt: 99, sidechainId: headlineHandle },
         ] },
     }) });
     vi.spyOn(axios, 'get').mockImplementation(async href => {
@@ -45,7 +46,7 @@ function useHome(historySize: number, readable = true) {
             return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
         }
         if (!readable) return { status: 404, data: { error: 'not_found' } };
-        if (url.pathname === `/v2/sessions/${parent}`) return { status: 200, data: { session: record } };
+        if (url.pathname === `/v2/sessions/${parent}`) return { status: 200, data: { session: readRecord() } };
         if (url.pathname === `/v1/sessions/${parent}/messages`) {
             const before = url.searchParams.get('beforeSeq');
             const sidechain = url.searchParams.get('sidechainId');
@@ -78,7 +79,7 @@ function useHome(historySize: number, readable = true) {
             nextBeforeSeq: number | null;
         };
     };
-    return { requests, execute, query };
+    return { requests, execute, query, publishHeadline: (toolId: string) => { headlineHandle = toolId; } };
 }
 
 describe('Session child Action reads', () => {
@@ -100,6 +101,22 @@ describe('Session child Action reads', () => {
         });
         expect(requests.filter(url => url.searchParams.has('sidechainId')).map(url => url.searchParams.get('sidechainId')))
             .toEqual([toolId]);
+    });
+
+    it('gets a transcript child using its original list operand after its headline arrives', async () => {
+        const { execute, query, publishHeadline } = useHome(100);
+        const { rows } = await query();
+        const row = rows.find(candidate => candidate.operand.toolId === 'local');
+        expect(row).toMatchObject({ id: 'subagent_sidechain:local', operand: { beforeSeq: 102 } });
+        if (!row) throw new Error('Expected the transcript child in the roster');
+
+        publishHeadline('local');
+        expect(await execute(get.id, { ...row.operand, entryId: 'subagent_sidechain:absent', toolId: 'absent' }))
+            .toEqual({ ok: true, result: null });
+        expect(await execute(get.id, row.operand)).toMatchObject({
+            ok: true, result: { id: 'workflow_agent:workflow:local', operand: { toolId: 'local', beforeSeq: 102 },
+                detail: { sidechainId: 'local', messages: [{ text: 'activity from local' }] } },
+        });
     });
 
     it('refuses both reads without disclosing any child when the parent is unavailable', async () => {
