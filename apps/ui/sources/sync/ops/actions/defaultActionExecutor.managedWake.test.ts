@@ -272,7 +272,16 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
         const person = mode === 'person' || mode === 'required' || mode === 'person-send' || mode === 'person-send-now' || deliverSend;
         const send = mode === 'agent-send' || mode === 'person-send' || mode === 'person-send-now' || deliverSend;
         const actionId = send ? 'session.message.send' : mode === 'passive' ? 'daemon.filesystem.listDirectory' : 'daemon.filesystem.readFile';
-        const prepared = await createDefaultActionExecutor().prepare(actionId, send
+        const confirmations: unknown[] = [];
+        const executor = createDefaultActionExecutor({
+            presentUserActionConfirmation: async ({ actionId: reviewedActionId, preview }) => {
+                confirmations.push({ actionId: reviewedActionId, preview });
+                return false;
+            },
+        });
+        const reviewedWake = { action: 'machines.managed.power.set', role: 'managed-wake',
+            input: { homeId, managedId: machine.id, expectedRevision: 4, when: 'now', intent: 'start' } };
+        const prepared = await executor.prepare(actionId, send
             ? { sessionId: 'requested-session', message: 'Wake only after accepted input', reply: 'none',
                 ...(deliverSend ? { localId: 'test-send' } : {}),
                 ...(mode === 'person-send-now' || sendAfterWake ? { requestedAction: { v: 1, kind: 'send_now' } } : {}) }
@@ -283,15 +292,23 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
                 sessionInputSource: { sourceSessionId: 'caller', sourceTurnId: 'turn-1', via: 'action' as const } } : {}),
             serverId: homes.homes.a!.id, expectedAccountId: 'owner', actionRequestId: 'original-read',
             externalActionTarget: send ? { kind: 'session', sessionId: 'requested-session' } : { kind: 'machine', machineId: 'guest' } });
-        if (mode === 'agent' || mode === 'required') {
+        if (mode === 'required') {
+            expect(prepared.kind).toBe('ready');
+            if (prepared.kind !== 'ready') throw new Error('Expected a prepared UI invocation');
+            expect(confirmations).toEqual([]);
+            expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(confirmations).toEqual([expect.objectContaining({
+                actionId, preview: expect.objectContaining({ hostReviewedChildren: { children: [reviewedWake] } }),
+            })]);
+            expect(artifacts.list()).toHaveLength(0);
+        } else if (mode === 'agent') {
             expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'settled', result: { ok: true,
                 result: { kind: 'approval_request_created' } } });
             const rows = artifacts.list();
             expect(rows).toHaveLength(1);
             expect(JSON.parse(artifacts.readPlainBody(rows[0]!.id)!)).toMatchObject({
                 actionId,
-                preview: { hostReviewedChildren: { children: [{ action: 'machines.managed.power.set', role: 'managed-wake',
-                    input: { homeId, managedId: machine.id, expectedRevision: 4, when: 'now', intent: 'start' } }] } },
+                preview: { hostReviewedChildren: { children: [reviewedWake] } },
             });
         } else {
             expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
