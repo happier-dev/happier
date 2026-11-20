@@ -334,6 +334,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
 export function createCliActionInventoryDeps(params: Readonly<{
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   localMachineId?: string;
+  readHomeDomainAction?: () => ActionExecutorDeps['homeDomainAction'];
   /** Lazy because the Machine inventory owner is composed after the Account catalog owner. */
   getReviewReadinessDeps?: (catalog: AcpCatalogSnapshotV1) => Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
   token: string;
@@ -706,14 +707,34 @@ export function createCliActionInventoryDeps(params: Readonly<{
       return Object.fromEntries([...dispositions].map(([agentId, disposition]) => [agentId, disposition.kind]));
     },
     agentsModelsList: async (args, context) => {
+      const catalogInput = () => {
+        const homeDomainAction = params.readHomeDomainAction?.();
+        return {
+          credentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
+          savedSecretOperationContext: params.savedSecretOperationContext,
+          serverHttpBaseUrl: acpServerHttpBaseUrl,
+          authorizeConnectedAccountRequest: params.authorizeConnectedAccountRequest
+            ? (request: Parameters<NonNullable<typeof params.authorizeConnectedAccountRequest>>[1]) =>
+                params.authorizeConnectedAccountRequest!(context, request) : undefined,
+          machineId: args.machineId,
+          ...(homeDomainAction ? { homeDomainAction: ((request) => homeDomainAction({ ...request, context: {
+            ...request.context, ...context,
+          } })) satisfies NonNullable<ActionExecutorDeps['homeDomainAction']> } : {}),
+          serverId: args.serverId ?? params.serverId,
+          signal: args.signal,
+        };
+      };
       if (args.purpose === 'llm_task_runner') {
         if (!args.task || !args.machineId || args.machineId !== params.localMachineId) return { items: [], source: 'unavailable' };
-        const { resolveLlmTaskRunnerOnThisMachine } = await import('@/agent/executionRuns/tasks/llmTaskRunner');
+        const { resolveLlmTaskRunnerOnThisMachine, readLlmTaskRunnerCandidatesOnThisMachine } = await import('@/agent/executionRuns/tasks/llmTaskRunner');
         const { projectLlmTaskRunnerResolutionWireV1 } = await import('@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection');
         // Exactly the read a task run makes on this machine, so "Auto — currently X" is what runs.
         const resolution = await resolveLlmTaskRunnerOnThisMachine({ task: args.task, choice: args.choice,
           ...(args.sessionAgentTargetKey ? { sessionAgentTargetKey: args.sessionAgentTargetKey } : {}),
-          credentials: params.credentials, ...(args.signal ? { signal: args.signal } : {}) });
+          readCandidates: async () => {
+            const settings = await readAccountSettings();
+            return settings ? readLlmTaskRunnerCandidatesOnThisMachine(catalogInput(), settings) : { candidates: [], unavailableAgents: [] };
+          }, ...(args.signal ? { signal: args.signal } : {}) });
         return { items: [], llmTaskRunner: projectLlmTaskRunnerResolutionWireV1(resolution) };
       }
       if (args.purpose === 'scm_diff_summary') {
@@ -721,12 +742,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         const settings = await readAccountSettings();
         if (!settings) return { items: [], source: 'unavailable' };
         const { createCliSettingsCatalogServices } = await import("../settingsCatalogServices");
-        const services = createCliSettingsCatalogServices({ credentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
-          savedSecretOperationContext: params.savedSecretOperationContext,
-          serverHttpBaseUrl: acpServerHttpBaseUrl,
-          authorizeConnectedAccountRequest: params.authorizeConnectedAccountRequest
-            ? request => params.authorizeConnectedAccountRequest!(context, request) : undefined,
-          serverId: args.serverId ?? params.serverId, signal: args.signal });
+        const services = createCliSettingsCatalogServices(catalogInput());
         const catalog = await services.readScmDiffSummaryCatalog!(settings,
           args.modelSelector ? encodeScmDiffSummaryModelOverride(args.modelSelector) : readScmDiffSummaryRunnerCatalogId(readScmDiffSummaryRunnerChoice(settings)),
           { includeConfigured: true, discoveryTargetKey: args.discoveryTargetKey });

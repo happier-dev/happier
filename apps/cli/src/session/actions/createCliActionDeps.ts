@@ -726,6 +726,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { callMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
     localMachineId,
+    readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction,
     getReviewReadinessDeps: catalog => ({
       // Readiness must probe the same definitions the Review inventory just projected.
       machinesAgentsList: (args, context) => machineInventoryDeps.machinesAgentsList(args, context, catalog),

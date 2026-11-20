@@ -99,6 +99,25 @@ it('uses an already resolved runner without another model inventory read', async
     expect(execute.mock.calls.map(row => row[0])).toEqual(['execution.run.start']);
 });
 
+it('starts a detached task with the resolved brokered Team credential', async () => {
+    const selection = { source: 'team_resource', agentTargetKey: runner.modelSelection.agentTargetKey, modelId: 'team-model',
+        teamId: 'team_a', resourceId: 'resource_a', expectedResourceRevision: 7, deliveryMode: 'brokered' } as const;
+    const start = vi.fn<NonNullable<ActionExecutorDeps['executionRunStart']>>(async () =>
+        ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine_a' }),
+        executionRunStart: start,
+        executionRunWait: async () => ({ ok: true, status: 'running', disposition: 'observation_timeout',
+            runId: 'run_1', timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 }),
+    }));
+    execute.mockImplementation(executor.execute);
+    await runLlmTaskInWorkspace({ host, choice: null, resolvedRunner: { v: 1, modelSelection: selection },
+        task: 'deploy_suggestion', intent: 'task', instructions: 'Suggest a setup', intentInput: { input: { description: 'Bakery' } } });
+    expect(start).toHaveBeenCalledWith(null, expect.objectContaining({ teamCredentialModel: expect.objectContaining({
+        resourceId: 'resource_a', teamId: 'team_a', expectedResourceRevision: 7, deliveryMode: 'brokered', modelId: 'team-model',
+    }) }), expect.anything());
+});
+
 it('retains the canonical runner title and unavailable Agent reasons', async () => {
     const unavailableAgents = [{ agentTargetKey: runner.modelSelection.agentTargetKey, reason: 'sign_in_required' as const }];
     let ready = false;

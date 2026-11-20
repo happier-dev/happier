@@ -7,7 +7,7 @@ import { projectAgentProviderBrokerApplications } from '@/providers/broker/appli
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
-import { readTeamCredentialLaunchReadinessRefusal } from './spawnConnectedServicesDefaults';
+import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 
 /** Discover the worker's applications once; exact revalidation reads only its selected application. */
 export async function readSessionTeamCredentialProviderModels(input: Readonly<{
@@ -24,10 +24,7 @@ export async function readSessionTeamCredentialProviderModels(input: Readonly<{
 }>): Promise<TeamCredentialResourceCatalogEntryV1['providerModels']> {
   const requirements = readLeasedAgentProviderRequirements(input);
   if (!requirements) throw new SessionTeamCredentialLaunchUnavailableError('agent_unavailable', 'agent_requirements');
-  const supported = projectAgentProviderBrokerApplications({
-    registry: input.lease.registry.contributes, agentTargetKey: input.agentTargetKey,
-    acceptedProtocols: requirements.acceptsProtocols,
-  });
+  const supported = readSessionTeamCredentialApplications(input, requirements);
   const application = input.application;
   const applications = application ? supported.filter(candidate => isSameTeamCredentialBrokerApplication(candidate, application)) : supported;
   if (application && applications.length === 0) {
@@ -43,4 +40,24 @@ export async function readSessionTeamCredentialProviderModels(input: Readonly<{
     if (refusal) throw new SessionTeamCredentialLaunchUnavailableError(refusal, 'readiness');
   }
   return resource?.providerModels ?? [];
+}
+
+export function readSessionTeamCredentialApplications(input: Readonly<{
+    lease: PluginRuntimeRegistryLease;
+    agentId: string;
+    agentTargetKey: string;
+}>, requirements = readLeasedAgentProviderRequirements(input)) {
+    return projectAgentProviderBrokerApplications({
+        registry: input.lease.registry.contributes,
+        agentTargetKey: input.agentTargetKey,
+        acceptedProtocols: requirements?.acceptsProtocols ?? [],
+    });
+}
+
+export async function readQualifiedSessionTeamCredentialResources(input: Parameters<typeof readSessionTeamCredentialResourceCatalog>[0]
+    & Readonly<{ lease: PluginRuntimeRegistryLease; agentId: string }>) {
+    const resources = await readSessionTeamCredentialResourceCatalog(input);
+    if (!resources.length) return resources;
+    const { qualifySessionTeamCredentialProviderModels } = await import('@/providers/broker/sessionTeamCredentialProviderBinding');
+    return Promise.all(resources.map(resource => qualifySessionTeamCredentialProviderModels({ ...input, resource })));
 }

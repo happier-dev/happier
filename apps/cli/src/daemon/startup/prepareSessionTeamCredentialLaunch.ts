@@ -1,15 +1,12 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
-import { projectAgentProviderBrokerApplications } from '@/providers/broker/applicationProjection';
 import {
     normalizeSessionTeamCredentialLaunch,
-    readSessionTeamCredentialResourceCatalog,
     SessionTeamCredentialLaunchUnavailableError,
     type NormalizedSessionTeamCredentialLaunch,
 } from '@/session/services/sessionTeamCredentialLaunch';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import { qualifySessionTeamCredentialProviderModels } from '@/providers/broker/sessionTeamCredentialProviderBinding';
+import { readQualifiedSessionTeamCredentialResources, readSessionTeamCredentialApplications } from '@/session/services/sessionTeamCredentialProviderCatalog';
 import { assertSessionTeamCredentialNativeModel, type SessionTeamCredentialInstalledModelRead } from '@/providers/broker/sessionTeamCredentialNativeBinding';
 import { assertTeamCredentialModelAdmission } from '@/providers/broker/teamCredentialModelCompatibility';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams';
@@ -61,19 +58,12 @@ export async function prepareSessionTeamCredentialLaunch(input: Readonly<{
         }
     }
     if (!homeDomainAction) throw new SessionTeamCredentialLaunchUnavailableError('provider_catalog_unavailable', 'resource_catalog');
-    const applications = projectAgentProviderBrokerApplications({
-        registry: input.lease.registry.contributes,
-        agentTargetKey: input.agentTargetKey,
-        acceptedProtocols: readLeasedAgentProviderRequirements({ lease: input.lease, agentId })?.acceptsProtocols ?? [],
-    });
+    const applications = readSessionTeamCredentialApplications({ ...input, agentId });
     return await normalizeSessionTeamCredentialLaunch({
         options: input.options, agentId, agentTargetKey: input.agentTargetKey,
         executionMachineId: input.executionMachineId,
         contributions: input.lease.registry.contributes, applications,
-        readCatalog: async (scope) => Promise.all((await readSessionTeamCredentialResourceCatalog({
-            ...scope, homeDomainAction, ...(input.signal ? { signal: input.signal } : {}),
-            ...(input.executionMachineId ? { executionMachineId: input.executionMachineId } : {}),
-        })).map(resource => qualifySessionTeamCredentialProviderModels({ resource, lease: input.lease,
-            agentId, signal: input.signal }))),
+        readCatalog: scope => readQualifiedSessionTeamCredentialResources({ ...scope, homeDomainAction,
+            lease: input.lease, agentId, signal: input.signal, executionMachineId: input.executionMachineId }),
     });
 }

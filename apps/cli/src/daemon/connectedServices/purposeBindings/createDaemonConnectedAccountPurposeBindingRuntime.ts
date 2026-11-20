@@ -31,7 +31,7 @@ import { createPluginInteractionsService } from '@/plugins/runtime/invocation/se
 import type {
   StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import type { PluginReloadController, PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 import { logger } from '@/ui/logger';
 import { createPurposeTargetResolver } from './resolveTarget';
@@ -170,6 +170,29 @@ function qualifiedContributionKey(ref: PluginContributionRef): string {
   return buildQualifiedPluginContributionKey(ConnectedAccountServiceIdentityV1Schema.parse(ref));
 }
 
+export function readLeasedConnectedAccountService(
+  lease: PluginRuntimeRegistryLease,
+  service: PluginContributionRef,
+  entries = connectedAccountProjectionFamily.project({ generation: 0, registry: lease.registry.contributes }).entriesById,
+): ResolvedDaemonConnectedAccountService | null {
+  const host = lease.registry.connectedAccountContributions?.describe(service);
+  if (host?.sourceCustody.kind === 'host') {
+    return Object.freeze({ service: host.ref,
+      availability: host.isCurrent() ? 'available' as const : 'unavailable' as const,
+      authentication: host.descriptor.authentication });
+  }
+  const parsed = ConnectedAccountUiProjectionEntryV1Schema.safeParse(entries[qualifiedContributionKey(service)]);
+  if (!parsed.success) return null;
+  const entry = parsed.data;
+  if (entry.pluginId !== service.pluginId || entry.id !== service.localId
+    || !lease.registry.contributes.activationTargets.some(target => target.pluginId === service.pluginId)) return null;
+  return Object.freeze({
+    service: Object.freeze({ pluginId: service.pluginId, localId: service.localId }),
+    availability: entry.availability.state === 'available' ? 'available' as const : 'unavailable' as const,
+    authentication: entry.authentication,
+  });
+}
+
 function createRuntimeRegistryAccess(
   reloadController: Pick<
     PluginReloadController,
@@ -189,32 +212,7 @@ function createRuntimeRegistryAccess(
       return Object.freeze({
         isCurrent: () => reloadController.isRuntimeRegistryCurrent(lease.registry),
         resolveService(service: PluginContributionRef) {
-          const host = lease.registry.connectedAccountContributions?.describe(service);
-          if (host?.sourceCustody.kind === 'host') {
-            return Object.freeze({ service: host.ref,
-              availability: host.isCurrent() ? 'available' as const : 'unavailable' as const,
-              authentication: host.descriptor.authentication });
-          }
-          const parsedEntry = ConnectedAccountUiProjectionEntryV1Schema.safeParse(
-            projected.entriesById[qualifiedContributionKey(service)],
-          );
-          if (!parsedEntry.success) return null;
-          const entry = parsedEntry.data;
-          if (entry.pluginId !== service.pluginId || entry.id !== service.localId) return null;
-          const activationTarget = lease.registry.contributes.activationTargets.find(
-            (target) => target.pluginId === service.pluginId,
-          );
-          if (!activationTarget) return null;
-          return Object.freeze({
-            service: Object.freeze({
-              pluginId: service.pluginId,
-              localId: service.localId,
-            }),
-            availability: entry.availability.state === 'available'
-              ? 'available' as const
-              : 'unavailable' as const,
-            authentication: entry.authentication,
-          });
+          return readLeasedConnectedAccountService(lease, service, projected.entriesById);
         },
         listServices() {
           const hosts = lease.registry.connectedAccountContributions?.list().flatMap(entry => entry.sourceCustody.kind === 'host'

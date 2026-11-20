@@ -1,4 +1,4 @@
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { projectLlmTaskRunnerCandidatesFromCatalog } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import {
@@ -38,11 +38,12 @@ export class LlmTaskRunnerUnavailableError extends Error {
  */
 export async function readLlmTaskRunnerCandidatesOnThisMachine(
   services: Parameters<typeof import('@/session/actions/settingsCatalogServices').createCliSettingsCatalogServices>[0],
+  settings: AccountSettings = getActiveAccountSettingsSnapshot()?.settings ?? accountSettingsParse({}),
 ): Promise<LlmTaskRunnerMachineCandidates> {
-  const settings = getActiveAccountSettingsSnapshot()?.settings ?? accountSettingsParse({});
   const { createCliSettingsCatalogServices } = await import('@/session/actions/settingsCatalogServices');
   const catalog = await createCliSettingsCatalogServices(services).readScmDiffSummaryCatalog?.(settings, '');
-  return projectLlmTaskRunnerCandidatesFromCatalog(catalog ?? { profiles: [] });
+  const current = services.savedSecretOperationContext?.readSnapshot()?.settings ?? getActiveAccountSettingsSnapshot()?.settings ?? settings;
+  return projectLlmTaskRunnerCandidatesFromCatalog(catalog?.isCurrent(current) ? catalog : { profiles: [] });
 }
 
 /** Resolves a task's runner on this machine. Explicit choices need no machine read. */

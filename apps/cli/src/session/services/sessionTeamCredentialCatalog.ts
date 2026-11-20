@@ -81,6 +81,26 @@ export async function readSpawnConnectedServicesTeamResources(params: Readonly<{
   return resources;
 }
 
+export async function readSessionMemberTeamIds(input: Readonly<{
+  homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
+  signal?: AbortSignal;
+}>): Promise<readonly string[]> {
+  const teamIds: string[] = [];
+  let cursor: string | null = null;
+  do {
+    input.signal?.throwIfAborted();
+    const raw = await readCatalogPage({ ...input, phase: 'teams_catalog', request: {
+      actionId: 'teams.list', input: { v: 1, scope: 'member', archived: 'active', ...(cursor ? { cursor } : {}) },
+      context: { surface: 'cli' }, ...(input.signal ? { signal: input.signal } : {}),
+    } });
+    const parsed = TeamsPageV1Schema.safeParse(raw);
+    if (!parsed.success) throw new SessionTeamCredentialLaunchUnavailableError('provider_rpc_response_invalid', 'teams_catalog');
+    teamIds.push(...parsed.data.items.map(team => team.id));
+    cursor = parsed.data.nextCursor;
+  } while (cursor);
+  return teamIds;
+}
+
 /** Reads each admitted application through the same recipient catalog authority. */
 export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
@@ -90,23 +110,7 @@ export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
   executionMachineId?: string;
   signal?: AbortSignal;
 }>): Promise<readonly TeamCredentialResourceCatalogEntryV1[]> {
-  let teamIds = input.teamIds;
-  if (!teamIds) {
-    const discovered: string[] = [];
-    let cursor: string | null = null;
-    do {
-      input.signal?.throwIfAborted();
-      const raw = await readCatalogPage({ ...input, phase: 'teams_catalog', request: {
-        actionId: 'teams.list', input: { v: 1, scope: 'member', archived: 'active', ...(cursor ? { cursor } : {}) },
-        context: { surface: 'cli' }, ...(input.signal ? { signal: input.signal } : {}),
-      } });
-      const parsed = TeamsPageV1Schema.safeParse(raw);
-      if (!parsed.success) throw new SessionTeamCredentialLaunchUnavailableError('provider_rpc_response_invalid', 'teams_catalog');
-      discovered.push(...parsed.data.items.map(team => team.id));
-      cursor = parsed.data.nextCursor;
-    } while (cursor);
-    teamIds = discovered;
-  }
+  const teamIds = input.teamIds ?? await readSessionMemberTeamIds(input);
   const resourcesById = new Map<string, TeamCredentialResourceCatalogEntryV1>();
   const pages: (readonly TeamCredentialResourceCatalogEntryV1[])[] = [];
   for (const application of input.applications.length > 0 ? input.applications : [undefined]) {

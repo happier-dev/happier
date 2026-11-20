@@ -31,10 +31,12 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { readProviderStateSharingRiskAgentIdsV1, type ProviderStateSharingAgentV1 } from '@happier-dev/protocol/actions/settings/providerStateSharingMutations';
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
-import { readAgentConnectedDefaultRoutes } from '@/session/services/agentConnectedDefaultRoutes';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { configuration } from '@/configuration';
 
 export type CliSettingsCatalogServicesV1 = ScmDiffSummaryCatalogMutationServicesV1<AccountSettings>
     & VoiceSettingsMutationServicesV1<AccountSettings> & Readonly<{
@@ -95,6 +97,8 @@ export function createCliVoiceSettingsBindingContext(): PortableVoiceSettingsBin
 /** Native model evidence comes from the same current Agent catalog and probe as Action inventory. */
 export function createCliSettingsCatalogServices(params: Readonly<{
     credentials?: StoredCredentials;
+    machineId?: string;
+    homeDomainAction?: ActionExecutorDeps['homeDomainAction'];
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     serverHttpBaseUrl?: string;
     authorizeConnectedAccountRequest?: Parameters<typeof readActiveConnectedAccountCatalog>[0]['authorizeRequest'];
@@ -313,61 +317,78 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const unavailableTargets: ScmDiffSummaryCatalogUnavailableTargetV1[] = [];
                 const probeFailures: Array<{ backendTargetKey: string; spawnFailure: SpawnFailureV1 }> = [];
                 const routingIds = indexAgentRoutingIdsByContributionIdentity(agents);
-                // The same connected-default read the Agent backend inventory uses for readiness.
-                const { purposeCatalog, dispositions } = await readAgentConnectedDefaultRoutes({
-                    credentials: params.credentials, settings, signal: params.signal, operationContext,
+                const credentials = operationContext?.credentials ?? params.credentials;
+                const serverId = params.serverId ?? configuration.activeServerId;
+                const serverHttpBaseUrl = operationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+                const executionMachineId = params.machineId ?? (credentials && !params.authorizeConnectedAccountRequest
+                    ? resolveMachineIdForServerFromSettings(await readSettings(), serverId, readAccountIdFromToken(credentials.token)) ?? undefined
+                    : undefined);
+                const homeDomainAction = params.homeDomainAction ?? (credentials && executionMachineId && !params.authorizeConnectedAccountRequest
+                    ? (await import('@/api/accountServerActionDeps')).createAccountServerActionDeps({
+                        token: credentials.token, credentials, machineId: executionMachineId,
+                        serverId, serverHttpBaseUrl }).homeDomainAction : undefined);
+                const { withSessionLaunchCredentialReadiness } = await import('@/session/services/sessionLaunchCredentialReadiness');
+                return runWithServerHttpBaseUrl(serverHttpBaseUrl, () => withSessionLaunchCredentialReadiness({
+                    credentials, settings, signal: params.signal, operationContext, executionMachineId, homeDomainAction,
                     authorizeRequest: params.authorizeConnectedAccountRequest, agentIds: agents.map(entry => entry.id),
-                });
-                const profiles = (await Promise.all(agents.map(async entry => {
-                    const targets = entry.identity ? listAgentExecutionTargetsV1(entry.identity)
-                        .filter(target => !isBackendTargetDisabledByAccountSettings(settings, target)) : [];
-                    const staticModels = getAgentStaticModels(entry.id, { catalogOnly: true });
-                    if (targets.length === 0) return [];
-                    const targetKeys = targets.map(buildBackendTargetKeyV2);
-                    const noTools = entry.richDefinition?.definition.capabilities.tools?.noTools;
-                    for (const key of targetKeys) {
-                        discoveryTargetKeys.add(key);
-                        if (noTools !== undefined) noToolsByTarget.set(key, noTools);
-                    }
-                    const defaultAuth = dispositions.get(entry.id) ?? null;
-                    const connected = defaultAuth?.kind === 'connected';
-                    // Run admission consumes this same default-auth owner. A
-                    // signed-out native CLI does not withdraw a connected route.
-                    const signIn = connected || defaultAuth?.kind === 'unavailable' ? null : await probeAgentSignInStatus(entry.id);
-                    params.signal?.throwIfAborted();
-                    const unavailableReason: ScmDiffSummaryCatalogUnavailableTargetV1['reason'] | null = defaultAuth?.kind === 'unavailable'
-                        ? defaultAuth.reason === 'connected_account_purpose_catalog_unavailable' ? 'account_metadata_unavailable' : 'connected_default_unavailable'
-                        : !connected && signIn?.status !== 'signedIn'
-                            ? signIn?.status === 'signedOut' ? 'native_sign_in_required' : 'native_auth_unavailable' : null;
-                    if (unavailableReason) {
-                        unavailableTargets.push(...targetKeys.map(backendTargetKey => ({ backendTargetKey, reason: unavailableReason })));
-                        return [];
-                    }
-                    return (await Promise.all(targets.map(async executionTarget => {
-                        const agentId = readAgentRoutingIdForContributionIdentity(routingIds, executionTarget.identity);
-                        if (!agentId) return [];
-                        const target = readBackendTargetRefV2({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' });
-                        if (isBackendTargetDisabledByAccountSettings(settings, target)) return [];
-                        const observation = staticModels.length ? null : await probeSummaryModels({
-                            agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
-                            catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target),
-                            ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
-                        });
-                        if (observation?.spawnFailure) probeFailures.push({ backendTargetKey: buildBackendTargetKeyV2(executionTarget), spawnFailure: observation.spawnFailure });
-                        const models = observation?.availableModels ?? staticModels;
-                        return buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget,
-                            models,
-                            agentFormats: readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats });
+                }, async ({ purposeCatalog, readAgent }) => {
+                    const profiles = (await Promise.all(agents.map(async entry => {
+                        const targets = entry.identity ? listAgentExecutionTargetsV1(entry.identity)
+                            .filter(target => !isBackendTargetDisabledByAccountSettings(settings, target)) : [];
+                        const staticModels = getAgentStaticModels(entry.id, { catalogOnly: true });
+                        if (targets.length === 0) return [];
+                        const targetKeys = targets.map(buildBackendTargetKeyV2);
+                        const noTools = entry.richDefinition?.definition.capabilities.tools?.noTools;
+                        for (const key of targetKeys) {
+                            discoveryTargetKeys.add(key);
+                            if (noTools !== undefined) noToolsByTarget.set(key, noTools);
+                        }
+                        return (await Promise.all(targets.map(async executionTarget => {
+                            const agentId = readAgentRoutingIdForContributionIdentity(routingIds, executionTarget.identity);
+                            if (!agentId) return [];
+                            const target = readBackendTargetRefV2({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' });
+                            if (isBackendTargetDisabledByAccountSettings(settings, target)) return [];
+                            const backendTargetKey = buildBackendTargetKeyV2(executionTarget);
+                            const route = await readAgent(agentId, backendTargetKey);
+                            if (route.kind === 'unavailable') {
+                                unavailableTargets.push({ backendTargetKey, reason: route.reason });
+                                return [];
+                            }
+                            const agentFormats = readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats;
+                            if (route.kind === 'team') {
+                                return route.models.flatMap(({ descriptor, selection }) => {
+                                    const { kind: _kind, ...ref } = selection;
+                                    return buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models: [descriptor], agentFormats })
+                                        .map(profile => {
+                                            const modelSelector = { backendTargetKey, modelId: ref.modelId,
+                                                modelSelection: { source: 'team_resource' as const, ...ref }, connectedServices: null };
+                                            return { ...profile, modelSelector, catalogId: encodeScmDiffSummaryModelOverride(modelSelector) };
+                                        });
+                                });
+                            }
+                            const observation = staticModels.length ? null : await probeSummaryModels({
+                                agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
+                                catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target),
+                                ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
+                            });
+                            if (observation?.spawnFailure) probeFailures.push({ backendTargetKey, spawnFailure: observation.spawnFailure });
+                            const models = observation?.availableModels ?? staticModels;
+                            const modelProfiles = buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models, agentFormats });
+                            return route.kind === 'personal' ? modelProfiles.map(profile => {
+                                const modelSelector = { ...profile.modelSelector, backendTargetKey, connectedServices: route.connectedServices };
+                                return { ...profile, modelSelector, catalogId: encodeScmDiffSummaryModelOverride(modelSelector) };
+                            }) : modelProfiles;
+                        }))).flat();
                     }))).flat();
-                }))).flat();
-                return { profiles, discoveryTargetKeys: [...discoveryTargetKeys], noToolsByTarget, ...(probeFailures.length ? { probeFailures } : {}),
-                    ...(unavailableTargets.length ? { unavailableTargets } : {}),
-                    ...(purposeCatalog && purposeCatalog.status !== 'ready' ? { unavailableReason: 'account_metadata_unavailable' as const } : {}),
-                    isCurrent: current => !params.signal?.aborted
-                    && readCurrentContributionRegistry() === registry
-                    && accountIsCurrent(lifetime)
-                    && (purposeCatalog?.status !== 'ready' || readAccountSnapshot()?.connectedPurposeCatalog === purposeCatalog)
-                    && JSON.stringify(current.backendEnabledByTargetKey) === JSON.stringify(settings.backendEnabledByTargetKey) };
+                    return { profiles, discoveryTargetKeys: [...discoveryTargetKeys], noToolsByTarget, ...(probeFailures.length ? { probeFailures } : {}),
+                        ...(unavailableTargets.length ? { unavailableTargets } : {}),
+                        ...(purposeCatalog && purposeCatalog.status !== 'ready' ? { unavailableReason: 'account_metadata_unavailable' as const } : {}),
+                        isCurrent: current => !params.signal?.aborted
+                        && readCurrentContributionRegistry() === registry
+                        && accountIsCurrent(lifetime)
+                        && (purposeCatalog?.status !== 'ready' || readAccountSnapshot()?.connectedPurposeCatalog === purposeCatalog)
+                        && JSON.stringify(current.backendEnabledByTargetKey) === JSON.stringify(settings.backendEnabledByTargetKey) };
+                }));
             }
             return readSelectedSummaryCatalog(settings, storedValue);
         },

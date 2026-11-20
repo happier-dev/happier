@@ -5,6 +5,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { type LlmTaskRunnerUnavailableAgentV1, type LlmTaskIdV1, LLM_TASK_DECLARATIONS_V1, LlmTaskRunnerResolutionWireV1Schema, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 
@@ -142,7 +143,7 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
             intent: params.intent,
             ...(params.instructions === undefined ? {} : { instructions: params.instructions }),
             backendTarget: readBackendTargetRefV2(parseBackendTargetKeyV2(runner.modelSelection.agentTargetKey)),
-            modelSelection: runner.modelSelection,
+            ...projectSessionModelRefToExecutionModelSelection(runner.modelSelection),
             ...(runner.connectedServices !== undefined ? { connectedServices: runner.connectedServices } : {}),
             ...(runner.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: runner.sessionConfigOptionOverrides } : {}),
             // Hard-safety: the task declares only `no_tools`, and the owner clamps every runner to it.
