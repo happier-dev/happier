@@ -1122,6 +1122,20 @@ describe('web glass material', () => {
         expect(Number(layer('card').right ?? 0)).toBe(0);
     });
 
+    it('keeps a clipping floating surface from scrolling its frost reach into view (round 10: dialog header cut off on focus)', async () => {
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <GlassSurface testID="dialog" surfaceGroup="floating" style={{ borderRadius: 12, overflow: 'hidden' }}>{null}</GlassSurface>
+            <GlassSurface testID="card" surfaceGroup="card" style={{ borderRadius: 12, overflow: 'hidden' }}>{null}</GlassSurface>
+        </GlassMaterialSettingsProvider>);
+        const root = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!.props.style) ?? {};
+        // The frost layer reaches past the box; a hidden overflow would still let focus scroll the surface by that reach.
+        // Clipping without a scroll container keeps the same paint and nothing to scroll.
+        expect(root('dialog').overflow).toBe('clip');
+        expect(root('card').overflow).toBe('hidden');
+    });
+
     it('lets secondary action ink sit on the containing translucent material instead of an opaque slab', async () => {
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');

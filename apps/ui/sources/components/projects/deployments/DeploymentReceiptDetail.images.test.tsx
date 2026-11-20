@@ -190,7 +190,12 @@ describe('Receipt → failed', () => {
         && node.props.description !== undefined)[0]!;
       const description = String(banner.props.description);
       if (consequence === 'failed') expect(description).toContain(t('projects.deployments.failureRestoreFailed', { sha: 'bbbbbbb' }));
-      else if (consequence === 'unverified') expect(description).toContain(t('projects.deployments.stateUnverified'));
+      else if (consequence === 'unverified') {
+        // The unverified restoration is a fragment without a full stop: it stands on its own line, never run into the next
+        // sentence ("…Running, not verified A machine operation failed", round 10 live receipt).
+        expect(description.split('\n')).toContain([t('projects.deployments.restoredPrevious'), 'bbbbbbb',
+          t('projects.deployments.stateUnverified')].join(' · '));
+      }
       else expect(description).toContain(t('projects.deployments.failureRestored', { sha: 'bbbbbbb' }));
       if (consequence !== 'healthy') expect(description).not.toContain(t('projects.deployments.failureRestored', { sha: 'bbbbbbb' }));
     } finally { await screen.unmount(); controller.retire(); }

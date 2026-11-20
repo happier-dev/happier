@@ -392,10 +392,15 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         [`--happier-glass-${group}-plane-background-color`]: material.opacity < 1
             && resolveGlassSurfacePlaneMaterial(settings, group, runtimeEnvironment).opacity === 0 ? 'transparent' : 'initial',
     } as unknown as ViewStyle;
+    const reachesPastEdges = frosted && group === 'floating';
+    // A clipping surface stays a clip, not a scroll container: its frost layer reaches past the box, and with a hidden
+    // overflow a focus or scroll-into-view scrolled the surface by that reach, cutting off a dialog's header (round 10).
+    const clipWithoutScrolling = reachesPastEdges && readSurfaceStyleProperty(props.style, 'overflow') === 'hidden'
+        ? { overflow: 'clip' } as unknown as ViewStyle : null;
     return (
-        <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
+        <View {...viewProps} style={[props.style, clipWithoutScrolling, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
-            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frosted, frosted && group === 'floating'), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
+            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frosted, reachesPastEdges), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}

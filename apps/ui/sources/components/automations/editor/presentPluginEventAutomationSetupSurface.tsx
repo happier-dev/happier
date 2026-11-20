@@ -24,6 +24,7 @@ import { PluginMachineExecutionOriginPickerProvider } from '@/components/setting
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
 import type { BaseModalConfig } from '@/modal/types';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -85,6 +86,9 @@ export function resolvePluginEphemeralInputSurfaceChrome(input: Readonly<{
         footer: input.footer,
     };
 }
+
+// Keeps the body's height contract (it fills and may shrink) while adding the card's content edge.
+const SETUP_SURFACE_INSET = { flexGrow: 1, flexShrink: 1, minHeight: 0, paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx } as const;
 
 type SetupSurfaceModalProps = Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
@@ -165,15 +169,14 @@ function PluginEventAutomationSetupSurfaceModal(
         actionInputSelectionFactsKey,
         binding,
     });
+    const host = <PluginSurfaceHost ephemeralMount={ephemeralMount} machineId={props.machineId} serverId={props.serverId}
+        launchInput={props.launchInput} />;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
         <PluginMachineExecutionOriginPickerProvider pluginId={setupSurface.contribution.pluginId}>
-            <PluginSurfaceHost
-                ephemeralMount={ephemeralMount}
-                machineId={props.machineId}
-                serverId={props.serverId}
-                launchInput={props.launchInput}
-            />
+            {/* A setup form stands on the card's content edge, in line with its title and footer; a picker's rows run to
+                the card edge themselves (ROWS-FLEET-OPS-177 F4: the health setup form sat flush against the card). */}
+            {props.presentation === 'setup' ? <View style={SETUP_SURFACE_INSET}>{host}</View> : host}
         </PluginMachineExecutionOriginPickerProvider>
     );
 }
