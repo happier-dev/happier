@@ -171,7 +171,7 @@ describe('readSessionWorkStatusFacts', () => {
         expect(status).toMatchObject({ bucket: 'idle', tone: 'neutral', word: 'status.unknownState' });
     });
 
-    it('keeps observer loss offline, including an idle runtime after a cancelled turn', () => {
+    it('keeps detached Sessions offline and preserves settled work after a cancelled turn', () => {
         // A hydrated row the Home marked inactive, with no device-observed presence.
         const detached = createSessionListRenderableSessionFixture({ active: false, presence: undefined, activeAt: NOW - 3_600_000 });
         const facts = readSessionWorkStatusFacts(detached, NOW);
@@ -186,8 +186,9 @@ describe('readSessionWorkStatusFacts', () => {
         const cancelled = createSessionListRenderableSessionFixture({ active: true, activeAt: NOW, presence: 'online',
             latestTurnStatus: 'cancelled', latestTurnStatusObservedAt: NOW - 1 });
         expect(readSessionWorkStatusFacts(cancelled, NOW).awareness.runtime).toBe('idle');
-        expect(readSessionWorkStatusFacts({ ...cancelled, active: false, presence: undefined }, NOW + 3_600_000).word)
-            .toBe('status.offline');
+        const settled = readSessionWorkStatusFacts({ ...cancelled, active: false, presence: undefined }, NOW + 3_600_000);
+        expect(settled.awareness.runtime).toBe('offline');
+        expect(settled.word).toBe('status.ready');
     });
 
     it('does not turn an idle runtime heartbeat expiry into a confirmed stop', () => {
