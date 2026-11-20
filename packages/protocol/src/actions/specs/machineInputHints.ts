@@ -21,6 +21,7 @@ const credentials = { path: 'credentials', title: 'Credential selections', widge
 const members = { path: 'members', title: 'Machine members and priority tiers', widget: 'json', required: true } as const;
 const description = { path: 'description', title: 'Description', widget: 'textarea' } as const;
 const poolAudience = { path: 'audience', title: 'Pool audience', widget: 'json' } as const;
+const oneOffMachineSelection = { op: 'eq', path: 'selection.kind', value: 'one-off' } as const;
 // Revision is required only for immediate effects; the strict domain union
 // validates deferred effects without making the absent arm unreviewable.
 const nativeEffectOptions = [
@@ -94,7 +95,8 @@ export const MANAGED_MACHINE_INPUT_FIELDS = {
     { path: 'selectors', title: 'Provisioning choices', widget: 'json', required: true }],
   'machines.managed.acquire': [
     { path: 'selection', title: 'Reviewed machine selection', widget: 'json', required: true },
-    { path: 'enrollmentIdentity', title: 'Reviewed enrollment identity', widget: 'json', required: true },
+    { path: 'enrollmentIdentity', title: 'Reviewed enrollment identity', widget: 'json',
+      description: 'Required for a one-off Machine.', visibleWhen: oneOffMachineSelection, requiredWhen: oneOffMachineSelection },
     { ...controller, required: false }, { ...retention, required: false }, { ...wake, required: false },
     { path: 'agentStart', title: 'Agent startup', widget: 'json' },
     { path: 'reviewedFacts', title: 'Reviewed configuration facts', widget: 'json' }],

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { ACTION_IDS } from './actionIds.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { actionSpecToActionDefinitionV1 } from './actionCatalog.js';
+import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { getActionSpec, listActionCliCommandDeclarations, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { MachinePublishedMetadataV1Schema, StoredMachinePublishedMetadataV1Schema } from '../machines/machinePublishedContentV1.js';
 
@@ -12,6 +14,16 @@ const effects = ['machines.managed.acquire', 'machines.managed.bootstrap.retry',
   'machines.managed.controller.update', 'machines.managed.retire'] as const;
 
 describe('managed Machine host Action contracts', () => {
+  it('asks the agent for enrollment identity only when creating a one-off Machine', () => {
+    const spec = getActionSpec('machines.managed.acquire');
+    const definition = actionSpecToActionDefinitionV1(spec, { surface: 'agent' });
+    const preset = spec.inputSchema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 } });
+    const presetFields = resolveEffectiveActionInputFields(definition, preset);
+    expect(presetFields.find(field => field.path === 'enrollmentIdentity')).toBeUndefined();
+    const oneOffFields = resolveEffectiveActionInputFields(definition, { selection: { kind: 'one-off' } });
+    expect(oneOffFields.find(field => field.path === 'enrollmentIdentity')).toMatchObject({ required: true });
+  });
+
   it('preserves native Delete admission alongside Account-owned deletion', () => {
     const spec = getActionSpec('machines.managed.delete');
     const input = spec.inputSchema.parse({ homeId: 'home', managedId: 'managed', expectedRevision: 1,
