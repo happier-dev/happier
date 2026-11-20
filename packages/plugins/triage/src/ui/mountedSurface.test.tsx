@@ -1466,6 +1466,41 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByRole('button', { name: 'Refresh' })).resolves.toBeUndefined();
     });
 
+    it('releases retained list watches and reads current sources when presented again', async () => {
+        const harness = createHarness();
+        let active = true;
+        const shell = await mountSurface(context => renderShellSurface({ ...context, activity: { active } }),
+            harness, 'retained-list', {}, { directAccountData: true });
+        await settleWindow('view', shell);
+        const scope = harness.ephemeralSharedScope;
+        const watchCount = () => [...harness.kvObservers.values()].reduce((sum, listeners) => sum + listeners.size, 0);
+        const sourceChanged = () => {
+            const key = JSON.stringify({ kind: 'collection', collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION.id });
+            for (const listener of harness.kvObservers.get(key) ?? []) listener();
+        };
+        expect(watchCount()).toBeGreaterThan(0);
+        expect(readTriageListWindowSnapshot(shell.context.hostApi, scope).configuredSources
+            .some(row => row.sourceInstanceId === INSTANCE_A)).toBe(true);
+
+        active = false;
+        await act(async () => { await shell.updateSurface(shell.context.surface); });
+        expect.soft(watchCount()).toBe(0);
+        const reads = harness.collectionReadCounts.get(CORPUS_SOURCE_INSTANCES_COLLECTION.id);
+        const actions = harness.actionCalls.length;
+        expect(await removeConfiguredSourceInstance({ collections: harness.collections, sourceInstanceId: INSTANCE_A,
+            signal: new AbortController().signal })).toMatchObject({ kind: 'removed' });
+        await act(async () => { sourceChanged(); });
+        expect.soft(harness.collectionReadCounts.get(CORPUS_SOURCE_INSTANCES_COLLECTION.id)).toBe(reads);
+        expect.soft(harness.actionCalls.length - actions).toBe(0);
+
+        active = true;
+        await act(async () => { await shell.updateSurface(shell.context.surface); });
+        await settleWindow('view', shell);
+        expect(watchCount()).toBeGreaterThan(0);
+        expect(readTriageListWindowSnapshot(shell.context.hostApi, scope).configuredSources
+            .some(row => row.sourceInstanceId === INSTANCE_A)).toBe(false);
+    });
+
     it('opens Tasks with one row-producing list pass, without an initial default-lens pass', async () => {
         const harness = createHarness({ tasks: true });
         const shell = await mountSurface(renderShellSurface, harness, 'triage-tasks', {}, { tasksDestination: true });

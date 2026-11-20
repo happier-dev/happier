@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
-import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope, usePluginUiDataClientOrNull, type PluginUiHostReadiness } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginSurfaceActivity, usePluginUiEphemeralSharedScope, usePluginUiDataClientOrNull, type PluginUiHostReadiness } from '@happier-dev/plugin-ui';
 
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
@@ -27,6 +27,7 @@ import {
  * cannot double-count one. It is also what makes a host scope change safe:
  * React resubscribes, releases this artifact's old shared-value lease, and
  * joins the new Account/plugin/generation scope without inheriting rows.
+ * A hidden surface holds the retained snapshot without registering a live client.
  *
  * Reading is not demanding. Mounting *the PRs & Issues page* is a named
  * materialization producer (`core/CORPUS.md` §4.1) and mounting the Composer
@@ -60,6 +61,7 @@ export type TriageMountedListWindowV1 = Readonly<{
 export function useTriageListWindow(publication?: TriageListPublicationV1): TriageMountedListWindowV1 {
   const hostApi = usePluginHostApi();
   const dataClient = usePluginUiDataClientOrNull();
+  const { active } = usePluginSurfaceActivity();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const hostReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const committedReadiness = useRef(hostReadiness);
@@ -69,16 +71,16 @@ export function useTriageListWindow(publication?: TriageListPublicationV1): Tria
   }, [hostApi, sharedScope, hostReadiness]);
 
   const subscribe = useCallback((listener: () => void) => {
-    const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current, dataClient);
-    const unsubscribe = subscribeToTriageListWindow(hostApi, change => {
+    const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current, dataClient, active);
+    const unsubscribe = active ? subscribeToTriageListWindow(hostApi, change => {
       publication?.synchronize(readTriageMountedWindowReadState(hostApi, sharedScope).snapshot, change);
       listener();
-    }, sharedScope);
+    }, sharedScope) : undefined;
     return () => {
-      unsubscribe();
+      unsubscribe?.();
       lease.release();
     };
-  }, [hostApi, sharedScope, publication, dataClient]);
+  }, [hostApi, sharedScope, publication, dataClient, active]);
 
   // Host identity addresses this artifact's local lease; Account/plugin/install
   // isolation and retirement belong to the injected shared scope.

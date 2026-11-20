@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginSurfaceActivity, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
 
 import type { TriageAdministerSavedViewInputV1 } from '../../actions/savedViewsProtocol.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../../settings/savedViews.js';
@@ -73,6 +73,7 @@ const UNAVAILABLE_REASON = 'Happier cannot reach your account right now, so save
 
 export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const hostApi = usePluginHostApi();
+  const { active } = usePluginSurfaceActivity();
   const durable = useTriageDurableAccount();
   const dataClient = usePluginUiDataClientOrNull();
   const readiness = usePluginHostReadiness(durable.savedViews === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
@@ -116,7 +117,7 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   }, [text, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
-    if (readiness.pending || readiness.ready === false) return;
+    if (!active || readiness.pending || readiness.ready === false) return;
     const controller = new AbortController();
     let watch: Readonly<{ dispose(): void }> | undefined;
     if (dataClient) {
@@ -132,7 +133,7 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
       void read(controller.signal);
     }
     return () => { controller.abort(); watch?.dispose(); };
-  }, [dataClient, read, readiness.pending, readiness.ready, readiness.revision, text]);
+  }, [active, dataClient, read, readiness.pending, readiness.ready, readiness.revision, text]);
 
   const retry = useCallback(() => {
     if (readiness.pending || readiness.ready === false) return;

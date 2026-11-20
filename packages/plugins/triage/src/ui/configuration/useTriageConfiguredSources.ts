@@ -1,7 +1,7 @@
 import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginTranslation, usePluginUiDataClientOrNull, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation, usePluginSurfaceActivity, usePluginUiDataClientOrNull, useSurfaceContext } from '@happier-dev/plugin-ui';
 
 import { readActiveConfiguredSourceRows } from '../../corpus/configuration/readConfiguredSourceRows.js';
 import { removeConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
@@ -60,6 +60,7 @@ type ConfiguredSourceRead = Readonly<{
  */
 export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   const host = usePluginHostApi();
+  const { active } = usePluginSurfaceActivity();
   const surface = useSurfaceContext();
   const accountDataSources = useMemo(() => readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1(
     surface.targetedContributions?.points.find(point => point.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1)
@@ -123,6 +124,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   }, [accountDataSources, durable.collections, host, setUnavailableReason, text]);
 
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     let watch: Readonly<{ dispose(): void }> | undefined;
     if (dataClient) {
@@ -138,7 +140,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
         });
     } else void read(controller.signal);
     return () => { controller.abort(); watch?.dispose(); };
-  }, [dataClient, host, read, setUnavailableReason, text]);
+  }, [active, dataClient, host, read, setUnavailableReason, text]);
 
   const remove = useCallback(async (sourceInstanceId: string): Promise<boolean> => {
     if (!loaded || durable.collections === null || busySourceInstanceId !== null || unavailableReason !== null) {

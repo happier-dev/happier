@@ -59,7 +59,6 @@ type AccountDataObserver = Pick<PluginUiDataClient, 'watchAccountData'>;
 type MountedWindow = {
   readonly shared: SharedMountedWindow;
   readonly sharedLease: Readonly<{ release(): void }>;
-  readonly unregisterClient: () => void;
   readState: TriageMountedWindowReadState;
   /** Live acquisitions in this artifact realm for this exact Host API. */
   leases: number;
@@ -146,6 +145,7 @@ export function acquireTriageListWindow(
   scope: PluginUiEphemeralSharedScope | null,
   readiness: PluginUiHostReadiness = UNSPECIFIED_READINESS,
   data: AccountDataObserver | null = null,
+  active = true,
 ): TriageListWindowLeaseV1 {
   if (scope === null) return Object.freeze({ release() {} });
   const byScope = mountedByHost.get(host);
@@ -318,11 +318,11 @@ export function acquireTriageListWindow(
     mounted = {
       shared: sharedLease.value,
       sharedLease,
-      unregisterClient: sharedLease.value.registerClient(host, readiness, data, scope),
       readState: UNMOUNTED_READ_STATE,
       leases: 0,
     };
   }
+  const unregisterClient = active ? mounted.shared.registerClient(host, readiness, data, scope) : undefined;
   mounted.leases += 1;
   if (existing === undefined) {
     const target = byScope ?? new Map<PluginUiEphemeralSharedScope, MountedWindow>();
@@ -335,12 +335,12 @@ export function acquireTriageListWindow(
     release() {
       if (released) return;
       released = true;
+      unregisterClient?.();
       mounted.leases -= 1;
       if (mounted.leases > 0) return;
       const currentByScope = mountedByHost.get(host);
       if (currentByScope?.get(scope) === mounted) currentByScope.delete(scope);
       if (currentByScope?.size === 0) mountedByHost.delete(host);
-      mounted.unregisterClient();
       mounted.sharedLease.release();
     },
   });

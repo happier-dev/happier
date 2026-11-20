@@ -2,7 +2,7 @@ import { CORPUS_USER_MARKS_COLLECTION } from '../../corpus/collections/definitio
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginSurfaceActivity, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
 
 import type { TriageListLoadMoreV1 } from '../../projection/listWindowStore.js';
 import type { TriageListDisplayRowV1 } from './pinnedRows.js';
@@ -115,6 +115,7 @@ function noticeFor(
 
 export function useTriagePinnedEntries(): TriageMountedPinsV1 {
   const hostApi = usePluginHostApi();
+  const { active } = usePluginSurfaceActivity();
   const dataClient = usePluginUiDataClientOrNull();
   const durable = useTriageDurableAccount();
   const readiness = usePluginHostReadiness(durable.collections === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
@@ -218,14 +219,14 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
   }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
-    if (readiness.pending || readiness.ready === false) return;
+    if (!active || readiness.pending || readiness.ready === false) return;
     const controller = new AbortController();
     void read(controller.signal, demand);
     return () => { controller.abort(); };
-  }, [demand, read, readiness.pending, readiness.ready, readiness.revision]);
+  }, [active, demand, read, readiness.pending, readiness.ready, readiness.revision]);
 
   useEffect(() => {
-    if (!dataClient || readiness.pending || readiness.ready === false) return;
+    if (!active || !dataClient || readiness.pending || readiness.ready === false) return;
     const controller = new AbortController();
     void dataClient.watchAccountData({ kind: 'collection', collectionId: CORPUS_USER_MARKS_COLLECTION.id }, () => {
       if (!controller.signal.aborted) setDemand(current => ({ ...current, appending: false, nonce: current.nonce + 1 }));
@@ -238,7 +239,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
       await presentTriageMountedUiActionFailure(hostApi, error, text);
     });
     return () => controller.abort();
-  }, [dataClient, hostApi, readiness.pending, readiness.ready, readiness.revision, text]);
+  }, [active, dataClient, hostApi, readiness.pending, readiness.ready, readiness.revision, text]);
 
   const loadMorePins = useCallback((): void => {
     if (reading || readiness.pending || readiness.ready === false) return;
