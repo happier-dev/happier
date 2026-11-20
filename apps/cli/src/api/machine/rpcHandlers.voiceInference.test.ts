@@ -433,7 +433,12 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       streamId: streamStartResp.streamId,
       generation: streamStartResp.generation,
     });
-    expect(cancelStt).toHaveBeenCalledWith('stt-stream-1');
+    await expect(sttStreamChunk?.({
+      streamId: streamStartResp.streamId,
+      generation: streamStartResp.generation,
+      seq: 1,
+      pcm16Base64: Buffer.from([0, 0, 1, 0]).toString('base64'),
+    })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     await expect(modelsRemove?.({ packId: qualifiedPackId })).resolves.toEqual({ ok: true });
     expect(removeModel).toHaveBeenCalledWith(qualifiedPackId);
     await expect(worker.getModelsStatus([qualifiedPackId])).resolves.toMatchObject([{ installState: 'not_installed' }]);
