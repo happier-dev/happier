@@ -176,7 +176,7 @@ describe('PermissionFooter offered native choices', () => {
     );
   });
 
-  it('distinguishes a Muse-local grant from an Account grant on a phone', async () => {
+  it('describes lasting grants from their declared scope and rule preview', async () => {
     const [once, session, always, reject] = nativeChoices.choices;
     const account = createMcpCatalogPermissionChoiceV1({
       mcpTool: { server: 'docs', tool: 'edit', serverTitle: 'Docs', item: { serverId: 'docs-id' },
@@ -184,8 +184,10 @@ describe('PermissionFooter offered native choices', () => {
       grant: once!, existingChoices: nativeChoices.choices,
     });
     if (!account) throw new Error('Expected an Account catalog grant');
+    const preview = 'Saved by the native tool policy';
     const { screen } = await renderFooter({ nativeChoices: {
-      ...nativeChoices, source: 'muse', choices: [once!, session!, always!, account, reject!],
+      ...nativeChoices, source: 'muse', choices: [once!, session!, always!,
+        { ...always!, id: 'opaque:custom', rulePreview: preview }, account, reject!],
     } });
     await layOut(screen, 390);
 
@@ -193,7 +195,8 @@ describe('PermissionFooter offered native choices', () => {
       .findByTestId(`permission-footer.choice.${choiceId}`)?.findAll(node => node.children.includes(text)).length;
     expect(rowHasText(session!.id, 'capabilities.session.toolAsk.untilSessionEnds')).toBeGreaterThan(0);
     expect(rowHasText(account.id, 'capabilities.session.toolAsk.savedForLater')).toBeGreaterThan(0);
-    expect(rowHasText(always!.id, 'capabilities.session.toolAsk.savedInMuseSettings')).toBeGreaterThan(0);
+    expect(rowHasText(always!.id, 'capabilities.session.toolAsk.savedForLater')).toBeGreaterThan(0);
+    expect(rowHasText('opaque:custom', preview)).toBeGreaterThan(0);
   });
 
   it('withholds a lasting choice from a shared approver with its reason, while once and session still answer', async () => {

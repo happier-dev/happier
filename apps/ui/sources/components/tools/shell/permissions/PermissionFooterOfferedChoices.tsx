@@ -12,7 +12,6 @@ import { isOfferedPermissionChoiceAvailable, type OfferedPermissionChoice } from
 
 type Props = Readonly<{
   choices: readonly OfferedPermissionChoice[];
-  nativeSource?: string;
   primaryId: string | null;
   /** Every choice is withheld (answered, pending, unconfirmed). */
   disabled: boolean;
@@ -24,7 +23,7 @@ type Props = Readonly<{
 }>;
 
 /** The second line of a list row: the producer's own rule preview, else what the offered scope means. */
-function describeOfferedChoice(choice: OfferedPermissionChoice, ownerRequiredReason: string, nativeSource?: string): string | null {
+function describeOfferedChoice(choice: OfferedPermissionChoice, ownerRequiredReason: string): string | null {
   if (!isOfferedPermissionChoiceAvailable(choice))
     return ownerRequiredReason;
   if (choice.rulePreview) return choice.rulePreview;
@@ -32,9 +31,7 @@ function describeOfferedChoice(choice: OfferedPermissionChoice, ownerRequiredRea
   if (choice.scope === 'session')
     return t('capabilities.session.toolAsk.untilSessionEnds');
   if (choice.scope === 'localPersistent')
-    return nativeSource === 'muse' && !choice.followUp
-      ? t('capabilities.session.toolAsk.savedInMuseSettings')
-      : t('capabilities.session.toolAsk.savedForLater');
+    return t('capabilities.session.toolAsk.savedForLater');
   return null;
 }
 
@@ -47,7 +44,7 @@ export const PermissionFooterOfferedChoices = React.memo(function PermissionFoot
     choices={props.choices.map(choice => ({
       id: choice.id, label: choice.label, refusal: isRefusingPermissionChoice(choice),
       available: isOfferedPermissionChoiceAvailable(choice), allowsFeedback: choice.allowsFeedback,
-      description: describeOfferedChoice(choice, ownerRequiredReason, props.nativeSource),
+      description: describeOfferedChoice(choice, ownerRequiredReason),
     }))}
     primaryId={props.primaryId} disabled={props.disabled} busyChoiceId={props.busyChoiceId}
     unavailableReason={ownerRequiredReason}

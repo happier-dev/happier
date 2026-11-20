@@ -844,7 +844,6 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         };
         const choicesProps: React.ComponentProps<typeof PermissionFooterOfferedChoices> = {
             choices: offeredChoices,
-            nativeSource: nativeChoices?.source,
             permissionOwnerLabel: projectedRequest?.permissionOwnerLabel ?? permission.permissionOwnerLabel,
             primaryId: selectPrimaryPermissionChoice(offeredChoices),
             disabled: !isPending || answerUnconfirmed || isCurrentRequestLoading,
