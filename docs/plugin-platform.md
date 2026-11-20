@@ -2510,6 +2510,15 @@ to the current Account selection, then translates it to that registry's
 process-local occurrence; settled consent cannot approve a replacement target
 selected after the prompt.
 
+In 0.3 development, a one-shot Account Action running as a host-reviewed child
+can reacquire custody once after the dispatch owner confirms retirement before
+the handler started. The Account ingress resolves the same plugin and Action
+against the current Account selection and sends the original operands through
+ordinary child admission. The existing review applies to those exact operands.
+A new operand goes through its own confirmation policy. If the Account has no
+current installation for the plugin, the child returns
+`plugin_account_execution_unavailable`.
+
 The UI admits Account Action and Resource descriptors without acquiring or
 evaluating their executable artifact. The first invocation, Resource read or
 observation prepares that exact Account target through the existing executable

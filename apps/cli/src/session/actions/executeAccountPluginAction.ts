@@ -1,4 +1,5 @@
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { ActionId } from '@happier-dev/protocol';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -125,7 +126,7 @@ export async function executeAccountPluginAction(params: Readonly<{
       ?? params.context?.executionRunTargetMachineId;
     const machineId = explicitMachineId ?? params.context?.defaultSessionMachineId;
     const serverIdentityId = params.context?.serverIdentityId ?? params.host.serverIdentityId;
-    const runtime = await resolveAccountExecutionRuntime({
+    const acquireRuntime = () => resolveAccountExecutionRuntime({
       executeTeamCredentialBrokerAction: params.host.executeTeamCredentialBrokerAction,
       externalActionHomeBinding: {
         serverId,
@@ -150,9 +151,35 @@ export async function executeAccountPluginAction(params: Readonly<{
     // not turn the invocation into an independently admitted Machine Action.
     const accountHandlerUnavailable = { matched: true as const, result: { ok: false as const,
       errorCode: 'plugin_action_handler_missing', error: 'plugin_action_handler_missing' } };
+    const runtime = await acquireRuntime();
     if (!runtime) return search ? { matched: false } : accountHandlerUnavailable;
-    try { return await executeInAccountRuntime(params, runtime); }
-    finally { await runtime.registry.dispose(); }
+    let retired: { attempt: CurrentProcessPluginActionExecutionAttempt; pluginId: string; custodyId: string };
+    try {
+      const attempt = await executeInAccountRuntime(params, runtime);
+      if (!attempt.matched || attempt.result.ok || attempt.result.errorCode !== 'plugin_action_generation_retired'
+        || attempt.result.effectAttempted !== false || !pluginId || params.actionId !== 'action.invoke'
+        || params.inheritedInvocation || params.context?.expectedContributedActionOccurrenceId !== undefined
+        || (params.input && typeof params.input === 'object' && 'expectedContributorOccurrenceId' in params.input)) return attempt;
+      const reviewed = readHostReviewedChildOperationV1(params.context, params.actionId, params.input);
+      if (!isHostAdmittedReviewedChildPolicyV1(reviewed, params.actionId, params.input)) return attempt;
+      const selection = runtime.registry.readAccountExecutionSelection?.(pluginId);
+      if (selection?.kind !== 'available') return attempt;
+      retired = { attempt, pluginId, custodyId: selection.custodyId };
+    } finally { await runtime.registry.dispose(); }
+
+    // The first child never entered its handler. Reopen custody under the same
+    // parent and operands and let normal Action admission decide the child again.
+    if (!await isCredentialCurrent()) return retired.attempt;
+    const replacement = await acquireRuntime();
+    try {
+      const selection = replacement?.registry.readAccountExecutionSelection?.(retired.pluginId);
+      if (!replacement || selection?.kind !== 'available') {
+        const code = selection?.kind === 'unavailable' ? selection.code : 'plugin_account_execution_unavailable';
+        return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
+      }
+      if (selection.custodyId === retired.custodyId) return retired.attempt;
+      return await executeInAccountRuntime(params, replacement);
+    } finally { await replacement?.registry.dispose(); }
   });
 }
 
