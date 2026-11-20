@@ -5,7 +5,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '../actionSpecs.js';
 import {
   bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1,
-  type ExternalActionExecutionAuthorizationRequestV1,
+  type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionSignedAuthenticationV1,
 } from '../externalActionApi.js';
 import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionExecutionAuthorization.js';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
@@ -19,20 +19,22 @@ export function readRequesterOperationAddressV1(actionId: string, input: unknown
   return parsed.success && !parsed.data.managed && !parsed.data.environmentId ? parsed.data : null;
 }
 
-/** Both Account clients reuse the signed installed carrier and its one-use codec. */
+/** Reuse the signed installed carrier and its one-use codec for requester reads. */
 export async function readRequesterActionOperationV1(params: Readonly<{
   input: NonNullable<ReturnType<typeof readRequesterOperationAddressV1>>;
   accountId: string;
   serverIdentityId: string;
   tokenEpoch: number;
+  authenticationKind?: ExternalActionSignedAuthenticationV1['kind'];
   requestId: string;
   randomBytes(length: number): Uint8Array;
   request(path: string, body: ExternalActionExecutionAuthorizationRequestV1): Promise<Readonly<{ status: number; value: unknown }>>;
 }>): Promise<ActionExecuteResult | null> {
   const actionId = ACTION_OPERATION_GET_ACTION_ID_V1;
   const target = { kind: 'machine' as const, machineId: params.input.machineId };
+  const authentication = { kind: params.authenticationKind ?? 'account', tokenEpoch: params.tokenEpoch };
   const binding = { actionId, target, accountId: params.accountId, requestId: params.requestId,
-    serverIdentityId: params.serverIdentityId, authentication: { kind: 'account' as const, tokenEpoch: params.tokenEpoch } };
+    serverIdentityId: params.serverIdentityId, authentication };
   const material = { type: 'dataKey' as const, machineKey: params.randomBytes(32) };
   const envelope = { ...sealExternalActionRequestV2({ binding, material,
     projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
@@ -56,7 +58,8 @@ export async function readRequesterActionOperationV1(params: Readonly<{
   const root = authorization.data.binding;
   const key = authorization.data.requesterOperationReadInstallationPublicKey;
   if (!root.requesterOperationRead || !key || root.accountId !== params.accountId || root.serverIdentityId !== params.serverIdentityId
-    || !('authentication' in root) || root.authentication.tokenEpoch !== params.tokenEpoch
+    || !('authentication' in root) || root.authentication.kind !== authentication.kind
+    || root.authentication.tokenEpoch !== authentication.tokenEpoch
     || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: target.machineId, envelope })) return unavailable;
   // The installation public key is needed only by the caller. The receiver
   // opens this message with its private key and verifies the signed binding.

@@ -1682,9 +1682,11 @@ No background requester controller or custodian-credential fallback is implied.
 ### Reading an admitted operation (unreleased 0.3)
 
 The requester can open `action.operations.get` with the retained Home, Machine
-and operation id. Home routes the signed Account request to the current
-installation and the daemon's operation owner looks up the snapshot under that
-requester's Account. Another Account receives `not_found` for the same address.
+and operation id. Home routes the signed request from either an Account bearer
+or a paired-terminal credential to the current installation. Terminal credentials
+retain their automation authority. The daemon's operation owner looks up the
+snapshot under the requester's Account. Another Account receives `not_found`
+for the same address.
 The requester read uses a per-invocation sealed codec. It needs no grant on
 the executor Machine or access to its content keys. This transport is scoped
 to a single operation read and requires the current 0.3 Home and daemon.

@@ -869,9 +869,10 @@ export function readOriginalAccountRequesterOperation(params: Readonly<{
   const accountId = readAccountIdFromToken(params.credentials.token);
   const extras = claims && typeof claims.extras === 'object' && claims.extras !== null && !Array.isArray(claims.extras)
     ? claims.extras as Readonly<Record<string, unknown>> : {};
-  const authentication = ExternalActionSignedAuthenticationV1Schema.safeParse({ kind: 'account', tokenEpoch: claims?.tokenEpoch ?? extras.tokenEpoch });
-  if (!accountId || provenance?.provenance.kind !== 'account' || provenance.provenance.authority !== 'present_user'
-    || !authentication.success) return Promise.resolve(null);
+  const authentication = ExternalActionSignedAuthenticationV1Schema.safeParse({
+    kind: provenance?.provenance.kind, tokenEpoch: claims?.tokenEpoch ?? extras.tokenEpoch,
+  });
+  if (!accountId || !authentication.success) return Promise.resolve(null);
   const home = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
   const headers = { Authorization: `Bearer ${params.credentials.token}`, 'Content-Type': 'application/json',
     ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
@@ -880,7 +881,8 @@ export function readOriginalAccountRequesterOperation(params: Readonly<{
     if (params.isCurrent && !await params.isCurrent()) throw new Error('not_authenticated');
   };
   return readRequesterActionOperationV1({ input: params.input, accountId, serverIdentityId: params.serverIdentityId,
-    tokenEpoch: authentication.data.tokenEpoch, requestId: params.requestId, randomBytes,
+    authenticationKind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch,
+    requestId: params.requestId, randomBytes,
     request: async (path, body) => {
       await assertCurrent();
       const response = await axios.post<unknown>(`${home}${path}`, body, { headers, validateStatus: () => true,

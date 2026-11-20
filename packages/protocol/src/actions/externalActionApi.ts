@@ -1461,7 +1461,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
-  if (value.requesterOperationRead && (!('authentication' in value) || value.authentication.kind !== 'account'
+  if (value.requesterOperationRead && (!('authentication' in value)
     || value.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1 || value.target.kind !== 'machine'
     || value.target.machineId !== value.machineId || value.target.project || value.admittedMachineRole
     || value.managedAdmission || value.environmentId

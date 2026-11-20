@@ -1480,6 +1480,10 @@ describe('composed CLI managed Action origination', () => {
             runtimeActionMachineId: selected.controller.machineId,
             externalActionMachineRequestPrivateKey: selected.keys.secretKey,
             externalActionMachineInstallationId: selected.controller.installationId,
+            machineActionDirectTargetTransport: { machineId: target.machineId, invoke: async (method, request, options) => {
+                expect(method).toBe(ACTION_OPERATION_RPC_METHODS_V2.get);
+                return operations.handlers.getV2(request, options?.rpcContext);
+            } },
             managedMachineAction: async ({ actionId: effectActionId, context }) => {
                 const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
                     homeId, admittedActionRequestId: binding.requestId } } });
@@ -1603,6 +1607,27 @@ describe('composed CLI managed Action origination', () => {
                     operationId, state: 'succeeded', scope: { accountId: requester.account.id, machineId: target.machineId },
                 } } });
                 expect(await read(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                const readWithPairedCli = async (member: typeof requester) => {
+                    const token = await auth.createToken(member.account.id, undefined,
+                        { kind: 'terminal', authority: 'account_automation' });
+                    const pairedCli = createCliActionExecutorFromCredentials({
+                        credentials: { token, credentialProvenance: 'stored_session', encryption: null },
+                        serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+                        actionsSettingsProvider: {
+                            getActionsSettings: () => ActionsSettingsV1Schema.parse(storedSettings.actionsSettingsV1),
+                            getAccountSettings: () => accountSettingsParse(storedSettings),
+                        },
+                    });
+                    return pairedCli.execute(ACTION_OPERATION_GET_ACTION_ID_V1, address, {
+                        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                        serverId: homeId, serverIdentityId: homeId, actionRequestId: crypto.randomUUID(),
+                    });
+                };
+                const ownRead = await readWithPairedCli(requester);
+                expect(ownRead, JSON.stringify(ownRead)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                    operationId, state: 'succeeded', scope: { accountId: requester.account.id, machineId: target.machineId },
+                } } });
+                expect(await readWithPairedCli(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
                 expect(await resolveMachineAccess({ actorAccountId: otherMember.account.id, machineId: target.machineId })).toBeNull();
             }
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }

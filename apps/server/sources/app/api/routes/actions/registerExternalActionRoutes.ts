@@ -797,7 +797,7 @@ export function registerExternalActionRoutes(
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
             }
             if (requesterOperationRead && (actionId.data !== ACTION_OPERATION_GET_ACTION_ID_V1
-                || !('authentication' in principal) || principal.authentication.kind !== 'account'
+                || !('authentication' in principal)
                 || body.data.envelope.pluginInvocation
                 || managedAdmission || deploymentNativeAdmission || deploymentMetadataEnvironmentId
                 || target.kind !== 'machine' || target.machineId !== receivingMachineId || target.project
