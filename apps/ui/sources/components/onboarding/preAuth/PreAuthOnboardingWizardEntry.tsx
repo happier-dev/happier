@@ -252,6 +252,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         wizardChromeMode: 'bare' as const,
         wizardLayoutPresentation: isDesktopShell ? 'fullscreen' as const : undefined,
         authEntryOptions,
+        isHomeAuthenticated: auth.isAuthenticated,
         accountServiceEntry,
         accountContinuationIntent,
         accountEntryReturnTo: resolveAuthReturnToRoute(),

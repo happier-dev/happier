@@ -12,9 +12,9 @@ import { t } from '@/text';
 /** Shown when a Home joined an already usable set, so changing the device's focus is explicit. */
 export function ConnectedHomePane(props: Readonly<{
     profile: ServerProfile;
-    onOpen: () => Promise<ActiveServerSwitchResult>;
+    onOpen?: () => Promise<ActiveServerSwitchResult>;
     onOpened: () => void;
-    onShowAllHomes: () => Promise<void>;
+    onShowAllHomes?: () => Promise<void>;
 }>) {
     const [opening, setOpening] = React.useState(false);
     const [openFailed, setOpenFailed] = React.useState(false);
@@ -24,7 +24,7 @@ export function ConnectedHomePane(props: Readonly<{
         setOpening(true);
         setOpenFailed(false);
         try {
-            const result = await props.onOpen();
+            const result = await props.onOpen?.();
             if (result === 'blocked') setOpenFailed(true);
             else props.onOpened();
         } catch {
@@ -34,7 +34,7 @@ export function ConnectedHomePane(props: Readonly<{
         }
     }, [opening, props]);
     const showAll = React.useCallback(async () => {
-        if (opening) return;
+        if (opening || !props.onShowAllHomes) return;
         setOpening(true);
         setOpenFailed(false);
         try {
@@ -50,8 +50,8 @@ export function ConnectedHomePane(props: Readonly<{
         <View style={styles.actions}>
             <RoundButton testID="add-home.open-home" size="small" title={t('homeAdd.openHome', { home })}
                 loading={opening} onPress={() => { void open(); }} />
-            <RoundButton testID="add-home.show-all-homes" size="small" display="secondary"
-                title={t('homeAdd.showAllHomes')} disabled={opening} onPress={() => { void showAll(); }} />
+            {props.onShowAllHomes ? <RoundButton testID="add-home.show-all-homes" size="small" display="secondary"
+                title={t('homeAdd.showAllHomes')} disabled={opening} onPress={() => { void showAll(); }} /> : null}
         </View>
         {openFailed ? <Text testID="add-home.open-failed">{t('errors.operationFailed')}</Text> : null}
     </View>;

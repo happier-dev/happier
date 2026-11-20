@@ -752,7 +752,7 @@ describe('OnboardingWizardSurface', () => {
         expect(nextProps?.onWizardSelectedProviderIdChange).toBe(firstProps?.onWizardSelectedProviderIdChange);
         expect(nextProps?.onWizardRequestProviderDetails).toBe(firstProps?.onWizardRequestProviderDetails);
         expect(screen.findByType(LocalRelayAccessControlSection as never).props.wizardSelectedProviderId).toBe('cloudflareNamed');
-        expect((nextProps as { serverProfileId?: unknown } | null)?.serverProfileId).toEqual(expect.any(String));
+        expect((nextProps as { serverProfileId?: unknown } | null)?.serverProfileId).toBeNull();
 
         const localRelayAccessSection = screen.findByType(LocalRelayAccessControlSection as never) as unknown as {
             props: React.ComponentProps<typeof LocalRelayAccessControlSection>;
@@ -2290,21 +2290,74 @@ describe('OnboardingWizardSurface', () => {
         await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-confirmSwitchRelay')).toBeTruthy());
     });
 
-    it('switches remote relay hosting through the configured share URL once relay access provides one', async () => {
+    it('retries local Home provisioning, then opens reachability and the selected Home welcome', async () => {
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const { PersonalHomeBootstrapAdmission } = await import('@/components/personalHome/bootstrap/PersonalHomeBootstrapAdmission');
+        const { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate } = await import('@/components/personalHome/bootstrap/PersonalHomeBootstrapGate');
+        const homeUrl = 'http://127.0.0.1:43124';
+        const homeId = await homes.addHome({ name: 'Provisioned Home', serverUrl: homeUrl, accountId: null, active: false });
+        const profile = profiles.getServerProfileById(homeId)!;
+        let attempts = 0;
+        const readFacts = async (): Promise<import('@/components/personalHome/bootstrap/personalHomeBootstrapTypes').PersonalHomeFacts> => ({
+            hostIsDesktop: true,
+            isDesktopMainWindow: true,
+            explicitlySelectedOtherHome: false,
+            completedPersonalHomeProfile: attempts === 2 ? profile : null,
+            candidateLocalProfile: null,
+            relayRuntime: null,
+            localHomeReachability: 'unknown',
+            localHomeIdentity: null,
+            localHomeAuth: 'unknown',
+            anonymousSignup: 'unknown',
+            daemon: attempts === 2 ? { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: 'local-machine', servesPersonalHome: true } : null,
+            activeTask: null,
+        });
+        const operations = {
+            'ensure-home-ready': async () => {
+                if (++attempts === 1) throw new Error('Local runtime setup failed');
+            },
+        };
+        const Runtime: React.ComponentProps<typeof PersonalHomeBootstrapAdmission>['runtime'] = ({ children, onSettled }) => (
+            <PersonalHomeBootstrapGate isDesktopHost isDesktopMainWindow readFacts={readFacts} operations={operations} onReady={onSettled}>
+                <PersonalHomeBootstrapContent>{children}</PersonalHomeBootstrapContent>
+            </PersonalHomeBootstrapGate>
+        );
+        const screen = await renderScreen(
+            <PersonalHomeBootstrapAdmission admission="offer" runtime={Runtime}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell isHomeAuthenticated initialStepId="relay_select" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapAdmission>,
+        );
+        await pressOnboarding(screen, 'onboarding-wizard-relay:thisComputer');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await vi.waitFor(() => expect(screen.findByTestId('personal-home-bootstrap-retry')).toBeTruthy());
+        await screen.pressByTestIdAsync('personal-home-bootstrap-retry');
+        await vi.waitFor(() => expect(screen.findByType(LocalRelayAccessControlSection as never)).toBeTruthy());
+        expect(getOnboardingStepId(screen)).toBe('relay_access');
+        await pressOnboarding(screen, 'settings.server.relayAccess.choice:localOnly');
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await vi.waitFor(() => expect(screen.findByTestId('add-home.open-home')).toBeTruthy());
+        expectFocusedHome(homeUrl);
+        expect(attempts).toBe(2);
+    });
+
+    it('adopts only the chosen SSH Home address through verified connection after relay access', async () => {
+        const upstream = 'https://remote-relay.example.test';
+        const shareUrl = 'https://remote-share.example.test';
+        const serverIdentityId = 'srv_installed_remote';
+        const request = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation((input, init) => String(input) === `${shareUrl}/v1/features`
+            ? Promise.resolve(Response.json(createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } } })))
+            : request(input, init));
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
+                initialStepId: 'relay_select',
                 authEntryOptions: baseAuthOptions,
             }),
         );
-
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
         await act(async () => {
@@ -2337,7 +2390,7 @@ describe('OnboardingWizardSurface', () => {
         await act(async () => {
             remoteChecklistProps?.onCompleted?.({
                 machineId: 'mach-remote',
-                relayRuntimeUrl: 'https://remote-relay.example.test',
+                relayRuntimeUrl: upstream,
                 relayAccessTarget: {
                     kind: 'ssh',
                     ssh: {
@@ -2349,6 +2402,7 @@ describe('OnboardingWizardSurface', () => {
             });
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
+        expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === upstream)).toBe(false);
 
         await act(async () => {
             screen.findByType(RemoteSshChecklistStep as never).props.onRequestAdvance?.();
@@ -2358,7 +2412,7 @@ describe('OnboardingWizardSurface', () => {
         await vi.waitFor(() => expect(screen.findByType(LocalRelayAccessControlSection as never)).toBeTruthy());
         await act(async () => {
             (screen.findByType(LocalRelayAccessControlSection as never)?.props as { onShareUrlChange?: (value: string | null) => void } | null)
-                ?.onShareUrlChange?.('https://remote-share.example.test');
+                ?.onShareUrlChange?.(shareUrl);
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -2368,13 +2422,11 @@ describe('OnboardingWizardSurface', () => {
         const confirmBody = screen.findByTestId('onboarding-wizard-confirmSwitchRelay')!;
         expect(String(confirmBody.props.relayUrl ?? screen.getTextContent())).toContain('remote-share.example.test');
 
-        const confirmButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await confirmButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
 
-        expectFocusedHome('https://remote-share.example.test');
+        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
+        expectFocusedHome(shareUrl);
+        expect(profiles.listServerProfiles().find((profile) => profile.serverUrl === shareUrl)?.serverIdentityId).toBe(serverIdentityId);
         expect(getPendingSetupIntent()).toEqual(expect.objectContaining({
             relayUrl: 'https://remote-share.example.test',
         }));

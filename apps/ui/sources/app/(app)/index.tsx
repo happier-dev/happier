@@ -13,6 +13,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { readLegacySessionDeepLinkFromWebLocation, resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveNewSessionAuthContinuation } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
 import { PersonalHomeBootstrapContent, usePersonalHomeBootstrapActive } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
+import { useFirstRunPersonalHome } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -49,6 +50,7 @@ export function Home() {
     const { serverId } = useActiveServerSnapshot();
     const scope = useActiveServerAccountScope(serverId);
     const pendingSetup = usePendingSetupIntent();
+    const firstRun = useFirstRunPersonalHome();
     const { start: startAskHappier, ready: askHappierReady } = useAskHappierStarter();
     const keepBootstrapShell = shouldKeepDesktopPersonalHomeShell({
         isAuthenticated,
@@ -61,6 +63,10 @@ export function Home() {
     // Only the focused root completes inline auth. A separate auth route owns its
     // explicit continuation and arrives here already authenticated if it chose Home.
     React.useLayoutEffect(() => {
+        if (firstRun) {
+            interactive.current = true;
+            return;
+        }
         if (!isAuthenticated) {
             applying.current = false;
             interactive.current = focused && !keepBootstrapShell;
@@ -129,9 +135,12 @@ export function Home() {
             if (interactive.current) apply();
             else setHomeVisible(true);
         }
-    }, [askHappierReady, focused, homeVisible, isAuthenticated, keepBootstrapShell, params, pendingSetup,
+    }, [askHappierReady, firstRun, focused, homeVisible, isAuthenticated, keepBootstrapShell, params, pendingSetup,
         router, scope, serverId, startAskHappier]);
 
+    if (firstRun) {
+        return <PersonalHomeBootstrapContent><PreAuthOnboardingWizardEntry /></PersonalHomeBootstrapContent>;
+    }
     if (!keepBootstrapShell && (!isAuthenticated || !homeVisible)) {
         return !isAuthenticated || interactive.current ? <PreAuthOnboardingWizardEntry /> : null;
     }

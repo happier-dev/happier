@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ConnectedHomePane } from '@/components/homes/add/ConnectedHomePane';
 import { View } from 'react-native';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
@@ -150,6 +151,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onConnectHomeReached?: () => void;
     onOpenRelaySelectionFromAuth: () => void;
     onCreatePersonalHome?: () => void;
+    preparedHome?: React.ComponentProps<typeof ConnectedHomePane>;
 
     onOpenRestore: () => void;
     onOpenLostAccess: () => void;
@@ -301,6 +303,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         return (
             <RelayHostLocalChecklistStep
                 testID={`${params.testIDPrefix}-relay-host-local`}
+                onStart={params.onCreatePersonalHome}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
             />
         );
@@ -387,6 +390,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     }
 
     if (params.stepId === 'auth') {
+        if (params.preparedHome) return <ConnectedHomePane {...params.preparedHome} />;
         return (
             <>
                 <View style={params.styles.authEntryWrapper}>

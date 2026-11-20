@@ -12,6 +12,8 @@ import { PersonalHomeSetupBackdrop, PersonalHomeSetupSurface } from '../setup/Pe
 import { derivePersonalHomeSetupProgress } from '../setup/personalHomeSetupProgress';
 import { PersonalHomeRecoveryStrip } from './PersonalHomeRecoveryStrip';
 import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { useFirstRunPersonalHome } from './personalHomeBootstrapRequest';
 import type {
     PersonalHomeBootstrapOperation,
     PersonalHomeBootstrapSnapshot,
@@ -151,7 +153,7 @@ export type PersonalHomeBootstrapGateProps = Readonly<{
     onSignInToExistingRuntime?: () => void;
     onOpenDetails?: () => void;
     /** Releases a one-shot creation request after the lifecycle owner finishes. */
-    onReady?: () => void;
+    onReady?: (profile?: ServerProfile) => void;
     setupSurface?: (props: React.ComponentProps<typeof PersonalHomeSetupSurface>) => React.ReactNode;
 }>;
 
@@ -177,6 +179,7 @@ function passThroughFacts(): Promise<PersonalHomeFacts> {
  * shell/navigation stays mounted. Overlay/callback windows and mobile/web hosts bypass setup.
  */
 export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps): React.ReactElement {
+    const firstRun = useFirstRunPersonalHome();
     const runtimeHost = isPersonalHomeBootstrapRuntimeHost();
     const isDesktop = props.isDesktopHost ?? runtimeHost;
     const isMainWindow = props.isDesktopMainWindow ?? runtimeHost;
@@ -203,9 +206,12 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
     });
     const existingRuntimeNeedsSignIn = controller.snapshot.detail?.code === 'existing_runtime_credentials';
     const onReady = props.onReady;
+    const completedProfile = controller.facts?.completedPersonalHomeProfile;
     React.useEffect(() => {
-        if (enabled && controller.snapshot.phase === 'ready' && !controller.isOperating) onReady?.();
-    }, [enabled, controller.snapshot.phase, controller.isOperating, onReady]);
+        if (enabled && controller.snapshot.phase === 'ready' && !controller.isOperating && (!firstRun || completedProfile)) {
+            onReady?.(completedProfile ?? undefined);
+        }
+    }, [completedProfile, enabled, controller.snapshot.phase, controller.isOperating, firstRun, onReady]);
     const onSignInToExistingRuntime = props.onSignInToExistingRuntime;
     const handleUseExisting = React.useCallback(() => {
         if (existingRuntimeNeedsSignIn && onSignInToExistingRuntime) {
@@ -229,14 +235,14 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
         controller.refresh();
     }, [controller.refresh]);
 
-    const gating = enabled && controller.snapshot.shouldGateShell;
+    const gating = enabled && (firstRun ? firstRun.profile === null : controller.snapshot.shouldGateShell);
     const creatingFirstHome = React.useRef(false);
     const facts = controller.facts;
-    if (gating && facts && !facts.explicitlySelectedOtherHome && !facts.completedPersonalHomeProfile
+    if (!firstRun && gating && facts && !facts.explicitlySelectedOtherHome && !facts.completedPersonalHomeProfile
         && !facts.candidateLocalProfile && !facts.relayRuntime?.installed && !facts.relayRuntime?.dataPresent) {
         creatingFirstHome.current = true;
     }
-    const firstArrival = enabled && controller.snapshot.homeReady && creatingFirstHome.current
+    const firstArrival = !firstRun && enabled && controller.snapshot.homeReady && creatingFirstHome.current
         && facts?.explicitlySelectedOtherHome !== true;
 
     const factTask = controller.facts?.activeTask ?? null;
@@ -257,10 +263,10 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
             : {}),
     };
     // Recovery after Home readiness stays secondary; pre-ready setup belongs only to Home content.
-    const showPostShellPending = enabled
+    const showPostShellPending = enabled && !firstRun
         && controller.error == null
         && controller.isOperating && controller.snapshot.homeReady && controller.snapshot.shouldGateShell === false;
-    const showPostShellRecovery = enabled
+    const showPostShellRecovery = enabled && !firstRun
         && controller.error != null
         && controller.snapshot.homeReady
         && controller.snapshot.shouldGateShell === false;

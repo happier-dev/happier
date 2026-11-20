@@ -65,6 +65,7 @@ import { PersonalHomeBootstrapGate } from './PersonalHomeBootstrapGate';
 import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import { resolvePersonalHomeAdmission } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { PersonalHomeBootstrapAdmission } from './PersonalHomeBootstrapAdmission';
+import { useFirstRunPersonalHome } from './personalHomeBootstrapRequest';
 import { awaitPersonalHomeBootstrapQaMutationPause } from './personalHomeBootstrapQaMutationPause';
 import {
     runPersonalHomeBootstrapFromSystemTasks,
@@ -774,7 +775,7 @@ function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
     children: React.ReactNode;
     initialFacts?: PersonalHomeFacts;
     requested?: boolean;
-    onSettled: () => void;
+    onSettled: (profile?: ServerProfile) => void;
 }>): React.ReactElement {
     const runtime = usePersonalHomeBootstrapRuntime();
     const readFacts = React.useCallback(async () => {
@@ -827,13 +828,18 @@ function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
     );
 }
 
-function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children: React.ReactNode; requested: boolean; onSettled: () => void }>): React.ReactElement {
+function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{
+    children: React.ReactNode;
+    requested: boolean;
+    onSettled: (profile?: ServerProfile) => void;
+}>): React.ReactElement {
+    const firstRun = useFirstRunPersonalHome();
     const segments = useCurrentRouteSegments();
     const activeSelection = useActiveServerSnapshot();
     useServerProfilesGeneration();
     const activeProfile = getServerProfileById(activeSelection.serverId);
     if (shouldBypassPersonalHomeBootstrapForSegments(segments)
-        || (!props.requested && isExplicitExistingHomeSelection(activeProfile, activeSelection.isSelectionExplicit))) {
+        || (!firstRun && !props.requested && isExplicitExistingHomeSelection(activeProfile, activeSelection.isSelectionExplicit))) {
         return <>{props.children}</>;
     }
 

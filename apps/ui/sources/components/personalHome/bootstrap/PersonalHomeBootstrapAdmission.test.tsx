@@ -6,7 +6,7 @@ import { useRequestPersonalHomeBootstrap } from './personalHomeBootstrapRequest'
 
 function Shell() {
     const request = useRequestPersonalHomeBootstrap();
-    return <button data-testid="create" disabled={!request} onClick={request ?? undefined} />;
+    return <button data-testid="create" disabled={!request} onClick={() => request?.()} />;
 }
 
 function Runtime(props: Readonly<{ children: React.ReactNode; requested: boolean; onSettled: () => void }>) {

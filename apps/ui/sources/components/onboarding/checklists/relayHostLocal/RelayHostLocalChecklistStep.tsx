@@ -10,13 +10,15 @@ import { t } from '@/text';
 /** Local Home creation uses the complete Personal Home lifecycle, including identity and signup closure. */
 export function RelayHostLocalChecklistStep(props: Readonly<{
     testID?: string;
+    onStart?: () => void;
     onWizardPrimaryChange?: (state: Readonly<{
         label: string;
         disabled: boolean;
         onPress: (() => void) | (() => Promise<void>);
     }> | null) => void;
 }>) {
-    const request = useRequestPersonalHomeBootstrap();
+    const bootstrap = useRequestPersonalHomeBootstrap();
+    const request = props.onStart ?? bootstrap;
     const onWizardPrimaryChange = props.onWizardPrimaryChange;
     const label = t('setupOnboarding.setupNewRelayAction');
     React.useLayoutEffect(() => {

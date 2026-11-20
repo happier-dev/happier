@@ -20,10 +20,10 @@ import { Modal } from '@/modal';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
-import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { isSameServerUrl, normalizeServerUrl, setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { getActiveServerSnapshot, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { listServerProfiles, removeServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
@@ -33,7 +33,7 @@ import { removeServerProfileUiAction } from '@/components/serverProfiles/removeS
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
 import { canConnectHomeByAddress, resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
-import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
+import { useFirstRunPersonalHome, useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import {
@@ -88,6 +88,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
     wizardChromeMode?: 'overlay' | 'embedded' | 'bare';
     wizardLayoutPresentation?: 'auto' | 'card' | 'fullscreen';
     authEntryOptions: AuthEntryOptions;
+    isHomeAuthenticated?: boolean;
     /**
      * Advertised sign-in methods of the selected sign-in service. Absent for hosts that do not
      * own an unauthenticated entry (the setup wizard reuses this surface while authenticated).
@@ -144,6 +145,9 @@ export type OnboardingWizardHomeContext = Readonly<{
 
 export function useOnboardingWizardController(props: OnboardingWizardSurfaceProps): OnboardingWizardController {
     const requestPersonalHomeBootstrap = useRequestPersonalHomeBootstrap();
+    const firstRunPersonalHome = useFirstRunPersonalHome();
+    const preparedPersonalHome = firstRunPersonalHome?.profile;
+    const startPersonalHome = React.useCallback(() => requestPersonalHomeBootstrap?.('first-run'), [requestPersonalHomeBootstrap]);
     const homeRouter = useHomeRouter();
     const { theme } = useUnistyles();
     const styles = onboardingWizardSurfaceStylesheet;
@@ -236,6 +240,19 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     }, []);
     const canCreatePersonalHome = requestPersonalHomeBootstrap != null;
+    React.useEffect(() => {
+        if (!preparedPersonalHome) return;
+        dispatch({
+            type: 'wizard/setRelaySelection',
+            relaySelection: {
+                choiceId: 'thisComputer',
+                serverUrl: preparedPersonalHome.serverUrl,
+                relayProfileId: preparedPersonalHome.id,
+                locked: false,
+            },
+        });
+        dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
+    }, [dispatch, preparedPersonalHome]);
 
 
     const handleSelectAccountService = React.useCallback<AccountServiceSelectionFormProps['onSelect']>(async (url, options) => {
@@ -751,7 +768,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         stepId,
     ]);
 
-    const handleRemoteRelayRuntimeCompletedChange = React.useCallback(async (payload: Readonly<{
+    const handleRemoteRelayRuntimeCompletedChange = React.useCallback((payload: Readonly<{
         machineId: string | null;
         relayRuntimeUrl: string | null;
         relayAccessTarget: RelayAccessTaskTarget | null;
@@ -769,20 +786,15 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessRemoteHostRef.current = payload.relayAccessRemoteHost;
         setRelayAccessTarget(payload.relayAccessTarget);
         setRelayAccessShareUrl(null);
-        const relayProfile = await upsertServerProfileOnly({
-            serverUrl: relayUrl,
-            source: 'url',
-        });
         dispatch({
             type: 'wizard/setRelaySelection',
             relaySelection: {
                 choiceId: 'remoteComputer',
                 serverUrl: relayUrl,
-                relayProfileId: relayProfile.id,
+                relayProfileId: null,
                 locked: false,
             },
         });
-        setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
     }, [dispatch]);
 
     const handleRelayAccessShareUrlChange = React.useCallback((shareUrl: string | null) => {
@@ -1166,11 +1178,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const relayUrl = isManualRelayEntry
             ? null
             : (selectedRelayFooterUrl || snapshotRelayUrl || null);
-        if (await handleAdvance()) {
+        const choiceId = state.context.relaySelection.choiceId;
+        const settingUpHome = choiceId === 'remoteComputer' || (choiceId === 'thisComputer' && props.isDesktopShell);
+        if (await handleAdvance() && !settingUpHome) {
             setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
         }
     }, [
         handleAdvance,
+        props.isDesktopShell,
         selectedRelayFooterUrl,
         snapshotRelayUrl,
         state.context.relaySelection.choiceId,
@@ -1178,11 +1193,17 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         state.context.relaySelection.serverUrl,
     ]);
 
-    const handleRelayAccessAdvance = React.useCallback(() => {
+    const handleRelayAccessAdvance = React.useCallback(async () => {
+        if (preparedPersonalHome) {
+            if (await connectAndFocusHomeAddress(preparedPersonalHome.serverUrl)) {
+                dispatch({ type: 'wizard/goToStep', stepId: 'auth' });
+            }
+            return;
+        }
         setRelaySwitchDecision('switch');
         dispatch({ type: 'wizard/setRelaySwitchConfirmationPending', pending: true });
         dispatch({ type: 'wizard/goToStep', stepId: 'confirm_switch_relay' });
-    }, [dispatch]);
+    }, [connectAndFocusHomeAddress, dispatch, preparedPersonalHome]);
 
     const handleRelayAccessProviderIdChange = React.useCallback((providerId: RelayAccessProviderId | null) => {
         dispatch({ type: 'wizard/setRelayAccessProviderId', providerId });
@@ -1247,7 +1268,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     : stepId === 'background_service_handoff'
                         ? () => dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' })
                         : stepId === 'host_relay_local'
-                        ? requestPersonalHomeBootstrap ?? (() => undefined)
+                        ? startPersonalHome
                         : stepId === 'relay_access'
                             ? handleRelayAccessAdvance
                         : stepId === 'relay_access_prereqs'
@@ -1288,17 +1309,18 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                                 }
 
                                 if (relaySwitchDecision === 'switch') {
-                                    await upsertActivateAndSwitchServer({ serverUrl: relayUrl, source: 'url', scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
+                                    const profile = await connectAndFocusHomeAddress(relayUrl);
+                                    if (!profile) return;
                                     dispatch({
                                         type: 'wizard/setRelaySelection',
                                         relaySelection: {
                                             choiceId: state.context.relaySelection.choiceId ?? 'customUrl',
-                                            serverUrl: relayUrl,
-                                            relayProfileId: state.context.relaySelection.relayProfileId ?? null,
+                                            serverUrl: profile.serverUrl,
+                                            relayProfileId: profile.id,
                                             locked: false,
                                         },
                                     });
-                                    setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
+                                    setOnboardingWizardAwaitingAuthResumeIntent(profile.serverUrl);
                                 } else {
                                     const fallbackSelection = buildDefaultRelaySelection();
                                     dispatch({ type: 'wizard/setRelaySelection', relaySelection: fallbackSelection });
@@ -1351,6 +1373,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const restoreTargetProfileId = stepId === 'auth_restore'
         ? resolveReverseQrTargetProfileId(activeServerSnapshot.serverId) ?? undefined
         : undefined;
+    const selectedProfile = preparedPersonalHome?.id === activeServerSnapshot.serverId && props.isHomeAuthenticated && stepId === 'auth'
+        ? preparedPersonalHome
+        : null;
     body = renderOnboardingWizardStepBody({
         stepId,
         testIDPrefix: props.testID ?? 'onboarding-wizard',
@@ -1427,7 +1452,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         connectHomeInitialAddress: props.initialServerUrl,
         onConnectHomeReached: props.onInitialServerUrlConnected,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
-        onCreatePersonalHome: requestPersonalHomeBootstrap ?? undefined,
+        onCreatePersonalHome: canCreatePersonalHome ? startPersonalHome : undefined,
+        preparedHome: selectedProfile && firstRunPersonalHome ? { profile: selectedProfile, onOpened: firstRunPersonalHome.finish } : undefined,
         onOpenRestore: handleOpenRestore,
         onOpenLostAccess: handleOpenLostAccess,
         onOpenSecretKeyLogin: handleOpenSecretKeyLogin,
