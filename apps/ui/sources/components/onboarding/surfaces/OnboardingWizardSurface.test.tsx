@@ -1501,6 +1501,38 @@ describe('OnboardingWizardSurface', () => {
         );
     });
 
+    it('opens the GitHub browser wait from Approve and returns to Approve on Back', async () => {
+        await focusHomeAtAddress('https://relay.example.test');
+        const cancel = vi.fn(async () => {});
+        const github = {
+            method: { id: 'github', enabledActions: [{ id: 'login', mode: 'keyless' }] },
+            action: { id: 'login', mode: 'keyless' },
+            execution: { kind: 'oauth', providerId: 'github', mode: 'keyless' },
+        } satisfies HomeAuthenticationAction;
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
+            layout: 'portrait',
+            initialStepId: 'auth_restore',
+            authEntryOptions: {
+                ...baseAuthOptions,
+                authenticationCatalog: { provenance: 'structured', methods: [github.method] },
+                authenticationActions: [github],
+            },
+            onContinueWithHomeAuthentication: async (_request, context) => {
+                context.presentOAuthBrowserWait?.({ providerName: 'GitHub', cancel, destination: { kind: 'home', label: 'My Home' } });
+            },
+        }));
+
+        await pressOnboarding(screen, 'welcome-provider-primary');
+        expect(getOnboardingStepId(screen)).toBe('auth_oauth_browser_wait');
+        expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
+        expect(screen.findByTestId('welcome-provider-primary')).toBeNull();
+        await pressOnboarding(screen, 'onboarding-wizard-back');
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(getOnboardingStepId(screen)).toBe('auth_restore');
+        expect(screen.findByTestId('welcome-provider-primary')).toBeTruthy();
+    });
+
     it('uses the mTLS primary action for managed certificate login states', async () => {
         await focusHomeAtAddress('https://relay.example.test');
         const onContinueWithHomeAuthentication = vi.fn();

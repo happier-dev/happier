@@ -2551,6 +2551,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const zhHant = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `在 ${provider} 完成登入`,
+        body: "請在瀏覽器完成登入，然後返回這裡。",
+        findHomes: "返回後，我們會尋找你的 Home。",
+        home: ({ homeName }: { homeName: string }) => `你將返回 ${homeName}。`,
+    },
     title: '登入以尋找你的 Home',
     cancelNote: '取消不會登出你現有的 Home。', focusedHomePreserved: '目前聚焦的 Home 不會變更。',
     stages: { signingIn: '正在登入', findingHomes: '正在尋找你的 Homes', waitingApproval: '正在等待 Home 核准' },

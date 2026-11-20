@@ -42,6 +42,7 @@ import {
     type EndpointReachabilityRemediation,
 } from '@/components/serverReachability/remediation';
 import type { EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
+import type { OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
@@ -114,6 +115,7 @@ export type WelcomeAuthenticationActionContext = Readonly<{
     emailProvision?: WelcomeAuthenticationMethod;
     /** Opens the shared email/password controller as the next step of this workflow. */
     presentEmailPassword: (request: EmailPasswordAuthStepRequest) => void;
+    presentOAuthBrowserWait: (wait: OAuthBrowserWait) => void;
 }>;
 
 export type OnboardingWizardController = Readonly<{
@@ -198,6 +200,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
     const [accountDirectoryKeyRequest, setAccountDirectoryKeyRequest] = React.useState<WelcomeAuthenticationMethod | null>(null);
     const [emailPasswordRequest, setEmailPasswordRequest] = React.useState<EmailPasswordAuthStepRequest | null>(null);
+    const [oauthBrowserWait, setOAuthBrowserWait] = React.useState<OAuthBrowserWait | null>(null);
     const [accountDirectoryContinuationIntent, setAccountDirectoryContinuationIntent] = React.useState<AccountContinuationIntent | null>(null);
     const [accountDirectoryHomeRecovery, setAccountDirectoryHomeRecovery] = React.useState<Readonly<{
         kind: 'home_auth' | 'continuation';
@@ -358,6 +361,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const stepId = state.currentStepId;
     const welcomeAuthenticationRef = React.useRef<{ controller: AbortController; stepId: WizardStepId } | null>(null);
     React.useEffect(() => {
+        if (stepId !== 'auth_oauth_browser_wait') setOAuthBrowserWait(null);
         const current = welcomeAuthenticationRef.current;
         if (current && current.stepId !== stepId) {
             current.controller.abort();
@@ -381,6 +385,12 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             await action(request, {
                 signal: controller.signal,
                 ...(emailProvision ? { emailProvision } : {}),
+                presentOAuthBrowserWait: (wait) => {
+                    if (welcomeAuthenticationRef.current !== active || controller.signal.aborted) return;
+                    active.stepId = 'auth_oauth_browser_wait';
+                    setOAuthBrowserWait(wait);
+                    dispatch({ type: 'wizard/goToStep', stepId: 'auth_oauth_browser_wait' });
+                },
                 presentEmailPassword: (emailPassword) => {
                     if (welcomeAuthenticationRef.current !== active || controller.signal.aborted) return;
                     setEmailPasswordRequest(emailPassword);
@@ -814,8 +824,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, []);
 
     const handleBack = React.useCallback(() => {
+        if (stepId === 'auth_oauth_browser_wait' && oauthBrowserWait) {
+            void oauthBrowserWait.cancel();
+        }
         dispatch({ type: 'wizard/back' });
-    }, [dispatch]);
+    }, [dispatch, oauthBrowserWait, stepId]);
 
     const handleBackToWelcome = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'welcome' }, 'back');
@@ -911,8 +924,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     // The Home a step acts on (or, while choosing, the one selected). Hosts present it their own
     // way: a footer summary in the card, one quiet line in the welcome pane's header.
     const homeContext = React.useMemo((): OnboardingWizardHomeContext | null => {
-        // The email/password step names its Home in its own heading block.
-        if (stepId === 'auth_email_password' || stepId === 'connect_home') return null;
+        // These steps present their own Home or sign-in service context.
+        if (stepId === 'auth_email_password' || stepId === 'auth_oauth_browser_wait' || stepId === 'connect_home') return null;
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
@@ -1425,6 +1438,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         accountDirectoryKeyRequest,
         accountDirectoryHomeRecovery,
         emailPasswordRequest,
+        oauthBrowserWait,
         onEmailPasswordClose: () => {
             setEmailPasswordRequest(null);
             dispatch({ type: 'wizard/back' });

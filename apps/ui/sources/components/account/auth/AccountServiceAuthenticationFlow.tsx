@@ -7,7 +7,8 @@ import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeAction
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { AccountDirectoryKeyLoginForm, type AccountDirectoryKeyLoginOutcome } from './AccountDirectoryKeyLoginForm';
 import { t } from '@/text';
-import { describeAccountServiceAuthenticationAction, launchAccountServiceOAuthAuthentication } from './accountServiceAuthenticationActions';
+import { describeAccountServiceAuthenticationAction, describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from './accountServiceAuthenticationActions';
+import { OAuthBrowserWaitStep, type OAuthBrowserWait } from './OAuthBrowserWaitStep';
 import type { AccountPostAuthInput, AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 
 export type AccountServiceAuthenticationFlowProps = Readonly<{
@@ -44,6 +45,7 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
     const [keySelection, setKeySelection] = React.useState<'login' | 'provision' | null>(null);
     const [passwordSelection, setPasswordSelection] = React.useState<'sign_in' | 'create' | null>(null);
     const [launchFailed, setLaunchFailed] = React.useState(false);
+    const [browserWait, setBrowserWait] = React.useState<OAuthBrowserWait | null>(null);
     const actions = props.service.authenticationActions;
     const admission = React.useMemo(() => ({
         pendingActionId,
@@ -59,6 +61,12 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
             }
         },
     }), [pendingActionId, props]);
+    if (browserWait) {
+        return <OAuthBrowserWaitStep wait={browserWait} onBack={async () => {
+            await browserWait.cancel();
+            setBrowserWait(null);
+        }} />;
+    }
     if (passwordSelection) {
         const login = actions.find(({ execution }) => execution.kind === 'email_password' && execution.action === 'login')?.execution;
         return <AccountDirectoryKeyLoginForm
@@ -126,6 +134,11 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
                         transport: props.service.transport,
                         signal: props.signal,
                         isCurrent: props.isCurrent,
+                        onBrowserHandoff: (handoff) => setBrowserWait({
+                            ...handoff,
+                            ...describeAccountServiceAuthenticationProvider(entry.method),
+                            destination: { kind: 'find_homes' },
+                        }),
                     });
                     if (outcome === 'opened') await props.onExternalAuthStarted();
                     else if (outcome === 'failed') setLaunchFailed(true);

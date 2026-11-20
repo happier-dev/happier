@@ -8,7 +8,7 @@ import {
 import { Modal } from '@/modal';
 import { accountDirectoryAuthClient } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { AccountDirectoryKeyLoginOutcome } from '@/components/account/auth/AccountDirectoryKeyLoginForm';
-import { launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
 import { useWelcomeAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
@@ -135,6 +135,11 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             accountEntryReturnTo: resolveAuthReturnToRoute(),
             transport: accountServiceEntry.transport,
             signal: context.signal,
+            onBrowserHandoff: (handoff) => context.presentOAuthBrowserWait?.({
+                ...handoff,
+                ...describeAccountServiceAuthenticationProvider(request.method),
+                destination: { kind: 'find_homes' },
+            }),
         });
         if (outcome === 'failed') {
             await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -151,6 +156,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             keyChallengeV2Available: authEntryOptions.keyChallengeV2Available,
             retryServerCheck: authEntryOptions.retryServerCheck,
             onProvisioned: trackAccountCreated,
+            onBrowserHandoff: (handoff) => context.presentOAuthBrowserWait?.({
+                ...handoff,
+                destination: { kind: 'home', label: authEntryOptions.homeLabel ?? undefined },
+            }),
         });
         // Every native email/password action owns a controller the generic
         // helper deliberately refuses to run. Welcome hosts the same shared
@@ -182,6 +191,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                 onOpenEmailProvision: () => continueWithHomeAuthentication(emailProvision, {
                     signal: context.signal,
                     presentEmailPassword: context.presentEmailPassword,
+                    presentOAuthBrowserWait: context.presentOAuthBrowserWait,
                 }),
             } : {}),
             // Welcome has no other mounted step behind this one, so a Connect

@@ -20,6 +20,7 @@ import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeAction
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
 import { useExactHomeArrival } from '@/components/account/auth/useExactHomeDestination';
+import { OAuthBrowserWaitStep, type OAuthBrowserWait } from './OAuthBrowserWaitStep';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { NativeBackLayerBoundary } from '@/components/ui/overlays/NativeBackLayerBoundary';
@@ -102,6 +103,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
     const [passwordRequest, setPasswordRequest] = React.useState<WelcomeAuthenticationMethod | null>(() => (
         chosenAction?.execution.kind === 'email_password' ? toRequest(chosenAction) : null
     ));
+    const [browserWait, setBrowserWait] = React.useState<OAuthBrowserWait | null>(null);
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const inFlightRef = React.useRef(false);
     const abortRef = React.useRef(new AbortController());
@@ -118,17 +120,26 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
     const backToMethods = () => moveMethod('back', () => {
         setKeyRequest(null);
         setPasswordRequest(null);
+        setBrowserWait(null);
     });
+    const leave = () => { abortRef.current.abort(); props.onBack(); };
+    const backFromBrowser = async () => {
+        if (!browserWait) return;
+        await browserWait.cancel();
+        if (chosenAction) leave();
+        else backToMethods();
+    };
+    const backFromMethod = browserWait ? () => { void backFromBrowser(); } : backToMethods;
     const methodHasBack = movesMethods && resolvedTarget !== null && arrival.state.kind === 'idle'
-        && (keyRequest !== null || passwordRequest !== null);
+        && (keyRequest !== null || passwordRequest !== null || browserWait !== null);
     useEscapeLayer({
         enabled: methodHasBack,
         priority: ESCAPE_LAYER_PRIORITIES.pane,
         allowEditableTarget: true,
-        onEscape: backToMethods,
+        onEscape: backFromMethod,
     });
     const showMethod = (stepKey: string, content: React.ReactElement, backTestID?: string) => movesMethods ? (
-        <NativeBackLayerBoundary active={methodHasBack} onRequestClose={backToMethods}>
+        <NativeBackLayerBoundary active={methodHasBack} onRequestClose={backFromMethod}>
             <StepMotionLayer layerKey={methodLayer} stepKey={stepKey} backTestID={backTestID}>{content}</StepMotionLayer>
         </NativeBackLayerBoundary>
     ) : content;
@@ -169,6 +180,10 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             signal: cancellation.signal,
             onAuthenticated: props.onAuthenticated,
             onExternalAuthStarted: props.onExternalAuthStarted,
+            onBrowserHandoff: (handoff) => moveMethod('step', () => setBrowserWait({
+                ...handoff,
+                destination: { kind: 'home', label: props.teamAdmission ? undefined : props.homeLabel },
+            })),
         });
     };
     // A chosen one-tap action is already the person's decision, so it runs on arrival through
@@ -181,8 +196,6 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         // eslint-disable-next-line react-hooks/exhaustive-deps -- arrival runs once for the chosen action
     }, []);
 
-    const leave = () => { abortRef.current.abort(); props.onBack(); };
-
     if (arrival.state.kind !== 'idle') {
         const arrivalState = arrival.state;
         return showMethod('destination', <WelcomeActionList admission={admission}>
@@ -190,6 +203,11 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             <WelcomeActionCard testID="home-auth-destination-back" title={t('common.back')} iconName="arrow-left" escape
                 onPress={() => { abortRef.current.abort(); props.onBack(); }} />
         </WelcomeActionList>, 'home-auth-destination-back');
+    }
+
+    if (browserWait) {
+        return showMethod('oauth-browser-wait', <OAuthBrowserWaitStep wait={browserWait} onBack={backFromBrowser} />,
+            'oauth-browser-wait-back');
     }
 
     if (keyRequest && resolvedTarget) {

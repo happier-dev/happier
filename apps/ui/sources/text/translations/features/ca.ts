@@ -2647,6 +2647,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const ca = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `Acaba a ${provider}`,
+        body: "Completa la connexió al navegador i torna aquí.",
+        findHomes: "Quan tornis, cercarem els teus Homes.",
+        home: ({ homeName }: { homeName: string }) => `Tornaràs a ${homeName}.`,
+    },
     title: 'Inicia la sessió per trobar els teus Homes',
     cancelNote: 'La cancel·lació no tancarà la sessió dels Homes existents.', focusedHomePreserved: 'El Home actiu no canviarà.',
     stages: { signingIn: 'Iniciant sessió', findingHomes: 'Cercant els teus Homes', waitingApproval: 'Esperant l’aprovació del Home' },

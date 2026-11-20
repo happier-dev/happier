@@ -32,6 +32,7 @@ import { WelcomeDecisionPanel } from '../preAuth/WelcomeDecisionPanel';
 import { HomeAddForm } from '@/components/homes/add/HomeAddForm';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
 import { EmailPasswordAuthStep, type EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
+import { OAuthBrowserWaitStep, type OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { AccountServiceSelectionForm, type AccountServiceSelectionFormProps } from '@/components/account/auth/AccountServiceSelectionForm';
 import { readAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
@@ -84,6 +85,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     accountEntryReturnTo?: string;
     accountDirectoryKeyRequest: WelcomeAuthenticationMethod | null;
     emailPasswordRequest: EmailPasswordAuthStepRequest | null;
+    oauthBrowserWait: OAuthBrowserWait | null;
     onEmailPasswordClose: () => void;
     accountDirectoryHomeRecovery: Readonly<{
         kind: 'home_auth' | 'continuation';
@@ -209,6 +211,10 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 onHomeConnected={params.onConnectHomeReached}
             />
         );
+    }
+
+    if (params.stepId === 'auth_oauth_browser_wait') {
+        return params.oauthBrowserWait ? <OAuthBrowserWaitStep wait={params.oauthBrowserWait} /> : null;
     }
 
     if (params.stepId === 'auth_email_password') {

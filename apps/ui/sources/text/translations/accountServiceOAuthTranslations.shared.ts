@@ -1,6 +1,12 @@
 
 
 export const en = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `Finish on ${provider}`,
+        body: "Complete sign-in in your browser, then return here.",
+        findHomes: "We’ll find your Homes when you return.",
+        home: ({ homeName }: { homeName: string }) => `You’ll return to ${homeName}.`,
+    },
     title: 'Sign in to find your Homes',
     cancelNote: 'Canceling won’t sign you out of your existing Homes.',
     focusedHomePreserved: 'Your focused Home won’t change.',

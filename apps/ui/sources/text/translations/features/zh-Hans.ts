@@ -2550,6 +2550,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const zhHans = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `在 ${provider} 完成登录`,
+        body: "请在浏览器完成登录，然后返回这里。",
+        findHomes: "返回后，我们会查找你的 Home。",
+        home: ({ homeName }: { homeName: string }) => `你将返回 ${homeName}。`,
+    },
     title: '登录以查找你的 Home',
     cancelNote: '取消不会退出你现有的 Home。', focusedHomePreserved: '当前聚焦的 Home 不会改变。',
     stages: { signingIn: '正在登录', findingHomes: '正在查找你的 Homes', waitingApproval: '正在等待 Home 批准' },

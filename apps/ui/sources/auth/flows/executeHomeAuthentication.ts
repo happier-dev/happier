@@ -1,4 +1,4 @@
-import { Linking, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { AuthCredentialLifecycleResult, AuthCredentialPersistenceOptions } from '@/auth/context/AuthContext';
@@ -7,7 +7,7 @@ import { createHomeOAuthRequestContext, createTeamOAuthRequestContext } from '@/
 import { getAuthProvider } from '@/auth/providers/registry';
 import type { ExternalAuthStartInput, TeamOAuthRequestContext, TeamOAuthStart } from '@/auth/providers/types';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
-import { type AccountHomeAuthenticationContinuation, type AuthCredentials, TokenStorage } from '@/auth/storage/tokenStorage';
+import { type AccountHomeAuthenticationContinuation, type AuthCredentials, type PendingExternalAuth, TokenStorage } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
@@ -32,6 +32,7 @@ import {
 import { createAuthenticationFailure } from './authenticationFailure';
 import { authenticationErrorMessage } from './authenticationErrorMessage';
 import { moveAccountCredentialJourneyToMain } from './accountCredentialJourney';
+import { openExternalAuthenticationUrl, type OAuthBrowserHandoff } from './openExternalAuthenticationUrl';
 
 type LoginWithCredentials = (
     credentials: AuthCredentials,
@@ -54,6 +55,7 @@ export type ExecuteHomeAuthenticationOptions = Readonly<{
     }>) => void | Promise<void>;
     onProvisioned?: () => void | Promise<void>;
     onExternalAuthStarted?: () => void | Promise<void>;
+    onBrowserHandoff?: (handoff: OAuthBrowserHandoff & Readonly<{ providerName: string; badgeIconName?: string }>) => void;
     /** Explicit Team entry context for a Team-bound OAuth action. */
     teamAdmission?: Readonly<{
         teamId: string;
@@ -63,21 +65,6 @@ export type ExecuteHomeAuthenticationOptions = Readonly<{
         accountSelection?: 'current' | 'another';
     }>;
 }>;
-
-async function openExternalAuthUrl(url: string): Promise<void> {
-    if (Platform.OS === 'web') {
-        const location = typeof window !== 'undefined' ? window.location : null;
-        if (location && typeof location.assign === 'function') {
-            location.assign(url);
-            return;
-        }
-        if (location && typeof location.href === 'string') {
-            location.href = url;
-            return;
-        }
-    }
-    await Linking.openURL(url);
-}
 
 async function promptRetryGeneratedKeyModeResolution(signal?: AbortSignal): Promise<boolean> {
     if (signal?.aborted) return false;
@@ -154,7 +141,7 @@ async function startTeamAdmissionConnect(input: Readonly<{
         const start = await provider.getConnectUrl(input.credentials, requestContext);
         if (input.signal?.aborted) throw new Error('Home authentication cancelled');
         if (!isSafeExternalAuthUrl(start.url)) throw new Error('Invalid Home OAuth URL');
-        await openExternalAuthUrl(start.url);
+        await openExternalAuthenticationUrl(start.url);
         if (input.signal?.aborted) return;
         await input.onExternalAuthStarted?.();
     } catch {
@@ -393,7 +380,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                 ? { mode: 'keyed' as const, proofHash, publicKey: publicKey! }
                 : { mode: 'keyless' as const, proofHash };
             let url: string;
-            let pending;
+            let pending: PendingExternalAuth;
             if (options.teamAdmission) {
                 const requestContext = createTeamOAuthRequestContext(
                     callbackTarget,
@@ -448,8 +435,17 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
             }
             if (options.signal?.aborted) throw new Error('Home authentication cancelled');
             if (!isSafeExternalAuthUrl(url)) throw new Error('Invalid Home OAuth URL');
-            await openExternalAuthUrl(url);
+            const handoff = await openExternalAuthenticationUrl(url);
             if (options.signal?.aborted) return;
+            if (handoff === 'system_browser') {
+                options.onBrowserHandoff?.({
+                    providerName: provider.displayName ?? providerId,
+                    badgeIconName: provider.badgeIconName,
+                    cancel: async () => {
+                        await TokenStorage.clearPendingExternalAuth({ ...callbackTarget, removeExact: pending }).catch(() => false);
+                    },
+                });
+            }
             await options.onExternalAuthStarted?.();
         } catch {
             await TokenStorage.clearPendingExternalAuth(callbackTarget).catch(() => false);
@@ -481,7 +477,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     );
                     if (!legacyStartUrl) throw new Error('Invalid mTLS start URL');
                     if (options.signal?.aborted) throw new Error('Home authentication cancelled');
-                    await openExternalAuthUrl(legacyStartUrl);
+                    await openExternalAuthenticationUrl(legacyStartUrl);
                     if (options.signal?.aborted) return;
                     await options.onExternalAuthStarted?.();
                     return;
@@ -524,7 +520,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     throw new Error('Failed to persist pending mTLS authentication');
                 }
                 if (options.signal?.aborted) throw new Error('Home authentication cancelled');
-                await openExternalAuthUrl(startUrl);
+                await openExternalAuthenticationUrl(startUrl);
                 if (options.signal?.aborted) return;
                 await options.onExternalAuthStarted?.();
             } catch (error) {

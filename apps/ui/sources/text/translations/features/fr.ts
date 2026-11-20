@@ -2665,6 +2665,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const fr = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `Termine sur ${provider}`,
+        body: "Termine la connexion dans ton navigateur, puis reviens ici.",
+        findHomes: "À ton retour, nous rechercherons tes Homes.",
+        home: ({ homeName }: { homeName: string }) => `Tu reviendras dans ${homeName}.`,
+    },
     title: 'Se connecter pour trouver tes Homes',
     cancelNote: 'L’annulation ne te déconnectera pas de tes Homes existants.', focusedHomePreserved: 'Le Home actif ne changera pas.',
     stages: { signingIn: 'Connexion en cours', findingHomes: 'Recherche de tes Homes', waitingApproval: 'En attente de l’approbation du Home' },

@@ -129,6 +129,15 @@ const wizardStepRegistryEntries = [
         visibleWhen: () => false,
     },
     {
+        id: 'auth_oauth_browser_wait',
+        titleKey: 'common.login',
+        bodyOwnsHeading: true,
+        kind: 'auth',
+        surface: 'onboarding',
+        canSkip: false,
+        visibleWhen: () => false,
+    },
+    {
         // A Home reached by its link or address, then that Home's own sign-in (owner 11-13: steps of the
         // welcome, not a sheet over it). Each pane titles itself, so the host draws no heading.
         id: 'connect_home',

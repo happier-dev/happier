@@ -187,6 +187,47 @@ describe('HomeAuthenticationFlow', () => {
         expect(boundary.openURL).not.toHaveBeenCalled();
     });
 
+    it('waits for the system browser on an exact Home GitHub login', async () => {
+        boundary.platformOS = 'ios';
+        setReducedMotionPreferenceOverride(true);
+        boundary.request.mockImplementation(async () => Response.json({ url: 'https://github.example.test/authorize' }));
+        const github = actionFromEntry({ kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless', origin: 'home',
+            presentation: { displayName: 'GitHub' } });
+        const serverUrl = 'https://home.example.test';
+        const serverId = 'srv_home';
+        const screen = await renderScreen(<StepMotionStage><AuthProvider initialCredentials={null}>
+            <HomeAuthenticationFlow
+                target={{
+                    kind: 'descriptor',
+                    authority: 'account_directory',
+                    descriptor: {
+                        v: 1,
+                        homeServerIdentityId: serverId,
+                        canonicalServerUrl: serverUrl,
+                        revision: 1,
+                        endpoints: [{ kind: 'https', url: serverUrl }],
+                    },
+                }}
+                actions={[github]}
+                homeLabel="My Home"
+                returnTo="/projects/setup"
+                onAuthenticated={vi.fn()}
+                onBack={vi.fn()}
+            />
+        </AuthProvider></StepMotionStage>);
+
+        await screen.pressByTestIdAsync('home-auth-github-login-keyless');
+        expect(boundary.openURL).toHaveBeenCalledExactlyOnceWith('https://github.example.test/authorize');
+        expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
+        expect(screen.findByTestId('home-auth-github-login-keyless')).toBeNull();
+        expect(await TokenStorage.readPendingExternalAuthStateForServerUrl(serverUrl, { serverId }))
+            .toMatchObject({ value: { provider: 'github', returnTo: '/projects/setup' } });
+
+        await screen.pressByTestIdAsync('oauth-browser-wait-back');
+        expect(screen.findByTestId('home-auth-github-login-keyless')).toBeTruthy();
+        expect((await TokenStorage.readPendingExternalAuthStateForServerUrl(serverUrl, { serverId })).value).toBeNull();
+    });
+
     it('runs native Team mTLS through the shared executor and persists its admission continuation', async () => {
         boundary.platformOS = 'ios';
         boundary.request.mockImplementation(async () => Response.json({

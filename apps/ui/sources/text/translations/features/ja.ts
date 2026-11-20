@@ -2605,6 +2605,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const ja = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `${provider} で続行`,
+        body: "ブラウザーでサインインを完了してから、ここに戻ってください。",
+        findHomes: "戻ったら、あなたの Home を検索します。",
+        home: ({ homeName }: { homeName: string }) => `${homeName} に戻ります。`,
+    },
     title: 'サインインして Home を見つける',
     cancelNote: 'キャンセルしても既存の Home からはサインアウトされません。', focusedHomePreserved: '現在の Home は変更されません。',
     stages: { signingIn: 'サインイン中', findingHomes: 'Home を検索中', waitingApproval: 'Home の承認を待っています' },

@@ -2542,6 +2542,12 @@ const Domain_accountServiceOAuthTranslations = (() => {
 const en = Shared_accountServiceOAuthTranslations.en;
 
 const es = {
+    browserWait: {
+        title: ({ provider }: { provider: string }) => `Termina en ${provider}`,
+        body: "Completa el inicio de sesión en el navegador y vuelve aquí.",
+        findHomes: "Cuando vuelvas, buscaremos tus Homes.",
+        home: ({ homeName }: { homeName: string }) => `Volverás a ${homeName}.`,
+    },
     title: 'Inicia sesión para encontrar tus Homes',
     cancelNote: 'Cancelar no cerrará la sesión de tus Homes existentes.', focusedHomePreserved: 'Tu Home enfocado no cambiará.',
     stages: { signingIn: 'Iniciando sesión', findingHomes: 'Buscando tus Homes', waitingApproval: 'Esperando la aprobación del Home' },

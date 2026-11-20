@@ -1,4 +1,3 @@
-import { Linking, Platform } from 'react-native';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
 
 import { accountDirectoryAuthClient, type AccountDirectoryAuthTransport, type AccountDirectoryAuthenticationAction, type AccountDirectoryOAuthStartResult, type VerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
@@ -6,6 +5,7 @@ import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { prepareAccountCredentialJourney } from '@/auth/flows/accountCredentialJourney';
+import { openExternalAuthenticationUrl, type OAuthBrowserHandoff } from '@/auth/flows/openExternalAuthenticationUrl';
 import { asIconName } from '@/components/ui/icons/asIconName';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -37,26 +37,6 @@ async function startAccountServiceOAuthAuthentication(input: Readonly<{
     });
 }
 
-/**
- * Leaves the app for a provider authorization URL. Web replaces the current document so the
- * provider return lands back on the same origin and the page it left re-reads its sign-in; native
- * hands the URL to the OS.
- */
-async function leaveForAccountServiceAuthUrl(url: string): Promise<void> {
-    if (Platform.OS === 'web') {
-        const location = typeof window !== 'undefined' ? window.location : null;
-        if (location && typeof location.assign === 'function') {
-            location.assign(url);
-            return;
-        }
-        if (location && typeof location.href === 'string') {
-            location.href = url;
-            return;
-        }
-    }
-    await Linking.openURL(url);
-}
-
 export type AccountServiceOAuthLaunchOutcome = 'opened' | 'cancelled' | 'failed';
 
 /**
@@ -74,6 +54,7 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
     transport?: AccountDirectoryAuthTransport;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
+    onBrowserHandoff?: (handoff: OAuthBrowserHandoff) => void;
 }>): Promise<AccountServiceOAuthLaunchOutcome> {
     if (input.isCurrent?.() === false) return 'cancelled';
     const target = { endpoint: input.authority.endpointUrl, serverIdentityId: input.authority.serverIdentityId };
@@ -84,15 +65,17 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
         } });
         if (move) { await move(); return 'opened'; }
         started = await startAccountServiceOAuthAuthentication(input);
+        const pending = started.pending;
+        const cancel = async () => { await TokenStorage.clearPendingAccountDirectoryAuth(target, { expected: pending }).catch(() => false); };
         if (input.signal?.aborted || input.isCurrent?.() === false) {
-            await TokenStorage.clearPendingAccountDirectoryAuth(target, { expected: started.pending }).catch(() => false);
+            await cancel();
             return 'cancelled';
         }
         if (!isSafeExternalAuthUrl(started.url)) throw new Error('Unsafe account-service sign-in URL');
-        // Every surface leaves the same way. On web a new tab opened after this awaited start is
-        // a popup the browser blocks, and it would leave this tab stale; the provider returns to
-        // the same origin, which resumes the recorded return path.
-        await leaveForAccountServiceAuthUrl(started.url);
+        const handoff = await openExternalAuthenticationUrl(started.url);
+        // Once the browser owns the URL, a return may have already unmounted the launcher.
+        if (input.signal?.aborted || input.isCurrent?.() === false) return 'cancelled';
+        if (handoff === 'system_browser') input.onBrowserHandoff?.({ cancel });
         return 'opened';
     } catch {
         if (started) {
@@ -111,26 +94,27 @@ export type AccountServiceAuthenticationActionPresentation = Readonly<{
     accentColor?: string;
 }>;
 
-/**
- * How one advertised account-service authentication action reads, wherever it is offered (the
- * account-entry route's cards and the Account page's method strip). Titles and marks come from the
- * shared Home authentication presentation and the auth-provider registry, never from an id branch
- * in a surface.
- */
-export function describeAccountServiceAuthenticationAction(
-    entry: AccountDirectoryAuthenticationAction,
-    serviceName: string,
-): AccountServiceAuthenticationActionPresentation {
-    const { method, action, execution } = entry;
+/** The provider's name and mark for both the method control and its browser wait. */
+export function describeAccountServiceAuthenticationProvider(method: AccountDirectoryAuthenticationAction['method']) {
     const provider = getAuthProvider(method.id, method.presentation ? {
         displayName: method.presentation.displayName,
         ...(method.presentation.iconHint ? { badgeIconName: method.presentation.iconHint } : {}),
         connectButtonColor: method.presentation.connectButtonColor ?? null,
     } : undefined);
     const providerName = method.presentation?.displayName ?? provider?.displayName ?? method.id;
+    return { providerName, badgeIconName: asIconName(provider?.badgeIconName) ?? asIconName(method.presentation?.iconHint) };
+}
+
+/** How the advertised method reads in the account-entry cards and the Account page's method strip. */
+export function describeAccountServiceAuthenticationAction(
+    entry: AccountDirectoryAuthenticationAction,
+    serviceName: string,
+): AccountServiceAuthenticationActionPresentation {
+    const { method, action, execution } = entry;
+    const { providerName, badgeIconName } = describeAccountServiceAuthenticationProvider(method);
     const base = describeHomeAuthenticationAction({ execution, providerName });
     const iconName = execution.kind === 'oauth'
-        ? asIconName(provider?.badgeIconName) ?? asIconName(method.presentation?.iconHint) ?? base.iconName
+        ? badgeIconName ?? base.iconName
         : base.iconName;
     const providerTitle = t('welcome.signUpWithProvider', { provider: providerName });
     // Email creation is its own journey (mailbox first), never the generated-key "get started".

@@ -15,11 +15,16 @@ import type { AccountServiceAuthenticationFlowProps } from './AccountServiceAuth
 
 const network = vi.hoisted(() => ({ request: vi.fn() }));
 const linking = vi.hoisted(() => ({ openURL: vi.fn(async () => {}) }));
+const host = vi.hoisted(() => ({ os: 'web', sameTab: vi.fn(), stored: new Map<string, string>() }));
 
 installTokenStorageWebPlatformMocks({ reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Linking: linking });
-} });
+    return createReactNativeWebMock({ Linking: linking, Platform: { get OS() { return host.os; } } });
+}, secureStore: () => ({
+    getItemAsync: async (key: string) => host.stored.get(key) ?? null,
+    setItemAsync: async (key: string, value: string) => { host.stored.set(key, value); },
+    deleteItemAsync: async (key: string) => { host.stored.delete(key); },
+}) });
 installTokenStorageTestIsolation('account-service-auth-flow');
 
 vi.mock('@/text', async () => {
@@ -70,6 +75,9 @@ describe('AccountServiceAuthenticationFlow', () => {
     let restoreStorage: () => void;
     let restoreLocks: () => void;
     beforeEach(() => {
+        host.os = 'web';
+        host.stored.clear();
+        host.sameTab.mockClear();
         vi.stubGlobal('window', { location: { assign: linking.openURL } });
         restoreStorage = installLocalStorageMock().restore;
         restoreLocks = installWebLockManagerMock().restore;
@@ -95,6 +103,7 @@ describe('AccountServiceAuthenticationFlow', () => {
             'account-service-auth-key_challenge-login-keyed',
         ]);
         await screen.pressByTestIdAsync('account-service-auth-github-provision-either');
+        expect(screen.findByTestId('oauth-browser-wait-title')).toBeNull();
         const [url] = network.request.mock.calls[0]!;
         expect(new URL(String(url)).origin).toBe(service.transport.runtimeOrigin);
         expect(new URL(String(url)).searchParams.get('mode')).toBe('keyed');
@@ -115,6 +124,26 @@ describe('AccountServiceAuthenticationFlow', () => {
 
         expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
         expect(screen.findByTestId('account-directory-key-provision-pending') ?? screen.findByTestId('account-directory-key-provision-failed')).not.toBeNull();
+    });
+
+    it.each(['ios', 'android'])('opens the GitHub wait on %s and goes Back to the methods', async (os) => {
+        host.os = os;
+        vi.stubGlobal('window', { location: { assign: host.sameTab } });
+        const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent}
+            onPostAuthContinuation={() => {}} returnTo="/setup/wizard" onResult={vi.fn()}
+            onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);
+
+        await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
+
+        expect(linking.openURL).toHaveBeenCalledExactlyOnceWith('https://oauth.example.test/start');
+        expect(host.sameTab).not.toHaveBeenCalled();
+        expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
+        expect(screen.findByTestId('account-service-auth-github-login-keyless')).toBeNull();
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ returnTo: '/setup/wizard' });
+
+        await screen.pressByTestIdAsync('oauth-browser-wait-back');
+        expect(screen.findByTestId('account-service-auth-github-login-keyless')).toBeTruthy();
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
     });
 
     it('shows a neutral launch error when the service starts OAuth but the browser handoff rejects', async () => {
