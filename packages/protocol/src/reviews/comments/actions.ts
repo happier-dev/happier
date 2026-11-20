@@ -674,6 +674,7 @@ export const ReviewCommentBulkTransitionRequestV1Schema = lazyZodSchema(() => z.
   ...ReviewCommentScopeV1Schema.shape,
   commentIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
   toState: ReviewCommentStateV1Schema,
+  reviewTriageStatus: ReviewCommentTransitionRequestV1Schema.shape.reviewTriageStatus,
   expectedState: ReviewCommentStateV1Schema,
   expectedServerRevisions: z.record(z.string().check(z.minLength(1)), z.number().check(z.int(), z.positive())),
   evidence: z._default(z.array(ReviewCommentEvidenceV1Schema), []),
@@ -684,7 +685,9 @@ export const ReviewCommentBulkTransitionRequestV1Schema = lazyZodSchema(() => z.
   clientLamport: z.optional(z.number().check(z.int(), z.nonnegative())),
   eventEnvelope: z.optional(StoredJsonContentEnvelopeSchema),
 }).check(z.superRefine(validateReviewCommentScopeV1), z.superRefine((value, ctx) => {
-  if (reviewCommentStateTransitionRequiresEvidenceV1(value.toState) && value.evidence.length === 0 && !value.reason) {
+  if (reviewCommentStateTransitionRequiresEvidenceV1(value.toState)
+    && !(value.toState === value.expectedState && value.reviewTriageStatus !== undefined)
+    && value.evidence.length === 0 && !value.reason) {
     ctx.addIssue({
       code: "custom",
       path: ['evidence'],

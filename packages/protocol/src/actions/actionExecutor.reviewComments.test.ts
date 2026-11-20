@@ -47,6 +47,62 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
+  it.each(['prompt', 'session'] as const)('implements only selected accepted Review roots through the %s destination', async destination => {
+    const root = ReviewCommentV1Schema.parse({
+      v: 1, id: 'selected', accountId: 'account', reviewId: 'review',
+      workspace: { machineId: 'machine', path: '/repo' }, runId: 'run-selected',
+      findingId: 'finding-selected', findingIdentity: 'a'.repeat(64),
+      body: 'Selected current evidence', bodyVersion: 1, edits: [], flags: {}, dispositions: {},
+      threadId: 'selected', transitions: [], anchor: { kind: 'file', filePath: 'reader.ts' },
+      snapshot: { kind: 'none', capturedAt: 1 }, author: { kind: 'user', userId: 'person' },
+      state: 'open', reviewTriageStatus: 'accept', serverRevision: 2, createdAt: 1, updatedAt: 1,
+    });
+    let selected = root;
+    const unselected = { ...root, id: 'unselected', threadId: 'unselected', findingIdentity: 'b'.repeat(64),
+      runId: 'run-unselected', findingId: 'finding-unselected', body: 'Unselected accepted evidence' };
+    let includeUndecidedSibling = false;
+    const sent: string[] = [];
+    const executor = createActionExecutor(createDeps({
+      resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
+      reviewCommentAction: async () => ({ items: [selected, unselected,
+        ...(includeUndecidedSibling ? [{ ...unselected, id: 'sibling', threadId: 'sibling', findingIdentity: root.findingIdentity, reviewTriageStatus: 'defer' }] : []),
+      ], cursor: null }),
+      sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'selected-apply' }; },
+    }));
+    const input = { reviewId: 'review', commentIds: ['selected'],
+      ...(destination === 'prompt' ? { destination: 'prompt' } : { sessionId: 'origin' }) };
+    const context = { surface: 'ui' as const, serverId: 'home' };
+    const result = await executor.execute('review.apply', input, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error(result.error);
+    const prepared = ReviewFindingsApplyResultV1Schema.parse(result.result);
+    const prompt = 'prompt' in prepared ? prepared.prompt : sent[0];
+    expect(prompt).toContain(root.body);
+    expect(prompt).not.toContain(unselected.body);
+    expect(sent).toHaveLength(destination === 'session' ? 1 : 0);
+    if ('prompt' in prepared) expect(prepared.commentIds).toEqual(['selected']);
+
+    const all = await executor.execute('review.apply', { reviewId: 'review', destination: 'prompt' }, context);
+    expect(all).toMatchObject({ ok: true, result: { status: 'prepared', commentIds: ['selected', 'unselected'] } });
+    includeUndecidedSibling = true;
+    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+    includeUndecidedSibling = false;
+    await expect(executor.execute('review.apply', { ...input, commentIds: ['another-review-root'] }, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+
+    selected = { ...selected, reviewTriageStatus: 'reject', serverRevision: 3 };
+    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+    await expect(executor.execute('review.apply', { ...input, commentIds: [] }, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+    expect(sent).toHaveLength(destination === 'session' ? 1 : 0);
+  });
+
   it('prepares the current accepted Review prompt without sending and excludes a newly rejected comment', async () => {
     let comment = ReviewCommentV1Schema.parse({
       v: 1, id: 'accepted', accountId: 'account', reviewId: 'review', workspace: { machineId: 'machine', path: '/repo' },

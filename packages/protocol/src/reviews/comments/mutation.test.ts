@@ -10,6 +10,8 @@ import {
   reviewCommentTransitionAllowedV1,
 } from './mutation.js';
 import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openStoredReviewCommentV1 } from './content.js';
+import { buildReviewTriageTransitionRequestV1 } from './triageTransition.js';
+import { readReviewFindingDecisionV1 } from '../reviewTriageStatus.js';
 
 const actor = { kind: 'user' as const, userId: 'user-1' };
 const input = {
@@ -21,6 +23,30 @@ const input = {
 const runtime = { now: () => 1000, createId: (prefix: string) => `${prefix}-1` };
 
 describe('canonical Review Comment structural mutations', () => {
+  it.each([
+    ['defer', 'single'], ['needs_refinement', 'single'],
+    ['defer', 'bulk'], ['needs_refinement', 'bulk'],
+  ] as const)('reopens ignored findings when %s is chosen through a %s transition', (decision, surface) => {
+    const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+    const created = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!.structural;
+    const ignore = projectReviewCommentStructuralMutationV1('reviews.comments.transition',
+      buildReviewTriageTransitionRequestV1({ comment: created, decision: 'reject', clientMutationId: 'ignore-first' }));
+    const ignored = deriveReviewCommentStructuralMutationV1({ mutation: ignore, accountId: 'account-1', actor, current: [created], runtime }).records[0]!.structural;
+    expect(readReviewFindingDecisionV1(ignored.reviewTriageStatus, ignored.state)).toBe('reject');
+    const transition = buildReviewTriageTransitionRequestV1({ comment: ignored, decision, clientMutationId: 'choose-again' });
+    const { commentId, expectedServerRevision, ...common } = transition;
+    const mutation = surface === 'single'
+      ? projectReviewCommentStructuralMutationV1('reviews.comments.transition', transition)
+      : projectReviewCommentStructuralMutationV1('reviews.comments.bulkTransition', {
+        ...common, commentIds: [commentId], expectedServerRevisions: { [commentId]: expectedServerRevision }, bulkActionId: 'choose-again',
+      });
+    const updated = deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor, current: [ignored], runtime }).records[0]!.structural;
+    expect(updated).toMatchObject({ state: 'open', reviewTriageStatus: decision, serverRevision: 3 });
+    expect(readReviewFindingDecisionV1(updated.reviewTriageStatus, updated.state)).toBe(decision === 'defer' ? 'defer' : 'undecided');
+    expect(buildReviewTriageTransitionRequestV1({ comment: { ...updated, state: 'resolved' }, decision, clientMutationId: 'preserve-verified' }))
+      .toMatchObject({ toState: 'resolved' });
+  });
+
   it('retains independent dispositions from two detached Runs of the same engine', () => {
     const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
     let current = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!.structural;
@@ -122,6 +148,21 @@ describe('canonical Review Comment structural mutations', () => {
     expect(() => deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor, current: [first.structural],
       runtime: { now: runtime.now, createId: () => { throw externalError; } },
     })).toThrow(externalError);
+  });
+
+  it('applies bulk triage decisions under the same CAS and history as a single decision', () => {
+    const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+    const created = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!.structural;
+    const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.bulkTransition', {
+      projectId: 'project-1', commentIds: [created.id, 'stale'], expectedServerRevisions: { [created.id]: 1, stale: 1 },
+      expectedState: 'open', toState: 'open', reviewTriageStatus: 'defer', clientMutationId: 'bulk-defer', bulkActionId: 'bulk-action-1',
+    });
+    const result = deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1', actor,
+      current: [created, { ...created, id: 'stale', serverRevision: 2 }], runtime });
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.structural).toMatchObject({ id: created.id, state: 'open', reviewTriageStatus: 'defer', serverRevision: 2,
+      transitionHistory: [expect.anything(), expect.objectContaining({ reviewTriageStatus: 'defer', transitionedBy: actor, bulkActionId: 'bulk-action-1' })] });
+    expect(result.failed).toMatchObject([{ commentId: 'stale', errorCode: 'review_comment_conflict' }]);
   });
 
   it('derives an edit from admitted currentness and preserves private history for its revised binding', () => {

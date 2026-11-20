@@ -13,12 +13,12 @@ function resolveTargetState(state: ReviewCommentStateV1, decision: ReviewTriageS
       return reviewCommentTransitionAllowedV1(state, 'dismissed') ? 'dismissed' : state;
     case 'defer':
     case 'needs_refinement':
-      return state;
+      return state === 'dismissed' ? 'open' : state;
   }
 }
 
 /**
- * The one mapping from a finding decision (Implement fix · Ignore · Decide later) to a
+ * The one mapping from a finding decision (Implement fix · Ignore · Decide later · Pending) to a
  * `reviews.comments.transition` request. The review card and the `review.triage` Action both write
  * a finding's decision through it, so `ReviewComment` stays the only place a decision lives.
  */

@@ -16,9 +16,11 @@ export const ReviewFindingsApplyInputV1Schema = lazyZodSchema(() => z.union([z.s
 }), z.strictObject({
   sessionId: SessionTargetV1Schema,
   reviewId: z.string().check(z.minLength(1)),
+  commentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 }), z.strictObject({
   reviewId: z.string().check(z.minLength(1)),
   destination: z.literal('prompt'),
+  commentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 })]));
 export type ReviewFindingsApplyInputV1 = z.infer<typeof ReviewFindingsApplyInputV1Schema>;
 export const ReviewFindingsApplyResultV1Schema = lazyZodSchema(() => z.union([

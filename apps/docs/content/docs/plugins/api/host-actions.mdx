@@ -16497,8 +16497,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `sessionId` (select, required): Session
-- `reviews` (json, required): Reviewed findings — Review Run identities and selected findings. Current acceptance and revisions are rechecked before sending.
+- `sessionId` (select): Session — Destination Session when sending. Omit when preparing a prompt.
+- `destination` (select): Prompt destination
+- `reviewId` (text): Review — Apply accepted persisted findings from this Review.
+- `commentIds` (json): Selected comments — Canonical comment ids within the Review. Omit to apply all accepted findings; an empty selection applies none.
+- `reviews` (json): Reviewed findings — Historical Run identities and findings, instead of a Review id. Current acceptance and revisions are read before sending.
 
 ## `review.engines.list`
 
@@ -16658,10 +16661,12 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
+- `reviewId` (text): Review Id
 - `projectId` (text): Project Id
 - `workspace` (json): Workspace
 - `commentIds` (text_list, required): Comment Ids
 - `toState` (select, required): To State
+- `reviewTriageStatus` (select): Review Triage Status
 - `expectedState` (select, required): Expected State
 - `expectedServerRevisions` (json, required): Expected Server Revisions
 - `evidence` (json): Evidence

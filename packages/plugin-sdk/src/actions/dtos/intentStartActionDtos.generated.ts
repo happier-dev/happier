@@ -2684,9 +2684,11 @@ export type IntentStartActionInputById = {
     readonly "review.apply": {
         reviewId: string;
         destination: 'prompt';
+        commentIds?: string[] | undefined;
     } | {
         sessionId: SessionTargetV1<true>;
         reviewId: string;
+        commentIds?: string[] | undefined;
     } | {
         sessionId: SessionTargetV1<true>;
         reviews: {

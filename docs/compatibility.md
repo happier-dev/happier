@@ -704,6 +704,20 @@ envelope and detached-target object remain closed; the context is opaque JSON
 data and grants no identity, authority or routing meaning. No migration, wire
 epoch, capability gate or earlier-development adapter is added.
 
+## Selected Review findings (unreleased 0.3)
+
+Unreleased 0.3 bound `review.apply` requests accept optional `commentIds` for
+both Session delivery and prompt preparation. Omission keeps all accepted
+findings; an empty selection applies none. Selection still uses the current
+canonical semantic-group acceptance decision. The existing closed
+`reviews.comments.bulkTransition` request accepts the single-transition
+`reviewTriageStatus` field, including same-state decision annotations under the
+existing CAS and history owner. Matching Protocol, SDK, CLI, server and UI
+development readers load together because earlier strict readers reject these
+fields. The scoped-clean `../0.2` frontier at `24731ff73c0e032af6ee6b1347b0fceef947949b`
+has neither Review contract. No stored format, migration, wire epoch or
+mixed-development adapter changes.
+
 ## Review rosters and completion (unreleased 0.3)
 
 Current Review start writers emit ordered `reviewers` selections rather than

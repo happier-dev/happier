@@ -180,7 +180,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
                 ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
                 ...(comment.runId ? { runId: comment.runId } : {}) },
             }] })) : apply.reviews;
-          const findings = buildAcceptedReviewFindingsForVerifyV1(reviews, comments);
+          const findings = buildAcceptedReviewFindingsForVerifyV1(reviews, comments, 'reviewId' in apply ? apply.commentIds : undefined);
           if (findings.length === 0) return { ok: true, result: { status: 'unchanged', commentIds: [] } };
           if ('reviewId' in apply && findings.some(finding => typeof comments.find(comment => comment.id === finding.comment?.id)?.body !== 'string')) {
             return { ok: false, errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable' };

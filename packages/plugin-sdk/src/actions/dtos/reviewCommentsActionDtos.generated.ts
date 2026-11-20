@@ -480,6 +480,7 @@ export type ReviewCommentsActionInputById = {
         expectedState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
         expectedServerRevisions: Record<string, number>;
         clientMutationId: string;
+        reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
         evidence?: ({
             kind: 'agentMessage';
             sessionId: string;

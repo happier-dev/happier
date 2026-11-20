@@ -282,10 +282,12 @@ describe('canonical Review Comment client transport', () => {
     expect(reply.comment).toMatchObject({ body: 'PRIVATE-reply', parentCommentId: comment.id, threadId: comment.threadId });
     const bulk = ReviewCommentActionOutputSchemasV1['reviews.comments.bulkTransition'].parse(await run('reviews.comments.bulkTransition', {
       workspace, commentIds: [comment.id, 'missing'], expectedServerRevisions: { [comment.id]: comment.serverRevision, missing: 1 },
-      expectedState: 'open', toState: 'resolved', reason: 'PRIVATE-resolution', clientMutationId: 'bulk-1',
+      expectedState: 'open', toState: 'resolved', reviewTriageStatus: 'accept', reason: 'PRIVATE-resolution', clientMutationId: 'bulk-1',
     }));
     expect(bulk.failed).toMatchObject([{ commentId: 'missing', errorCode: 'review_comment_not_found' }]);
     comment = bulk.updated[0]!;
+    expect(comment).toMatchObject({ state: 'resolved', reviewTriageStatus: 'accept' });
+    expect(comment.transitions.at(-1)).toMatchObject({ reviewTriageStatus: 'accept', bulkActionId: bulk.bulkActionId });
     comment = ReviewCommentActionOutputSchemasV1['reviews.comments.redact'].parse(await run('reviews.comments.redact', {
       ...input(), reason: 'PRIVATE-redaction', clientMutationId: 'redact-1',
     })).comment;

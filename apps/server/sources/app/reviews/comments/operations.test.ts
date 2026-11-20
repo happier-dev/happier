@@ -12,6 +12,7 @@ import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from "@happier-dev/pro
 import { buildReviewCommentTextSnapshotHashes } from "./snapshots";
 import { createInMemoryReviewCommentStore } from "./store";
 import { createReviewCommentOperations } from "./operations";
+import { buildReviewTriageTransitionRequestV1 } from "@happier-dev/protocol/reviews/comments/triageTransition";
 
 function textSnapshot(lines: readonly string[]): ReviewCommentSnapshotV1 {
     const hashes = buildReviewCommentTextSnapshotHashes({
@@ -259,6 +260,38 @@ describe("review comment operations", () => {
         expect(deferred.comment.transitions.at(-1)?.reviewTriageStatus).toBe("defer");
         await expect(operations.transition({ ...principal, input: { ...input, reviewTriageStatus: "needs_refinement" } }))
             .rejects.toMatchObject({ code: "review_comment_conflict" });
+    });
+
+    it("persists bulk triage decisions with shared history and per-target CAS failures", async () => {
+        const { operations } = createHarness();
+        const principal = { accountId: "account-1", actor: { kind: "user", userId: "user-1" } as const };
+        const create = async (clientMutationId: string) => (await operations.create({ ...principal, input: {
+            projectId: "project-1", anchor: { kind: "file", filePath: "src/example.ts" },
+            snapshot: textSnapshot(["return value.name;"]), body: "Guard this value",
+            authorIntent: "open", clientMutationId,
+        } })).comment;
+        let current = await create("bulk-triage-current");
+        const stale = await create("bulk-triage-stale");
+        await operations.transition({ ...principal, input: { projectId: "project-1", commentId: stale.id,
+            expectedState: "open", toState: "open", expectedServerRevision: 1,
+            reviewTriageStatus: "accept", clientMutationId: "bulk-triage-concurrent" } });
+        for (const decision of ["accept", "reject", "defer", "needs_refinement"] as const) {
+            const transition = buildReviewTriageTransitionRequestV1({ comment: current, decision, clientMutationId: `bulk-${decision}` });
+            const result = await operations.bulkTransition({ ...principal, input: {
+                projectId: "project-1", commentIds: [current.id, stale.id], expectedState: transition.expectedState,
+                toState: transition.toState, reviewTriageStatus: transition.reviewTriageStatus,
+                reason: transition.reason, evidence: [], expectedServerRevisions: { [current.id]: current.serverRevision, [stale.id]: 1 },
+                clientMutationId: transition.clientMutationId,
+            } });
+            expect(result.failed).toMatchObject([{ commentId: stale.id, errorCode: "review_comment_conflict" }]);
+            expect(result.updated).toHaveLength(1);
+            current = result.updated[0]!;
+            expect(current).toMatchObject({ state: transition.toState, reviewTriageStatus: decision });
+            expect(current.transitions.at(-1)).toMatchObject({ reviewTriageStatus: decision,
+                transitionedBy: principal.actor, bulkActionId: result.bulkActionId });
+            expect((await operations.get({ ...principal, input: { projectId: "project-1", commentId: current.id, includeHistory: true } })).comment)
+                .toMatchObject({ reviewTriageStatus: decision, serverRevision: current.serverRevision });
+        }
     });
 
     it("confines agent reads and verdict writes to its session review scope under CAS", async () => {

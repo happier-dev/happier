@@ -33,16 +33,19 @@ export function groupReviewFindingSourcesV1<T extends Readonly<{ runId: string; 
 /** Select only currently accepted groups, preserving every reviewer's own CAS and evidence. */
 export function buildAcceptedReviewFindingsForVerifyV1(
   reviews: readonly Readonly<{ runId: string; findings: readonly ReviewFindingForVerifyV1[] }>[], comments: readonly ReviewCommentV1[],
+  selectedCommentIds?: readonly string[],
 ): ReviewFindingForVerifyV1[] {
   const groups = groupReviewFindingSourcesV1(reviews.flatMap(review => review.findings.map(finding => ({
     runId: review.runId, finding, comment: findReviewCommentForFindingV1(comments, finding, review.runId),
   }))));
   const included = new Set<string>();
+  const selected = selectedCommentIds === undefined ? undefined : new Set(selectedCommentIds);
   return groups.flatMap(group => {
     const decided = group.filter(source => source.comment !== null);
     if (decided.length === 0 || !decided.every(source => readReviewFindingDecisionV1(source.comment?.reviewTriageStatus, source.comment?.state) === 'accept')) return [];
     return group.flatMap(source => {
       const comment = source.comment;
+      if (selected && (!comment || !selected.has(comment.id))) return [];
       if (comment && included.has(comment.id)) return [];
       if (comment) included.add(comment.id);
       return [{ ...source.finding, ...(comment ? { comment, flags: comment.flags, engineId: comment.engineId } : {}) }];

@@ -282,6 +282,8 @@ function createReviewActionSpecs(): readonly [
         options: [{ value: 'prompt', label: 'Prepare prompt for copying or a New Session draft' }] },
       { path: 'reviewId', title: 'Review', widget: 'text',
         description: 'Apply accepted persisted findings from this Review.' },
+      { path: 'commentIds', title: 'Selected comments', widget: 'json',
+        description: 'Canonical comment ids within the Review. Omit to apply all accepted findings; an empty selection applies none.' },
       { path: 'reviews', title: 'Reviewed findings', widget: 'json',
         description: 'Historical Run identities and findings, instead of a Review id. Current acceptance and revisions are read before sending.' },
     ] },
