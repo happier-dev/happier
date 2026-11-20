@@ -1,5 +1,5 @@
 import { describeApprovalRequestFields, formatApprovalFieldValues, getApprovalFieldValues } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { PluginActionContributionV2Schema, type PluginActionContributionV2 } from '@happier-dev/protocol';
+import { normalizePluginActionInputHintsV2, PluginActionContributionV2Schema, type PluginActionContributionV2 } from '@happier-dev/protocol';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -19,6 +19,36 @@ function reviewFacts(action: PluginActionContributionV2, input: unknown) {
 }
 
 describe('Triage write approval facts', () => {
+    it.each(['action.invoke', 'plugin_target_action'] as const)('does not use a caller-supplied repository label in %s review', (kind) => {
+        const action = PluginActionContributionV2Schema.parse(
+            PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create),
+        );
+        const input = {
+            v: 1, instance: createTriageSourceV1Fixture().configuredInstance,
+            kindId: 'issue', fields: { scopeId: 'octo/example', title: 'Fix launch' },
+        };
+        const forgedLabel = 'Octo/Other';
+        const forged = { ...input, fields: { ...input.fields, repositoryLabel: forgedLabel } };
+
+        const describe = (requestInput: unknown) => kind === 'action.invoke'
+            ? describeApprovalRequestFields({
+                actionId: 'action.invoke',
+                actionArgs: { action: { pluginId: PLUGIN_MANIFEST.id, localId: action.id }, input: requestInput },
+                preview: { contributedAction: { title: 'Create issue',
+                    fields: normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema)?.fields ?? [],
+                } },
+            })
+            : describeApprovalRequestFields({
+                kind, input: requestInput, secretInputPaths: action.secretInputPaths ?? [],
+                ...(action.confirmation?.inputFields === undefined ? {} : { inputFields: action.confirmation.inputFields }),
+            });
+        expect(describe(input).unrepresentable).toBeNull();
+        const repositoryRow = describe(forged).rows.find(
+            row => row.kind === 'value' && !row.technical && row.title === 'Repository',
+        );
+        expect(repositoryRow).not.toEqual(expect.objectContaining({ value: forgedLabel }));
+    });
+
     it('shows the repository, Account and supplied issue fields in normal approval Details', () => {
         const action = PluginActionContributionV2Schema.parse(
             PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create),
