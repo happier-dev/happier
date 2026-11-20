@@ -6251,8 +6251,10 @@ An explicit Domain Add to reconcile after a restart starts a new Domain
 operation. Home admits it against the current Environment, runtime Link, and
 Domain revisions. Any native work uses the placements captured for that
 pending operation. If the runtime Link revision changes before discovery,
-Home refuses the stale request with `target_link_revision_mismatch`. Refresh
-the Environment and review the Domain action again. The deployment receipt
+Home refuses the stale request before creating a pending Domain. The Action
+operation and approval result retain `target_link_revision_mismatch` and
+`expectedTargetLinkRevision`. Refresh the Environment and review the Domain
+action again. The deployment receipt
 describes the incumbent workload. A settled Domain capture cannot authorize
 new native work.
 

@@ -22,8 +22,8 @@ import { DeploymentDomainHeaderV1Schema, DeploymentDomainListResultV1Schema,
 import { DeploymentDomainTopologyV1Schema, DeploymentDomainAddAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentActionInputSchemasV1, DeploymentDomainChildRpcV1Schema, DeploymentDomainMachineTopologyV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentChildRpcV1Schema, createActionExecutor, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeDeploymentChildExecutionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
@@ -590,7 +590,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -601,6 +601,11 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
         || scenario === 'administrator native outcome unknown with fact';
     const nativeUnknownWithFact = scenario === 'administrator native outcome unknown with fact';
+    const staleLink = scenario === 'Domain stale Link child refused';
+    const staleLinkDetails = { reason: 'target_link_revision_mismatch', requiredFact: 'expectedTargetLinkRevision',
+        remedy: 'Refresh the Environment and review the Domain action again' };
+    const homeRefusalPhase = staleLink ? 'deployment_child_admission'
+        : scenario === 'Domain Home purpose refused' ? 'verification_purpose' : undefined;
     const nativeCheckFailure = MachineElevationFailureV1Schema.parse({ kind: 'native_check_unavailable',
         phase: 'check', stepId: 'caddy-initial-config', reason: 'foreign_effect_conflict', requiredFact: 'caddy-initial-config',
         remedy: 'Inspect and reconcile the existing Caddy seed before retrying the Domain operation.' });
@@ -631,6 +636,11 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         if (!retainedSeed) delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
+    }
+    if (staleLink) {
+        link.revision = 2;
+        link.members = [{ machineId: 'controller', installationId: 'controller-installation', state: 'active' }];
+        link.machines = ['controller'];
     }
     if (noActiveDomainMembers || incumbentJoining) link.members[0]!.state = 'joining';
     if (scenario === 'no active Domain members') delete link.activeDeploymentId;
@@ -737,7 +747,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     }));
     const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse({ serverId: 'home',
         environmentId: environment.environment.id, domainId: 'domain', expectedRevision: environment.environment.revision,
-        targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'domain-add',
+        targetLinkId: link.id, expectedTargetLinkRevision: staleLink ? 1 : link.revision, requestKey: 'domain-add',
         contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
         ...(membership ? { membershipDeploymentId: 'membership-receipt', membershipMachines: [
             { machineId: 'a', installationId: 'installed-a' },
@@ -785,8 +795,23 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
         installationId: 'controller-installation', createdAt: 1, publicKey: Buffer.from(identity.publicKey).toString('base64url'),
         privateKey: Buffer.from(identity.secretKey).toString('base64url') });
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const refusedChildReads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
         const path = new URL(url).pathname;
+        const childProof = config?.headers?.[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER];
+        if (staleLink && path === '/v1/machines/controller' && typeof childProof === 'string') {
+            const token = config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+            expect(typeof token).toBe('string');
+            const proof = typeof token === 'string' ? decodeDeploymentChildExecutionV1(childProof, token) : null;
+            expect(proof?.externalActionExecution.deploymentChildRouting).toMatchObject({ kind: 'domainDiscover', machineId: 'controller',
+                installationId: 'controller-installation', input: { expectedTargetLinkRevision: 1 } });
+            expect(link.revision).toBe(2);
+            refusedChildReads.push(path);
+            // Home's signed codec response comes before the child socket call and before the Domain write.
+            throw Object.assign(new Error('Private Home transport context'), { response: { status: 401, data: {
+                error: 'invalid_token', authorizationRefusal: 'deployment_child_admission', details: staleLinkDetails,
+            } } });
+        }
         if (path.startsWith('/v1/machines/')) {
             const machineId = path.split('/').at(-1)!;
             return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({ id: machineId, kind: 'persistent',
@@ -1181,7 +1206,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             originalActionEnvelope: envelope, externalActionTarget: target, actionRequestId: envelope.requestId,
             operationAcceptance: { operationId: 'domain-operation', accept() {} } });
         if (noActiveDomainMembers || scenario === 'Domain Environment HTTP unavailable'
-            || scenario === 'network review required' || scenario === 'Domain Home purpose refused'
+            || scenario === 'network review required' || homeRefusalPhase
             || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown || removingNativeOutput) {
             const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'controller',
                 resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-operation' });
@@ -1195,7 +1220,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                             : { requiredFact: 'nativeExecutionResult' }),
                             remedy: nativeUnknownWithFact ? nativeUnknownFailure.remedy : expect.any(String) }
                         : scenario === 'administrator native check unavailable' ? { failure: nativeCheckFailure, remedy: nativeCheckFailure.remedy }
-                        : scenario === 'Domain Home purpose refused' ? { requiredFact: 'verification_purpose', remedy: expect.any(String) } : {}),
+                        : staleLink ? staleLinkDetails
+                        : homeRefusalPhase ? { requiredFact: homeRefusalPhase, remedy: expect.any(String) } : {}),
                 operation: { serverId: 'home', machineId: 'controller', operationId: 'domain-operation' } };
             // RpcError carries the Home reader's typed failure unchanged.
             const errorCode = removingNativeOutput ? scenario === 'Remove native parsed output invalid'
@@ -1204,14 +1230,14 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 : scenario === 'network review required' ? 'machine_network_review_required'
                     : nativeOutcomeUnknown ? 'outcome_unknown'
                     : scenario === 'administrator native check unavailable' ? 'native_check_unavailable'
-                    : scenario === 'Domain Home purpose refused' ? 'action_forbidden' : 'home_unreachable';
+                    : homeRefusalPhase ? 'action_forbidden' : 'home_unreachable';
             expect.soft(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode, details });
             if (removingNativeOutput || nativeOutcomeUnknown && !nativeUnknownWithFact) {
                 // Only the missing Domain result is known; no child-native step is fabricated.
                 expect(result).not.toHaveProperty('details.failure');
             }
-            if (scenario === 'Domain Home purpose refused') expect.soft(result).toMatchObject({
-                failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } });
+            if (homeRefusalPhase) expect.soft(result).toMatchObject({
+                failureCause: { phase: `home.authorization.${homeRefusalPhase}`, httpStatus: 401 } });
             else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(result).toMatchObject({
                 failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } });
             else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(result).not.toHaveProperty('failureCause');
@@ -1220,8 +1246,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 transport: async ({ payload }) => operations.handlers.getV2(payload) });
             expect.soft(operation).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
                 errorCode, details } } });
-            if (scenario === 'Domain Home purpose refused') expect.soft(operation).toMatchObject({ operation: { error: {
-                failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } } });
+            if (homeRefusalPhase) expect.soft(operation).toMatchObject({ operation: { error: {
+                failureCause: { phase: `home.authorization.${homeRefusalPhase}`, httpStatus: 401 } } } });
             else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(operation).toMatchObject({ operation: { error: {
                 failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } } });
             else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(operation).not.toHaveProperty('operation.error.failureCause');
@@ -1235,7 +1261,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 summary: removingNativeOutput ? 'Remove Domain' : 'Add Domain', decision: { kind: 'approve', decidedAtMs: 2 },
                 executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
                     serverId: 'home', accountId: 'owner', machineId: 'controller',
-                    ...(scenario === 'network review required' ? { serverIdentityId: canonicalHome,
+                    ...(staleLink || scenario === 'network review required' ? { serverIdentityId: staleLink ? 'home' : canonicalHome,
                         target: { kind: 'machine', machineId: 'controller' } } : {}),
                     actionId, requestId: envelope.requestId } });
             const settled = projectSettledApprovalExecution({ request, actionId, exec: result,
@@ -1259,8 +1285,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                     expect(observed).toHaveProperty('execution.details.requiredFact', 'nativeExecutionResult');
                     expect(observed).not.toHaveProperty('execution.details.failure');
                 }
-                if (scenario === 'Domain Home purpose refused') expect.soft(observed).toMatchObject({ execution: {
-                    failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } } });
+                if (homeRefusalPhase) expect.soft(observed).toMatchObject({ execution: {
+                    failureCause: { phase: `home.authorization.${homeRefusalPhase}`, httpStatus: 401 } } });
                 else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(observed).toMatchObject({ execution: {
                     failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } });
                 else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(observed).not.toHaveProperty('execution.failureCause');
@@ -1269,6 +1295,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             expect(JSON.stringify(operation)).not.toContain('Private network transport context');
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(removingNativeOutput ? 1 : 0);
+            if (staleLink) expect(refusedChildReads).toEqual(['/v1/machines/controller']);
             if (removingNativeOutput) expect(children[0]).toMatchObject({ actionId, capture: { desired: false } });
             return;
         }

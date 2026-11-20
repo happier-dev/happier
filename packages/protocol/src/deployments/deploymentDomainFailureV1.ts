@@ -52,13 +52,16 @@ export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.unio
         ...cloudflareRecoveryFields,
         /** Authored endpoint templates, issue paths and expected types; never response values. */
         providerOutput: z.optional(z.string().check(z.minLength(1))),
+        reason: z.optional(z.literal('target_link_revision_mismatch')),
         requiredFact: z.optional(z.union([DeploymentDomainNativeRequiredFactV1Schema, ExternalActionAuthorizationRefusalPhaseSchema,
-            MachineElevationFailureV1Schema.shape.requiredFact])),
+            MachineElevationFailureV1Schema.shape.requiredFact, z.literal('expectedTargetLinkRevision')])),
         failure: z.optional(z.union([DeploymentDomainCaddyFailureV1Schema, MachineElevationFailureV1Schema])),
         remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
-        operation: z.optional(ActionOperationAddressV1Schema) }).check(z.refine(value => value.requiredFact === undefined
-            || DeploymentDomainNativeRequiredFactV1Schema.safeParse(value.requiredFact).success
-            || ExternalActionAuthorizationRefusalPhaseSchema.safeParse(value.requiredFact).success
-            || value.failure?.requiredFact === value.requiredFact)),
+        operation: z.optional(ActionOperationAddressV1Schema) }).check(z.refine(value => value.reason !== undefined
+            ? value.requiredFact === 'expectedTargetLinkRevision'
+            : value.requiredFact === undefined
+                || DeploymentDomainNativeRequiredFactV1Schema.safeParse(value.requiredFact).success
+                || ExternalActionAuthorizationRefusalPhaseSchema.safeParse(value.requiredFact).success
+                || value.failure?.requiredFact === value.requiredFact)),
 ]));
 export type DeploymentDomainFailureDetailsV1 = z.infer<typeof DeploymentDomainFailureDetailsV1Schema>;
