@@ -143,17 +143,33 @@ const SessionReadinessFactsV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type SessionReadinessFactsV1 = z.infer<typeof SessionReadinessFactsV1Schema>;
 
+const SessionReadinessUnknownReasonV1Schema = lazyZodSchema(() => z.enum([
+  'session_machine_unknown', 'machine_readiness_unknown',
+  'agent_inventory_reader_unavailable', 'machine_host_facts_unavailable', 'machine_host_facts_missing',
+  'session_agent_unknown', 'agent_inventory_unavailable', 'agent_inventory_invalid',
+  'agent_inventory_item_missing', 'agent_inventory_item_unavailable', 'agent_inventory_not_current',
+  'agent_execution_state_unknown', 'invocation_access_unknown', 'team_credential_readiness_unknown',
+  'personal_credential_readiness_unknown', 'credential_selection_unknown',
+]));
+type SessionReadinessUnknownReasonV1 = z.infer<typeof SessionReadinessUnknownReasonV1Schema>;
+
 export const SessionReadinessV1Schema = lazyZodSchema(() => z.strictObject({
   ...SessionReadinessFactsV1Schema.shape, v: z.literal(1),
   status: z.enum(['ready', 'unavailable', 'unknown']),
   cause: z.nullable(z.enum(['configuration', 'machine', 'agent', 'invocation', 'credential'])),
+  reason: z.optional(SessionReadinessUnknownReasonV1Schema),
 }));
 export type SessionReadinessV1 = z.infer<typeof SessionReadinessV1Schema>;
 
 /** Pure diagnostic composition. Actual operations always re-admit at their original owner. */
 export function composeSessionReadinessV1(facts: SessionReadinessFactsV1,
-  options?: Readonly<{ credentialRequiredForConversation?: boolean }>): SessionReadinessV1 {
-  const result = (status: SessionReadinessV1['status'], cause: SessionReadinessV1['cause']): SessionReadinessV1 => ({ ...facts, v: 1, status, cause });
+  options?: Readonly<{ credentialRequiredForConversation?: boolean;
+    machineUnknownReason?: SessionReadinessUnknownReasonV1;
+    agentUnknownReason?: SessionReadinessUnknownReasonV1 }>): SessionReadinessV1 {
+  const result = (status: SessionReadinessV1['status'], cause: SessionReadinessV1['cause'],
+    reason?: SessionReadinessUnknownReasonV1): SessionReadinessV1 => ({ configured: facts.configured,
+      operation: facts.operation, machine: facts.machine, agent: facts.agent, invocation: facts.invocation,
+      credential: facts.credential, v: 1, status, cause, ...(reason ? { reason } : {}) });
   if (!facts.configured) return result('unavailable', 'configuration');
   if (facts.invocation?.capabilities.submitAgentInput === false) return result('unavailable', 'invocation');
   const machine = facts.machine?.status ?? 'unknown';
@@ -165,17 +181,21 @@ export function composeSessionReadinessV1(facts: SessionReadinessFactsV1,
     if (credential.kind === 'personal' && credential.usable === false) return result('unavailable', 'credential');
     if (credential.kind === 'team' && credential.readiness && credential.readiness.kind !== 'available') return result('unavailable', 'credential');
   }
-  if (machine !== 'ready') return result('unknown', 'machine');
+  if (machine !== 'ready') return result('unknown', 'machine',
+    options?.machineUnknownReason ?? (facts.machine ? 'machine_readiness_unknown' : 'session_machine_unknown'));
   // A Team-backed execution route is itself the requested credential operation.
   // If its exact resource disappeared, report that route as unread instead of
   // falling back to the backing Agent's native sign-in state.
   if (credentialRequired && credential.kind === 'team' && !credential.readiness) {
-    return result('unknown', 'credential');
+    return result('unknown', 'credential', 'team_credential_readiness_unknown');
   }
   if (facts.agent?.current && ['needsSignIn', 'notInstalled', 'unsupported'].includes(facts.agent.state)) return result('unavailable', 'agent');
-  if (!facts.agent?.current || facts.agent.state !== 'ready') return result('unknown', 'agent');
-  if (!facts.invocation) return result('unknown', 'invocation');
+  if (!facts.agent?.current) return result('unknown', 'agent',
+    options?.agentUnknownReason ?? (facts.agent ? 'agent_inventory_not_current' : 'agent_inventory_item_missing'));
+  if (facts.agent.state !== 'ready') return result('unknown', 'agent', 'agent_execution_state_unknown');
+  if (!facts.invocation) return result('unknown', 'invocation', 'invocation_access_unknown');
   if (credentialRequired && (credential.kind === 'not_required' || credential.kind === 'unknown'
-    || (credential.kind === 'personal' && credential.usable === null) || (credential.kind === 'team' && !credential.readiness))) return result('unknown', 'credential');
+    || (credential.kind === 'personal' && credential.usable === null))) return result('unknown', 'credential',
+    credential.kind === 'personal' ? 'personal_credential_readiness_unknown' : 'credential_selection_unknown');
   return result('ready', null);
 }

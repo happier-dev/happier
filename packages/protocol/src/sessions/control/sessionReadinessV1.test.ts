@@ -23,10 +23,15 @@ it('keeps optional integration failure independent of conversation, preserving t
 });
 
 it('never certifies stale or missing sign-in and never reclassifies unsupported as offline', () => {
-  expect(composeSessionReadinessV1({ ...facts, agent: null })).toMatchObject({ status: 'unknown', cause: 'agent' });
-  expect(composeSessionReadinessV1({ ...facts, agent: { ...facts.agent!, current: false } })).toMatchObject({ status: 'unknown', cause: 'agent' });
+  expect(composeSessionReadinessV1({ ...facts, machine: { status: 'unknown', machineId: 'machine-1' }, agent: null }))
+    .toMatchObject({ status: 'unknown', cause: 'machine', reason: 'machine_readiness_unknown' });
+  expect(composeSessionReadinessV1({ ...facts, agent: null }))
+    .toMatchObject({ status: 'unknown', cause: 'agent', reason: 'agent_inventory_item_missing' });
+  expect(composeSessionReadinessV1({ ...facts, agent: { ...facts.agent!, current: false } }))
+    .toMatchObject({ status: 'unknown', cause: 'agent', reason: 'agent_inventory_not_current' });
   expect(composeSessionReadinessV1({ ...facts, agent: { ...facts.agent!, state: 'unsupported' } })).toMatchObject({ status: 'unavailable', cause: 'agent', machine: { status: 'ready' } });
-  expect(composeSessionReadinessV1({ ...facts, operation: 'credential' })).toMatchObject({ status: 'unknown', cause: 'credential' });
+  expect(composeSessionReadinessV1({ ...facts, operation: 'credential' }))
+    .toMatchObject({ status: 'unknown', cause: 'credential', reason: 'credential_selection_unknown' });
 });
 
 it('keeps a missing required Team route on the credential owner instead of native Agent sign-in', () => {

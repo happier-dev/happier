@@ -11562,6 +11562,9 @@ qualified `credentialTeamSelection` from its setup selection, checked against th
 same purpose, service and entitled resource. Unavailable resources retain their
 owner's failure and recovery facts. The result reports
 `configured:true` and `status:'ready'|'unavailable'|'unknown'` with a cause.
+The CLI and Agent Action use the same readiness reader. An unknown result
+can include a closed `readiness.reason` such as `agent_inventory_unavailable`
+when the reader cannot complete the target Machine's Agent inventory probe.
 Saved configuration alone does not prove readiness; inaccessible or incomplete
 evidence stays unknown. This read performs no repair. Each effect still rechecks
 its own authority and binding. People/Bot readiness rendering remains in progress.

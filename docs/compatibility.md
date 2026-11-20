@@ -1,5 +1,13 @@
 # Compatibility and version skew
 
+## Session readiness reasons (unreleased 0.3)
+
+`session.status.get` can return a closed `readiness.reason` when the shared
+readiness composer reports `unknown`. Updated readers accept older results
+without the field. The inspected 0.2 frontier at `24731ff73c` has no Session
+readiness contract. Earlier strict 0.3 development readers require matching
+sources. There is no persisted format change.
+
 ## Applied parent Connected Service reads (unreleased 0.3)
 
 The daemon and Session runner may return a closed `reason` on an unavailable

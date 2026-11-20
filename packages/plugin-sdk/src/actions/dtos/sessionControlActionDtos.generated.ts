@@ -3405,6 +3405,7 @@ export type SessionControlActionResultById = {
             } | {
                 kind: 'unknown';
             };
+            reason?: 'agent_execution_state_unknown' | 'agent_inventory_invalid' | 'agent_inventory_item_missing' | 'agent_inventory_item_unavailable' | 'agent_inventory_not_current' | 'agent_inventory_reader_unavailable' | 'agent_inventory_unavailable' | 'credential_selection_unknown' | 'invocation_access_unknown' | 'machine_host_facts_missing' | 'machine_host_facts_unavailable' | 'machine_readiness_unknown' | 'personal_credential_readiness_unknown' | 'session_agent_unknown' | 'session_machine_unknown' | 'team_credential_readiness_unknown' | undefined;
         };
         awareness?: undefined | {
             v: 1;
@@ -4140,6 +4141,7 @@ export type SessionControlActionResultById = {
                         } | {
                             kind: 'unknown';
                         };
+                        reason?: 'agent_execution_state_unknown' | 'agent_inventory_invalid' | 'agent_inventory_item_missing' | 'agent_inventory_item_unavailable' | 'agent_inventory_not_current' | 'agent_inventory_reader_unavailable' | 'agent_inventory_unavailable' | 'credential_selection_unknown' | 'invocation_access_unknown' | 'machine_host_facts_missing' | 'machine_host_facts_unavailable' | 'machine_readiness_unknown' | 'personal_credential_readiness_unknown' | 'session_agent_unknown' | 'session_machine_unknown' | 'team_credential_readiness_unknown' | undefined;
                     };
                     awareness?: undefined | {
                         v: 1;

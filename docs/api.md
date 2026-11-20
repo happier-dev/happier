@@ -3926,7 +3926,9 @@ confirmation policy, not actor authority or execution credentials. See
 
 `session.status.get` accepts `{sessionId,readiness:true}`. The optional `readiness`
 result distinguishes saved configuration from `ready`, `unavailable` and `unknown`,
-with operation, Machine/Agent evidence, invocation access and cause. Omitted
+with operation, Machine/Agent evidence, invocation access and cause.
+`readiness.reason` is an optional closed code describing an unknown observation.
+Older responses can omit it. Omitted
 `operation` means conversation, with credential `not_required`. Requesting
 `operation:'credential'` and a qualified `credentialPurpose` reads the existing
 personal purpose binding. A Team operation also supplies the existing qualified
