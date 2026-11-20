@@ -526,19 +526,37 @@ describe('RemoteSshChecklistStep', () => {
 
         await flushHookEffects({ cycles: 3, turns: 3 });
 
-        const menu = screen.findByTestId('remote-ssh-step-configured-host-picker-menu') as unknown as {
-            props: { onSelect: (id: string) => void };
-        } | null;
-        expect(menu).toBeTruthy();
-
-        await act(async () => {
-            menu?.props.onSelect('ssh-config:devbox');
-        });
+        expect(screen.findByTestId('remote-ssh-step-ssh-sshHostInput')).toBeNull();
+        expect(screen.findByTestId('remote-ssh-step-new-host')).toBeTruthy();
+        await screen.pressByTestIdAsync('remote-ssh-step-configured-host-picker-ssh-config:devbox');
 
         expect(screen.findByTestId('remote-ssh-step-ssh-sshUsernameInput')?.props.value).toBe('ubuntu');
         expect(screen.findByTestId('remote-ssh-step-ssh-sshHostInput')?.props.value).toBe('devbox');
         expect(screen.findByTestId('remote-ssh-step-ssh-sshPortInput')?.props.value).toBe('2222');
         expect(screen.findAllByTestId('remote-ssh-step-remote-host-picker')).toHaveLength(0);
+    });
+
+    it('opens the credentials form directly after SSH discovery finds no hosts', async () => {
+        tauriState.isDesktop = true;
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const runnerHarness = createRunner({
+            startBehavior: (spec, taskId) => spec.kind === 'local.ssh.discoverConfiguredHosts.v1' ? {
+                taskId,
+                snapshot: {
+                    taskId, status: 'succeeded', currentStepId: null, latestMessage: null,
+                    awaitingInput: false, cancelRequested: false, events: [],
+                    result: { protocolVersion: 1, taskId, ok: true, data: [] },
+                },
+            } : undefined,
+        });
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step', mode: 'remoteRelayHost', relayUrl: 'https://relay.example.test',
+            runner: { ...runnerHarness.runner, mode: 'tauri' },
+        }));
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        expect(screen.findByTestId('remote-ssh-step-ssh-sshHostInput')).toBeTruthy();
+        expect(screen.findByTestId('remote-ssh-step-configured-host-picker')).toBeNull();
     });
 
     it('routes the remote Personal Home plan through the canonical remote host action', async () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { t } from '@/text';
 import { getActiveServerId, getServerProfileById, removeServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 type WizardPrimaryState = {
@@ -346,6 +347,8 @@ describe('relay access wizard detail steps', () => {
             }),
         );
 
+        expect(screen.findByTestId('relay-access-cloudflare-hostname')?.props.accessibilityHint)
+            .toBe(t('settings.relayAccess.missingHostname'));
         await vi.waitFor(() => expect(harness.listeners.has('task_1:relay.access.status.v1')).toBe(true));
         await renderer.act(async () => {
             harness.listeners.get('task_1:relay.access.status.v1')?.onResult({

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
@@ -30,6 +31,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
+import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
@@ -184,6 +186,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     const styles = remoteSshChecklistStyles;
     const copy = React.useMemo(() => getRemoteSshChecklistCopy(props.mode), [props.mode]);
     const [phase, setPhase] = React.useState<RemoteSshChecklistPhase>('credentials');
+    const [credentialEntryChosen, setCredentialEntryChosen] = React.useState(props.initialDraft != null);
     const supportedAuthModes = props.runner?.mode === 'native'
         ? (['keyfile', 'password'] as const)
         : undefined;
@@ -238,6 +241,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         suggestions: configuredHostSuggestions.suggestions,
         remoteHosts: usableRemoteHosts,
     }), [configuredHostSuggestions.suggestions, usableRemoteHosts]);
+    const hasConfiguredHosts = filteredConfiguredHostSuggestions.length > 0;
+    const choosingHost = !credentialEntryChosen && (hasConfiguredHosts || configuredHostSuggestions.loading);
 
     const [saveHost, setSaveHost] = React.useState(false);
     const saveHostInitializedRef = React.useRef(false);
@@ -307,6 +312,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     const handleSelectConfiguredHostSuggestion = React.useCallback((suggestion: SshConfiguredHostSuggestion) => {
         setHostPickerOpen(false);
+        setCredentialEntryChosen(true);
         setSelectedSavedRemoteHostId(SAVED_REMOTE_HOST_NEW_ID);
         setDraft((current) => {
             const next = applyConfiguredSshHostSuggestionToDraft(current, suggestion);
@@ -446,8 +452,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         const relayRuntime = (activeTaskSnapshot.result.data as {
             relayRuntime?: { relayUrl?: unknown };
         } | undefined)?.relayRuntime;
-        const relayUrl = typeof relayRuntime?.relayUrl === 'string' ? relayRuntime.relayUrl.trim() : '';
-        return relayUrl.length > 0 ? relayUrl : null;
+        return typeof relayRuntime?.relayUrl === 'string' ? relayRuntime.relayUrl : null;
     }, [activeTaskSnapshot]);
     const completionRelayUrl = React.useMemo(() => {
         return resolveRemoteRelayCompletionUrl({
@@ -646,7 +651,9 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     React.useEffect(() => {
         if (phase === 'credentials') {
-            props.onWizardBackChange?.(null);
+            props.onWizardBackChange?.(!choosingHost && hasConfiguredHosts
+                ? { onPress: () => setCredentialEntryChosen(false) }
+                : null);
             props.onWizardSkipChange?.(null);
 
             const credentialsReady = selectedSavedRemoteHostId !== SAVED_REMOTE_HOST_NEW_ID
@@ -654,7 +661,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 : isSshCredentialsDraftReady(draft);
             props.onWizardPrimaryChange?.({
                 label: t('common.continue'),
-                disabled: !credentialsReady,
+                disabled: choosingHost || !credentialsReady,
                 onPress: () => setPhase('plan'),
             });
             return;
@@ -748,9 +755,11 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         activeTaskSnapshot?.result,
         checklist.canContinue,
         checklist.retry,
+        choosingHost,
         declinePrompt,
         dismissPrompt,
         draft,
+        hasConfiguredHosts,
         handleContinueAfterPrompt,
         handleStartExecution,
         isStarting,
@@ -781,6 +790,22 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         );
     }
 
+    if (phase === 'credentials' && choosingHost) {
+        const testID = props.testID ?? 'remote-ssh-checklist';
+        return <View testID={props.testID} style={styles.root}>
+            <SshConfiguredHostPicker
+                presentation="suggestions"
+                testID={`${testID}-configured-host-picker`}
+                {...configuredHostSuggestions}
+                suggestions={filteredConfiguredHostSuggestions}
+                onRefresh={configuredHostSuggestions.refresh}
+                onSelectSuggestion={handleSelectConfiguredHostSuggestion}
+            />
+            <RoundButton testID={`${testID}-new-host`} size="small" display="secondary"
+                title={t('setupOnboarding.remoteHosts.newHostOption')} onPress={() => setCredentialEntryChosen(true)} />
+        </View>;
+    }
+
     if (phase === 'credentials') {
         return (
             <RemoteSshChecklistCredentialsPhase
@@ -793,15 +818,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 selectedHostPickerId={selectedSavedRemoteHostId}
                 onSelectHostPickerId={handleSelectSavedRemoteHostId}
                 usingSavedHost={usingSavedHost}
-                configuredHostSuggestions={{
-                    suggestions: filteredConfiguredHostSuggestions,
-                    loading: configuredHostSuggestions.loading,
-                    refreshing: configuredHostSuggestions.refreshing,
-                    unsupported: configuredHostSuggestions.unsupported,
-                    error: configuredHostSuggestions.error,
-                }}
-                onRefreshConfiguredHostSuggestions={configuredHostSuggestions.refresh}
-                onSelectConfiguredHostSuggestion={handleSelectConfiguredHostSuggestion}
                 draft={draft}
                 onChangeDraft={(next) => {
                     savedDraftRef.current = next;

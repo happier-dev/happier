@@ -6,6 +6,8 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { useLocalRelayAccessControl } from '@/components/settings/server/localControl/useLocalRelayAccessControl';
 import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 import { RelayAccessCredentialFields } from '@/components/settings/server/relayAccess/RelayAccessCredentialFields';
@@ -137,6 +139,7 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
                         testID={props.testID ? `${props.testID}-${field.id}` : `${props.definition.testIDPrefix}-${field.id}`}
                         label={field.label}
                         placeholder={field.placeholder}
+                        supportText={normalizedDraft[field.id] ? undefined : field.emptyHelp}
                         autoCapitalize={field.autoCapitalize}
                         value={draft[field.id]}
                         onChangeText={(value) => handleChange(field.id, value)}
@@ -154,7 +157,12 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
             </View>
 
             {typeof lastErrorMessage === 'string' && lastErrorMessage.trim().length > 0 ? (
-                <Text style={styles.hint}>{lastErrorMessage}</Text>
+                <SurfaceStateCard
+                    kind="error"
+                    title={t('settings.systemTaskStepDidNotFinish', { step: t('settings.relayAccess.progressStepApply') })}
+                    reason={lastErrorMessage}
+                    accessibilitySemantics="alert"
+                />
             ) : null}
 
             <RelayAccessWizardBusyOverlay

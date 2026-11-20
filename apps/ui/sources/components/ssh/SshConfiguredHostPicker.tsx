@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
@@ -14,6 +15,7 @@ export type ApplySshConfiguredHostSuggestion = (suggestion: SshConfiguredHostSug
 
 export type SshConfiguredHostPickerProps = Readonly<{
     testID: string;
+    presentation?: 'suggestions';
     suggestions: readonly SshConfiguredHostSuggestion[];
     loading: boolean;
     refreshing: boolean;
@@ -36,6 +38,7 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
     props: SshConfiguredHostPickerProps,
 ) {
     const { theme } = useUnistyles();
+    const inline = props.presentation === 'suggestions';
     const [open, setOpen] = React.useState(false);
     const byId = React.useMemo(() => new Map(props.suggestions.map((suggestion) => [suggestion.id, suggestion])), [props.suggestions]);
     const items = React.useMemo<DropdownMenuItem[]>(() => props.suggestions.map((suggestion) => ({
@@ -52,6 +55,8 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
         props.onSelectSuggestion(suggestion);
     }, [byId, props]);
 
+    if (inline && (props.unsupported || (!items.length && !props.loading && !props.refreshing && !props.error))) return null;
+
     if (props.unsupported) {
         return (
             <Item
@@ -66,7 +71,19 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
 
     return (
         <View testID={props.testID}>
-            {items.length > 0 ? (
+            {inline && items.length > 0 ? (
+                <View style={styles.suggestions}>
+                    {props.suggestions.map((suggestion) => <RoundButton
+                        key={suggestion.id}
+                        testID={`${props.testID}-${suggestion.id}`}
+                        size="small"
+                        display="secondary"
+                        title={suggestion.alias}
+                        accessibilityHint={describeSuggestion(suggestion)}
+                        onPress={() => props.onSelectSuggestion(suggestion)}
+                    />)}
+                </View>
+            ) : items.length > 0 ? (
                 <DropdownMenu
                     testID={`${props.testID}-menu`}
                     open={open}
@@ -129,3 +146,7 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
         </View>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
+}));

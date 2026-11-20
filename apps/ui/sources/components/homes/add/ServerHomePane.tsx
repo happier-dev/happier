@@ -75,8 +75,7 @@ export function ServerHomePane(props: Readonly<{
                         initialInstallRelayRuntime
                         onWizardPrimaryChange={setPrimary}
                         onCompleted={(payload) => {
-                            const address = payload.relayRuntimeUrl?.trim();
-                            if (address) onHomeReady(address);
+                            if (payload.relayRuntimeUrl) onHomeReady(payload.relayRuntimeUrl);
                         }}
                     />
                 )}
