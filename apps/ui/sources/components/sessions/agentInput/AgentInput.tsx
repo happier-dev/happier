@@ -1326,6 +1326,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
         return getModelOptionsForSession(agentId, props.metadata ?? null, { selectedModelId: props.modelMode });
     }, [agentId, props.metadata, props.modelMode, props.modelOptionsOverride]);
+    const effectiveModelPolicy = React.useMemo(() => {
+        return describeEffectiveModelMode({
+            agentType: agentId,
+            selectedModelId: props.modelMode ?? 'default',
+            metadata: props.metadata ?? null,
+        });
+    }, [agentId, props.metadata, props.modelMode]);
+    const hasModelContinuation = Boolean(props.sessionId && !armedComposerTarget
+        && getAgentBehavior(agentId).sessionComposer?.offerModelContinuation
+        && effectiveModelPolicy.pendingModelId);
 
     // Profile data
     const profiles = useSetting('profiles');
@@ -1674,7 +1684,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             text: liveInputText,
         });
         const hasStructuredInputMeta = Object.keys(structuredInputMetaOverrides).length > 0;
-        const shouldCarryLiveInputText = !props.sessionId || liveInputText !== props.value;
+        const submittedInputText = hasModelContinuation && liveInputText.trim().length === 0
+            && !props.hasSendableAttachments
+            ? t('common.continue') : liveInputText;
+        const shouldCarryLiveInputText = !props.sessionId || submittedInputText !== props.value;
         props.onSend(
             options?.forceImmediate === true || options?.deliveryIntent != null || options?.afterSend != null || hasStructuredInputMeta
                 ? {
@@ -1682,16 +1695,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     ...(options?.deliveryIntent != null ? { deliveryIntent: options.deliveryIntent } : {}),
                     ...(options?.afterSend != null ? { afterSend: options.afterSend } : {}),
                     ...(hasStructuredInputMeta ? { structuredInputMetaOverrides } : {}),
-                    ...(shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : {}),
+                    ...(shouldCarryLiveInputText ? { inputTextOverride: submittedInputText } : {}),
                 }
-                : (shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : undefined),
+                : (shouldCarryLiveInputText ? { inputTextOverride: submittedInputText } : undefined),
         );
     }, [
+        hasModelContinuation,
         keepFocusAfterSend,
         messageHistory,
         props.onSend,
         props.sessionId,
         props.value,
+        props.hasSendableAttachments,
         sendActionDisabled,
         updateInputSelectionState,
     ]);
@@ -1954,14 +1969,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
             });
     }, [engineChipAgentId, permissionMetadata, props.permissionMode, sessionPermissionModeApplyTiming]);
-
-    const effectiveModelPolicy = React.useMemo(() => {
-        return describeEffectiveModelMode({
-            agentType: agentId,
-            selectedModelId: props.modelMode ?? 'default',
-            metadata: props.metadata ?? null,
-        });
-    }, [agentId, props.metadata, props.modelMode]);
 
     const selectedModelLabel = React.useMemo(() => {
         const found = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
@@ -2852,7 +2859,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const handleKeyPress = React.useCallback((event: KeyPressEvent): boolean => {
         const eventInputText = event.inputState?.text ?? inputRef.current?.getText?.() ?? inputStateRef.current.text;
         const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText
-            || props.hasSendableAttachments === true || props.armedContinuationTarget != null;
+            || props.hasSendableAttachments === true || props.armedContinuationTarget != null || hasModelContinuation;
         const sendShortcutAction = resolveComposerSendShortcutAction(event, {
             newSessionComposer: props.newSessionAfterSendMode != null,
             keyboardShortcutsV2Enabled,
@@ -2942,17 +2949,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, props.disabled, props.hasSendableAttachments, props.armedContinuationTarget, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    }, [handleCommandMenuKey, props.disabled, props.hasSendableAttachments, props.armedContinuationTarget, hasModelContinuation, props.canSendNextQueued, props.alternateSendMode, props.onSend, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
         if (!enterToSendEnabled) return;
         if (sendActionDisabled) return;
         const hasSendableInput = liveTextStatus.hasText || props.hasSendableAttachments === true
-            || props.armedContinuationTarget != null;
+            || props.armedContinuationTarget != null || hasModelContinuation;
         if (!hasSendableInput) return;
         handleSend();
-    }, [enterToSendEnabled, handleSend, liveTextStatus.hasText, props.hasSendableAttachments, props.armedContinuationTarget, sendActionDisabled]);
+    }, [enterToSendEnabled, handleSend, liveTextStatus.hasText, props.hasSendableAttachments, props.armedContinuationTarget, hasModelContinuation, sendActionDisabled]);
 
     const submitBehavior = React.useMemo<MultiTextInputSubmitBehavior | undefined>(() => {
         if (Platform.OS === 'web') return undefined;
@@ -3182,6 +3189,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         micPressHandler={micPressHandler}
                         micActive={micActive}
                         armedContinuationTarget={props.armedContinuationTarget ?? null}
+                        modelContinuationLabel={hasModelContinuation ? selectedModelLabel : null}
                         onSend={handleSend}
                         sendMenuItems={sendMenuItems}
                         onStop={handleAbortPress}

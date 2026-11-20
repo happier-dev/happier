@@ -24,27 +24,35 @@ export function measureNativeLayout(root: ReactTestInstance, width: number, text
     function build(instance: ReactTestInstance): Node {
         const node = Yoga.Node.createWithConfig(config);
         nodes.set(instance, node);
-        const style = flattenStyle(instance.props.style);
+        const style = flattenStyle(typeof instance.props.style === 'function'
+            ? instance.props.style({ pressed: false }) : instance.props.style);
         if (style.position === 'absolute') node.setPositionType(Yoga.POSITION_TYPE_ABSOLUTE);
         if (style.flexDirection === 'row') node.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
+        if (style.flexWrap === 'wrap') node.setFlexWrap(Yoga.WRAP_WRAP);
         if (style.alignItems === 'center') node.setAlignItems(Yoga.ALIGN_CENTER);
         if (style.alignItems === 'flex-start') node.setAlignItems(Yoga.ALIGN_FLEX_START);
         if (style.justifyContent === 'center') node.setJustifyContent(Yoga.JUSTIFY_CENTER);
         if (typeof style.flex === 'number') node.setFlex(style.flex);
+        if (typeof style.flexGrow === 'number') node.setFlexGrow(style.flexGrow);
         if (typeof style.flexShrink === 'number') node.setFlexShrink(style.flexShrink);
         if (typeof style.minWidth === 'number') node.setMinWidth(style.minWidth);
         if (typeof style.minHeight === 'number') node.setMinHeight(style.minHeight);
         if (typeof style.width === 'number' || style.width === '100%') node.setWidth(style.width);
         if (typeof style.height === 'number') node.setHeight(style.height);
-        if (typeof style.maxWidth === 'number' || style.maxWidth === '100%') node.setMaxWidth(style.maxWidth);
+        if (typeof style.maxWidth === 'number') node.setMaxWidth(style.maxWidth);
+        if (typeof style.maxWidth === 'string' && /^\d+(\.\d+)?%$/.test(style.maxWidth)) {
+            node.setMaxWidth(style.maxWidth as `${number}%`);
+        }
         if (typeof style.gap === 'number') node.setGap(Yoga.GUTTER_ALL, style.gap);
         for (const [key, edge] of [
             ['paddingHorizontal', Yoga.EDGE_HORIZONTAL], ['paddingVertical', Yoga.EDGE_VERTICAL],
             ['paddingTop', Yoga.EDGE_TOP], ['paddingBottom', Yoga.EDGE_BOTTOM],
+            ['paddingLeft', Yoga.EDGE_LEFT], ['paddingRight', Yoga.EDGE_RIGHT],
         ] as const) {
             if (typeof style[key] === 'number') node.setPadding(edge, style[key]);
         }
         if (typeof style.marginRight === 'number') node.setMargin(Yoga.EDGE_RIGHT, style.marginRight);
+        if (typeof style.marginLeft === 'number') node.setMargin(Yoga.EDGE_LEFT, style.marginLeft);
         if (typeof style.marginTop === 'number') node.setMargin(Yoga.EDGE_TOP, style.marginTop);
         if (String(instance.type) === 'Text') {
             const fontSize = Number(style.fontSize ?? 12) * textScale;

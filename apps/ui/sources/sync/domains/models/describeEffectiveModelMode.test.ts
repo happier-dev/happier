@@ -13,6 +13,20 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectiveModelMode', () => {
+    it('exposes a pending model only until the selected next-prompt model is applied', () => {
+        const metadata = buildMetadata({
+            sessionAppliedModelV1: { v: 1, provider: 'opencode', modelId: 'anthropic/old', updatedAt: 1 },
+        });
+        const describeSelection = (selectedModelId: string, state: Metadata | null = metadata) =>
+            describeEffectiveModelMode({ agentType: 'opencode', selectedModelId, metadata: state });
+        expect(describeSelection('openai/new')).toMatchObject({ pendingModelId: 'openai/new' });
+        expect(describeSelection('anthropic/old')).toMatchObject({ pendingModelId: null });
+        expect(describeSelection('default')).toMatchObject({ pendingModelId: null });
+        expect(describeSelection('openai/new', null)).toMatchObject({ pendingModelId: null });
+        metadata.sessionAppliedModelV1 = { v: 1, provider: 'opencode', modelId: 'openai/new', updatedAt: 2 };
+        expect(describeSelection('openai/new')).toMatchObject({ pendingModelId: null });
+    });
+
     it('retains the configured backend applied model separately from the requested model', () => {
         const metadata = buildMetadata({
             acpConfiguredBackendV1: { v: 1, backendId: 'custom-one', title: 'Custom', updatedAt: 1 },

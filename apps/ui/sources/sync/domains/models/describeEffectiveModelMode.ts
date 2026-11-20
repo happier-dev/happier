@@ -12,6 +12,8 @@ export type EffectiveModelModeDescription = Readonly<{
     selectedModelId: string;
     /** The latest model accepted for a new provider prompt, when available. */
     appliedModelId: string | null;
+    /** An explicit next-prompt selection that differs from the last accepted model. */
+    pendingModelId: string | null;
     /** @deprecated Use selectedModelId. Retained for internal callers during migration. */
     effectiveModelId: string;
     applyScope: ModelApplyScope;
@@ -61,6 +63,9 @@ export function describeEffectiveModelMode(params: {
     return {
         selectedModelId: resolvedSelectedModelId,
         appliedModelId: appliedModelId || null,
+        pendingModelId: applyScope !== 'spawn_only' && appliedModelId
+            && resolvedSelectedModelId !== 'default' && resolvedSelectedModelId !== appliedModelId
+            ? resolvedSelectedModelId : null,
         effectiveModelId: resolvedSelectedModelId,
         applyScope,
         notes,
