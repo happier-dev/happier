@@ -9214,6 +9214,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     reviewFindings: {
       title: ({ count }: { count: number }) => `Achados de revisão (${count})`,
       questionsTitle: "Perguntas do revisor",
+      questionsMachineUnavailable: "Não foi possível carregar as perguntas do revisor. A máquina está inacessível.",
+      questionsRunMissing: "A execução do revisor não está mais disponível.",
       assumptionsTitle: "Suposições",
       findingTitle: ({
         status,

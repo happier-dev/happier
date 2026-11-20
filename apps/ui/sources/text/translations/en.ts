@@ -10623,6 +10623,8 @@ const enSession = {
   reviewFindings: {
     title: ({ count }: { count: number }) => `Review findings (${count})`,
     questionsTitle: 'Questions from reviewer',
+    questionsMachineUnavailable: "Couldn’t load reviewer questions. The machine is unreachable.",
+    questionsRunMissing: "The reviewer run is no longer available.",
     assumptionsTitle: 'Assumptions',
     findingTitle: ({
       status,

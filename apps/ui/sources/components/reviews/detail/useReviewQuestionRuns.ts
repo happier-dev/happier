@@ -9,12 +9,30 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { isExecutionRunTargetUnavailable } from '@/sync/runtime/executionRuns/executionRunHeaderReads';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ReviewFindingsMember } from '../finding/useReviewFindingsModel';
 
 type Reference = Extract<ReviewRunReferenceV1, { kind: 'execution' }>;
-type Read = Readonly<{ key: string; member: ReviewFindingsMember | null; failed: boolean }>;
+export type ReviewQuestionRunsUnavailableReason = 'temporarily_unavailable' | 'run_missing' | 'read_failed';
+export type ReviewQuestionRunsState =
+    | Readonly<{ kind: 'loading' | 'no_questions' | 'ready' }>
+    | Readonly<{ kind: 'unavailable'; reason: ReviewQuestionRunsUnavailableReason }>;
+
+type Read = Readonly<{
+    key: string;
+    member: ReviewFindingsMember | null;
+    unavailableReason: ReviewQuestionRunsUnavailableReason | null;
+}>;
+
+function readUnavailableReason(error: unknown): ReviewQuestionRunsUnavailableReason {
+    const code = error instanceof WorkflowActionError ? error.rawCode : null;
+    if (isExecutionRunTargetUnavailable(code)) return 'temporarily_unavailable';
+    if (code === 'execution_run_not_found') return 'run_missing';
+    return 'read_failed';
+}
 const EMPTY_RUNS: readonly ReviewRunReferenceV1[] = Object.freeze([]);
 const EMPTY_READS: readonly Read[] = Object.freeze([]);
 const EMPTY_MEMBERS: readonly ReviewFindingsMember[] = Object.freeze([]);
@@ -62,8 +80,10 @@ export function useReviewQuestionRuns(params: Readonly<{
                             questions: normalized.questions, assumptions: normalized.assumptions,
                             findings: [], commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {},
                         } : null;
-                        return { key: referenceKey(reference), member, failed: false };
-                    } catch { return { key: referenceKey(reference), member: null, failed: true }; }
+                        return { key: referenceKey(reference), member, unavailableReason: null };
+                    } catch (error) {
+                        return { key: referenceKey(reference), member: null, unavailableReason: readUnavailableReason(error) };
+                    }
                 }));
                 if (controller.signal.aborted || !lifetime.isCurrent()) return;
                 setSnapshot(previous => {
@@ -74,7 +94,7 @@ export function useReviewQuestionRuns(params: Readonly<{
                         const id = referenceKey(reference);
                         const before = previousByKey.get(id);
                         const update = updates.get(id);
-                        return update ? [{ ...update, member: update.failed ? before?.member ?? null : update.member }] : before ? [before] : [];
+                        return update ? [{ ...update, member: update.unavailableReason ? before?.member ?? null : update.member }] : before ? [before] : [];
                     });
                     const reads = retainKeyedRows(prior, incoming, read => read.key);
                     if (previous.key === key && reads === prior && !previous.loading) return previous;
@@ -96,6 +116,11 @@ export function useReviewQuestionRuns(params: Readonly<{
     }, [params.enabled, lifetime, references, key, retryVersion]);
     const reads = snapshot.key === key ? snapshot.reads : EMPTY_READS;
     const members = React.useMemo(() => reads.length > 0 ? reads.flatMap(read => read.member ? [read.member] : []) : EMPTY_MEMBERS, [reads]);
-    return { members, loading: params.enabled && references.length > 0 && (snapshot.key !== key || snapshot.loading),
-        failed: reads.some(read => read.failed), retry };
+    const unavailableReason = reads.find(read => read.unavailableReason === 'temporarily_unavailable')?.unavailableReason
+        ?? reads.find(read => read.unavailableReason !== null)?.unavailableReason;
+    let state: ReviewQuestionRunsState;
+    if (unavailableReason) state = { kind: 'unavailable', reason: unavailableReason };
+    else if (params.enabled && references.length > 0 && (snapshot.key !== key || snapshot.loading)) state = { kind: 'loading' };
+    else state = { kind: members.some(member => member.questions.length > 0) ? 'ready' : 'no_questions' };
+    return { members, state, retry };
 }

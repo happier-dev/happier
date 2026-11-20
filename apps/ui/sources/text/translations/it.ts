@@ -9333,6 +9333,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     reviewFindings: {
       title: ({ count }: { count: number }) => `Risultati della revisione (${count})`,
       questionsTitle: "Domande del revisore",
+      questionsMachineUnavailable: "Impossibile caricare le domande del revisore. La macchina non è raggiungibile.",
+      questionsRunMissing: "L’esecuzione del revisore non è più disponibile.",
       assumptionsTitle: "Ipotesi",
       findingTitle: ({
         status,

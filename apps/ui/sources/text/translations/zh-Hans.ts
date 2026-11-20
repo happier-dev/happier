@@ -8793,6 +8793,8 @@ export const zhHans: TranslationStructure = {
     reviewFindings: {
       title: ({ count }: { count: number }) => `审查发现 (${count})`,
       questionsTitle: "审查者问题",
+      questionsMachineUnavailable: "无法加载审查者的问题。无法连接到机器。",
+      questionsRunMissing: "审查者的运行已不可用。",
       assumptionsTitle: "假设",
       findingTitle: ({
         status,

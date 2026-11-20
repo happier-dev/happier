@@ -8948,6 +8948,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     reviewFindings: {
       title: ({ count }: { count: number }) => `Résultats de la review (${count})`,
       questionsTitle: "Questions du reviewer",
+      questionsMachineUnavailable: "Impossible de charger les questions du reviewer. La machine est inaccessible.",
+      questionsRunMissing: "L’exécution du reviewer n’est plus disponible.",
       assumptionsTitle: "Hypothèses",
       findingTitle: ({
         status,

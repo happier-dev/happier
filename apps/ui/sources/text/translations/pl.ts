@@ -8944,6 +8944,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     reviewFindings: {
       title: ({ count }: { count: number }) => `Wyniki przeglądu (${count})`,
       questionsTitle: "Pytania recenzenta",
+      questionsMachineUnavailable: "Nie udało się wczytać pytań recenzenta. Maszyna jest nieosiągalna.",
+      questionsRunMissing: "Uruchomienie recenzenta nie jest już dostępne.",
       assumptionsTitle: "Założenia",
       findingTitle: ({
         status,

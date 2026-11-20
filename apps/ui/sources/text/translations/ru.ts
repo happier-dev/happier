@@ -9565,6 +9565,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     reviewFindings: {
       title: ({ count }: { count: number }) => `Замечания ревью (${count})`,
       questionsTitle: "Вопросы от ревьюера",
+      questionsMachineUnavailable: "Не удалось загрузить вопросы ревьюера. Машина недоступна.",
+      questionsRunMissing: "Запуск ревьюера больше недоступен.",
       assumptionsTitle: "Предположения",
       findingTitle: ({
         status,

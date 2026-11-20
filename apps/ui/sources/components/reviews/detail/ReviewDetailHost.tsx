@@ -388,9 +388,15 @@ export function ReviewDetailHost(props: Readonly<{
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}
           label={t(comments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')} onPress={() => void comments.loadMore()} /> : null}
-        {questionRuns.loading && questionRuns.members.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
-        {questionRuns.failed ? <SurfaceStateCard testID="review-detail:questions-unavailable" kind="error" size="line" title={t('common.error')}
-          action={{ label: t('common.retry'), onPress: questionRuns.retry }} /> : null}
+        {questionRuns.state.kind === 'loading' && questionRuns.members.length === 0
+          ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
+        {questionRuns.state.kind === 'unavailable' ? <SurfaceStateCard testID="review-detail:questions-unavailable"
+          kind={questionRuns.state.reason === 'read_failed' ? 'error' : 'unavailable'} size="line"
+          title={questionRuns.state.reason === 'temporarily_unavailable' ? t('reviewFindings.questionsMachineUnavailable')
+            : questionRuns.state.reason === 'run_missing' ? t('reviewFindings.questionsRunMissing')
+              : t('surfaceState.couldNotOpen', { name: t('reviewFindings.questionsTitle') })}
+          action={{ label: t(questionRuns.state.reason === 'run_missing' ? 'surfaceState.checkAgain' : 'common.retry'),
+            onPress: questionRuns.retry }} /> : null}
         <ReviewQuestions questions={findings.questions} multiReviewer={(round?.reviewerIds.length ?? 0) > 1}
           canAct={canEdit} onAnswer={findings.setReplyToQuestion} />
         {canEdit && findings.questions.length > 0 && openFinding === null ? <ReviewFollowUpDock

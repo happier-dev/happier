@@ -8468,6 +8468,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         reviewFindings: {
             title: ({ count }: { count: number }) => `Resultats de la revisió (${count})`,
             questionsTitle: 'Preguntes del revisor',
+            questionsMachineUnavailable: "No s’han pogut carregar les preguntes del revisor. No es pot connectar amb la màquina.",
+            questionsRunMissing: "L’execució del revisor ja no està disponible.",
             assumptionsTitle: 'Supòsits',
             findingTitle: ({
                 status,

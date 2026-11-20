@@ -7767,6 +7767,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         reviewFindings: {
             title: ({ count }: { count: number }) => `審查發現 (${count})`,
             questionsTitle: '審查者問題',
+            questionsMachineUnavailable: '無法載入審查者的問題。無法連線到機器。',
+            questionsRunMissing: '審查者的執行已無法使用。',
             assumptionsTitle: '假設',
             status: {
                 untriaged: '待處理',

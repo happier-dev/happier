@@ -9136,6 +9136,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         reviewFindings: {
             title: ({ count }: { count: number }) => `Review-Befunde (${count})`,
             questionsTitle: 'Rückfragen des Reviewers',
+            questionsMachineUnavailable: "Die Rückfragen konnten nicht geladen werden. Der Rechner ist nicht erreichbar.",
+            questionsRunMissing: "Der Review-Lauf ist nicht mehr verfügbar.",
             assumptionsTitle: 'Annahmen',
             findingTitle: ({
                 status,

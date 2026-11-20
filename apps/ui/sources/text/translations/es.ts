@@ -9108,6 +9108,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     reviewFindings: {
       title: ({ count }: { count: number }) => `Hallazgos de revisión (${count})`,
       questionsTitle: "Preguntas del revisor",
+      questionsMachineUnavailable: "No se pudieron cargar las preguntas del revisor. No se puede acceder a la máquina.",
+      questionsRunMissing: "La ejecución del revisor ya no está disponible.",
       assumptionsTitle: "Suposiciones",
       findingTitle: ({
         status,

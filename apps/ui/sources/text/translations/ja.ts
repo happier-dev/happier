@@ -9415,6 +9415,8 @@ localTailscale: {
     reviewFindings: {
       title: ({ count }: { count: number }) => `レビュー結果（${count}件）`,
       questionsTitle: "レビュアーからの質問",
+      questionsMachineUnavailable: "レビュアーからの質問を読み込めませんでした。マシンに接続できません。",
+      questionsRunMissing: "レビュアーの実行結果は利用できなくなりました。",
       assumptionsTitle: "前提",
       findingTitle: ({
         status,
