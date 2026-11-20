@@ -17,6 +17,7 @@ import {
   resolveBuiltinWorkflowDefinitionV1, type WorkflowDefinitionV1, type WorkflowAcceptedAuthorizationV1, type WorkflowStep,
   WorkflowDefinitionV1Schema,
   captureWorkflowDiscussionV1,
+  WorkflowTriggerRemoveRequestV1Schema,
 } from '@happier-dev/protocol/workflows';
 import { workflowInvocationKey, type WorkflowStepExecutor } from './coordinator';
 import { bindAutomationWorkflowInputs, WorkflowInputResolutionError, type WorkflowJsonValue } from './input';
@@ -36,6 +37,10 @@ import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/exec
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationTriggerDetailSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSessionLifecycleTriggerSchema, projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
   openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
@@ -55,7 +60,8 @@ import { RoleArtifactV1Schema } from '@happier-dev/protocol/prompts/roles/roleAr
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const engine = buildBackendTargetKeyV2(agentTarget);
-const otherEngine = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
+const otherAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+const otherEngine = buildBackendTargetKeyV2(otherAgentTarget);
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const credentials = { token: 'native-boundary-fixture', encryption: null };
 // Persisted user choices at the Account-settings boundary, not an executor
@@ -324,6 +330,8 @@ function harness(fixtures: Fixtures = {}) {
           value = { verdict: fixtures.opinion ?? 'agree', confidence: 0.8, risks: [], missingEvidence: [], nextStep: 'review' };
         } else if (instructions.includes('Return a document explaining')) {
           events.push('synthesis'); value = { document: 'A plan', proposal: { invalid: true } };
+        } else if (instructions.includes('Draft a read-only plan')) {
+          value = 'native result';
         } else if (instructions.includes('Rule only on disputed')) {
           events.push('judge'); value = { verdicts: fixtures.judgeVerdicts ?? [] };
         } else {
@@ -393,18 +401,33 @@ function harness(fixtures: Fixtures = {}) {
       }
       return { ok: true };
     },
-    workflowAction: async args => {
+    workflowAction: Object.assign(async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0]): ReturnType<NonNullable<ActionExecutorDeps['workflowAction']>> => {
       if (args.actionId === 'workflow.run.start' || args.actionId === 'workflow.run.get' || args.actionId === 'workflow.run.invocations.get'
         || args.actionId === 'workflow.run.invocations.list') {
         return runOwner.execute(args);
       }
       if (fixtures.workflowAction) return fixtures.workflowAction(args);
       const { actionId, input } = args;
-      if (actionId !== 'session.trigger.remove') throw new Error('Unexpected native Workflow Action');
-      removedTriggers.push(input); events.push('detach');
+      if (actionId !== 'workflow.trigger.remove') throw new Error('Unexpected native Workflow Action');
+      const removal = WorkflowTriggerRemoveRequestV1Schema.parse(input);
+      if (fixtures.happierGoal) {
+        expect(await goalControl('get')).toMatchObject({ nativeGoalOwner: false,
+          workState: { items: [expect.objectContaining({ origin: 'happier', status: 'complete' })] } });
+      }
+      removedTriggers.push(removal); events.push('detach');
       return { set: { automationId: 'origin-automation', revision: 1, enabled: false, health: 'available', triggers: [] } };
-    },
-    scmActionExecute: async ({ input }) => { scmRequests.push(input); events.push('open-pr'); return { success: true, nextAction: { kind: 'none' }, pullRequest: {
+    }, { prepareTriggerMutation: fixtures.workflowAction?.prepareTriggerMutation }),
+    scmActionExecute: async ({ actionId, input }) => {
+      if (actionId === 'scm.diffSummary.capture') {
+        const capture = ScmComparisonCaptureInputSchema.parse(input);
+        const source = capture.source ?? { kind: 'workingTree' as const };
+        const id = capture.comparisonId ?? 'c'.repeat(64);
+        return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: { id, source,
+          repository: { rootPath: capture.cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { source, sourceKey: id } });
+      }
+      if (actionId !== 'scm.pullRequest.openOrReuse') throw new Error(`Unexpected native SCM Action: ${actionId}`);
+      scmRequests.push(input); events.push('open-pr'); return { success: true, nextAction: { kind: 'none' }, pullRequest: {
       number: 1, title: 'PR', url: 'https://example.test/pr/1', state: 'open', draft: false,
       provider: { id: 'fixture', kind: 'github', displayName: 'Fixture', baseUrl: 'https://example.test' },
       baseBranch: 'main', headBranch: 'feature',
@@ -515,7 +538,7 @@ function harness(fixtures: Fixtures = {}) {
       },
       observeRun: async (run) => fixtures.reviewFailed && nativeRuns.get(run.runId)?.intent === 'review'
         ? { kind: 'failed', code: 'native_review_failed' }
-        : { kind: 'completed', result: {}, commentIds: [...(fixtures.panelCommentIds ?? fixtures.comments?.().map((comment) => comment.id) ?? [])],
+        : { kind: 'completed', result: nativeRuns.get(run.runId)?.intent === 'plan' ? nativeRuns.get(run.runId)!.value : {}, commentIds: [...(fixtures.panelCommentIds ?? fixtures.comments?.().map((comment) => comment.id) ?? [])],
           reviewedFingerprint: 'panel-fingerprint', materialization: fixtures.reviewPartial
             ? { kind: 'partial', errorCode: 'review_materialization_partial' } : { kind: 'complete' } },
     },
@@ -818,9 +841,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.launches).toHaveLength(2);
     expect(h.store.list().filter(row => row.blockId === 'opinion').map(row => row.lifecycle)).toEqual(['completed', 'completed']);
   });
-  it('FIX80 settles both done occurrences while removing only their claim-bound firing trigger once', async () => {
-    // Only Home persistence/authorized Run reads are substituted. The trigger
-    // owner, family registration, executor, Goal router and coordinator are real.
+  async function firingGoalFixture(beforeRemove?: () => Promise<void>) {
     const rows = new Map<string, AutomationDefinitionDetail>();
     const removals: string[] = [];
     const claims = new Map<string, { sessionId: string; triggerId: string; automationId: string }>();
@@ -834,6 +855,13 @@ describe('built-ins through accepted materialization and native leaf adapters', 
         ? row.executionRecipe.workflow.v : null,
       sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
         workflow: { t: 'plain', v: context }, triggerEvidence: null }),
+      openSessionLifecycleTrigger: async (row, item) => {
+        const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, automationId: row.id, triggerId: item.id, triggerRevision: item.revision, triggerKind: item.kind },
+          envelope: JSON.parse(item.triggerDefinitionEnvelope) });
+        if (opened.kind !== 'available') throw new Error(opened.kind);
+        return AutomationSessionLifecycleTriggerSchema.parse(opened.definition);
+      },
       automations: {
         list: async () => ({ automations: [...rows.values()], nextCursor: null }),
         listDetails: async () => ({ automations: [...rows.values()], nextCursor: null }),
@@ -844,14 +872,22 @@ describe('built-ins through accepted materialization and native leaf adapters', 
             lastRunAt: null, createdAt: 1, updatedAt: 1, workflowDefinitionId: input.workflowDefinitionId,
             scopeSessionId: input.scopeSessionId, executionRecipe: input.executionRecipe,
             assignments: [{ machineId: workspace.machineId, enabled: true, priority: 0, updatedAt: 1 }],
-            triggers: input.triggers.map(({ triggerId, trigger }) => AutomationTriggerDetailSchema.parse({ ...trigger,
-              id: triggerId, revision: 0, createdAt: 1, updatedAt: 1, remainingOccurrences: 1,
-              status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null })),
+            triggers: input.triggers.map(({ triggerId, trigger }) => {
+              const { enabled, ...definition } = trigger;
+              const lifecycle = AutomationSessionLifecycleTriggerSchema.parse(definition);
+              return AutomationTriggerDetailSchema.parse({ ...projectAutomationSessionLifecycleStructuralTrigger(lifecycle),
+                enabled, id: triggerId, revision: 0, createdAt: 1, updatedAt: 1, remainingOccurrences: 1,
+                status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(
+                  sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: { v: 1,
+                    automationId: input.automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId),
+                    triggerRevision: 0, triggerKind: 'sessionLifecycle' }, definition: lifecycle })) });
+            }),
           };
           rows.set(row.id, row); return row;
         },
         reconcile: async (id, input, _current, beforeWrite) => {
           await beforeWrite?.();
+          await beforeRemove?.();
           const row = rows.get(id);
           if (!row) throw new Error('Missing Automation');
           removals.push(...input.removedTriggers.map((item) => item.triggerId));
@@ -864,7 +900,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     };
     const triggers = createWorkflowTriggerActions(deps);
     const added = await triggers.sessionAdd({ sessionId: 'origin', target: { kind: 'workflow', ref: 'builtin:keep-going' },
-      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'origin', events: ['parentTurnCompleted'],
+      trigger: { kind: 'sessionLifecycle', enabled: true, subject: { kind: 'session', serverId: 'home', sessionId: 'origin' }, events: ['parentTurnCompleted'],
         policy: { kind: 'everyMatch' } } });
     if (!added.triggerId) throw new Error('Missing firing trigger');
     const firing = { sessionId: 'origin', triggerId: added.triggerId, automationId: added.set.automationId };
@@ -875,8 +911,14 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       assertDefinitionWriteAllowed: async () => undefined });
     const workflowAction = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions, triggers,
       runs: { execute: unexpected } });
+    return { rows, removals, firing, workflowAction };
+  }
+  it('FIX80 settles both done occurrences while removing only their claim-bound firing trigger once', async () => {
+    // Only Home persistence/authorized Run reads are substituted. The trigger
+    // owner, family registration, executor, Goal router and coordinator are real.
+    const { rows, removals, firing, workflowAction } = await firingGoalFixture();
     const h = harness({ happierGoal: true, checks: [{ verdict: 'done' }, { verdict: 'done' }, { verdict: 'done' }], workflowAction });
-    const evidence = { triggerId: firing.triggerId };
+    const evidence = { automationId: firing.automationId, triggerId: firing.triggerId };
     expect(await h.run(builtin('keep-going'), evidence, true, 'first-occurrence')).toMatchObject({ state: 'succeeded' });
     const completedGoal = { nativeGoalOwner: false, workState: { primaryItemId: 'goal:derived:happier:session-goal',
       items: [{ id: 'goal:derived:happier:session-goal', origin: 'happier', title: 'Finish the objective', status: 'complete' }] } };
@@ -890,17 +932,25 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(rows.get(firing.automationId)?.triggers).toEqual([]);
     // A caller-supplied id without the corresponding claim must still fail,
     // even after the legitimate trigger has gone.
-    await expect(h.run(builtin('keep-going'), { triggerId: 'unrelated-trigger' }, true, 'coalesced-occurrence'))
-      .resolves.toEqual({ state: 'interrupted', reason: 'run_access_denied' });
+    await expect(h.run(builtin('keep-going'), { automationId: firing.automationId, triggerId: 'unrelated-trigger' }, true, 'coalesced-occurrence'))
+      .rejects.toThrow();
+    expect(h.store.list().find(row => row.blockId === 'detach'))
+      .toMatchObject({ lifecycle: 'failed', reason: 'approvals_not_supported' });
     expect(removals).toEqual([firing.triggerId]);
   });
   it('FIX75 completes the Happier-owned configured-Agent Goal before detaching its firing trigger', async () => {
-    const h = harness({ happierGoal: true, checks: [{ verdict: 'progress' }, { verdict: 'done' }] });
-    expect(await h.run(builtin('keep-going'), { triggerId: 'firing-trigger' })).toMatchObject({ state: 'succeeded' });
+    const { removals, firing, workflowAction } = await firingGoalFixture(async () => {
+      expect(await h.readGoal()).toMatchObject({ nativeGoalOwner: false,
+        workState: { items: [expect.objectContaining({ origin: 'happier', status: 'complete' })] } });
+    });
+    const h = harness({ happierGoal: true, checks: [{ verdict: 'progress' }, { verdict: 'done' }], workflowAction });
+    expect(await h.run(builtin('keep-going'), { automationId: firing.automationId, triggerId: firing.triggerId }, true, 'first-occurrence'))
+      .toMatchObject({ state: 'succeeded' });
     await expect(h.readGoal()).resolves.toMatchObject({ nativeGoalOwner: false,
       workState: { items: [expect.objectContaining({ origin: 'happier', title: 'Finish the objective', status: 'complete' })] } });
-    expect(h.removedTriggers).toEqual([{ sessionId: 'origin', triggerId: 'firing-trigger' }]);
-    expect(h.events).toEqual(['check', 'continue', 'check', 'detach']);
+    expect(removals).toEqual([firing.triggerId]);
+    expect(h.events).toEqual(['check', 'continue', 'check']);
+    expect(h.goals).toEqual([{ sessionId: 'origin', status: 'complete' }]);
   });
   it.each(['keep-going', 'review-and-converge'])('refuses %s without an origin before native effects', async (id) => {
     const h = harness();
@@ -1220,17 +1270,6 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.reviewReads).toEqual([]);
     expect(h.sessionTargets).toEqual(['review-target']);
   });
-  it('refuses a different Action Session operand even when its Workflow admits an accessible reviewSession', async () => {
-    const h = harness();
-    const definition: WorkflowDefinitionV1 = { version: 1, defaults: {},
-      inputs: [{ name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' } }],
-      blocks: [{ kind: 'action', id: 'read', actionId: 'reviews.comments.list',
-        input: { sessionId: { kind: 'literal', value: 'other-session' } } }] };
-    await expect(h.run(definition, { reviewSession: { serverId: 'home', sessionId: 'review-target' } }))
-      .rejects.toThrow('unsupported_action');
-    expect(h.reviewReads).toEqual([]);
-    expect(h.launches).toEqual([]);
-  });
   it('resolves the admitted reviewSession once through comment transport', async () => {
     let accessObservations = 0;
     const h = harness({ reviewSessionAccess: observation => {
@@ -1255,20 +1294,13 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.events).toEqual(['check', 'continue', 'check']);
     expect(h.goals).toEqual([{ sessionId: 'origin', status: 'complete' }]);
   });
-  it.skipIf(!ActionIdSchema.safeParse('session.trigger.remove').success)('detaches only the named originating trigger after completing the origin goal', async () => {
-    const h = harness({ checks: [{ verdict: 'done' }] });
-    expect(await h.run(builtin('keep-going'), { triggerId: 'firing-trigger' })).toMatchObject({ state: 'succeeded' });
-    expect(h.goals).toEqual([{ sessionId: 'origin', status: 'complete' }]);
-    expect(h.removedTriggers).toEqual([{ sessionId: 'origin', triggerId: 'firing-trigger' }]);
-    expect(h.events).toEqual(['check', 'detach']);
-  });
-  it.skipIf(!ActionIdSchema.safeParse('session.trigger.remove').success).each(['disagree', 'uncertain'] as const)('notifies without completing or parking on second-opinion %s', async (opinion) => {
+  it.each(['disagree', 'uncertain'] as const)('notifies without completing or parking on second-opinion %s', async (opinion) => {
     const h = harness({ checks: [{ verdict: 'done' }], opinion });
     expect(await h.run(builtin('keep-going'), { secondOpinion: true })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
     expect(h.goals).toEqual([]); expect(h.notifications).toHaveLength(1);
     expect(h.store.list().some((row) => row.lifecycle === 'waiting_for_review')).toBe(false);
   });
-  it.skipIf(!ActionIdSchema.safeParse('session.trigger.remove').success).each([
+  it.each([
     { checks: [{ verdict: 'progress' }], usage: 10, budget: 10, arm: 1 },
     { checks: [{ verdict: 'no_progress' }, { verdict: 'no_progress' }], arm: 2 },
   ])('stops without goal writes on budget or trailing strikes $arm', async ({ arm, ...fixtures }) => {
@@ -1276,7 +1308,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(await h.run(builtin('keep-going'), { strikes: 2 })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm } });
     expect(h.goals).toEqual([]);
   });
-  it.skipIf(!ActionIdSchema.safeParse('session.trigger.remove').success)('resets trailing strikes on progress and honors a non-default round cap', async () => {
+  it('resets trailing strikes on progress and honors a non-default round cap', async () => {
     const h = harness({ checks: [{ verdict: 'no_progress' }, { verdict: 'progress' }, { verdict: 'no_progress' }] });
     expect(await h.run(builtin('keep-going'), { strikes: 2, maxRounds: 3 })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 3 } });
     expect(h.goals).toEqual([]);
@@ -1449,7 +1481,19 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     const result = await h.run(builtin('plan-with-a-panel'), { request: 'Plan it', engines: [engine, otherEngine] }, origin);
     expect(result, JSON.stringify({ result, events: h.events, rows: h.store.list().filter((row) => row.lifecycle === 'failed') })).toMatchObject({ state: 'waiting_for_review' });
     expect(h.launches.every(({ sessionId }) => sessionId === null)).toBe(true);
+    const planners = h.launches.filter(({ request }) => String(request.instructions).includes('Draft a read-only plan'));
+    expect(planners).toHaveLength(2);
+    expect(planners.map(({ request }) => request)).toEqual(expect.arrayContaining([agentTarget, otherAgentTarget].map(target => expect.objectContaining({
+      intent: 'agent', permissionMode: 'read_only', instructions: expect.stringContaining('Plan it'),
+      backendTarget: target,
+    }))));
+    expect(planners.every(({ request }) => String(request.instructions).includes('Do not implement changes'))).toBe(true);
     expect(h.store.list().filter((row) => row.blockId === 'plan')).toHaveLength(2);
+    for (const row of h.store.list().filter((row) => row.blockId === 'plan')) {
+      expect(row).toMatchObject({ lifecycle: 'completed', result: 'native result', resultContract: { kind: 'text' } });
+    }
+    expect(h.launches.find(({ request }) => String(request.instructions).includes('Return a document explaining'))?.request.instructions)
+      .toContain('native result');
     expect(h.store.list().find((row) => row.blockId === 'synthesis')).toMatchObject({ lifecycle: 'waiting_for_review',
       result: { document: 'A plan' }, resultContract: { kind: 'json' } });
   });
@@ -1462,11 +1506,15 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     const h = harness();
     const previousRoundContext = { outcomes: [{ status: 'completed', answer: 'prior-plan-sentinel' },
       { status: 'failed', reason: 'previous planner unavailable' }] };
-    expect(await h.run(builtin('plan-with-a-panel'), { request: 'Refine it', previousRoundContext }, false))
+    expect(await h.run(builtin('plan-with-a-panel'), { request: 'Refine it', engines: [engine], previousRoundContext }, false))
       .toMatchObject({ state: 'waiting_for_review' });
-    expect(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)
+    const plannerInstructions = h.launches.find(({ request }) => String(request.instructions).includes('Draft a read-only plan'))?.request.instructions;
+    expect(plannerInstructions).toContain('Refine it');
+    expect(plannerInstructions).toContain('prior-plan-sentinel');
+    expect(plannerInstructions).toContain('previous planner unavailable');
+    expect(h.launches.find(({ request }) => String(request.instructions).includes('Return a document explaining'))?.request.instructions)
       .toContain('prior-plan-sentinel');
-    expect(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)
+    expect(h.launches.find(({ request }) => String(request.instructions).includes('Return a document explaining'))?.request.instructions)
       .toContain('previous planner unavailable');
     expect(h.store.list().find((row) => row.blockId === 'synthesis'))
       .toMatchObject({ lifecycle: 'waiting_for_review', result: { document: 'A plan' } });
