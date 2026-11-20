@@ -11359,6 +11359,8 @@ const machineDetailPageTranslations = { ca: translated({
                 title: 'Logs',
                 description: ({ service }) => `Les darreres línies de ${service}.`,
                 none: ({ service }) => `${service} no té logs que Happier pugui llegir.`,
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configura «${recipe}» a ${machine} i després torna a llegir els logs.`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `Configura l’accés als logs a ${machine} i després torna a llegir els logs.`,
                 reading: 'S’estan llegint les darreres línies…',
                 approval: 'S’espera l’aprovació per llegir aquests logs.',
                 error: { title: 'No s’han pogut llegir els logs', machineNotAnswering: ({ machine }) => `${machine} no respon` },

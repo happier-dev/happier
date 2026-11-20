@@ -40,6 +40,8 @@ export type ManagedControllerScope = Readonly<{
   hasCandidates: boolean;
   /** Something in the chooser is online: nothing chosen yet is then a choice to make, not an outage. */
   hasOnlineCandidate: boolean;
+  /** The chosen machine's pushed presence says it is offline: what it runs can't be created until it is back. */
+  controllerOffline: boolean;
   /**
    * Whether this Home's machine list has been read: an empty `hasCandidates` before that is not
    * "no machine can manage", and `unavailable` is a list that could not be read (retry re-reads it).
@@ -306,6 +308,8 @@ export function useManagedControllerScope(
     hasCandidates: controllerMachines.length > 0,
     hasOnlineCandidate: scopedRows.some(row => row.candidate.availability === 'online'),
     machineList: listSettled ? 'settled' : listStatus === 'error' || listStatus === 'signedOut' ? 'unavailable' : 'loading',
+    controllerOffline: scopedRows.some(row => row.candidate.target.machineId === (input.delegatedPreset ? input.preferred : controller)?.machineId
+      && row.candidate.availability === 'offline'),
     chip: input.delegatedPreset ? null : chip,
     selection: input.delegatedPreset ? undefined : selection,
   };

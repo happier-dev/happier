@@ -22,6 +22,13 @@ import { Typography } from '@/constants/Typography';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
+import { isSameActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSoftware';
+import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { useMachineServiceLogViewer, type useNativeLogViewer } from './useMachineServiceLogViewer';
@@ -156,6 +163,8 @@ export function MachineServiceLogs(
         reason={projection.reason}
         machineName={machineName}
         code={projection.reason}
+        recipeRemedy={projection.recipeRemedy ? { serverId: props.serverId, machineId: props.machineId,
+          ref: projection.recipeRemedy, presented: props.active } : null}
       />
     );
   }
@@ -419,8 +428,11 @@ function UnavailableLogs(
     code: string;
     details?: unknown;
     onOpenEnvironment?: (() => void) | null;
+    /** The source's named recipe that would let it read; its Store listing on this Machine owns inputs and review. */
+    recipeRemedy?: LogRecipeRemedyInput | null;
   }>,
 ) {
+  const remedy = useLogRecipeRemedy(props.recipeRemedy ?? null, props.machineName);
   const redeploy = props.reason === 'secret_redaction_unavailable'
     && props.details !== null && typeof props.details === 'object'
     && 'remedy' in props.details && props.details.remedy === 'redeploy_environment';
@@ -432,12 +444,40 @@ function UnavailableLogs(
       title={t(`machineServices.logs.unavailable.${props.reason}`, {
         machine: props.machineName,
       })}
-      reason={redeploy ? t('machineServices.logs.remedy.redeployEnvironment') : undefined}
+      reason={redeploy ? t('machineServices.logs.remedy.redeployEnvironment') : remedy?.reason}
       {...(redeploy && props.onOpenEnvironment ? { action: { label: t('machineServices.groups.openEnvironment'),
-        onPress: props.onOpenEnvironment, testID: 'machine-service-logs-open-environment' } } : {})}
+        onPress: props.onOpenEnvironment, testID: 'machine-service-logs-open-environment' } }
+        : remedy ? { action: remedy.action } : {})}
       diagnosticCode={props.code}
     />
   );
+}
+
+type LogRecipeRemedyInput = Readonly<{ serverId: string; machineId: string; ref: MachineRecipeReferenceV1; presented: boolean }>;
+
+/**
+ * A refused read that names its recipe (the journal reader for a refused journal) leads to that recipe's Store listing
+ * on this Machine, the same door Setup's Add recipe opens: the listing asks for its inputs and runs the one review.
+ * Its name comes from the Account's recipe declarations, read only while this state is shown.
+ */
+function useLogRecipeRemedy(input: LogRecipeRemedyInput | null, machineName: string) {
+  const router = useRouter();
+  const { binding } = useServerCredentialAccountScopeBinding(input?.serverId);
+  const homeId = input ? getServerProfileById(input.serverId)?.serverIdentityId ?? null : null;
+  const machineId = input?.machineId;
+  const target = React.useMemo(() => binding && homeId && machineId
+    ? { scope: binding.scope, machine: { serverIdentityId: homeId, machineId } } : null, [binding, homeId, machineId]);
+  const demand = React.useMemo(() => ({ presented: input?.presented === true }), [input?.presented]);
+  const recipes = useMachineSetupRecipeOptions(input ? target : null, demand);
+  if (!input) return null;
+  const recipe = recipes.state.options.find(option => isSameActionInputOptionValue(option.value, input.ref))?.label;
+  return {
+    reason: recipe ? t('machineServices.logs.remedy.recipe', { recipe, machine: machineName })
+      : t('machineServices.logs.remedy.recipeUnnamed', { machine: machineName }),
+    action: { label: t('managedMachines.add.action.setUp'), testID: 'machine-service-logs-set-up-recipe',
+      disabled: target === null,
+      onPress: () => { if (target) router.push(buildStoreListingRoute({ type: 'software', value: input.ref, target }) as never); } },
+  };
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -11353,6 +11353,8 @@ const machineDetailPageTranslations = { pt: translated({
                 title: 'Logs',
                 description: ({ service }) => `As linhas mais recentes de ${service}.`,
                 none: ({ service }) => `${service} não tem logs que o Happier possa ler.`,
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configure “${recipe}” em ${machine} e depois leia os logs de novo.`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `Configure o acesso aos logs em ${machine} e depois leia os logs de novo.`,
                 reading: 'Lendo as linhas mais recentes…',
                 approval: 'Aguardando aprovação para ler estes logs.',
                 error: { title: 'Não foi possível ler os logs', machineNotAnswering: ({ machine }) => `${machine} não está respondendo` },

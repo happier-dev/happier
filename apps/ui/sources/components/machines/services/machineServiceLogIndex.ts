@@ -1,10 +1,12 @@
 import type { ManagedServiceNativeLogResultV1, ManagedServiceUnavailableReasonV1 } from '@happier-dev/protocol';
+import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import { buildLogIndexV1, type LogIndexV1 } from '@happier-dev/forge-ci/runtime';
 
 export type MachineServiceLogProjection =
     | Readonly<{ kind: 'index'; index: LogIndexV1; truncated: boolean; secretMasking: boolean }>
     | Readonly<{ kind: 'sourceChanged'; index: LogIndexV1 | null }>
-    | Readonly<{ kind: 'unavailable'; reason: ManagedServiceUnavailableReasonV1 }>;
+    /** `recipeRemedy`: the source's own named recipe that would let it read (the journal reader for a refused journal). */
+    | Readonly<{ kind: 'unavailable'; reason: ManagedServiceUnavailableReasonV1; recipeRemedy?: MachineRecipeReferenceV1 }>;
 
 /** Admit only the two finite native pages. Forge owns byte/ANSI indexing and all line projections. */
 export function buildMachineServiceLogIndex(input: Readonly<{
@@ -16,7 +18,8 @@ export function buildMachineServiceLogIndex(input: Readonly<{
     continues?: boolean;
 }>): MachineServiceLogProjection {
     const { first, followed } = input;
-    if (first.kind === 'unavailable') return { kind: 'unavailable', reason: first.reason };
+    if (first.kind === 'unavailable') return { kind: 'unavailable', reason: first.reason,
+        ...(first.recipeRemedy ? { recipeRemedy: first.recipeRemedy } : {}) };
     const previous = input.baseline?.sourceKey === input.sourceKey ? input.baseline : null;
     // A source transition is not an authority withdrawal. Keep only this exact
     // source/Account's already-admitted finite observation until Read again.

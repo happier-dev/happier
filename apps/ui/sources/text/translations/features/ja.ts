@@ -11312,6 +11312,8 @@ const machineDetailPageTranslations = { ja: translated({
                 title: 'ログ',
                 description: ({ service }) => `${service} の最新の行。`,
                 none: ({ service }) => `${service} には Happier が読めるログがありません。`,
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `${machine} で「${recipe}」を設定してから、ログを再度読み取ってください。`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `${machine} でログへのアクセスを設定してから、ログを再度読み取ってください。`,
                 reading: '最新の行を読み取り中…',
                 approval: 'これらのログを読むための承認を待っています。',
                 error: { title: 'ログを読み取れませんでした', machineNotAnswering: ({ machine }) => `${machine} が応答していません` },

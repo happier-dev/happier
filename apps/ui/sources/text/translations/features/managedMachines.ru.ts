@@ -140,6 +140,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             onYourComputers: "На ваших компьютерах",
             localCollapsedTitle: "Виртуальные машины и контейнеры",
             localCollapsedBody: ({ names }: { names: string }) => `${names} работают на добавленном компьютере. Сначала добавьте компьютер.`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} работают на добавленном компьютере, но ни один из них не в сети. Подключите один, чтобы создать их.`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} работают на добавленном компьютере. Выберите один выше, чтобы создать их.`,
             choosingCreate: "Выбор, что создать",
             pageDescription: "Подключите уже имеющуюся машину или позвольте Happier создать её для вас.",
             joinsThisHome: "Присоединяется к этому Home",

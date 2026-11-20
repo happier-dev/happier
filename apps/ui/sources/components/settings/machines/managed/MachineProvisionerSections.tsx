@@ -47,8 +47,11 @@ export const MachineProvisionerSections = React.memo(
       testID: string;
       /** The machine-scope chip ("Managed from · MacBook Pro"), for the section of computer-run provisioners. */
       scope?: ManagedProvisionerScope;
-      /** Computer-run machines while no computer can run them: one row naming them, leading to adding a computer. */
-      localCollapsed?: Readonly<{ names: readonly string[]; onAddComputer: () => void }>;
+      /**
+       * Computer-run machines while no computer can run them: one row naming them. It leads to adding a computer only
+       * when none is added (`waitingFor: 'computer'`); an added one that is offline, or not chosen yet, is said instead.
+       */
+      localCollapsed?: Readonly<{ names: readonly string[]; waitingFor?: 'computer' | 'online' | 'choice'; onAddComputer: () => void }>;
       /** Opens the one hand-off for every provider this browser cannot reach, named once per group. */
       onHandoff?: () => void;
     }>,
@@ -107,7 +110,8 @@ export const MachineProvisionerSections = React.memo(
     const collapsed = props.localCollapsed && collapsedNames.length > 0 ? (
       <React.Fragment key="collapsed">
         {collapsedScope?.placement === 'row' ? <ManagedScopeRow testID="managed-picker.scope" chip={collapsedScope.chip} /> : null}
-        <LocalCollapsedGroup names={collapsedNames} onAddComputer={props.localCollapsed.onAddComputer}
+        <LocalCollapsedGroup names={collapsedNames} waitingFor={props.localCollapsed.waitingFor ?? 'computer'}
+          onAddComputer={props.localCollapsed.onAddComputer}
           action={collapsedScope?.placement === 'header' ? collapsedScope.chip : undefined}
           compact={props.compact} testID={`${props.testID}.local.collapsed`} />
       </React.Fragment>
@@ -191,23 +195,29 @@ export const MachineProvisionerSectionsSkeleton = React.memo(function MachinePro
 
 /** Machines a computer you've added runs, folded until one can run them. */
 function LocalCollapsedGroup(
-  props: Readonly<{ names: readonly string[]; onAddComputer: () => void; action?: React.ReactNode; compact: boolean; testID: string }>,
+  props: Readonly<{ names: readonly string[]; waitingFor: 'computer' | 'online' | 'choice'; onAddComputer: () => void;
+    action?: React.ReactNode; compact: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
   const label = t('managedMachines.add.action.addComputer');
+  const names = joinList([...props.names]);
+  // Adding a computer is the step only when none is added; one that is offline or unchosen needs no new computer.
+  const addStep = props.waitingFor === 'computer';
   return (
     <ItemGroup title={t('managedMachines.add.onThisComputer')} action={props.action} actionLayout="adaptive">
       <Item
         testID={props.testID}
         title={t('managedMachines.add.localCollapsedTitle')}
-        subtitle={t('managedMachines.add.localCollapsedBody', { names: joinList([...props.names]) })}
+        subtitle={props.waitingFor === 'online' ? t('managedMachines.add.localCollapsedOfflineBody', { names })
+          : props.waitingFor === 'choice' ? t('managedMachines.add.localCollapsedChooseBody', { names })
+          : t('managedMachines.add.localCollapsedBody', { names })}
         subtitleLines={0}
         icon={<Icon name="laptop" size={MANAGED_PROVISIONER_MARK_SIZE.row} color={theme.colors.text.secondary} />}
         // A phone row pushes; a wide row offers its one quiet step beside it.
-        onPress={props.compact ? props.onAddComputer : undefined}
-        showChevron={props.compact}
-        accessoryLayout={props.compact ? undefined : 'adaptive'}
-        rightElement={props.compact ? undefined : (
+        onPress={addStep && props.compact ? props.onAddComputer : undefined}
+        showChevron={addStep && props.compact}
+        accessoryLayout={addStep && !props.compact ? 'adaptive' : undefined}
+        rightElement={!addStep || props.compact ? undefined : (
           <RoundButton testID={`${props.testID}.action`} size="small" display="inverted" title={label}
             accessibilityLabel={label} onPress={props.onAddComputer} />
         )}

@@ -159,6 +159,47 @@ describe('Machine service shared log viewer', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('leads a refused journal read to the recipe it names, on this Machine', async () => {
+        const actionId = 'machines.services.logs.read';
+        const actionPath = `/v1/actions/${actionId}`;
+        const journalReader = { pluginId: 'happier.machine.recipes', recipeId: 'journal-reader', revision: '1' };
+        const refused: ManagedServiceNativeLogResultV1 = { kind: 'unavailable', reason: 'denied', recipeRemedy: journalReader };
+        const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-service-log-proof', binding: {
+                serverIdentityId: 'srv_service_logs', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId: 'machine' },
+                machineId: 'machine', installationId: 'installation', custodianAccountId: 'account', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: refused } } };
+        } });
+        const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
+            lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
+            capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        const screen = await renderScreen(<MachineServiceLogs serverId={serverId} machineId="machine"
+            machineName="Development machine" service={service} active />);
+        try {
+            await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-logs-set-up-recipe')).not.toBeNull());
+            expect(screen.getTextContent()).toMatch(/Development machine, then read the logs again/u);
+            await vi.waitFor(() => expect(screen.findByTestId('machine-service-logs-set-up-recipe')?.props.disabled).not.toBe(true));
+            await screen.pressByTestIdAsync('machine-service-logs-set-up-recipe');
+            const pushed = vi.mocked(router.push).mock.calls.at(-1)?.[0] as { params?: { selection?: string } } | undefined;
+            expect(JSON.parse(pushed?.params?.selection ?? 'null')).toMatchObject({ type: 'software', value: journalReader,
+                target: { machine: { serverIdentityId: 'srv_service_logs', machineId: 'machine' } } });
+        } finally { await screen.unmount(); }
+    });
+
     it('retains admitted redacted lines through follow, pause, resume and a source change, then releases hidden demand', async () => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;

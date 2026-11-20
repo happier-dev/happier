@@ -140,6 +140,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             onYourComputers: "Auf deinen Rechnern",
             localCollapsedTitle: "Virtuelle Maschinen und Container",
             localCollapsedBody: ({ names }: { names: string }) => `${names} laufen auf einem hinzugefügten Computer. Füge zuerst einen hinzu.`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} laufen auf einem hinzugefügten Computer, aber keiner davon ist online. Bring einen online, um sie zu erstellen.`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} laufen auf einem hinzugefügten Computer. Wähle oben einen aus, um sie zu erstellen.`,
             choosingCreate: "Auswahl, was erstellt wird",
             pageDescription: "Verbinde einen Rechner, den du schon hast, oder lass Happier einen für dich erstellen.",
             joinsThisHome: "Tritt diesem Home bei",

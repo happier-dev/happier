@@ -11252,6 +11252,8 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 title: '日志',
                 description: ({ service }) => `${service} 的最新几行。`,
                 none: ({ service }) => `${service} 没有 Happier 可读取的日志。`,
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `在 ${machine} 上设置“${recipe}”，然后重新读取日志。`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `在 ${machine} 上设置日志访问权限，然后重新读取日志。`,
                 reading: '正在读取最新几行…',
                 approval: '正在等待批准以读取这些日志。',
                 error: { title: '无法读取日志', machineNotAnswering: ({ machine }) => `${machine} 没有响应` },

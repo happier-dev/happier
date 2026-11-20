@@ -140,6 +140,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             onYourComputers: "在你的電腦上",
             localCollapsedTitle: "虛擬機器與容器",
             localCollapsedBody: ({ names }: { names: string }) => `${names} 在你新增的電腦上執行。請先新增一台電腦。`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} 在你新增的電腦上執行，但這些電腦都不在線。讓其中一台上線即可建立。`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} 在你新增的電腦上執行。在上方選擇一台即可建立。`,
             choosingCreate: "正在選擇要建立的內容",
             pageDescription: "連接你已有的機器，或讓 Happier 為你建立一台。",
             joinsThisHome: "加入此 Home",

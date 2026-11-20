@@ -82,6 +82,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         delegatedPreset: props.controller !== undefined, observeThisComputer: !props.presetOnly && !props.controller,
         testIDPrefix: 'managed-picker.controller' });
     const controller = props.presetOnly ? undefined : scope.controller;
+    // The chosen machine's pushed presence: while it is offline, what it runs is said offline, never "Ready" from its last check.
+    const controllerOffline = controller !== undefined && scope.controllerOffline;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
     // A conditional declaration is still an offer: the configurator evaluates its selected launch.
     // Billing describes cost, and cannot decide whether a contribution can sandbox this controller.
@@ -178,6 +180,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         const placement = readMachineProvisionerHostAvailability({ ...(accountHost && accountHost !== 'unavailable' ? accountHost : { host: 'native' as const }),
             provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
         if (placement.requiresController && local) { waiting.push(titleOf(provisioner)); return []; }
+        // A card the offline controller runs keeps its place and says so; its retained check returns when it is back.
+        const offline = local && controllerOffline;
         const hostPending = needsRuntimeHost(provisioner, controller) && (accountHost === null || accountHost === 'unavailable');
         const needsApp = !hostPending && !placement.available && !placement.requiresController;
         const readiness = describeManagedProvisionerReadiness({ check: outcome?.kind === 'succeeded' ? outcome.value : undefined,
@@ -189,7 +193,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
         if (readiness.homeUnreachable) homeUnreachable = true;
         // The floor says the state in a word (lab m-add); the provider's own words, or why a check failed, are the hint.
-        const statusLabel = placement.requiresController ? '' : needsApp ? t('managedMachines.add.status.needsApp')
+        const statusLabel = placement.requiresController ? '' : offline ? t('machine.offline') : needsApp ? t('managedMachines.add.status.needsApp')
             : readiness.homeUnreachable ? t('managedMachines.add.status.needsSetup')
             : readiness.kind === 'needsAccount' ? t('managedMachines.add.status.noAccount')
             : readiness.kind === 'ready' ? t('managedMachines.add.status.ready')
@@ -197,7 +201,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             : readiness.kind === 'needsSetup' ? t('managedMachines.add.status.needsSetup')
             : readiness.kind === 'unavailable' ? t('managedMachines.add.status.unavailable')
             : t('managedMachines.add.status.checking');
-        const hint = placement.requiresController || needsApp || readiness.homeUnreachable || readiness.kind === 'ready' ? undefined
+        const hint = offline || placement.requiresController || needsApp || readiness.homeUnreachable || readiness.kind === 'ready' ? undefined
             : readiness.status ? managedProvisionerStatusHint(localized(provisioner.contribution.pluginId, readiness.status), statusLabel)
             : readiness.failure && readiness.kind === 'unavailable' ? describeManagedProvisionerFailure(readiness.failure) : undefined;
         const title = titleOf(provisioner);
@@ -217,11 +221,12 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             repairFailure: currentRepair?.kind === 'failed' ? currentRepair.outcome : undefined,
             ...(currentRepair?.kind === 'pending' ? { repairPending: true as const } : {}),
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
-            status: { tone: readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
+            status: { tone: offline ? 'none' : readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
             // Its configurator picks the Machine that runs it: the card offers the same Choose as a ready one.
             action: placement.requiresController ? { kind: 'choose', label: t('managedMachines.add.action.choose'),
                 onPress: () => open(id, undefined), disabled: !catalog.isCurrentFor(id) || hostPending }
+            : offline ? { kind: 'choose', label: t('managedMachines.add.action.choose'), onPress: () => {}, disabled: true }
             : needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
             : readiness.homeUnreachable ? { kind: 'repair', label: t('homeGovernance.reach.setAddress'),
@@ -267,6 +272,9 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
             title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} />
             : null)
+        // Offline is said once, on the page, from the controller's presence; a check failing because of it adds nothing.
+        : controllerOffline ? <SurfaceStateCard testID="managed-picker.controller-offline" kind="unavailable" size="line"
+            title={t('managedMachines.add.controllerOffline', { controller: controllerName })} />
         : failure ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error" size="line" diagnosticCode={failure}
             diagnosticDetail={failure ? describeManagedProvisionerFailure(failure) : undefined}
             title={t(partialRead ? 'managedMachines.add.checksUnreadable' : 'managedMachines.add.controllerUnreadable', { controller: controllerName })}
@@ -292,12 +300,14 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
     // The first read reserves the catalog's own layout (its cards' skeletons), not a lone loading line.
     const reading = !shown && (catalog.loading || !props.presetOnly && !scope.hasCandidates && scope.machineList === 'loading');
-    return { approval, router, cards, waiting, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
+    // What the folded computer-run kinds wait for: a computer added at all, one online, or a choice among online ones.
+    const waitingFor: 'computer' | 'online' | 'choice' = !scope.hasCandidates ? 'computer' : scope.hasOnlineCandidate ? 'choice' : 'online';
+    return { approval, router, cards, waiting, waitingFor, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
         sectionScope, shown, reading, pageSections, retryMachineList, setUpThisComputer, controllerName };
 }
 
 function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
-    const { approval, router, cards, waiting, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
+    const { approval, router, cards, waiting, waitingFor, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
         sectionScope, shown, reading, pageSections, retryMachineList, setUpThisComputer } = useMachineProvisionerCatalog(props);
     return <View testID="managed-picker">
         {approval.approvalId ? <AttentionBanner testID="managed-picker.approval" title={t('approvals.title')} description={t('approvals.status.open')}
@@ -319,7 +329,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
                         action={{ label: t('homeGovernance.reach.setAddress'), onPress: () => router.push(homeAdministrationReachPath(props.serverId) as never) }} /> : null}
                 </ItemGroup> : null}
                 <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={sectionScope}
-                    localCollapsed={waiting.length > 0 ? { names: waiting, onAddComputer: setUpThisComputer } : undefined}
+                    localCollapsed={waiting.length > 0 ? { names: waiting, waitingFor, onAddComputer: setUpThisComputer } : undefined}
                     localTitle={t('managedMachines.add.onThisComputer')} localDescription={localDescription}
                     onHandoff={showCloudHandoff} />
             </>

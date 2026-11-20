@@ -11252,6 +11252,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 title: '日誌',
                 description: ({ service }) => `${service} 的最新幾行。`,
                 none: ({ service }) => `${service} 沒有 Happier 可讀取的日誌。`,
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `在 ${machine} 上設定「${recipe}」，然後重新讀取日誌。`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `在 ${machine} 上設定日誌存取權限，然後重新讀取日誌。`,
                 reading: '正在讀取最新幾行…',
                 approval: '正在等待核准以讀取這些日誌。',
                 error: { title: '無法讀取日誌', machineNotAnswering: ({ machine }) => `${machine} 沒有回應` },

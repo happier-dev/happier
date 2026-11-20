@@ -1512,6 +1512,35 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   });
 
+  it('says the folded computer-run kinds wait for an added computer to come online, without offering to add one (F29)', async () => {
+    await installBundledMachinePlugins();
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://cloud-fold-offline.example.test',
+      serverIdentityId: 'srv_cloud_fold_offline', accountId: 'fold-offline-owner', currentAccount: true });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'fold-offline-owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'fold-offline-owner' }, [
+      createControllerMachineFixture({ id: 'desk', installationId: 'desk-installation', active: false, activeAt: 0 }),
+    ]);
+    runtimeHost.current = 'native';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const addComputer = vi.fn();
+    const { t } = await import('@/text');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} onSetUpThisComputer={addComputer} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.provisioners.local.collapsed'), screen.getTextContent()).not.toBeNull());
+      const row = screen.tree.findAll(node => node.props.testID === 'managed-picker.provisioners.local.collapsed' && typeof node.props.subtitle === 'string')[0];
+      const names = String(row?.props.subtitle).split(' run on ')[0]!;
+      expect(row?.props.subtitle).toBe(t('managedMachines.add.localCollapsedOfflineBody', { names }));
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.add.action.addComputer'));
+      expect(screen.findByTestId('managed-picker.provisioners.local.collapsed.action')).toBeNull();
+      expect(addComputer).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
   it('offers a Machine-run Account card the same short Choose as a ready one, never the Machine prompt as its status and button', async () => {
     await installBundledMachinePlugins();
     const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://machine-less.example.test',
@@ -1750,9 +1779,10 @@ describe('provisioner picker demand', () => {
     expect(onSelect).toHaveBeenCalledOnce();
     await screen.unmount();
   });
-  it('keeps the reported check failure when controller activity changes, with Retry and retained cards', async () => {
+  it('says an offline controller once from its pushed presence, and its cards say Offline with no Choose until it is back', async () => {
     const { serverId } = await arrangeCatalog({ home: 'offline-cards' });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const { t } = await import('@/text');
     const { storage } = await import('@/sync/domains/state/storage');
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     function FixedPicker() {
@@ -1765,13 +1795,21 @@ describe('provisioner picker demand', () => {
     expect(screen.findByTestId('managed-picker.offline')).toBeNull();
     const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
     const machine = storage.getState().machineListByServerId[scopeId]!.find(entry => entry.id === 'controller')!;
+    const beta = () => (cards() as unknown as { title: string; status: { label: string }; action: { label: string; disabled?: boolean } }[])
+      .find(card => card.title === 'Beta');
+    await waitForHomeGovernance(() => expect(beta()?.status.label).not.toBe(t('managedMachines.add.status.checking')));
+    const online = beta()!.status.label;
+    expect(online).not.toBe(t('machine.offline'));
     await act(async () => publishMachineActivityForTest([machine], { active: false, activeAt: 0 }));
-    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull());
-    const failure = screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable' && 'diagnosticCode' in node.props)[0];
-    expect(failure?.props.diagnosticCode).toBe('controller_unavailable');
-    expect(screen.findByTestId('managed-picker.offline')).toBeNull();
-    expect(screen.findByTestId('managed-picker.unavailable-action')).not.toBeNull();
+    // F29: the open catalog follows the pushed presence at once; no "Ready · Choose" from the last check.
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.controller-offline')).not.toBeNull());
+    expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
+    expect(beta()?.status.label).toBe(t('machine.offline'));
+    expect(beta()?.action.disabled).toBe(true);
     expect(cards().some(card => card.title === 'Alpha')).toBe(true);
+    await act(async () => publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.controller-offline')).toBeNull());
+    expect(beta()?.status.label).toBe(online);
     await screen.unmount();
   });
   it('publishes no loading or replacement cards for an equal catalog refresh, and publishes changed cards once', async () => {

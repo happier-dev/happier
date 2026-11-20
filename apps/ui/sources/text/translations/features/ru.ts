@@ -11389,6 +11389,8 @@ const machineDetailPageTranslations = { ru: translated({
                 none: ({ service }) => `У ${service} нет логов, которые Happier может прочитать.`,
                 reading: 'Чтение последних строк…',
                 approval: 'Ожидается разрешение на чтение этих логов.',
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Настройте «${recipe}» на ${machine}, затем прочитайте логи ещё раз.`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `Настройте доступ к логам на ${machine}, затем прочитайте логи ещё раз.`,
                 error: { title: 'Не удалось прочитать логи', machineNotAnswering: ({ machine }) => `${machine} не отвечает` },
                 needMachineOnline: ({ machine }) => `Для чтения журналов в реальном времени ${machine} должна быть в сети.`,
                 remedy: {

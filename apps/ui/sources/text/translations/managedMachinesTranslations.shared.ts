@@ -146,6 +146,8 @@ export const managedMachinesEn = {
             onYourComputers: "On your computers",
             localCollapsedTitle: "Virtual machines and containers",
             localCollapsedBody: ({ names }: { names: string }) => `${names} run on a computer you’ve added. Add one first.`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} run on a computer you’ve added, and none of those computers is online. Bring one online to create them.`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} run on a computer you’ve added. Choose one above to create them.`,
             choosingCreate: "Choosing what to create",
             pageDescription: "Connect a machine you already have, or let Happier create one for you.",
             joinsThisHome: "Joins this Home",

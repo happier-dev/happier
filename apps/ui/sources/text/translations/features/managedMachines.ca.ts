@@ -140,6 +140,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             onYourComputers: "Als teus ordinadors",
             localCollapsedTitle: "Màquines virtuals i contenidors",
             localCollapsedBody: ({ names }: { names: string }) => `${names} s’executen en un ordinador que has afegit. Afegeix-ne un primer.`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} s’executen en un ordinador que has afegit, però cap d’aquests ordinadors està en línia. Posa’n un en línia per crear-los.`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} s’executen en un ordinador que has afegit. Tria’n un a dalt per crear-los.`,
             choosingCreate: "Triant què crear",
             pageDescription: "Connecta una màquina que ja tinguis o deixa que Happier en creï una per a tu.",
             joinsThisHome: "S’uneix a aquest Home",

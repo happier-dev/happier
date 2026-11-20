@@ -140,6 +140,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             onYourComputers: "あなたのコンピューター",
             localCollapsedTitle: "仮想マシンとコンテナー",
             localCollapsedBody: ({ names }: { names: string }) => `${names} は追加したコンピューターで実行されます。先にコンピューターを追加してください。`,
+            localCollapsedOfflineBody: ({ names }: { names: string }) => `${names} は追加したコンピューターで動作しますが、どれもオフラインです。作成するには 1 台をオンラインにしてください。`,
+            localCollapsedChooseBody: ({ names }: { names: string }) => `${names} は追加したコンピューターで動作します。作成するには上で 1 台を選んでください。`,
             choosingCreate: "作成するものを選択中",
             pageDescription: "手持ちのマシンを接続するか、Happier に作成を任せましょう。",
             joinsThisHome: "この Home に参加",
