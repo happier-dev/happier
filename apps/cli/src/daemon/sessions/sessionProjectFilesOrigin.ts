@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import {
   SessionCreationCorrespondenceV1ReadSchema,
   type SessionCreationCorrespondenceV1,
-  type SessionManagedCreationV1,
   type SessionProjectFilesOriginV1,
 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -18,12 +17,14 @@ import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManage
 /** Record the endpoints of an already placed local folder through the Account's Workspace owner. */
 export async function retainImplicitManagedProjectFilesOrigin(input: Readonly<{
   credentials: StoredCredentials;
-  managedCreation: SessionManagedCreationV1 & Required<Pick<SessionManagedCreationV1, 'controller'>>;
+  recipe: Pick<SessionCreationCorrespondenceV1['recipe'], 'managedCreation'> | undefined;
   workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
   sessionCustody?: ProjectAccountSessionCustody;
   signal?: AbortSignal;
-}>): Promise<SessionProjectFilesOriginV1> {
-  const { homeId: serverId, managedId, controller } = input.managedCreation;
+}>): Promise<SessionProjectFilesOriginV1 | undefined> {
+  const creation = input.recipe?.managedCreation;
+  if (!creation?.controller) return undefined;
+  const { homeId: serverId, managedId, controller } = creation;
   const mutate = createProjectAccountSnapshotMutation({ credentials: input.credentials, serverId,
     ...(input.sessionCustody ? { sessionCustody: input.sessionCustody } : {}) });
   let origin: SessionProjectFilesOriginV1 | undefined;

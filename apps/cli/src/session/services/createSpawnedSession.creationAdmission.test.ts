@@ -273,14 +273,16 @@ describe('canonical Session creation admission', () => {
     });
   });
 
-  it('resolves policy placement once and retries failed target preparation on the same retained unstarted Session', async () => {
+  it.each(['explicit', 'implicit'] as const)('retries failed target preparation with the retained %s copy source', async source => {
     const managedCreation = { homeId: 'home', managedId: 'retained-after-preparation-failure',
       controller: { machineId: 'machine-1', installationId: 'installation' } };
     const projectFilesSource = { target: { serverId: 'server-1', machineId: 'original-machine' }, directory: '/original/project' };
     const sourceWorkspace = { serverId: 'server-1', machineId: 'original-machine', workspaceId: 'source-workspace', rootPath: '/original/project' };
+    const recipeSource = source === 'explicit' ? { projectFilesSource } : {};
+    const placementSource = source === 'explicit' ? { projectFilesSource, projectFilesSourceWorkspace: sourceWorkspace } : {};
     const correspondence = { ...sessionCreationCorrespondence, recipe: { ...sessionCreationCorrespondence.recipe,
       managedCreation, managedCreationOrigin: 'machine_policy' as const,
-      projectFilesSource,
+      ...recipeSource,
       projectFilesOrigin: { sourceWorkspace, targetWorkspace: { v: 2 as const, kind: 'managed' as const,
         serverId: 'server-1', workspaceId: 'target-workspace', managedId: managedCreation.managedId,
         controller: managedCreation.controller, rootPath: '/target/project' } },
@@ -312,9 +314,10 @@ describe('canonical Session creation admission', () => {
     spawn.mockImplementation(async request => {
       const parsed = SpawnDaemonSessionRequestSchema.parse(request);
       expect(parsed).toMatchObject({ managedTargetPlacement: { managedId: managedCreation.managedId,
-        projectFilesSource, projectFilesSourceWorkspace: sourceWorkspace,
+        ...placementSource,
         projectFiles: correspondence.recipe.projectFiles },
-        sessionCreationCorrespondence: { recipe: { managedCreation, managedCreationOrigin: 'machine_policy', projectFilesSource } } });
+        sessionCreationCorrespondence: { recipe: { managedCreation, managedCreationOrigin: 'machine_policy', ...recipeSource } } });
+      if (source === 'implicit') expect(parsed.managedTargetPlacement?.projectFilesSourceWorkspace).toBeUndefined();
       attempts += 1;
       if (!birthCommitted) {
         birthCommitted = true;
@@ -328,7 +331,7 @@ describe('canonical Session creation admission', () => {
       allocations += 1;
       return { sessionCreationCorrespondence: correspondence,
         managedTargetPlacement: { managedId: managedCreation.managedId, workspaceRoot: '/repo',
-          projectFilesSource, projectFilesSourceWorkspace: sourceWorkspace,
+          ...placementSource,
           projectFiles: correspondence.recipe.projectFiles } };
     } };
     await expect(createSpawnedSession(request)).rejects.toMatchObject({ code: 'target_prepare_failed' });

@@ -1545,7 +1545,8 @@ export async function executeSpawnSessionRequest(
                         })
                         : undefined;
                     try {
-                    const retainedOrigin = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin;
+                    const committedRecipe = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe;
+                    const retainedOrigin = committedRecipe?.projectFilesOrigin;
                     sessionTargetOrigin = retainedOrigin;
                     const managedPlacement = { ...effectiveOptionsForSpawn.managedTargetPlacement,
                         ...(retainedOrigin?.contentPolicyDigest ? { projectFilesSourceWorkspace: retainedOrigin.sourceWorkspace } : {}) };
@@ -1622,13 +1623,12 @@ export async function executeSpawnSessionRequest(
                         agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
                     sessionTargetWorkspace = launch.workspace;
-                    const creation = effectiveOptionsForSpawn.managedCreation;
-                    if (!sessionTargetOrigin && committedLaunchSession && creation?.controller
+                    if (!sessionTargetOrigin && committedLaunchSession
                         && !managedPlacement.projectFilesSource && !managedPlacement.projectFilesSourceWorkspace
                         && (!projectFiles || projectFiles.kind === 'copy_once')) {
                         const bootstrap = requesterRuntime?.bootstrap;
                         sessionTargetOrigin = await retainImplicitManagedProjectFilesOrigin({ credentials: params.credentials,
-                            managedCreation: { ...creation, controller: creation.controller }, workspace: launch.workspace,
+                            recipe: committedRecipe, workspace: launch.workspace,
                             ...(bootstrap ? { sessionCustody: {
                                 accountId: bootstrap.attribution.accountId,
                                 serverId: bootstrap.homeServerIdentityId ?? bootstrap.attribution.serverId,

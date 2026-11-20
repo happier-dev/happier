@@ -66,10 +66,12 @@ describe('native copied Project files retained by the existing Session recipe ow
     vi.mocked(axios.post).mockImplementation(createProjectAccountRowsHttpBoundary(rows));
     const managedCreation = { homeId: serverId, managedId: 'sandbox',
       controller: { machineId: 'controller', installationId: 'installation' } };
+    const recipe = { ...correspondence().recipe, managedCreation, projectFiles: { kind: 'copy_once' as const } };
     const workspace = { hostRoot: '/actual/git-root', targetRoot: '/guest/materialized-root' };
     try {
-      const origin = await retainImplicitManagedProjectFilesOrigin({ credentials, managedCreation, workspace });
-      const retry = await retainImplicitManagedProjectFilesOrigin({ credentials, managedCreation, workspace });
+      const origin = await retainImplicitManagedProjectFilesOrigin({ credentials, recipe, workspace });
+      const retry = await retainImplicitManagedProjectFilesOrigin({ credentials, recipe, workspace });
+      if (!origin) throw new Error('The attached birth recipe owns the placed copy');
       const retained = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin });
       expect(retained.origin).toEqual(retry);
       expect(retained.origin).toMatchObject({

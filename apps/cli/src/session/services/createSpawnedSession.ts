@@ -1166,7 +1166,8 @@ export async function createSpawnedSession(
             ...(restorePlacement && managedCreation ? { managedTargetPlacement: {
               managedId: managedCreation.managedId, workspaceRoot: params.directory,
               ...(projectFilesSource ? { projectFilesSource } : {}),
-              ...(projectFilesOrigin ? { projectFilesSourceWorkspace: projectFilesOrigin.sourceWorkspace } : {}),
+              ...(projectFilesOrigin && (projectFilesSource || projectFilesOrigin.contentPolicyDigest)
+                ? { projectFilesSourceWorkspace: projectFilesOrigin.sourceWorkspace } : {}),
               ...(projectFiles ? { projectFiles } : {}) } } : {}),
             ...(restoreNativeSandbox && nativeSandbox !== undefined ? { nativeSandbox } : {}),
           });
