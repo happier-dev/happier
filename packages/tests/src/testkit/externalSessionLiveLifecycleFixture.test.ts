@@ -593,8 +593,8 @@ describe('external-session live lifecycle fixture', () => {
           data: {
             kind: 'committed',
             pluginId: 'acme.external-session-live',
-            desiredGeneration: 'generation-two',
-            appliedGeneration: 'generation-two',
+            desiredGeneration: null,
+            appliedGeneration: null,
             pendingSurfaces: [],
           },
       };
@@ -691,15 +691,12 @@ describe('external-session live lifecycle fixture', () => {
     );
   });
 
-  it('does not treat a committed-but-unapplied development generation as a completed reload', async () => {
+  it.each(['failed', 'outcomeUnknown'] as const)('does not treat %s development adoption as a completed reload', async (kind) => {
     const postJson = vi.fn(async () => ({
       status: 200,
       data: {
-        kind: 'committed',
+        kind,
         pluginId: 'acme.external-session-live',
-        desiredGeneration: 'generation-two',
-        appliedGeneration: 'generation-one',
-        pendingSurfaces: ['reconciliation'],
       },
     }));
 
@@ -711,7 +708,7 @@ describe('external-session live lifecycle fixture', () => {
       changedPaths: ['daemon.mjs'],
       postJson,
     })).rejects.toThrow(
-      'Local plugin development reload committed without applying its desired generation',
+      `Local plugin development reload did not commit (status=200, kind=${kind}`,
     );
   });
 

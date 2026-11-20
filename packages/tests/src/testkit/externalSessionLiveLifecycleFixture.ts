@@ -526,28 +526,6 @@ function requireCommittedPluginChange(
   return data;
 }
 
-function requireAppliedDevelopmentGeneration(
-  response: Readonly<{ status: number; data: unknown }>,
-): Readonly<Record<string, unknown>> {
-  const data = requireCommittedPluginChange(
-    response,
-    'Local plugin development reload',
-  );
-  const desiredGeneration = data.desiredGeneration;
-  if (
-    typeof desiredGeneration !== 'string'
-    || desiredGeneration.length === 0
-    || data.appliedGeneration !== desiredGeneration
-  ) {
-    throw new Error(
-      'Local plugin development reload committed without applying its desired generation '
-      + `(desired=${String(desiredGeneration ?? 'unknown')}, `
-      + `applied=${String(data.appliedGeneration ?? 'unknown')})`,
-    );
-  }
-  return data;
-}
-
 export async function applyTrustedLocalPluginFixture(params: Readonly<{
   daemonPort: number;
   controlToken?: string | null;
@@ -636,7 +614,9 @@ export async function reloadTrustedLocalPluginFixture(params: Readonly<{
   postJson?: DaemonPluginPostJson;
 }>): Promise<Readonly<Record<string, unknown>>> {
   const postJson = params.postJson ?? daemonControlPostJson;
-  return requireAppliedDevelopmentGeneration(
+  // Source-in-place adoption has no immutable generation. The registry's
+  // committed result already proves that runtime adoption succeeded.
+  return requireCommittedPluginChange(
     await postJson({
       port: params.daemonPort,
       path: '/plugins/change/request',
@@ -649,6 +629,7 @@ export async function reloadTrustedLocalPluginFixture(params: Readonly<{
         ...(params.changedPaths ? { changedPaths: [...params.changedPaths] } : {}),
       },
     }),
+    'Local plugin development reload',
   );
 }
 

@@ -348,18 +348,13 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
       pluginId: CONTRIBUTOR_PLUGIN_ID,
       interactionId: 'demand-activation-contributor-install',
     });
-    const contributorReload = await reloadTrustedLocalPluginFixture({
+    await reloadTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
       controlToken: daemon.state.controlToken,
       pluginRoot: contributorRoot,
       pluginId: CONTRIBUTOR_PLUGIN_ID,
       changedPaths: ['daemon.mjs'],
     });
-    const exactGeneration = contributorReload.desiredGeneration;
-    if (typeof exactGeneration !== 'string' || exactGeneration.length === 0) {
-      throw new Error(`Contributor reload committed without a generation (${JSON.stringify(contributorReload)})`);
-    }
-
     await expect(executeTargetAction({ daemon })).resolves.toEqual({
       outcome: 'executed',
       result: { providerId: 'github', marker: 'one' },
@@ -368,17 +363,13 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
     // Currentness: after B advances to generation C', the old C can no longer
     // execute the operation, and the fresh C' carries the new bytes.
     await writeFile(join(contributorRoot, 'daemon.mjs'), contributorDaemonModule('two'), 'utf8');
-    const updatedReload = await reloadTrustedLocalPluginFixture({
+    await reloadTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
       controlToken: daemon.state.controlToken,
       pluginRoot: contributorRoot,
       pluginId: CONTRIBUTOR_PLUGIN_ID,
       changedPaths: ['daemon.mjs'],
     });
-    const updatedGeneration = updatedReload.desiredGeneration;
-    if (typeof updatedGeneration !== 'string' || updatedGeneration.length === 0) {
-      throw new Error(`Contributor update committed without a generation (${JSON.stringify(updatedReload)})`);
-    }
     await expect(executeTargetAction({
       daemon,
       useRetainedOperation: true,
@@ -393,7 +384,7 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
       result: { providerId: 'github', marker: 'two' },
     });
 
-    // A daemon replacement must rehydrate the committed generation and keep
+    // A daemon replacement must rehydrate the committed source and keep
     // the same exact currentness fence across the real daemon boundary.
     daemon = await replaceTestDaemonWithoutStoppingSessions({
       testDir,
@@ -427,18 +418,13 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
       pluginId: CONTRIBUTOR_PLUGIN_ID,
       interactionId: 'demand-activation-contributor-reinstall',
     });
-    const reinstalledReload = await reloadTrustedLocalPluginFixture({
+    await reloadTrustedLocalPluginFixture({
       daemonPort: daemon.state.httpPort,
       controlToken: daemon.state.controlToken,
       pluginRoot: contributorRoot,
       pluginId: CONTRIBUTOR_PLUGIN_ID,
       changedPaths: ['daemon.mjs'],
     });
-    const reinstalledGeneration = reinstalledReload.desiredGeneration;
-    if (typeof reinstalledGeneration !== 'string' || reinstalledGeneration.length === 0) {
-      throw new Error(`Contributor reinstall committed without a generation (${JSON.stringify(reinstalledReload)})`);
-    }
-    expect(reinstalledGeneration).not.toBe(updatedGeneration);
     await expect(executeTargetAction({
       daemon,
       useRetainedOperation: true,
