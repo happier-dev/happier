@@ -10,7 +10,7 @@ import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/accoun
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getServerFeaturesSnapshot, refreshAuthenticatedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
@@ -172,6 +172,11 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
                 wrapper: ({ children }) => createElement(AuthProvider, { initialCredentials: params.credentials, children }),
             });
             unmountAccountLifecycle = lifecycle.unmount;
+            // Join restore's authenticated discovery before reading the selected
+            // generation; it can still reflect only public discovery.
+            await refreshAuthenticatedServerFeaturesSnapshot({
+                credentials: params.credentials, serverId: getActiveServerSnapshot().serverId, force: true,
+            });
             // The mounted provider owns restore reconciliation, including a Home
             // descriptor learned before its subscription mounted.
             await waitForTestEvent(notify => {
