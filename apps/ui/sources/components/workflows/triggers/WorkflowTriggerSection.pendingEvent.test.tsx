@@ -64,3 +64,28 @@ describe('a seeded Machine event whose trigger catalog has not resolved (WF-ACCE
     },
   );
 });
+
+it('keeps an unresolved event starter distinct from a scheduled workflow', async () => {
+  const incomplete = createWorkflowTriggerIncompleteSeed({ eventSeed: {
+    eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-checks-failed-v1' },
+    setupInput: {},
+  } })!;
+  const screen = await renderScreen(
+    <WorkflowTriggerSection
+      testIDPrefix="example"
+      set={null}
+      draft={{ adds: [], updates: {}, removes: [] }}
+      onChangeDraft={vi.fn()}
+      status="ready"
+      onRetry={vi.fn()}
+      stepsUnsaved
+      whereTarget={null}
+      whereSummary={null}
+      inputs={[]}
+      incomplete={{ state: incomplete, onChange: vi.fn() }}
+    />,
+  );
+  const clientId = incomplete.pending[0]!.clientId;
+  expect(screen.findAllByTestId(`example-trigger:new:${clientId}-starts.trigger`).map(node => node.props.accessibilityLabel))
+    .toContain(`${t('workflows.triggers.card.when')}: ${t('automations.form.trigger.chooseEvent')}`);
+});

@@ -255,6 +255,7 @@ export function WorkflowTriggerBlock(
               label={t('workflows.triggers.card.when')}
               items={items}
               selectedId={startId}
+              placeholder={props.title || undefined}
               onSelect={props.onSelectStart}
               searchPlaceholder={t('workflows.triggers.card.searchTriggers')}
               {...(props.onStartsOpenChange
