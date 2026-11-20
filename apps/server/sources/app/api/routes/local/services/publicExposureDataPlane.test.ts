@@ -20,7 +20,8 @@ afterEach(() => { accessFixture.sessionOwnerId = 'user_1'; });
 // Database boundary only; Machine and Session authorization execute their real owners.
 vi.mock("@/storage/db", async () => {
     const { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
-    const storage = createDbMocks({ machine: ["findFirst", "findMany"], session: ['findUnique'] });
+    const storage = createDbMocks({ machine: ["findFirst", "findMany"], session: ['findUnique'], teamMembership: ['findFirst'] });
+    storage.db.teamMembership.findFirst.mockResolvedValue(null);
     storage.db.machine.findFirst.mockImplementation(async (query: { where: { id: string; accountId: string } }) => (
         query.where.id === "machine_1" && query.where.accountId === "user_1" ? { id: "machine_1" } : null
     ));
