@@ -149,8 +149,11 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           resolvePreparation: async value => {
             const preparation = await input.resolveProviderPreparation!(value, context);
             if (!preparation) return null;
-            return { ...preparation, signal: context.signal, isCurrent: async () => !provider.retired && read(snapshotId!, context) === retained
-              && await context.isCurrent() && await preparation.isCurrent() };
+            return { ...preparation, signal: context.signal, readCurrentnessRefusal: async () => {
+              if (provider.retired) return 'run_snapshot_retired';
+              if (read(snapshotId!, context) !== retained) return 'run_snapshot_replaced';
+              return await preparation.readCurrentnessRefusal();
+            } };
           },
         });
         try {
@@ -167,7 +170,7 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
             ...projectRunnerExecutionRunProviderLaunch(prepared) } };
         } catch (error) {
           const details = error && typeof error === 'object' && 'details' in error ? error.details : null;
-          const parsed = ProviderErrorV1Schema.safeParse(details && typeof details === 'object' && 'providerError' in details ? details.providerError : null);
+          const parsed = ProviderErrorV1Schema.safeParse(details && typeof details === 'object' && 'providerError' in details ? details.providerError : error);
           if (!parsed.success) throw error;
           return { ok: true as const, result: { kind: 'execution_run.provider.prepared' as const,
             ok: false as const, providerError: parsed.data,

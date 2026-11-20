@@ -1240,6 +1240,13 @@ credential authority at start; failure cannot silently select native or an
 Account default. Run `launchProfileId` carries the Launch Profile separately from
 the plugin execution `profileId`.
 
+When the attached Run owner refuses preparation or revalidation with
+`provider_authorization_changed`, the Provider error's
+`failureCause.nativeErrorReason` identifies the failed Account or Home check,
+retained runner or Agent check, or settings snapshot check. The daemon records
+the same reason and the scope kind in its `[PROVIDER] Run authorization refused`
+diagnostic without recording the compared identities or settings.
+
 Root starts and different-Agent Session starts retain Account-default
 resolution. Session status exposes `connectedServices` from the authorized
 owner selection as a validated, content-free binding object; an unavailable or

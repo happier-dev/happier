@@ -231,7 +231,7 @@ import { createAccountScopedProviderModelProjectionReader } from '@/providers/mo
 import { bindInactiveSessionControlLaunchScope } from '../spawn/inactiveSessionControlLaunchScope';
 import { prepareInactiveSessionControlLaunchScope } from '../spawn/prepareInactiveSessionControlLaunchScope';
 import type { ExecutionRunProviderLaunchRequest } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
-import type { RunnerExecutionRunProviderPreparation } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
+import { reportRunProviderAuthorizationRefusal, type RunnerExecutionRunProviderPreparation, type RunProviderAuthorizationRefusal } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
 import type { ExternalActionExecutionAuthorizationV1, ComposerRefV1, ConnectedAccountServiceKey, ConnectedServiceBindingsV2, ConnectedServiceCredentialRevisionV1, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, ConnectedServiceMaterializationIdentityV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, MachineSessionTerminalAuthorityV1, QualifiedConnectedAccountServiceRef, ProviderAccountUsageRecordId, RequestAuthFailureOutcomeV1, SessionContinuationResumePromptModeV1, SessionRunnerRestartDisabledReason, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol';
 
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -12120,54 +12120,81 @@ export async function startDaemonSessionControlRuntime(
     expectedAccountSettingsScopeKey: operation.expectedAccountSettingsScopeKey,
   });
   const resolveAttachedProviderAccount = async (sessionId: string, tracked: TrackedSession,
-    expectedScopeKey: string, signal: AbortSignal) => (async () => {
+    expectedScopeKey: string, signal: AbortSignal,
+    code: 'provider_authorization_changed' | 'provider_endpoint_unavailable' = 'provider_endpoint_unavailable') => (async () => {
     const requester = await resolveSessionAccountContext(sessionId, undefined, signal);
+    const refuse = (reason: RunProviderAuthorizationRefusal, outerCode = code) => reportRunProviderAuthorizationRefusal(
+      reason, requester ? 'requester_account' : 'daemon_account', outerCode);
     let accountReturned = false;
     try {
       const credentials = requester ? requester.bootstrap.credentials : params.credentials;
       const rootAccountId = readPreviewAccountIdFromToken(params.credentials.token);
-      if (!rootAccountId || readPreviewAccountIdFromToken(credentials.token) !== rootAccountId
-        || resolveForegroundAccountSettingsScopeKey(credentials) !== expectedScopeKey
-        || requester && (requester.bootstrap.attribution.serverId !== params.serverId
-          || requester.bootstrap.attribution.machineId !== params.machineId
-          || normalizeServerHttpBaseUrl(requester.bootstrap.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverBaseUrl))) return null;
+      if (!rootAccountId) throw refuse('daemon_account_missing');
+      const requestAccountId = readPreviewAccountIdFromToken(credentials.token);
+      if (!requestAccountId) throw refuse('request_account_missing');
+      if (requestAccountId !== rootAccountId) throw refuse('request_account_mismatch');
+      if (resolveForegroundAccountSettingsScopeKey(credentials) !== expectedScopeKey) throw refuse('request_settings_scope_mismatch');
+      if (requester && requester.bootstrap.attribution.serverId !== params.serverId) throw refuse('request_home_identity_mismatch');
+      if (requester && requester.bootstrap.attribution.machineId !== params.machineId) throw refuse('request_machine_mismatch');
+      if (requester && normalizeServerHttpBaseUrl(requester.bootstrap.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.serverBaseUrl)) {
+        throw refuse('request_home_origin_mismatch');
+      }
       const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+      const readSnapshotForAccount = () => requester ? requester.readAccountSettingsSnapshot() : getActiveAccountSettingsSnapshot();
       const readSnapshot = () => {
-        const snapshot = requester ? requester.readAccountSettingsSnapshot() : getActiveAccountSettingsSnapshot();
+        const snapshot = readSnapshotForAccount();
         return snapshot?.scopeKey === expectedScopeKey ? snapshot : null;
       };
-      const isCurrentPidOwner = () => !signal.aborted && !isRuntimePublicationQuiescing()
-        && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)
-        && tracked.reportMarkerCustody?.retiring !== true
-        && tracked.happySessionId === sessionId
-        && (requester ? tracked.requesterSessionRuntimeContext === requester
-          : lifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken());
-      const isCurrent = async () => {
-        if (!isCurrentPidOwner()) return false;
+      const readCustodyRefusal = (): RunProviderAuthorizationRefusal | null => {
+        if (signal.aborted) return 'daemon_work_aborted';
+        if (isRuntimePublicationQuiescing()) return 'daemon_publication_quiescing';
+        if (!isCurrentTrackedSession(params.trackedSessionsByKey, tracked)) return 'tracked_runner_replaced';
+        if (tracked.reportMarkerCustody?.retiring === true) return 'tracked_runner_retiring';
+        if (tracked.happySessionId !== sessionId) return 'tracked_session_mismatch';
+        if (requester) return tracked.requesterSessionRuntimeContext === requester ? null : 'requester_custody_replaced';
+        return lifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken() ? null : 'account_settings_lifetime_changed';
+      };
+      const isCurrentPidOwner = () => readCustodyRefusal() === null;
+      const readCheckedAccountSnapshot = async (): Promise<
+        { snapshot: NonNullable<ReturnType<typeof readSnapshot>>; reason?: never } | { reason: RunProviderAuthorizationRefusal; snapshot?: never }
+      > => {
+        const before = readCustodyRefusal();
+        if (before) return { reason: before };
         try {
           await assertSessionAccountCurrent(sessionId, requester);
-          return isCurrentPidOwner() && readSnapshot() !== null;
-        } catch { return false; }
+        } catch { return { reason: 'session_account_no_longer_current' }; }
+        const after = readCustodyRefusal();
+        if (after) return { reason: after };
+        try {
+          const snapshot = readSnapshotForAccount();
+          if (!snapshot) return { reason: 'account_settings_snapshot_missing' };
+          return snapshot.scopeKey === expectedScopeKey ? { snapshot } : { reason: 'account_settings_snapshot_scope_mismatch' };
+        } catch { return { reason: 'account_settings_snapshot_unreadable' }; }
       };
+      const readCurrentnessRefusal = async () => (await readCheckedAccountSnapshot()).reason ?? null;
+      const isCurrent = async () => await readCurrentnessRefusal() === null;
       const purposeResolver = requester ? requester.resolveManagedPurposeBindingIntent : params.resolveManagedPurposeBindingIntent;
       const purposeSelectionResolver = requester ? requester.resolveManagedPurposeBindingIntentSelection : params.resolveManagedPurposeBindingIntentSelection;
-      if (!await isCurrent()) return null;
+      const reason = await readCurrentnessRefusal();
+      if (reason) throw refuse(reason);
       // Returned closures borrow the exact tracked runtime; PID retirement owns it.
       accountReturned = true;
-      return { accountId: rootAccountId, credentials, isCurrent, isCurrentPidOwner,
+      return { accountId: rootAccountId, credentials, isCurrent, isCurrentPidOwner, readCurrentnessRefusal, readCheckedAccountSnapshot, refuse,
         managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requester),
         ...(requester ? { savedSecretOperationContext: requester.bootstrap.savedSecretOperationContext } : {}),
         release: async () => await releaseSessionAccountContext(requester),
         readCurrentAccountSettingsSnapshot: () => isCurrentPidOwner() ? readSnapshot() : null,
-        readAccountSettingsSnapshot: async () => await isCurrent() ? readSnapshot() : null,
+        readAccountSettingsSnapshot: async () => (await readCheckedAccountSnapshot()).snapshot ?? null,
         ...(purposeResolver ? { resolveManagedPurposeBindingIntent: async (input: Parameters<typeof purposeResolver>[0]) => {
           // The nested Connected Account reader checks the same requester at
           // entry. Share that read proof; keep the post-read fence fresh.
           const binding = await (async () => {
-            if (!await isCurrent()) throw createForegroundProviderError('provider_authorization_changed');
+            const refusal = await readCurrentnessRefusal();
+            if (refusal) throw refuse(refusal, 'provider_authorization_changed');
             return await withSessionAccountHome(requester, () => purposeResolver(input));
           })();
-          if (!await isCurrent()) throw createForegroundProviderError('provider_authorization_changed');
+          const refusal = await readCurrentnessRefusal();
+          if (refusal) throw refuse(refusal, 'provider_authorization_changed');
           return binding;
         } } : {}),
         ...(purposeSelectionResolver ? { resolveManagedPurposeBindingIntentSelection: (input: Parameters<typeof purposeSelectionResolver>[0]) =>
@@ -12197,7 +12224,6 @@ export async function startDaemonSessionControlRuntime(
     try {
       const account = await trace('binding_account_context', () =>
         resolveAttachedProviderAccount(input.sessionId, input.tracked, proof.expectedAccountSettingsScopeKey, signal));
-      if (!account) return null;
       resources.register(account.release);
       const resolveManagedPurposeBindingIntent = account.resolveManagedPurposeBindingIntent;
       if (!resolveManagedPurposeBindingIntent) return null;
@@ -12310,25 +12336,30 @@ export async function startDaemonSessionControlRuntime(
   const resolveRunnerProviderPreparation = async (request: ExecutionRunProviderLaunchRequest,
     context: Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[1]): Promise<RunnerExecutionRunProviderPreparation | null> => {
     const tracked = context.trackedSession;
-    if (!tracked || !await context.isCurrent()) return null;
+    if (!tracked) throw reportRunProviderAuthorizationRefusal('run_runner_missing', 'runner_snapshot');
+    if (!await context.isCurrent()) throw reportRunProviderAuthorizationRefusal('runner_service_no_longer_current', 'runner_snapshot');
     context.signal?.throwIfAborted();
     const account = await traceRunPreparationPhase(request.runId, 'request_account_context', context.signal, () =>
       resolveAttachedProviderAccount(context.sessionId, tracked, request.expectedAccountSettingsScopeKey,
-        shutdownCancellationDomains.daemonWorkSignal));
-    if (!account) return null;
+        shutdownCancellationDomains.daemonWorkSignal, 'provider_authorization_changed'));
     try {
-      const accountSettingsSnapshot = await traceRunPreparationPhase(request.runId, 'request_settings', context.signal,
-        () => account.readAccountSettingsSnapshot());
-      if (!accountSettingsSnapshot) return null;
+      const readCurrentnessRefusal = async () => await context.isCurrent()
+        ? await account.readCurrentnessRefusal()
+        : 'runner_service_no_longer_current' as const;
+      const settings = await traceRunPreparationPhase(request.runId, 'request_settings', context.signal,
+        () => account.readCheckedAccountSnapshot());
+      if (settings.reason) throw account.refuse(settings.reason);
+      const accountSettingsSnapshot = settings.snapshot;
       const serverSnapshot = await traceRunPreparationPhase(request.runId, 'request_features', context.signal,
         () => params.resolveServerFeaturesSnapshot?.() ?? fetchServerFeaturesSnapshot({ serverUrl: params.serverBaseUrl }));
-      if (!await context.isCurrent() || !await account.isCurrent()) return null;
+      const refusal = await readCurrentnessRefusal();
+      if (refusal) throw account.refuse(refusal);
       return { machineId: params.machineId, happyHomeDir: configuration.happyHomeDir, accountSettingsSnapshot,
         readAccountSettingsSnapshot: account.readCurrentAccountSettingsSnapshot,
         ...(account.savedSecretOperationContext ? { savedSecretOperationContext: account.savedSecretOperationContext } : {}),
         featureEnabled: resolveCliFeatureDecision({ featureId: 'providers', env: params.processEnv,
           ...(serverSnapshot ? { serverSnapshot } : {}) }).state === 'enabled',
-        isCurrent: async () => await context.isCurrent() && await account.isCurrent(),
+        readCurrentnessRefusal,
         ...(account.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: account.resolveManagedPurposeBindingIntent } : {}),
         ...(account.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: account.resolveManagedPurposeBindingIntentSelection } : {}),
         managedProviderAccountAuthority: account.managedProviderAccountAuthority,
@@ -13143,13 +13174,15 @@ export async function startDaemonSessionControlRuntime(
               if (operation.kind === 'provider_managed.purpose.resolve') {
                 const account = await resolveAttachedProviderAccount(sessionId, tracked, operation.expectedAccountSettingsScopeKey, signal);
                 try {
-                  if (!account?.resolveManagedPurposeBindingIntent) return unavailable();
+                  if (!account.resolveManagedPurposeBindingIntent) return unavailable();
                   const binding = await account.resolveManagedPurposeBindingIntent({
                     purpose: operation.purpose, target: operation.target, serviceRefs: operation.serviceRefs, signal,
                   });
-                  if (!binding || !await account.isCurrent()) return unavailable();
+                  if (!binding) return unavailable();
+                  const refusal = await account.readCurrentnessRefusal();
+                  if (refusal) throw account.refuse(refusal);
                   return { ok: true as const, result: { kind: 'provider_managed.purpose' as const, binding } };
-                } finally { await account?.release(); }
+                } finally { await account.release(); }
               }
               const proof = managedRunBindingProof(operation);
               const existing = operation.kind === 'provider_managed.binding.read' && operation.bindingId
