@@ -67,7 +67,7 @@ import { readActiveFileViewActionOwner, readShellColumnActionOwner } from '@/syn
 import { focusPaneRegion } from '@/components/appShell/panes/paneRegionFocus';
 import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
-import { readSessionComposerActionChipOffer, requestRegisteredSessionComposerActionChip } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { readSessionComposerActionChipOffer, readSessionComposerModelFavorites, requestRegisteredSessionComposerActionChip } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { SESSION_MODEL_PICKER_CHIP_KEY } from '@/components/sessions/presentation/useSessionModelPickerEntry';
 
 export function readActiveSessionIdFromRoute(
@@ -299,6 +299,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             && readSessionComposerActionChipOffer(modelPickerAddress, SESSION_MODEL_PICKER_CHIP_KEY) === 'offered'
             ? { open: () => { requestRegisteredSessionComposerActionChip(modelPickerAddress, SESSION_MODEL_PICKER_CHIP_KEY); } }
             : undefined;
+        const sessionModelFavorites = modelPickerAddress ? readSessionComposerModelFavorites(modelPickerAddress) : [];
         const askHappierCurrentContext = readCurrentUiContextActionReader({ surface: 'ui' })?.readCurrentUiContext() ?? null;
         return buildCommandPaletteCommands({
             sessionsById: storage.getState().sessions,
@@ -312,6 +313,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             fileViewControls,
             themeCommands: loadThemeCommands,
             ...(sessionModelPicker ? { sessionModelPicker } : {}),
+            ...(sessionModelFavorites.length > 0 ? { sessionModelFavorites } : {}),
             paneControls: {
                 readColumn: readShellColumnActionOwner,
                 focusRegion: direction => { focusPaneRegion(direction); },
@@ -462,6 +464,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                     ...(invocationScope.serverId ? { serverId: invocationScope.serverId } : {}),
                     ...(invocationScope.machineId ? { machineId: invocationScope.machineId } : {}),
                     ...(invocationScope.rootPath ? { rootPath: invocationScope.rootPath } : {}),
+                    ...(invocationScope.workspace ? { workspace: JSON.stringify(invocationScope.workspace) } : {}),
                     ...(options?.terminals ? { [TERMINAL_JUMP_ROUTE_PARAM]: options.terminals.scopeId } : {}),
                 },
             } as never);

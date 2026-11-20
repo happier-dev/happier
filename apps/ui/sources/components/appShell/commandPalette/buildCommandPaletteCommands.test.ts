@@ -18,6 +18,7 @@ import {
   type PluginContributedActionCurrentSnapshot,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
+import { readSessionComposerModelFavorites, registerSessionComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { readActiveFileViewActionOwner, registerFileViewActionOwner, type FileViewActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 
 const createSessionActionDraftSpy = vi.fn();
@@ -446,6 +447,48 @@ describe('buildCommandPaletteCommands', () => {
     expect(choose?.shortcut).toBeUndefined();
     await choose?.action();
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('names each favourite model the Session composer offers as a command and switches through that composer', async () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const address = { serverId: 'server-a', sessionId: 'session-1' } as const;
+    const applyOpus = vi.fn(async () => true);
+    const applySonnet = vi.fn(async () => true);
+    const unregister = registerSessionComposerPresentationTarget(address, {
+      readRevision: () => 0,
+      replace: () => 0,
+      readModelFavorites: () => [
+        { key: 'opus', label: 'Opus 5.5', reasoningEffort: 'high', sourceLabel: null, current: true, apply: applyOpus },
+        { key: 'sonnet', label: 'Sonnet 5.5', reasoningEffort: 'medium', sourceLabel: 'OpenRouter — Work', current: false, apply: applySonnet },
+      ],
+    });
+    try {
+      const commands = buildCommandPaletteCommands({
+        sessionsById: { 'session-1': { id: 'session-1', serverId: 'server-a', metadata: {} } },
+        isDev: false,
+        activeSessionId: 'session-1',
+        activeSessionServerId: 'server-a',
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        sessionModelFavorites: readSessionComposerModelFavorites(address),
+        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        actions: { execute: async () => ({ ok: true, result: {} }) },
+        alert: async () => {},
+      });
+      const favorites = commands.filter((command) => command.id.startsWith('session.model.favorite:'));
+      // Typed-search results only (lab: favourites by name), each governed by the model Action agents use.
+      expect(favorites.map(({ title, subtitle, actionSpecId, emptyQuerySuggested }) => ({ title, subtitle, actionSpecId, emptyQuerySuggested })))
+        .toEqual([
+          { title: 'Use favorite model Opus 5.5', subtitle: 'High · current', actionSpecId: 'session.model.set', emptyQuerySuggested: undefined },
+          { title: 'Use favorite model Sonnet 5.5', subtitle: 'Medium · via OpenRouter — Work', actionSpecId: 'session.model.set', emptyQuerySuggested: undefined },
+        ]);
+      await favorites[1]?.action();
+      expect(applySonnet).toHaveBeenCalledTimes(1);
+      expect(applyOpus).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
+    // Without a mounted composer for that Session there is nothing to offer.
+    expect(readSessionComposerModelFavorites(address)).toEqual([]);
   });
 
   it('names a recent Session the way the list does: its folder when nothing else names it', () => {

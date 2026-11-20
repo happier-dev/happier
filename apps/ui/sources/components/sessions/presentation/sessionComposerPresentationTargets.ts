@@ -238,6 +238,8 @@ export type ComposerPresentationTarget = Readonly<{
     openActionChip?: (chipKey: string, anchorRef?: React.RefObject<View | null>) => boolean;
     /** Whether this input offers the action chip now; read by surfaces that offer to open it. */
     hasActionChip?: (chipKey: string) => boolean;
+    /** The account's favourite models this Session can switch to, each applied as the model picker applies it. */
+    readModelFavorites?: () => readonly SessionComposerModelFavorite[];
     /** The mounted New Session directory owner; never a launch or filesystem write. */
     applyNewSessionDirectoryIntent?: (intent: SessionDirectoryIntentV1, expectedScope?: Readonly<Partial<ServerAccountScope>>) => boolean;
     applyNewSessionModelIntent?: (intent: NewSessionDraftModelIntent, expectedScope?: Readonly<Partial<ServerAccountScope>>) => Promise<boolean>;
@@ -371,6 +373,9 @@ export function useStableComposerPresentationTarget(
                 } : {}),
                 ...(target.hasActionChip ? {
                     hasActionChip: (chipKey) => readCurrent().hasActionChip?.(chipKey) ?? false,
+                } : {}),
+                ...(target.readModelFavorites ? {
+                    readModelFavorites: () => readCurrent().readModelFavorites?.() ?? [],
                 } : {}),
                 ...(target.applyNewSessionDirectoryIntent ? {
                     applyNewSessionDirectoryIntent: (intent, expectedScope) => readCurrent().applyNewSessionDirectoryIntent?.(intent, expectedScope) ?? false,
@@ -3136,6 +3141,28 @@ export function flushPendingRegisteredSessionComposerActionChip(addressRaw: Sess
  * is mounted for that Home/Session (a phone's Work page stands apart from the Chat surface).
  */
 export type SessionComposerActionChipOffer = 'offered' | 'not_offered' | 'no_composer';
+
+/** A favourite model as an open Session's composer offers it (Search lists these by name). */
+export type SessionComposerModelFavorite = Readonly<{
+    key: string;
+    label: string;
+    reasoningEffort?: string;
+    /** The Provider connection the favourite saved; null for the Agent's own models. */
+    sourceLabel: string | null;
+    /** The Session already runs on it. */
+    current: boolean;
+    /** Switches the Session to this model through the composer's model selection (`session.model.set`). */
+    apply: () => Promise<boolean>;
+}>;
+
+/** The exact Session composer's favourite models, read once by a surface as it opens; none without a composer. */
+export function readSessionComposerModelFavorites(addressRaw: SessionAddress): readonly SessionComposerModelFavorite[] {
+    const address = normalizeSessionAddress(addressRaw.serverId, addressRaw.sessionId);
+    if (!address) return [];
+    const target = resolveQualifiedSessionTarget(sessionAddressKey(address));
+    if (!target?.readModelFavorites || target.isCurrent?.() === false) return [];
+    return target.readModelFavorites();
+}
 
 export function readSessionComposerActionChipOffer(addressRaw: SessionAddress, chipKey: string): SessionComposerActionChipOffer {
     const address = normalizeSessionAddress(addressRaw.serverId, addressRaw.sessionId);

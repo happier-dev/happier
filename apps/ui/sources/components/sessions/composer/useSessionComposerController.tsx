@@ -71,7 +71,7 @@ import { mergeAbortSignals } from "@/utils/runtime/abortSignals";
 import { useComposerPresentationInputEffects } from "@/components/sessions/presentation/useComposerPresentationInputEffects";
 import { presentSessionTeamCredentialDenial } from "@/components/sessions/presentation/sessionTeamCredentialDenialPresentation";
 import { SESSION_MODEL_PICKER_CHIP_KEY } from "@/components/sessions/presentation/useSessionModelPickerEntry";
-import { applyComposerPresentationTransaction, flushPendingRegisteredSessionComposerActionChip, flushPendingRegisteredSessionComposerFocus, notifyComposerPresentationTargetChanged, notifySessionComposerPresentationTargetChanged, readComposerPresentationSnapshot, readReleasedComposerStagedMediaHandles, readSessionComposerPresentationTargetAtAddress, registerComposerPresentationTarget, registerSessionComposerPresentationTarget, releaseComposerStagedMedia, useStableComposerPresentationTarget, type ComposerPresentationDocumentMutation } from "@/components/sessions/presentation/sessionComposerPresentationTargets";
+import { applyComposerPresentationTransaction, flushPendingRegisteredSessionComposerActionChip, flushPendingRegisteredSessionComposerFocus, notifyComposerPresentationTargetChanged, notifySessionComposerPresentationTargetChanged, readComposerPresentationSnapshot, readReleasedComposerStagedMediaHandles, readSessionComposerPresentationTargetAtAddress, registerComposerPresentationTarget, registerSessionComposerPresentationTarget, releaseComposerStagedMedia, useStableComposerPresentationTarget, type ComposerPresentationDocumentMutation, type SessionComposerModelFavorite } from "@/components/sessions/presentation/sessionComposerPresentationTargets";
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1, composerRefV1Key } from "@happier-dev/protocol/plugins/ui/composerRef";
 import { PluginContextualResourceStoreProvider } from "@/components/plugins/surfaces/PluginContextualResourceStoreProvider";
 import { projectComposerAttachmentRowItems } from "@/components/sessions/composer/composerAttachmentProjection";
@@ -108,6 +108,11 @@ import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/se
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
 import { storage, useIsMachineListSettled, useLocalSetting, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
+import { useCurrentFavoriteModelSelectionsV1Mutable } from "@/sync/store/hooks";
+import { useAccountSettingsScope } from "@/sync/store/settingsWriters";
+import { buildFavoriteBackendIdentity } from "@/sync/domains/models/favoriteModelBackendIdentity";
+import { rememberFavoriteModelReasoningEffort, toggleFavoriteModelSelection } from "@/sync/domains/models/favoriteModelSelections";
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from "@happier-dev/protocol/providers/catalog/reasoningEffort";
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
 import { isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
@@ -298,7 +303,8 @@ import { useConfirmExperimentalProviderModel } from "@/providers/hooks/useConfir
 import { SessionModelPicker } from "@/components/sessions/modelPicker/SessionModelPicker";
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
-import { isTeamCredentialProviderModelPickerValue, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
+import { isTeamCredentialProviderModelPickerValue, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
+import { projectFavoriteModelEntries } from "@/components/sessions/modelPicker/favoriteModelEntries";
 import { hapticsLight } from "@/components/ui/theme/haptics";
 import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSessionViewBootstrap";
 import { type SessionPresentationIntentApplier } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
@@ -3888,17 +3894,26 @@ export function useSessionComposerController({
         }).then(requireActionSuccess).catch((error: unknown) => presentSessionActionOutcome(error, sessionAccountLifetime)), { tag: 'SessionView.updateAcpSessionModeOverride' });
     }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionModeOptionIds, sessionRouteServerId]);
 
-    const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
-        fireAndForget(actionExecutor.execute('session.config_option.set', buildExistingSessionConfigOptionActionInput({
-            sessionId,
-            configId,
-            valueId,
-        }), {
-            surface: 'ui',
-            defaultSessionId: sessionId,
-            serverId: sessionRouteServerId,
-        }).then(requireActionSuccess).catch((error: unknown) => presentSessionActionOutcome(error, sessionAccountLifetime)), { tag: 'SessionView.updateAcpConfigOptionOverride' });
+    const publishAcpConfigOptionOverride = React.useCallback(async (configId: string, valueId: string) => {
+        try {
+            requireActionSuccess(await actionExecutor.execute('session.config_option.set', buildExistingSessionConfigOptionActionInput({
+                sessionId,
+                configId,
+                valueId,
+            }), {
+                surface: 'ui',
+                defaultSessionId: sessionId,
+                serverId: sessionRouteServerId,
+            }));
+            return true;
+        } catch (error) {
+            presentSessionActionOutcome(error, sessionAccountLifetime);
+            return false;
+        }
     }, [actionExecutor, presentSessionActionOutcome, sessionAccountLifetime, sessionId, sessionRouteServerId]);
+    const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
+        fireAndForget(publishAcpConfigOptionOverride(configId, valueId), { tag: 'SessionView.updateAcpConfigOptionOverride' });
+    }, [publishAcpConfigOptionOverride]);
 
     // Resolves whether the Session took the model (applied, armed for the next message, or awaiting
     // its restart), so a card's option value is written only for a model the Session holds.
@@ -4159,6 +4174,29 @@ export function useSessionComposerController({
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
     }), [machineId, sessionRouteServerId]);
+    const [accountModelFavorites, setAccountModelFavorites] = useCurrentFavoriteModelSelectionsV1Mutable();
+    const accountSettingsScope = useAccountSettingsScope();
+    const sessionFavoritesEnabled = hasWriteAccess && !embedded
+        && areServerAccountScopesEqual(accountSettingsScope, sessionAccountScope);
+    const sessionFavoriteEntries = React.useMemo(
+        () => sessionFavoritesEnabled && modelPickerAgentTargetKey
+            ? projectFavoriteModelEntries(accountModelFavorites, { backendTargetKey: modelPickerAgentTargetKey })
+            : undefined,
+        [accountModelFavorites, modelPickerAgentTargetKey, sessionFavoritesEnabled],
+    );
+    const publishFavoriteModelSelection = React.useCallback(async (
+        ref: ProviderBoundModelRef,
+        effort?: string,
+        modelOptionsContext?: SessionModelOptionsContext,
+    ) => {
+        hapticsLight();
+        if (!await publishModelSelection(ref, modelOptionsContext)) return false;
+        return effort === undefined || await publishAcpConfigOptionOverride(PROVIDER_REASONING_EFFORT_OPTION_ID, effort);
+    }, [publishAcpConfigOptionOverride, publishModelSelection]);
+    const setSessionFavoriteEffort = React.useCallback((ref: ProviderBoundModelRef, effort: string) => {
+        const next = rememberFavoriteModelReasoningEffort(accountModelFavorites, ref, effort);
+        if (next) setAccountModelFavorites(next);
+    }, [accountModelFavorites, setAccountModelFavorites]);
     const existingSessionModelPicker = React.useMemo(() => {
         if (!agentId || !modelPickerAgentTargetKey) return embedded?.allowedModels ? null : undefined;
         return <SessionModelDiscoveryDetail
@@ -4238,6 +4276,35 @@ export function useSessionComposerController({
                         selectedTeamCredentialModel={selectedTeamCredentialModel}
                         reportedModel={existingSessionReportedModel}
                         canEnterCustomNativeValue={canEnterCustomModel}
+                        favoriteEntries={sessionFavoriteEntries}
+                        onUpdateFavoriteModelReasoningEffort={sessionFavoritesEnabled ? setSessionFavoriteEffort : undefined}
+                        onToggleFavorite={sessionFavoritesEnabled ? (ref, effort) => {
+                            const group = providerGroups.find(candidate => candidate.connectionId === ref.providerConnectionId);
+                            const modelLabel = ref.providerConnectionId
+                                ? group?.rows.find(row => row.ref.modelId === ref.modelId)?.descriptor.name
+                                : existingSessionNativeModels.find(model => model.value === ref.modelId)?.label;
+                            setAccountModelFavorites(toggleFavoriteModelSelection({
+                                favorites: accountModelFavorites,
+                                backend: sessionActionDefaultBackendEntry?.backendTargetKey === ref.agentTargetKey
+                                    ? buildFavoriteBackendIdentity(sessionActionDefaultBackendEntry)
+                                    : { backendTargetKey: ref.agentTargetKey },
+                                modelRef: ref,
+                                modelLabel,
+                                backendLabel: sessionActionDefaultBackendEntry?.title,
+                                providerDisplaySnapshot: group ? {
+                                    providerName: group.providerName,
+                                    connectionName: group.connectionName,
+                                    connectionRole: group.connectionRole,
+                                    connectionDisplayNameMode: group.connectionDisplayNameMode,
+                                } : null,
+                                reasoningEffort: effort,
+                                addedAtMs: Date.now(),
+                            }));
+                        } : undefined}
+                        onSelectFavoriteModel={sessionFavoritesEnabled && canSelectModel ? (ref, effort) => {
+                            const canonicalRef = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, ref);
+                            return publishFavoriteModelSelection(canonicalRef, effort, modelOptionsContext);
+                        } : undefined}
                         // Model options (Thinking, effort) are Session settings, not the model grant.
                         selectedOptionControls={hasWriteAccess ? existingSessionSelectedModelOptionControls ?? undefined : undefined}
                         onSelectOptionControlValue={updateAcpConfigOptionOverride}
@@ -4304,6 +4371,14 @@ export function useSessionComposerController({
         composerOptionsInput,
         hasWriteAccess,
         existingSessionModelOptionOverrides,
+        accountModelFavorites,
+        canSelectModel,
+        publishFavoriteModelSelection,
+        sessionActionDefaultBackendEntry,
+        sessionFavoriteEntries,
+        sessionFavoritesEnabled,
+        setAccountModelFavorites,
+        setSessionFavoriteEffort,
     ]);
 
     const [directoryRecovery, setDirectoryRecovery] = React.useState<Readonly<{
@@ -4639,6 +4714,25 @@ export function useSessionComposerController({
     // request until this surface is focused and presented again.
     const hasComposerActionChip = (chipKey: string): boolean => chipKey === SESSION_MODEL_PICKER_CHIP_KEY
         ? canSelectModel : composerActionChipKeysRef.current.has(chipKey);
+    // Search's "Use favorite model …" commands: the account's favourites for this Session's Agent, read when Search
+    // opens, each switched to exactly as the model picker's row does.
+    const readModelFavorites = (): readonly SessionComposerModelFavorite[] => {
+        if (!canSelectModel || !modelPickerAgentTargetKey) return [];
+        const selected = existingSessionSelectedModelRef
+            ? sessionModelSelectionKey(resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef))
+            : null;
+        return projectFavoriteModelEntries(
+            storage.getState().settings.currentFavoriteModelSelectionsV1 ?? [],
+            { backendTargetKey: modelPickerAgentTargetKey },
+        ).map(entry => ({
+            key: entry.key,
+            label: entry.label,
+            ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
+            sourceLabel: entry.sourceLabel,
+            current: entry.key === selected,
+            apply: () => publishModelSelection(resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref)),
+        }));
+    };
     const requestComposerActionChipOpen = (chipKey: string, anchorRef?: React.RefObject<View | null>): boolean => {
         if (!readSurfaceFocused() || !readSurfacePresented() || !hasComposerActionChip(chipKey)) return false;
         // The model picker is the status line's own picker; its entry is the one the banner's "Choose another" takes.
@@ -4723,6 +4817,7 @@ export function useSessionComposerController({
             return true;
         },
         hasActionChip: hasComposerActionChip,
+        readModelFavorites,
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
         submitDraft: options => activeComposerRefRef.current.kind === 'session' ? agentInputSendRef.current(options)
@@ -4799,6 +4894,7 @@ export function useSessionComposerController({
             return true;
         },
         hasActionChip: hasComposerActionChip,
+        readModelFavorites,
     });
     React.useEffect(() => !shouldShowInput ? undefined : activeComposerRef.kind === 'session'
         ? registerSessionComposerPresentationTarget(sessionComposerAddress, activeComposerPresentationTarget)

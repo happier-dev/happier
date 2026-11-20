@@ -6,6 +6,8 @@ import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/s
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
+import type { SessionComposerModelFavorite } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { KeyboardCommandId } from '@/keyboard';
 import {
@@ -127,6 +129,8 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   themeCommands?: () => Promise<readonly Command[]>;
   /** Present only while the active Session's composer offers its model picker (the composer decides). */
   sessionModelPicker?: Readonly<{ open: () => void }>;
+  /** The active Session composer's favourite models (lab: "Use favorite model …" by name). */
+  sessionModelFavorites?: readonly SessionComposerModelFavorite[];
   askHappierRelease?: AskHappierContext['release'];
   nav: Readonly<{
     push: (path: string) => void;
@@ -246,6 +250,19 @@ export function buildCommandPaletteCommands(
     id: 'session.model.choose', emptyQuerySuggested: true,
     title: t('commandPalette.commands.chooseModelTitle'), subtitle: t('commandPalette.commands.chooseModelSubtitle'),
     icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'), action: params.sessionModelPicker.open,
+  });
+
+  // Lab palette "favorites by name": one command per favourite, run as the picker's row runs (session.model.set).
+  for (const favorite of params.sessionModelFavorites ?? []) cmds.push({
+    id: `session.model.favorite:${favorite.key}`, actionSpecId: 'session.model.set',
+    title: t('commandPalette.commands.useFavoriteModelTitle', { model: favorite.label }),
+    subtitle: [
+      favorite.reasoningEffort ? formatReasoningEffortTierLabel(favorite.reasoningEffort) : null,
+      favorite.current ? t('commandPalette.commands.favoriteModelCurrent') : null,
+      favorite.sourceLabel ? t('commandPalette.commands.favoriteModelVia', { source: favorite.sourceLabel }) : null,
+    ].filter(Boolean).join(' · ') || undefined,
+    icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'),
+    action: async () => { await favorite.apply(); },
   });
 
   if (params.themeCommands) cmds.push({
