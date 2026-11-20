@@ -7,10 +7,10 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
-import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
-import { WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowProgressEnvelopeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentCreateResponseV1Schema, ReviewCommentPrincipalHeaderV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
@@ -33,6 +33,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { registerReviewCommentRoutes } from './routes';
+import { registerWorkflowRunStorageRoutes } from '@/app/api/routes/automations/registerWorkflowRunStorageRoutes';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -283,7 +284,10 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
         const address = { serverId: 'home', sessionId: targetId };
         const siblingAddress = { serverId: 'home', sessionId: siblingId };
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-        await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
+        await withAuthenticatedTestApp(app => {
+            registerReviewCommentRoutes(app);
+            registerWorkflowRunStorageRoutes(app);
+        }, async app => {
             const requests: Array<{ path: string; status: number; error?: string }> = [];
             let revokeBeforeCommit = false;
             let tamperSignedScope = false;
@@ -436,40 +440,14 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                             binding: { v: 1, purpose: 'invocation_progress', accountId: account.id, runId, recordId: id,
                                 sequence: String(sequence), parentRecordId, memberOrdinal, attempt: '0' } })) } });
                 }
-                const readKeyCensus = async (id: string) => {
-                    const key = await db.workflowRunDataKeyEnvelope.findUnique({ where: { runId_recipientAccountId: { runId: id, recipientAccountId: account.id } } });
-                    const encryptedDataKey = key ? privacyKit.encodeBase64(key.encryptedDataKey) : null;
-                    return WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: id, ownerAccountId: account.id, visibleTeamId: null,
-                        encryptionMode: mode, access: 'owner', ownerAccountCurrentness: encryption.witness,
-                        dataEncryptionKey: encryptedDataKey, callerDataEncryptionKey: encryptedDataKey, recipients: [] });
-                };
                 const runs = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => account.id,
                     resolveEncryption: async () => encryption,
                     definitions: { get: unused }, normalizeAbsolutePath: path => path.startsWith('/') ? path : null, randomBytes,
                     storage: { execute: async operation => {
-                        if (operation.operation === 'invocations.list' || operation.operation === 'invocations.get') {
-                            const rows = await db.workflowRunInvocation.findMany({ where: { runId: operation.runId,
-                                ...(operation.operation === 'invocations.get' ? { id: operation.invocationId } : {}) }, orderBy: { sequence: 'asc' } });
-                            const index = (row: typeof rows[number]) => WorkflowRunInvocationIndexV1Schema.parse({ id: row.id, runId: row.runId,
-                                parentRecordId: row.parentRecordId, lifecycle: row.lifecycle,
-                                sequence: row.sequence.toString(), memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString(),
-                                contentRevision: row.contentRevision.toString(), createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() });
-                            if (operation.operation === 'invocations.get') {
-                                const row = rows[0];
-                                if (!row) throw new Error('invocation_not_found');
-                                return { invocation: { index: index(row), contentEnvelope: row.contentEnvelope, parentRevision: 0 } };
-                            }
-                            return { invocations: rows.map(index), parentRevision: 0, keyCensus: await readKeyCensus(operation.runId),
-                                progressEnvelopesByInvocationId: Object.fromEntries(rows.map(row => [row.id, row.contentEnvelope])) };
-                        }
-                        if (operation.operation !== 'get') throw new Error('unexpected_storage_operation');
-                        const row = await db.automationRun.findUniqueOrThrow({ where: { id: operation.runId } });
-                        return { run: WorkflowRunSummaryV1Schema.parse({ id: row.id, sourceArtifactId: null, ownerAccountId: account.id, visibleTeamId: null,
-                            origin: accepted.snapshot.origin, state: 'queued', revision: 0, machineId, workflowCustodyState: 'pending', originDeliveryAckRevision: null,
-                            availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
-                            createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }),
-                            acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope, checkpointEnvelope: null, resultEnvelope: null,
-                            keyCensus: await readKeyCensus(row.id) };
+                        const response = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                            headers: { authorization: `Bearer ${token}` }, payload: operation });
+                        expect(response.statusCode, response.body).toBe(200);
+                        return response.json();
                     } } });
                 let producedPrincipal: ReviewCommentPrincipalHeaderV1 | undefined;
                 const executor = createActionExecutor(actionDependencies({ workflowAction: args => runs.execute(args),
@@ -485,6 +463,10 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 }));
                 const context = {
                     surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: account.id,
+                    // The person allowed this Action on the Agent surface; signed Home access remains real below.
+                    actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+                        'reviews.comments.setDisposition': ['agent'],
+                    } }),
                     ...(origin !== 'originless' ? { defaultSessionId: originId } : {}),
                     actionRequestId, actionCaller: { kind: 'workflowRun', runId, authorization: accepted.snapshot.authorization },
                 } as const;
@@ -506,7 +488,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 }
                 const verdictContext = { ...context, actionRequestId: `${runId}/${verdictInvocationId}/0` };
                 const verdict = await executor.execute('reviews.comments.setDisposition', verdictInput(targetId), verdictContext);
-                expect(verdict, JSON.stringify(requests)).toMatchObject({ ok: true, result: { comment: {
+                expect(verdict, JSON.stringify({ requests, verdict })).toMatchObject({ ok: true, result: { comment: {
                     id: comments.get(targetId), sessionId: targetId, serverRevision: 2, dispositions: { [`workflow:${runId}`]: 'blocking' },
                 } } });
                 // A repeated stale mutation retains the incumbent CAS contract;
