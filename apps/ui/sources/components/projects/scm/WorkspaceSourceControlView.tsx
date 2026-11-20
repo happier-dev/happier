@@ -22,6 +22,7 @@ import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 import { resolveChangedFilesViewMode, type ChangedFilesViewMode } from '@/scm/scmAttribution';
 import { storage } from '@/sync/domains/state/storage';
 import { machineScmStashList } from '@/sync/ops/scm/machineScm';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
 import { WorkspaceSourceControlBranchMenu } from './WorkspaceSourceControlBranchMenu';
 import { applyWorkspaceFileStageAction, WorkspaceScmCommitSelectionToggleButton } from './WorkspaceScmCommitSelectionToggleButton';
@@ -36,10 +37,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { activeReviewFileKeyForWorkspace, openChangedFileFromList, useActiveReviewFilePath } from '@/components/workspaces/scm/review/activeReviewFile';
 
-export type WorkspaceSourceControlViewProps = Readonly<{
-    serverId: string;
-    machineId: string;
-    rootPath: string;
+export type WorkspaceSourceControlViewProps = WorkspaceScopeBase & Readonly<{
     onOpenFile: (path: string) => void;
     onOpenFilePinned?: (path: string) => void;
     onOpenReviewAllChanges?: () => void;
@@ -74,7 +72,8 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
         serverId: props.serverId,
         machineId: props.machineId,
         rootPath: props.rootPath,
-    }), [props.machineId, props.rootPath, props.serverId]);
+        ...(props.workspace ? { workspace: props.workspace } : {}),
+    }), [props.machineId, props.rootPath, props.serverId, props.workspace]);
     const {
         snapshot, loading, error, refresh,
         commitDraftMessage, setCommitDraftMessage, scmOperationBusy, scmOperationStatus,
@@ -167,7 +166,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
         snapshotCount: resolveSnapshotScmStashCount(snapshot),
         refreshKey: `${props.machineId}:${props.rootPath}:${snapshot?.fetchedAt ?? 0}`,
         load: React.useCallback(
-            async () => await machineScmStashList(scope.machineId, { cwd: scope.rootPath }, { serverId: scope.serverId }),
+            async () => await machineScmStashList(scope.machineId, { cwd: scope.rootPath }, { serverId: scope.serverId, workspace: scope.workspace }),
             [scope],
         ),
     });
@@ -267,6 +266,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                         serverId={props.serverId}
                                         machineId={props.machineId}
                                         rootPath={props.rootPath}
+                                        workspace={props.workspace}
                                         currentBranch={scmStatusFiles.branch}
                                         snapshot={snapshot}
                                         writeEnabled={scmWriteEnabled}

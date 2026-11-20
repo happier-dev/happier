@@ -92,6 +92,7 @@ export async function searchWorkspaceCommits(input: Readonly<{
     };
     const response = await machineScmLogList(scope.machineId, request, {
         serverId: scope.serverId,
+        ...(scope.workspace ? { workspace: scope.workspace } : {}),
         ...(input.accountId ? { accountId: input.accountId } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
     });

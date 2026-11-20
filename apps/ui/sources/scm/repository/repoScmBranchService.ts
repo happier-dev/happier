@@ -5,6 +5,7 @@ import { sessionScmBranchList } from '@/sync/ops';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveRepoScmMachinePathRequest } from './resolveRepoScmMachinePathRequest';
 import { resolveRepoScmSessionRequest } from './resolveRepoScmSessionRequest';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export class RepoScmBranchService {
     private branchCache = new Map<string, ReadonlyArray<ScmBranchListEntry>>();
@@ -51,6 +52,7 @@ export class RepoScmBranchService {
         serverId?: string | null;
         machineId: string;
         path: string;
+        workspace?: WorkspaceScopeBase['workspace'];
         homeDir?: string | null;
         includeRemotes?: boolean;
     }>): Promise<ReadonlyArray<ScmBranchListEntry>> {
@@ -66,7 +68,9 @@ export class RepoScmBranchService {
                 cwd: request.resolvedPath,
                 includeRemotes,
             };
-            const response = input.serverId
+            const response = input.workspace
+                ? await machineScmBranchList(request.machineId, branchRequest, { serverId: input.serverId, workspace: input.workspace })
+                : input.serverId
                 ? await machineScmBranchList(request.machineId, branchRequest, { serverId: input.serverId })
                 : await machineScmBranchList(request.machineId, branchRequest);
             if (!response.success) {
@@ -120,6 +124,7 @@ export class RepoScmBranchService {
         serverId?: string | null;
         machineId: string;
         path: string;
+        workspace?: WorkspaceScopeBase['workspace'];
         homeDir?: string | null;
         includeRemotes?: boolean;
     }>): ReadonlyArray<ScmBranchListEntry> {

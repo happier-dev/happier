@@ -23,11 +23,13 @@ import { seedAndOpenProjectDraft } from '../activation/projectOpenDraftSeed';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export type WorkspaceSourceControlBranchMenuProps = Readonly<{
     serverId?: string | null;
     machineId: string;
     rootPath: string;
+    workspace?: WorkspaceScopeBase['workspace'];
     currentBranch: string | null;
     snapshot: ScmWorkingSnapshot | null;
     writeEnabled?: boolean;
@@ -47,8 +49,8 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     const currentBranch = props.currentBranch;
     const serverId = typeof props.serverId === 'string' ? props.serverId.trim() : '';
     const machineScmOptions = React.useMemo(() => (
-        serverId ? { serverId } : undefined
-    ), [serverId]);
+        props.workspace ? { serverId, workspace: props.workspace } : serverId ? { serverId } : undefined
+    ), [serverId, props.workspace]);
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
     const branchSwitchSetting = normalizeBranchSwitchSetting(branchSwitchSettingRaw);
@@ -56,10 +58,10 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
     const askBeforeOverwrite = askBeforeOverwriteRaw !== false;
 
     const canReadBranches = snapshot?.capabilities?.readBranches === true;
-    const canCheckout = snapshot?.capabilities?.writeBranchCheckout === true && writeEnabled && !disabled;
-    const canCreate = snapshot?.capabilities?.writeBranchCreate === true && writeEnabled && !disabled;
-    const canCreateWorktrees = snapshot?.capabilities?.worktreeCreate === true && writeEnabled && !disabled;
-    const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
+    const canCheckout = !props.workspace && snapshot?.capabilities?.writeBranchCheckout === true && writeEnabled && !disabled;
+    const canCreate = !props.workspace && snapshot?.capabilities?.writeBranchCreate === true && writeEnabled && !disabled;
+    const canCreateWorktrees = !props.workspace && snapshot?.capabilities?.worktreeCreate === true && writeEnabled && !disabled;
+    const canLaunchWorktreeSession = !props.workspace && snapshot?.repo.isRepo === true;
 
     const [open, setOpen] = React.useState(false);
     const [includeRemotes, setIncludeRemotes] = React.useState(false);
@@ -77,18 +79,20 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         return repoScmBranchService.readCachedBranchesForMachinePath({
             machineId: props.machineId,
             path: props.rootPath,
+            ...(props.workspace ? { workspace: props.workspace } : {}),
             includeRemotes,
         });
-    }, [includeRemotes, props.machineId, props.rootPath]);
+    }, [includeRemotes, props.machineId, props.rootPath, props.workspace]);
 
     const fetchBranches = React.useCallback(async () => {
         return await repoScmBranchService.fetchBranchesForMachinePath({
             ...(serverId ? { serverId } : {}),
             machineId: props.machineId,
             path: props.rootPath,
+            ...(props.workspace ? { workspace: props.workspace } : {}),
             includeRemotes,
         });
-    }, [includeRemotes, props.machineId, props.rootPath, serverId]);
+    }, [includeRemotes, props.machineId, props.rootPath, props.workspace, serverId]);
 
     const handleBranchLoadError = React.useCallback((error: unknown) => {
         const message = error instanceof Error ? error.message : t('files.branchMenu.failedToLoad');

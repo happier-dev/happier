@@ -101,7 +101,7 @@ export async function applyWorkspaceFileStageAction(input: Readonly<{
         scope,
         operation: stage ? 'stage' : 'unstage',
         run: async () => {
-            const scmCallOptions = { serverId: scope.serverId };
+            const scmCallOptions = { serverId: scope.serverId, workspace: scope.workspace };
             const response = stage
                 ? await machineScmChangeInclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] }, scmCallOptions)
                 : await machineScmChangeExclude(scope.machineId, { cwd: scope.rootPath, paths: [filePath] }, scmCallOptions);

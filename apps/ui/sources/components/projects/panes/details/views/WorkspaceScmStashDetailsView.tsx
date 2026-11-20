@@ -9,26 +9,27 @@ import {
     machineScmStashPop,
     machineScmStashShow,
 } from '@/sync/ops/scm/machineScm';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
-export type WorkspaceScmStashDetailsViewProps = Readonly<{
+export type WorkspaceScmStashDetailsViewProps = WorkspaceScopeBase & Readonly<{
     scopeId: string;
     workspaceRefId: string;
     workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
-    serverId: string;
     onOpenFile?: (path: string) => void;
     onOpenFilePinned?: (path: string) => void;
 }>;
 
 export const WorkspaceScmStashDetailsView = React.memo((props: WorkspaceScmStashDetailsViewProps) => {
-    const adapter = React.useMemo<ScmStashDetailsAdapter>(() => ({
-        list: () => machineScmStashList(props.machineId, { cwd: props.rootPath }, { serverId: props.serverId }),
-        show: (stashRef) => machineScmStashShow(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId }),
-        pop: (stashRef, call) => machineScmStashPop(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId, ...call }),
-        drop: (stashRef, call) => machineScmStashDrop(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId, ...call }),
-        apply: (stashRef, call) => machineScmStashApply(props.machineId, { cwd: props.rootPath, stashRef }, { serverId: props.serverId, ...call }),
-    }), [props.machineId, props.rootPath, props.serverId]);
+    const adapter = React.useMemo<ScmStashDetailsAdapter>(() => {
+        const options = { serverId: props.serverId, ...(props.workspace ? { workspace: props.workspace } : {}) };
+        return {
+            list: () => machineScmStashList(props.machineId, { cwd: props.rootPath }, options),
+            show: (stashRef) => machineScmStashShow(props.machineId, { cwd: props.rootPath, stashRef }, options),
+            pop: (stashRef, call) => machineScmStashPop(props.machineId, { cwd: props.rootPath, stashRef }, { ...options, ...call }),
+            drop: (stashRef, call) => machineScmStashDrop(props.machineId, { cwd: props.rootPath, stashRef }, { ...options, ...call }),
+            apply: (stashRef, call) => machineScmStashApply(props.machineId, { cwd: props.rootPath, stashRef }, { ...options, ...call }),
+        };
+    }, [props.machineId, props.rootPath, props.serverId, props.workspace]);
 
     return (
         <ScmStashDetailsCore

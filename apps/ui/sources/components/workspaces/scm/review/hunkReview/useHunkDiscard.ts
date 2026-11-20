@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   discardChange,
@@ -6,19 +8,11 @@ import {
   type DiscardChangeResult,
 } from '@/components/sessions/files/review/discardChange';
 import { describeDiffHunkRange } from '@/components/ui/code/diff/hunks/DiffHunkRow';
-import { decodeBase64 } from '@/encryption/base64';
-import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 import type { HunkReviewActionTarget } from './useHunkReviewController';
 import { readPresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
 import { fileBaseOfReviewSource } from '../reviewSource';
-
-function decodeUtf8(base64: string): string {
-  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-    decodeBase64(base64),
-  );
-}
 
 /** The changed lines a review unit lands on (new side; old side for a pure deletion), for its label and Ask. */
 export function rangeOfReviewUnit(
@@ -60,16 +54,9 @@ export function useHunkDiscard(
       machineId: scope.machineId,
       rootPath: scope.rootPath,
       serverId: scope.serverId,
+      workspace: scope.workspace,
     }),
-    [scope.machineId, scope.rootPath, scope.serverId],
-  );
-  const readCurrentTextFor = React.useCallback(
-    (path: string, fileTarget = target) => async () => {
-      const read = await workspaceReadFile(fileTarget, path);
-      if (!read.success) throw new Error(read.error);
-      return decodeUtf8(read.content);
-    },
-    [target],
+    [scope.machineId, scope.rootPath, scope.serverId, scope.workspace],
   );
   const agent = input.agentName?.trim() || t('hunkReview.agentFallback');
   const messagesFor = React.useCallback(
@@ -134,9 +121,12 @@ export function useHunkDiscard(
     void result.undo();
   }, []);
 
-  const discardDisabledReason = input.unreachable
-    ? t('hunkReview.discardNeeds', { machine: machineName })
-    : null;
+  const discardSupported = !scope.workspace || supportsManagedWorkspaceScmRpcMethod(RPC_METHODS.SCM_CHANGE_DISCARD);
+  const discardDisabledReason = !discardSupported
+    ? t('hunkReview.noticeUnsupported')
+    : input.unreachable
+      ? t('hunkReview.discardNeeds', { machine: machineName })
+      : null;
   const discard = React.useCallback(
     async (hunkTarget: HunkReviewActionTarget) => {
       const against =
@@ -192,7 +182,6 @@ export function useHunkDiscard(
     retireUndo,
     remember,
     messagesFor,
-    readCurrentTextFor,
     refresh,
     sessionTarget,
   };

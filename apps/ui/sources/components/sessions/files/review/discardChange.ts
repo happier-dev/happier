@@ -1,9 +1,11 @@
 import type { ScmComparisonDiscardEntry, ScmChangeDiscardResultEntry } from '@happier-dev/protocol/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { decodeBase64 } from '@/encryption/base64';
 import { machineScmChangeDiscard, type MachineScmCallOptions } from '@/sync/ops/scm/machineScm';
 import { workspaceWriteFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
 import type { MachineFileSystemTarget } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices,
   type PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -17,7 +19,7 @@ export type DiscardChangeResult =
   | Readonly<{ ok: true; entry: ScmChangeDiscardResultEntry; fileReplaced: boolean; undo?: () => Promise<DiscardUndoResult>; undoUnavailable?: true; retire: () => void; refreshFailed: boolean; noteDelivery?: 'queued' | 'failed' }>
   | Readonly<{ ok: false; reason: FailureReason }>;
 export type DiscardChangeParams = Readonly<{
-  target: MachineFileSystemTarget;
+  target: MachineFileSystemTarget & Pick<WorkspaceScopeBase, 'workspace'>;
   entry: Omit<ScmComparisonDiscardEntry, 'includeUndo'>;
   messages: DiscardChangeMessages;
   refresh: () => Promise<void>;
@@ -43,7 +45,7 @@ async function readPreviousBytes(params: DiscardChangeParams, previous: NonNulla
 function failureReason(errorCode?: string): FailureReason {
   if (errorCode === 'CHANGE_MOVED_ON' || errorCode === 'FILE_CHANGED') return 'moved_on';
   if (errorCode === 'INVALID_REQUEST') return 'update_required';
-  if (errorCode === 'DISCARD_UNSUPPORTED') return 'unsupported';
+  if (errorCode === 'DISCARD_UNSUPPORTED' || errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) return 'unsupported';
   if (errorCode === 'COMPARISON_UNAVAILABLE') return 'unavailable';
   return 'unknown';
 }
@@ -69,6 +71,7 @@ export async function discardChange(params: DiscardChangeParams): Promise<Discar
   try {
     response = await machineScmChangeDiscard(params.target.machineId, { cwd: params.target.rootPath,
       entries: [{ ...params.entry, includeUndo: true }] }, { ...params.options, serverId: params.target.serverId,
+      workspace: params.target.workspace,
       ...(params.sessionTarget ? { authorization: { kind: 'session.write', sessionId: params.sessionTarget.sessionId } } : {}) });
   } catch {
     notice(params.messages.unknown, 'error');

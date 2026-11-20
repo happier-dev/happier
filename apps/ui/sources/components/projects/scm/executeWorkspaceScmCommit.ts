@@ -31,7 +31,7 @@ export async function executeWorkspaceScmCommitUndoLast(input: Readonly<{
         run: (call) => machineScmCommitUndoLast(input.scope.machineId, {
             cwd: input.scope.rootPath,
             expectedHeadOid: input.expectedHeadOid,
-        }, { serverId: input.scope.serverId, ...call }),
+        }, { serverId: input.scope.serverId, workspace: input.scope.workspace, ...call }),
         refreshAfterMutation: async () => {
             await input.refreshScmData();
             // Snapshot controllers retain failure state and resolve their refresh promise.
@@ -74,6 +74,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     ...(includePatches ? { patches: input.commitSelectionPatches } : {}),
                 }, {
                     serverId: input.scope.serverId,
+                    workspace: input.scope.workspace,
                 });
                 // Declined, or waiting on an approval: nothing ran and nothing failed.
                 if (isScmActionNotRun(response)) return;

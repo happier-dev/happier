@@ -157,6 +157,31 @@ describe('comparison Discard and guarded Undo', () => {
     }) })]));
   });
 
+  it('refuses managed hunk Discard without touching the controller repository at the same path', async () => {
+    const { buildReviewUnits } = await import('@happier-dev/protocol/scm/comparisonOccurrences');
+    const { t } = await import('@/text');
+    const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'managed-project', managedId: 'guest',
+      controller: { machineId: 'm1', installationId: 'install' }, rootPath: '/repo' } as const;
+    const hook = await renderHook(() => useHunkDiscard({
+      scope: { machineId: 'm1', serverId, rootPath: '/repo', workspace },
+      sessionId: null, machineName: 'Machine', unreachable: false, refresh: () => {},
+    }));
+    let controllerText = 'new';
+    rpc.responses.push(() => {
+      controllerText = 'old';
+      return { success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash }] };
+    });
+    const unit = buildReviewUnits('a.txt', 'combined', '@@ -1 +1 @@\n-old\n+new\n')[0]!;
+    await act(async () => {
+      await hook.getCurrent().discard({ path: 'a.txt', changeKey: unit.key,
+        source: { kind: 'live', root: '/repo' }, unit });
+    });
+    expect(controllerText).toBe('new');
+    expect(rpc.requests).toHaveLength(0);
+    expect(hook.getCurrent().discardDisabledReason).toBe(t('hunkReview.noticeUnsupported'));
+    expect(readPresentationNotice()).toMatchObject({ message: t('hunkReview.noticeUnsupported'), severity: 'error' });
+  });
+
   it('undoes a captured selected hunk through restore at the repository root from a nested Session cwd', async () => {
     const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm');
     const { buildReviewUnits } = await import('@happier-dev/protocol/scm/comparisonOccurrences');

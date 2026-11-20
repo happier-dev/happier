@@ -53,7 +53,7 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
             return lockResult.started ? { started: true } : lockResult;
         },
         executeRemoteOperation: async (operation, remoteTarget, call) => {
-            const options = { serverId: input.scope.serverId, ...call };
+            const options = { serverId: input.scope.serverId, workspace: input.scope.workspace, ...call };
             return operation === 'fetch'
                 ? await machineScmRemoteFetch(input.scope.machineId, {
                     cwd: input.scope.rootPath,
@@ -74,7 +74,8 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
                     }, options);
         },
         removeIndexLock: async (request) =>
-            await machineScmRepositoryRemoveIndexLock(input.scope.machineId, request, { serverId: input.scope.serverId }),
+            await machineScmRepositoryRemoveIndexLock(input.scope.machineId, request,
+                { serverId: input.scope.serverId, workspace: input.scope.workspace }),
         reportOperation: ({ operation, status, detail, rawError, errorCode, outcome }) => {
             reportWorkspaceScmOperation({
                 state: storage.getState(),

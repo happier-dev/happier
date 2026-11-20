@@ -12,14 +12,12 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DetailsDiffSummaryRow } from '@/components/appShell/panes/details/header/DetailsDiffSummaryRow';
 import { ScmCommitDetailsHeader } from '@/components/workspaces/scm/history/ScmCommitDetailsHeader';
 import { useScmCommitLogEntry } from '@/scm/history/useScmCommitLogEntry';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
-export type WorkspaceCommitDetailsViewProps = Readonly<{
+export type WorkspaceCommitDetailsViewProps = WorkspaceScopeBase & Readonly<{
     scopeId: string;
     workspaceRefId: string;
     workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
-    serverId: string;
     sha: string;
     presentation?: 'screen' | 'panel';
     onOpenFile?: (filePath: string) => void;
@@ -32,8 +30,8 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     const [diff, setDiff] = React.useState('');
 
     const commitScope = React.useMemo(
-        () => ({ serverId: props.serverId, machineId: props.machineId, rootPath: props.rootPath }),
-        [props.machineId, props.rootPath, props.serverId],
+        () => ({ serverId: props.serverId, machineId: props.machineId, rootPath: props.rootPath, workspace: props.workspace }),
+        [props.machineId, props.rootPath, props.serverId, props.workspace],
     );
     const commitEntry = useScmCommitLogEntry(commitScope, props.sha);
     const [reloadToken, setReloadToken] = React.useState(0);
@@ -49,7 +47,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
                 const response = await machineScmDiffCommit(
                     props.machineId,
                     { cwd: props.rootPath, commit: props.sha },
-                    { serverId: props.serverId },
+                    { serverId: props.serverId, ...(props.workspace ? { workspace: props.workspace } : {}) },
                 );
                 if (!active) return;
                 if (!response.success) {
@@ -69,7 +67,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
         return () => {
             active = false;
         };
-    }, [props.machineId, props.rootPath, props.serverId, props.sha, reloadToken]);
+    }, [props.machineId, props.rootPath, props.serverId, props.sha, props.workspace, reloadToken]);
 
     if (loading) {
         return <SurfaceStateCard testID="workspace-commit-details-loading" kind="loading" title={t('surfaceState.opening', { name: props.sha.slice(0, 7) })} />;

@@ -221,9 +221,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
                         scopeId={options.scopeId}
                         workspaceRefId={options.workspaceRefId}
                         workspaceCacheKey={options.workspaceCacheKey}
-                        machineId={options.machineId}
-                        rootPath={options.activeRootPath}
-                        serverId={options.serverId}
+                        {...options.workspaceScope}
                         sha={readCommitSha(input.tab.resource)}
                         presentation={options.presentation}
                         onOpenFile={(path) => options.openFileTab(path, 'default')}
@@ -239,11 +237,9 @@ export function createWorkspaceDetailsSurfaceRenderers(
             canRender: (input) => readResourceKind(input) === 'scmReview',
             render: (input) => (
                 <WorkspaceScmReviewDetailsView
-                    key={JSON.stringify([options.serverId, options.machineId, options.activeRootPath])}
+                    key={options.workspaceCacheKey}
                     scopeId={options.scopeId}
-                    machineId={options.machineId}
-                    rootPath={options.activeRootPath}
-                    serverId={options.serverId}
+                    {...options.workspaceScope}
                     {...readSessionScmReviewTarget(input.tab.resource)}
                     onSelectTarget={input.callbacks.replaceTab ? (target) => input.callbacks.replaceTab?.(input.tab.key,
                         createSessionScmReviewDetailsTab(target), { intent: 'pinned' }) : undefined}
@@ -263,9 +259,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
                     scopeId={options.scopeId}
                     workspaceRefId={options.workspaceRefId}
                     workspaceCacheKey={options.workspaceCacheKey}
-                    machineId={options.machineId}
-                    rootPath={options.activeRootPath}
-                    serverId={options.serverId}
+                    {...options.workspaceScope}
                     onOpenFile={(path) => options.openFileTab(path, 'default')}
                     onOpenFilePinned={(path) => options.openFileTab(path, 'pinned')}
                 />

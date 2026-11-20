@@ -56,6 +56,7 @@ export async function applyWorkspaceFileDiscardAction(input: Readonly<{
                 entries: [{ path: input.file.fullPath, kind: input.file.status }],
             }, {
                 serverId: input.scope.serverId,
+                workspace: input.scope.workspace,
                 onDispatched: markRunning,
             });
 

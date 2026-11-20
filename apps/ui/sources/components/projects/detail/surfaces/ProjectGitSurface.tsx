@@ -12,6 +12,7 @@ import { useDestinationParamsSelector } from '@/components/appShell/workspace/De
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useProjectSessions, useSessionListRowRenderablesForItems, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectReviewEvidenceSessions, type ProjectReviewEvidenceSession } from './projectReviewEvidenceSessions';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -41,11 +42,8 @@ function ProjectReviewSurface(props: WorkspaceScmReviewDetailsViewProps) {
     return <WorkspaceScmReviewDetailsView {...props} evidenceSessions={evidenceSessions} />;
 }
 
-export const ProjectGitSurface = React.memo((props: Readonly<{
+export const ProjectGitSurface = React.memo((props: WorkspaceScopeBase & Readonly<{
     scopeId: string;
-    serverId: string;
-    machineId: string;
-    rootPath: string;
     onOpenFile: (fullPath: string) => void;
     onOpenFilePinned: (fullPath: string) => void;
     onOpenReviewAllChanges: () => void;
@@ -64,7 +62,8 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
         scopeState: { right: { tabState: { git: pane.scopeState.gitTabState } } }, setRightTabState: pane.setRightTabState,
     });
     const { persistedReviewTabState, setPersistedReviewTabState } = useScmReviewTabState(
-        JSON.stringify([props.serverId, props.machineId, props.rootPath]), { patchDetailsTabState: pane.patchDetailsTabState },
+        props.workspace ? tryBuildWorkspaceCacheKey(props) ?? '' : JSON.stringify([props.serverId, props.machineId, props.rootPath]),
+        { patchDetailsTabState: pane.patchDetailsTabState },
         SESSION_DETAILS_SCM_REVIEW_TAB_KEY, pane.scopeState.reviewTabState);
     const mode = persistedReviewTabState?.projectChangesMode === 'git' ? 'git' : 'review';
     // Review | Git leads the review's own comparison bar (one line of chrome); in Git it heads Git's pane.
@@ -81,6 +80,7 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
             {mode === 'review' ? <ProjectReviewSurface scopeId={props.scopeId} hostSwitch={modeSwitch}
                 {...(routeResource?.kind === 'scmReview' ? routeResource : {})}
                 serverId={props.serverId} machineId={props.machineId} rootPath={props.rootPath}
+                workspace={props.workspace}
                 onOpenFile={props.onOpenFile} onOpenFilePinned={props.onOpenFilePinned}
                 onShowInGit={showInGit} /> : <WorkspaceRightPanelGitView
             activeSubTabId={activeGitSubTab}
@@ -88,6 +88,7 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
             serverId={props.serverId}
             machineId={props.machineId}
             rootPath={props.rootPath}
+            workspace={props.workspace}
             onOpenFile={props.onOpenFile}
             onOpenFilePinned={props.onOpenFilePinned}
             onOpenReviewAllChanges={props.onOpenReviewAllChanges}

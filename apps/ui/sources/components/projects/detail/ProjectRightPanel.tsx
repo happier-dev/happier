@@ -43,7 +43,6 @@ import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
@@ -146,18 +145,14 @@ function useProjectRightSidebarModel(props: ProjectRightPanelProps) {
                 rightPaneHiddenByDetails: rightPaneHiddenByDetails === true });
         },
     }), [bottomTerminalActive, dockLocation, pane, rightPaneHiddenByDetails, rightTerminalActive]);
-    const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
-        serverId: props.workspaceRef.serverId,
-        machineId: props.workspaceRef.machineId,
-        rootPath: props.activeRootPath,
-    }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
     const controller = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
         activeWorktreeId: props.activeWorktreeId,
     });
-    const activeCheckout = useProjectAccountWorkspaceRef(controller.checkoutWorkspace?.workspaceId ?? null, props.workspaceRef.serverId);
+    const { workspaceScope } = controller;
+    const activeCheckout = useProjectAccountWorkspaceRef((workspaceScope.workspace ?? controller.checkoutWorkspace)?.workspaceId ?? null, props.workspaceRef.serverId);
     const projectContext = useProjectContext({ serverId: props.workspaceRef.serverId, projectRef: props.workspaceRef, activeCheckout });
     const viewerScope = useActiveServerAccountScope(props.workspaceRef.serverId);
     const projectRowsStatus = useProjectAccountRows()?.status;
@@ -513,9 +508,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                         <React.Suspense fallback={<PaneLoadingFallback />}>
                             <ProjectGitSurface
                         scopeId={props.scopeId}
-                                serverId={props.workspaceRef.serverId}
-                                machineId={props.workspaceRef.machineId}
-                                rootPath={props.activeRootPath}
+                                {...workspaceScope}
                                 onOpenFile={openFileInDetails}
                                 onOpenFilePinned={openFileInDetailsPinned}
                                 onOpenReviewAllChanges={openReviewAllChanges}

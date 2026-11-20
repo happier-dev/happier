@@ -14,7 +14,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { buildProjectRouteHref, readProjectCodeRouteLocation, readProjectSelectedRouteResource, readProjectRouteStringParam } from './projectRouteState';
 import type { WorkspaceCodeLocation } from '@/components/projects/files/code/WorkspaceCodeBrowserView';
 import { useRepositoryTreeBrowserState } from '@/hooks/workspaces/files/repositoryTreeBrowserState';
-import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { tryBuildWorkspaceCacheKey, workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { useWorkspaceScmTabState } from '@/components/workspaces/scm/useWorkspaceScmTabState';
 import { useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 import { resolveProjectRightTabId } from './resolveProjectRightTabId';
@@ -30,7 +30,7 @@ import {
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 export function useProjectSurfaceController(params: Readonly<{
     scopeId: string;
@@ -48,8 +48,11 @@ export function useProjectSurfaceController(params: Readonly<{
     const workspaceRefs = useWorkspaceRefs();
     const checkoutWorkspace = React.useMemo(() => {
         const checkout = resolveProjectCheckoutWorkspaceRef(workspaceRefs, params.workspaceRef, params.activeRootPath);
-        return checkout ? workspaceAddressFromRefV1(checkout) : null;
+        const address = checkout ? workspaceAddressFromRefV2(checkout) : null;
+        return address && !('kind' in address) ? address : null;
     }, [params.activeRootPath, params.workspaceRef, workspaceRefs]);
+    const workspaceScope = React.useMemo(() => workspaceScopeFromProject(params.workspaceRef, params.activeRootPath),
+        [params.workspaceRef, params.activeRootPath]);
     const paneContext = React.useContext(AppPaneContext);
     const pane = useAppPaneScope(params.scopeId, scope => ({
         activeTabId: scope?.right.activeTabId,
@@ -60,11 +63,10 @@ export function useProjectSurfaceController(params: Readonly<{
     const { setActiveGitSubTab } = useWorkspaceScmTabState({
         scopeState: { right: { tabState: { git: pane.scopeState.gitTabState } } }, setRightTabState: pane.setRightTabState,
     });
-    const { setPersistedReviewTabState } = useScmReviewTabState(JSON.stringify([
+    const workspaceKey = tryBuildWorkspaceCacheKey(workspaceScope) ?? '';
+    const { setPersistedReviewTabState } = useScmReviewTabState(workspaceScope.workspace ? workspaceKey : JSON.stringify([
         params.workspaceRef.serverId, params.workspaceRef.machineId, params.activeRootPath,
     ]), { patchDetailsTabState: pane.patchDetailsTabState }, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, pane.scopeState.reviewTabState);
-    const workspaceKey = tryBuildWorkspaceCacheKey({ serverId: params.workspaceRef.serverId,
-        machineId: params.workspaceRef.machineId, rootPath: params.activeRootPath }) ?? '';
     const { setLocation } = useRepositoryTreeBrowserState(workspaceKey);
     const codeLocation = React.useMemo<WorkspaceCodeLocation>(() => readProjectCodeRouteLocation(routeParams)
         ?? { kind: 'folder', path: '' }, [routeParams.codeKind, routeParams.codePath]);
@@ -173,9 +175,10 @@ export function useProjectSurfaceController(params: Readonly<{
         closeRetainedRightPaneOnPhone,
         rightOpen: pane.scopeState.rightOpen,
         checkoutWorkspace,
+        workspaceScope,
         codeLocation,
         navigateCodeLocation,
         openCodeHistory,
     }), [activeTab, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory, navigateToPage, navigateToSurface, page,
-        pane.scopeState.rightOpen, closeRetainedRightPaneOnPhone, selectDashboard, setActiveTab, syncSurface]);
+        pane.scopeState.rightOpen, closeRetainedRightPaneOnPhone, selectDashboard, setActiveTab, syncSurface, workspaceScope]);
 }

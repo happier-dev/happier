@@ -30,6 +30,7 @@ export function useScmCommitLogEntry(scope: WorkspaceScopeBase | null, sha: stri
     const serverId = scope?.serverId ?? null;
     const machineId = scope?.machineId ?? null;
     const rootPath = scope?.rootPath ?? null;
+    const workspace = scope?.workspace;
 
     React.useEffect(() => {
         const trimmedSha = sha.trim();
@@ -40,7 +41,7 @@ export function useScmCommitLogEntry(scope: WorkspaceScopeBase | null, sha: stri
         const controller = new AbortController();
         setState(LOADING);
         void searchWorkspaceCommits({
-            scope: { serverId, machineId, rootPath },
+            scope: { serverId, machineId, rootPath, workspace },
             query: trimmedSha,
             limit: 5,
             signal: controller.signal,
@@ -54,7 +55,7 @@ export function useScmCommitLogEntry(scope: WorkspaceScopeBase | null, sha: stri
             if (!controller.signal.aborted) setState(UNAVAILABLE);
         });
         return () => controller.abort();
-    }, [machineId, rootPath, serverId, sha]);
+    }, [machineId, rootPath, serverId, sha, workspace]);
 
     return state;
 }

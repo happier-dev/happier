@@ -37,7 +37,6 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { useWorkspaceDetailsMachineName } from './useWorkspaceDetailsMachineName';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { buildWorkspaceCacheKey, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
@@ -140,11 +139,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     const pluginInteractionEnabled = scopedPluginProjection.phase === 'current'
         && scopedPluginProjection.interactionEnabled === true;
 
-    const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
-        serverId: props.workspaceRef.serverId,
-        machineId: props.workspaceRef.machineId,
-        rootPath: effectiveRootPath,
-    }), [effectiveRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
+    const workspaceScope = filesController.workspaceScope;
 
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey(workspaceScope), [workspaceScope]);
     const resolveTabPresentation = useWorkspaceFileWriteTabPresentation(workspaceScope);
@@ -205,9 +200,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         }, openWorkspaceSyncDetails);
     }, [effectiveRootPath, openWorkspaceSyncDetails, props.workspaceRef.machineId, props.workspaceRef.serverId, selectedWorkspaceRef]);
 
-    const emptyEditorScope = React.useMemo(() => ({
-        serverId: props.workspaceRef.serverId, machineId: props.workspaceRef.machineId, rootPath: effectiveRootPath,
-    }), [effectiveRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
+    const emptyEditorScope = workspaceScope;
     // The editor column with nothing open (lab EM1). The Project's own facts and where it is available open from the
     // Project's menu as the workspace-info tab, so the column invites opening a file instead of repeating them.
     const renderEmptyState = React.useCallback(() => (

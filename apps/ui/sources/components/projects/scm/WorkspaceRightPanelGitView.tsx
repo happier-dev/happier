@@ -80,10 +80,11 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         serverId: props.serverId,
         machineId: props.machineId,
         rootPath: props.rootPath,
-    }), [props.machineId, props.rootPath, props.serverId]);
+        ...(props.workspace ? { workspace: props.workspace } : {}),
+    }), [props.machineId, props.rootPath, props.serverId, props.workspace]);
     const inFlightOperation = useWorkspaceScmInFlightOperation(scope);
     const scmOperationBusy = localScmOperationBusy || Boolean(inFlightOperation);
-    const scmCallOptions = React.useMemo(() => ({ serverId: scope.serverId }), [scope.serverId]);
+    const scmCallOptions = React.useMemo(() => ({ serverId: scope.serverId, ...(scope.workspace ? { workspace: scope.workspace } : {}) }), [scope.serverId, scope.workspace]);
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
@@ -109,9 +110,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     );
 
     const { historyIdentity: commitHistoryIdentity, historyEntries, historyLoading, historyError, historyHasMore, loadCommitHistory } = useWorkspaceScmCommitHistory({
-        serverId: props.serverId,
-        machineId: props.machineId,
-        rootPath: props.rootPath,
+        ...scope,
         historyBranch: snapshot?.branch.head,
         readLogEnabled: snapshot?.repo.isRepo === true && (snapshot.capabilities?.readLog ?? true),
     });

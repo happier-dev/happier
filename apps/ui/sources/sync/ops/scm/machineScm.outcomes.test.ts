@@ -53,6 +53,29 @@ describe('SCM mutation transport outcomes', () => {
             .toEqual([RPC_METHODS.SCM_BACKEND_DESCRIBE, RPC_METHODS.SCM_COMMIT_CREATE]
                 .map(method => ({ method, target: workspace, machineId: 'controller' })));
     });
+    it('returns the guest commit when the controller has a different repository at the same path', async () => {
+        const { searchWorkspaceCommits } = await import('@/scm/search/searchWorkspaceCommits');
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'remote-project', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' } as const;
+        rpc.mockImplementation(async (request: { payload: { target?: unknown } }) => {
+            const isGuest = request.payload.target !== undefined;
+            const sha = (isGuest ? 'b' : 'a').repeat(40);
+            return { success: true, queryApplied: true, entries: [{
+                sha, shortSha: sha.slice(0, 12), authorName: 'Test Author', authorEmail: 'author@example.test',
+                timestamp: 1_767_225_600_000, subject: 'matching commit', body: '',
+            }] };
+        });
+        const scope = { serverId, machineId: workspace.controller.machineId, rootPath: workspace.rootPath };
+        await expect(searchWorkspaceCommits({ scope, query: 'matching' })).resolves.toMatchObject({
+            status: 'matches', entries: [{ sha: 'a'.repeat(40) }],
+        });
+        await expect(searchWorkspaceCommits({ scope: { ...scope, workspace }, query: 'matching' })).resolves.toMatchObject({
+            status: 'matches', entries: [{ sha: 'b'.repeat(40) }],
+        });
+        expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({
+            method: RPC_METHODS.SCM_LOG_LIST, payload: expect.objectContaining({ target: workspace }),
+        }));
+    });
     it('refuses explicit commit-base authority when the target cannot honor it before sending a mutation', async () => {
         rpc.mockResolvedValue({ success: true, capabilities: createScmCapabilities({ writeCommit: true }) });
         const request = { cwd: '/repo', message: 'commit', expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main' };
