@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { ManagedAcquireInputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -14,6 +15,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/op
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { seedCliDataKeyAuthForServer } from '../../../../../packages/tests/src/testkit/cliAuth';
+import { startInterruptibleTcpProxy } from '../../../../../packages/tests/src/testkit/network/interruptibleTcpProxy';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createSignedAccountContentBinding } from '../../../../server/sources/testkit/accountEncryption';
 import { prepareE2eePrivateLabelForAccount } from '../../../../server/sources/testkit/privateLabelFixture';
@@ -41,7 +43,7 @@ import { acquireEnrollmentJourneyGuest } from './enrollmentJourney.testkit';
 // Run this same journey with HAPPIER_MEMBER_JOURNEY_FAULT=missing-payload-root,
 // invalid-archive or remote-stderr to falsify its successful enrollment assertion.
 const memberJourneys = [
-    { name: 'enrolls an unprepared Team preset as its member through the public enrollment answer', unprepared: true, scenarios: ['exact'] },
+    { name: 'enrolls an unprepared Team preset through the member CLI after the Home route changes', unprepared: true, scenarios: ['exact'] },
     { name: 'enrolls exact and pool Team containers as their member and preserves bootstrap failure causes', unprepared: false,
         scenarios: ['missing-native-option', 'missing-payload-root', 'invalid-archive', 'stderr', 'admin', 'exact', 'pool'] },
 ] as const;
@@ -74,7 +76,33 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
     const runRequesterAction = unprepared ? await (async () => {
         const cliHome = await mkdtemp(join(home.baseDir, 'requester-cli-'));
         const token = await auth.createToken(member.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-        await seedCliDataKeyAuthForServer({ cliHome, serverUrl: home.baseUrl, token, machineKey: memberKeys.secretKey });
+        const { serverId } = await seedCliDataKeyAuthForServer({
+            cliHome, serverUrl: home.baseUrl, token, machineKey: memberKeys.secretKey,
+        });
+        // Model a still-reachable former HTTPS ingress. Home has moved its
+        // approval route, while the requester's saved descriptor is one revision behind.
+        const retiredIngress = await startInterruptibleTcpProxy(home.baseUrl);
+        onTestFinished(() => retiredIngress.close());
+        const readDescriptor = async () => {
+            const response = await fetch(`${home.baseUrl}/v1/features/authenticated`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            expect(response.ok).toBe(true);
+            return HomeConnectionDescriptorV1Schema.parse((await response.json()).homeConnectionDescriptor);
+        };
+        const retiredUrl = retiredIngress.baseUrl.replace(/^http:/, 'https:');
+        vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', retiredUrl);
+        const savedDescriptor = await readDescriptor();
+        vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', home.baseUrl);
+        const currentDescriptor = await readDescriptor();
+        expect(currentDescriptor.revision).toBeGreaterThan(savedDescriptor.revision);
+        expect(savedDescriptor.endpoints).toEqual([{ kind: 'https', url: retiredUrl }]);
+        expect(currentDescriptor.endpoints).toEqual([{ kind: 'https', url: home.baseUrl }]);
+        const settingsPath = join(cliHome, 'settings.json');
+        const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
+        settings.servers[serverId].homeConnectionDescriptor = savedDescriptor;
+        settings.servers[serverId].homeConnectionDescriptorAuthority = 'exact';
+        await writeFile(settingsPath, JSON.stringify(settings));
         const sourceRuntime = fileURLToPath(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
         const entry = fileURLToPath(new URL('../../index.ts', import.meta.url));
         return async (actionId: string, input: Record<string, unknown>) => {

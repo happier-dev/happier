@@ -7,7 +7,7 @@ import { parseCapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilit
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { resolveHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
 import { readManagedMachineRead, openManagedMachineRead } from '@/machines/managed/readManagedMachine';
@@ -16,7 +16,7 @@ import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
-import { getServerProfile } from '@/server/serverProfiles';
+import { observeServerProfileHomeConnection } from '@/server/profileObservation';
 
 /** A command-line invocation is itself an answering client; no App or daemon acquires its credential custody. */
 export function createCliManagedInstallationRespond(params: Readonly<{
@@ -65,9 +65,13 @@ export function createCliManagedInstallationRespond(params: Readonly<{
                     content: { mode: 'plain' }, timeoutMs: null, signal: requestSignal }));
             }),
             approvePairing: async (pairing, signal) => {
-                const target = await resolveHomeTarget({ input: { kind: 'saved_profile', profileRef: params.serverId },
-                    readSavedProfile: getServerProfile });
-                if (target.homeServerIdentityId !== input.homeId) return 'server_target_mismatch';
+                // The admitted Action connection can observe a new approval ingress
+                // even when the saved descriptor still names a retired one.
+                const { profile } = await observeServerProfileHomeConnection({ profileId: params.serverId,
+                    serverUrl: params.serverUrl, token: params.credentials.token, signal });
+                const descriptor = profile.homeConnectionDescriptor;
+                if (descriptor?.homeServerIdentityId !== input.homeId) return 'server_target_mismatch';
+                const target = resolveHomeTargetFromDescriptor({ descriptor, authority: 'saved_profile', profile });
                 await approveTerminalAuthRequest({ publicKey: pairing.publicKey, pairing: pairing.pairing,
                     supportsTokenOnly: pairing.supportsTokenOnly, target, accountCredentials: params.credentials, signal });
                 return undefined;

@@ -3773,6 +3773,9 @@ with the controller Machine ID, operation ID, and the guest's
 `includeManagedPrompt: true` to wait for the question or settlement. Copy the
 current question and task ID into `machines.managed.bootstrap.respond` and
 confirm the answer.
+The CLI refreshes its approval route over the authenticated Home connection
+that admitted the Action. Pairing verifies the selected carrier against that
+Home’s current descriptor before sending the response.
 
 The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
 transport carries a transient result, not an Action operation or task observation.
