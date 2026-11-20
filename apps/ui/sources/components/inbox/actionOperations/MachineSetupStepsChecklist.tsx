@@ -8,16 +8,17 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { t } from '@/text';
 
 import { ProjectCommandOutputPane } from './ProjectCommandOutputPane';
-import { projectMachineSetupStepChecklist, type MachineSetupOutputAttachment } from './actionOperationDetailPresentation';
+import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { projectMachineSetupStepChecklist, projectProjectCommandStepChecklist, type MachineSetupOutputAttachment } from './actionOperationDetailPresentation';
 
 /**
  * A Setup operation's reviewed steps: the one run checklist the Machine's Setup tab and the operation
- * detail both show. The row the run waits on says "Needs you"; the question itself is asked once, above.
+ * detail both show, for a Machine setup and a Project setup's reviewed commands alike (plan E U2). The row the run waits on says "Needs you"; the question itself is asked once, above.
  * With `stepOutput`, a step with retained output opens it in place (the detail shows its own output pane).
  */
 export function MachineSetupStepsChecklist(props: Readonly<{
   operation: ActionOperationProjection;
-  attachment: MachineSetupOutputAttachment;
+  attachment: MachineSetupOutputAttachment | ProjectCommandAttachmentV1;
   title?: string | null;
   header?: React.ReactNode;
   stepOutput?: boolean;
@@ -29,18 +30,22 @@ export function MachineSetupStepsChecklist(props: Readonly<{
   const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
   const steps = React.useMemo(() => {
     const question = readActionOperationSudoPrompt(operation.snapshot);
-    const projected = projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation);
+    const projected = props.attachment.kind === 'projectCommand'
+      ? projectProjectCommandStepChecklist(props.attachment, operation.observation)
+      : projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation);
     if (!projected || !stepOutput) return projected;
     const items = projected.items.map((item): PlanChecklistItem => {
       const output = item.output;
       if (!output) return item;
       const title = typeof item.title === 'string' ? item.title : t('projects.scripts.output.title');
       const open = expandedIds.includes(item.id);
-      const failed = projected.executionById[item.id]?.status === 'error';
+      const status = projected.executionById[item.id]?.status;
+      // A running Project command with its own terminal (an arbitrary init) is answered there, one press away.
+      const opener = status === 'error' || (status === 'running' && props.attachment.kind === 'projectCommand');
       return {
         ...item,
         // A failed step's line is its output opener (lab L7-failed "› Output"): why it stopped is said once, at the head.
-        ...(failed ? { subtitle: `${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}` } : {}),
+        ...(opener ? { subtitle: `${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}` } : {}),
         renderDetails: () => (
           <ProjectCommandOutputPane operation={operation} terminalId={output.terminalId} title={title} height={240} ownerStatesExit />
         ),

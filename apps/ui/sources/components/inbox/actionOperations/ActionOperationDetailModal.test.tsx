@@ -177,6 +177,27 @@ describe('ActionOperationDetailModal', () => {
         await screen.unmount();
     });
 
+    it('shows a Project setup’s reviewed commands on the same Setup checklist, the running init opening its terminal in place (E U2)', async () => {
+        const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'project-setup-steps', revision: 1,
+            actionId: 'projects.prepare', state: 'running', scope: { accountId: 'account-1', machineId: 'machine-1' },
+            title: 'Set up a project', createdAt: 100, startedAt: 110, cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home-a', machineId: 'machine-1',
+                workspaceRefId: 'checkout', cwd: '/repo', steps: [
+                    { index: 0, source: { kind: 'command', command: 'pnpm install' }, state: 'succeeded', exitCode: 0 },
+                    { index: 1, source: { kind: 'command', command: './scripts/init.sh' }, state: 'running', terminalId: 'init-terminal' },
+                    { index: 2, source: { kind: 'command', command: 'pnpm db:migrate' }, state: 'pending' },
+                ] } });
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [operation] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="project-setup-steps" onClose={() => {}} />);
+        const steps = screen.findByTestId('action-operation-setup-steps');
+        expect(steps).not.toBeNull();
+        const text = screen.getTextContent();
+        expect(text).toContain('pnpm install');
+        expect(text).toContain('./scripts/init.sh');
+        expect(text).toContain('pnpm db:migrate');
+        await screen.unmount();
+    });
+
     it('marks the step a Setup waits on as needing the person, asking its password question once above', async () => {
         const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'setup-waits', revision: 1,
             actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'running', scope: { accountId: 'account-1', machineId: 'machine-1' },

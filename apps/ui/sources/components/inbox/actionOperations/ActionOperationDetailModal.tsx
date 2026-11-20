@@ -508,6 +508,10 @@ export const ActionOperationDetailModal = React.memo(
         ) : null}
 
         {detail.machineSetup ? <MachineSetupStepsChecklist operation={operation} attachment={detail.machineSetup} /> : null}
+        {detail.projectCommand?.steps?.length ? (
+          <MachineSetupStepsChecklist operation={operation} attachment={detail.projectCommand} stepOutput
+            title={describeProjectCommandPurpose(detail.projectCommand.purpose)} />
+        ) : null}
         {detail.machineFirewallRecovery ? <MachineFirewallRecovery recovery={detail.machineFirewallRecovery} /> : null}
 
         {/* Setup without attached output would only restate the status and Machine shown above. */}

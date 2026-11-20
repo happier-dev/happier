@@ -19,6 +19,7 @@ import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigur
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { describeProjectCommandSource } from '@/components/projects/projectSetup/projectScriptPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
@@ -470,6 +471,44 @@ export function projectMachineSetupStepChecklist(
             output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId,
                 machineId: attachment.machineId, terminalId: step.terminalId } : null });
         executionById[id] = { status: unobserved ? 'idle' : SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
+    }
+    return { items, selectedIds: items.map((item) => item.id), executionById, progressObservationLabel };
+}
+
+type ProjectCommandStep = NonNullable<ProjectCommandAttachmentV1['steps']>[number];
+const PROJECT_STEP_STATUS = {
+    pending: 'queued', running: 'running', succeeded: 'done', failed: 'error', cancelled: 'idle', outcome_uncertain: 'idle',
+} as const satisfies Record<ProjectCommandStep['state'], PlanChecklistItemStatus>;
+
+/**
+ * A Project setup's reviewed commands as rows of the same run checklist a Machine setup uses (plan E U2). The
+ * finite owner reports each command's state; a running command with its terminal opens that terminal in place,
+ * which is where an arbitrary init's own questions are answered.
+ */
+export function projectProjectCommandStepChecklist(
+    attachment: ProjectCommandAttachmentV1,
+    observation: ActionOperationObservation = 'available',
+): MachineSetupStepChecklist | null {
+    const steps = attachment.steps;
+    if (!steps || steps.length === 0) return null;
+    const items: MachineSetupStepChecklistItem[] = [];
+    const executionById: Record<string, PlanChecklistExecutionState> = {};
+    let progressObservationLabel: string | null = null;
+    for (const step of steps) {
+        const id = String(step.index);
+        const subtitle = step.state === 'failed' && step.exitCode !== undefined
+            ? t('localServices.actions.failure.exitCode', { code: String(step.exitCode) })
+            : step.state === 'outcome_uncertain' ? t('inbox.actionOperations.status.outcomeUncertain')
+            : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
+        const unobserved = observation !== 'available' && (step.state === 'running' || step.state === 'pending');
+        if (unobserved && step.state === 'running') {
+            progressObservationLabel ??= describeActionOperationStatusLabel({ kind: 'host', value: observation });
+        }
+        items.push({ id, title: describeProjectCommandSource(step.source).reference, satisfied: false, disabled: true,
+            ...(subtitle ? { subtitle } : {}), needsAttention: false,
+            output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId,
+                machineId: attachment.machineId, terminalId: step.terminalId } : null });
+        executionById[id] = { status: unobserved ? 'idle' : PROJECT_STEP_STATUS[step.state], logs: NO_LOGS };
     }
     return { items, selectedIds: items.map((item) => item.id), executionById, progressObservationLabel };
 }
