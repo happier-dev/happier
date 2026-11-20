@@ -17,6 +17,7 @@ import { SessionGitActionRailBadge, SessionGitActionRailTooltip } from './Sessio
 import { useSessionGitActionRailBadge } from './SessionGitActionRailBadge';
 import { formatGitActionRailAccessibilityLabel } from '@/components/ui/navigation/tabBadge/gitActionRailAccessibility';
 import { useSessionRunningAgentCount } from './useSessionRunningAgentCount';
+import { useOpenSessionTarget } from './open/useOpenSessionTarget';
 
 const styles = StyleSheet.create((theme) => ({
     rail: {
@@ -50,6 +51,7 @@ export const SessionActionRail = React.memo((props: Readonly<{
     const pane = useAppPaneScope(props.scopeId);
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     const terminal = useSessionTerminalAction(props);
+    const openSessionTarget = useOpenSessionTarget({ sessionId: props.sessionId, scopeId: props.scopeId, serverId: props.serverId });
     const runningAgentCount = useSessionRunningAgentCount(props.sessionId);
     const gitBadge = useSessionGitActionRailBadge(props.sessionId);
     const tabs = getSessionRightPanelTabs(false, runningAgentCount);
@@ -103,6 +105,11 @@ export const SessionActionRail = React.memo((props: Readonly<{
                     {tab.id === 'git' ? renderAction({
                         id: 'review', label: t('files.toolbar.review'), icon: 'file-diff',
                         active: reviewActive, onPress: () => toggleSessionReview(pane),
+                    }) : null}
+                    {/* Opens Files directly on its Session media tab; the Files button above keeps its own toggle. */}
+                    {tab.id === 'files' ? renderAction({
+                        id: 'media', label: t('files.sessionMedia.title'), icon: 'image',
+                        active: false, onPress: () => { openSessionTarget({ kind: 'fileBrowser', view: 'session' }); },
                     }) : null}
                 </React.Fragment>
             ))}

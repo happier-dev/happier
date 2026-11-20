@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,6 +74,10 @@ vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
         repositoryTreeListProps.push(props);
         return React.createElement('View', { ...props, testID: 'repository-tree-list' });
     }),
+}));
+
+vi.mock('@/components/sessions/sessionMedia/SessionMediaGrid', () => ({
+    SessionMediaGrid: (props: any) => React.createElement('View', { ...props, testID: 'session-media-grid' }),
 }));
 
 const searchFilesSpy = vi.fn();
@@ -222,6 +226,32 @@ describe('SessionRepositoryTreeBrowserView', () => {
         expect(nextProps.theme).toBe(initialProps.theme);
         expect(nextProps.onRequestDownload).toBe(initialProps.onRequestDownload);
         expect(nextProps.onExpandedPathsChange).toBe(initialProps.onExpandedPathsChange);
+    });
+
+    it('offers the Session media tab first and swaps the tree for the media grid when selected', async () => {
+        const { screen } = await renderRepositoryTreeBrowserView();
+
+        expect(screen.findByTestId('repository-tree-list')).toBeTruthy();
+        expect(screen.findByTestId('session-media-grid')).toBeNull();
+        const tabIds = screen.root.findAll((node) => String(node.props?.testID ?? '').startsWith('repository-tree-visibility:'))
+            .map((node) => String(node.props.testID));
+        expect(tabIds.find((id) => !id.endsWith(':badge') && !id.endsWith(':focus-ring'))).toBe('repository-tree-visibility:session');
+
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('repository-tree-visibility:session'), 'onPress');
+        });
+
+        expect(screen.findByTestId('session-media-grid')?.props.sessionId).toBe('s1');
+        expect(screen.findByTestId('repository-tree-list')).toBeNull();
+    });
+
+    it('lands on the Session media tab when asked to, then reports the request handled', async () => {
+        const onViewRequestHandled = vi.fn();
+        const { screen } = await renderRepositoryTreeBrowserView({ viewRequest: { view: 'session' }, onViewRequestHandled });
+
+        expect(screen.findByTestId('session-media-grid')).not.toBeNull();
+        expect(screen.findByTestId('repository-tree-list')).toBeNull();
+        expect(onViewRequestHandled).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the repository tree list stable when only scroll edge visibility changes', async () => {

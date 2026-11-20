@@ -55,11 +55,13 @@ export function useOpenSessionTarget(params: Readonly<{
         });
         if (!placement) return false;
 
-        if (target.kind === 'fileBrowser' && target.revealPath) {
+        if (target.kind === 'fileBrowser' && (target.revealPath || target.view)) {
             const current = pane.scopeState?.right.tabState.files;
             pane.setRightTabState('files', {
                 ...(current && typeof current === 'object' ? current : {}),
-                revealRequest: { path: target.revealPath },
+                ...(target.revealPath ? { revealRequest: { path: target.revealPath } } : null),
+                // A fresh object each time, so pressing it again re-applies the view.
+                ...(target.view ? { viewRequest: { view: target.view } } : null),
             });
         }
         if (target.kind === 'sourceControl') {

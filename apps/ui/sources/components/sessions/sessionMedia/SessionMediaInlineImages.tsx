@@ -19,7 +19,7 @@ import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashLis
 import { SafeNativeSvgXml } from '@/components/ui/media/SafeNativeSvgXml';
 import type { SessionMediaInlineImageSummary } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 
-import { resolveSessionMediaImageMimeType } from './sessionMediaPresentation';
+import { resolveSessionMediaImageMimeType, toSessionMediaPreviewImage } from './sessionMediaPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
 
 const FALLBACK_THUMBNAIL_SIZE = 84;
@@ -108,7 +108,7 @@ function resolveSessionMediaAccessibilityLabel(media: SessionMediaInlineImageSum
     return t('files.sessionMedia.generatedImageA11y', { name: accessibleName });
 }
 
-function SessionMediaInlineImagePreviewTile(props: Readonly<{
+export function SessionMediaInlineImagePreviewTile(props: Readonly<{
     sessionId: string;
     media: SessionMediaInlineImageSummary;
     mimeType: string;
@@ -246,15 +246,7 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
             result.push({
                 media,
                 mimeType,
-                modalImage: {
-                    kind: 'session-image',
-                    title: media.name,
-                    sessionId: props.sessionId,
-                    filePath: media.path,
-                    mimeType,
-                    sizeBytes: media.sizeBytes,
-                    cacheKey: media.sha256 ?? null,
-                },
+                modalImage: toSessionMediaPreviewImage(props.sessionId, media, mimeType),
             });
         }
         return result;

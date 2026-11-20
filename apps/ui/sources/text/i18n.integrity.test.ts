@@ -94,6 +94,7 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     fr: new Set([
         // "Session" is also the French noun for an agent session.
         'message.provenanceSession',
+        'files.toolbar.sessionMedia',
         'machine.thisComputer.cliChannelStable',
         // "Machine" is the French word for a computer here, not an untranslated fallback.
         'updates.sections.machine',

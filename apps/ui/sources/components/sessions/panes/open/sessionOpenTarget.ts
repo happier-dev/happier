@@ -51,8 +51,11 @@ export type SessionOpenTarget =
     | Readonly<{ kind: 'subagent'; subagent: SessionSubagent }>
     /** The full agent roster — the right pane's Agents tab, or its own screen where there is none. */
     | Readonly<{ kind: 'agentRoster' }>
-    /** The workspace file browser — the right pane's Files tab, or its own screen. */
-    | Readonly<{ kind: 'fileBrowser'; revealPath?: string }>
+    /**
+     * The workspace file browser — the right pane's Files tab, or its own screen. `view: 'session'`
+     * lands on its Session media tab instead of the tree.
+     */
+    | Readonly<{ kind: 'fileBrowser'; revealPath?: string; view?: 'session' }>
     | Readonly<{ kind: 'sourceControl' }>
     /**
      * The workspace shell terminal, in the sidebar. The `bottom` and `details` dock locations are a
