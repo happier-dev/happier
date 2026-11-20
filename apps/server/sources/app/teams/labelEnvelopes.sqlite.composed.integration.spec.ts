@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol/teams';
 import {
   parsePrivateLabelStoredV1,
+  PrivateLabelStoredV1Schema,
   projectPrivateLabelForRecipientV1,
   serializePrivateLabelStoredV1,
   type PrivateLabelStoredV1,
@@ -27,6 +28,7 @@ import {
 } from '@/testkit/privateLabelFixture';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { admitTeamMemberInTx } from './memberships/membershipService';
 import { registerTeamGroupRoutes } from './groups/registerTeamGroupRoutes';
 
@@ -64,6 +66,51 @@ describe('Team label envelope repair for credential, external-key and Pool label
     });
     return { account, content };
   }
+
+  it('discovers the one owed label without validating 1,001 stored recipient arrays', async () => {
+    const { account: owner } = await e2eeAccount();
+    const { account: newcomer } = await e2eeAccount();
+    const team = await db.team.create({ data: { name: 'Label census at scale' } });
+    const members = Array.from({ length: 198 }, () => ({ id: crypto.randomUUID(), encryptionMode: 'plain' }));
+    await db.account.createMany({ data: members });
+    await db.teamMembership.createMany({ data: [
+      { teamId: team.id, accountId: owner.id, role: 'owner' },
+      { teamId: team.id, accountId: newcomer.id, role: 'member' },
+      ...members.map(({ id }) => ({ teamId: team.id, accountId: id, role: 'member' as const })),
+    ] });
+    const owedId = crypto.randomUUID();
+    const prepared = await prepareE2eePrivateLabelForAccount(owner.id,
+      { entity: 'team_group', field: 'name', id: owedId }, 'Prepared label', { accountIds: [newcomer.id] });
+    const current = serializePrivateLabelStoredV1(prepared);
+    const missing = serializePrivateLabelStoredV1({ ...prepared, recipients: prepared.recipients.filter(row => row.accountId === owner.id) });
+    await db.teamGroup.createMany({ data: [
+      { id: owedId, teamId: team.id, name: missing },
+      ...Array.from({ length: 1_000 }, () => ({ teamId: team.id, name: current })),
+    ] });
+
+    const queries: string[] = [];
+    const client = await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
+    onDbClientQuery(client, event => queries.push(event.query));
+    const transaction = db.$transaction;
+    db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
+      return Reflect.apply(client.$transaction, client, args);
+    } });
+    const parses = vi.spyOn(PrivateLabelStoredV1Schema, 'safeParse');
+    const reparses = vi.spyOn(PrivateLabelStoredV1Schema, 'parse');
+    try {
+      const response = await app.inject({ method: 'GET', url: '/v2/teams/label-envelopes', headers: { 'x-test-user-id': owner.id } });
+      expect(response.statusCode).toBe(200);
+      const work = TeamLabelEnvelopeWorkV1Schema.parse(response.json());
+      expect(work.teams.flatMap(row => row.labels.map(label => label.binding.id))).toEqual([owedId]);
+      expect(queries.filter(query => query.includes('TeamGroup') && query.startsWith('SELECT')).length).toBe(1);
+      expect({ parses: parses.mock.calls.length, reparses: reparses.mock.calls.length }).toEqual({ parses: 0, reparses: 0 });
+    } finally {
+      parses.mockRestore();
+      reparses.mockRestore();
+      db.$transaction = transaction;
+      await client.$disconnect();
+    }
+  });
 
   it('delivers existing label keys to a later member and keeps non-members and ciphertext out', async () => {
     const a = await e2eeAccount();

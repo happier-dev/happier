@@ -81,12 +81,10 @@ export async function readTeamRecipientEnvelopeCensusesInTx(
     const accounts = accountIds.length === 0 ? [] : await tx.account.findMany({
         where: { id: { in: accountIds } }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
     });
-    const accountsById = new Map(accounts.map(account => [account.id, account]));
-    return new Map([...byTeam].map(([teamId, ids]) => [teamId,
-        projectSavedSecretRecipientEnvelopeCensusRecipientsV1({
-            accounts: ids.flatMap(id => { const account = accountsById.get(id); return account ? [account] : []; }),
-            envelopes: [],
-        }),
+    const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({ accounts, envelopes: [] });
+    const byAccount = new Map(recipients.map(recipient => [recipient.account.accountId, recipient]));
+    return new Map([...byTeam].map(([teamId, ids]) => [
+        teamId, ids.flatMap(id => byAccount.get(id) ?? []),
     ]));
 }
 
