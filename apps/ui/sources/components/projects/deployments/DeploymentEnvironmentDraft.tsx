@@ -272,7 +272,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     const suggestion = stepped ? resolvePublishTargetRecommendation(recommendationInput) : recommendation;
     const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
     const onPlatform = recommendation.target?.targetClass === 'platform';
+    const platformStatus = platforms.state.status;
     const platformDefinitionAccepted = recommendation.offeredTargetIds.includes(targetKey);
+    const selectedPlatformUnavailable = onPlatform && !platformDefinitionAccepted
+      && (props.platformAvailable !== true || platformStatus === 'ready');
     // The Configure preflight owner (DEPLOY-ACTIVITY-READ-1113) decides name and port syntax, as the server will.
     const configure = projectDeploymentConfigurePreflightV1({ name, port: imagePort });
     const imagePortValid = configure.port.status === 'valid';
@@ -422,7 +425,6 @@ export const DeploymentEnvironmentDraft = React.memo(
       }
     };
 
-    const platformStatus = platforms.state.status;
     // Turning on a plugin happens in Plugins; a hosted flow steps aside first. A tile that goes there is an action
     // among the choices, never one of them (DESIGN-ACCEPT-2 M1, lab jdF-where).
     const openPlugins = () => {
@@ -436,7 +438,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         id: target.key, title: target.title, mark: <PluginMark title={target.title} pluginId={target.pluginId} />,
         ...(target.description ? { subtitle: target.description } : {}),
       })),
-      ...(recommendation.target?.targetClass === 'platform' && !platformDefinitionAccepted ? [{ id: recommendation.target.id,
+      ...(selectedPlatformUnavailable ? [{ id: targetKey,
         title: t('common.unavailable'), subtitle: recommendation.target.id, disabled: true } satisfies SelectionTile<string>] : []),
       // The tiles keep their place while the read answers; each other state says itself once, with its next step.
       ...(recommendation.evidence.includes('stored_definition') ? [] : platformStatus === 'loading'
@@ -742,7 +744,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             {stepped ? null : machineAwayNotice}
             {stepped ? null : retentionChoice}
           </ItemGroup>
-          {!platformDefinitionAccepted ? <SurfaceStateCard kind="unavailable" size="line"
+          {selectedPlatformUnavailable ? <SurfaceStateCard kind="unavailable" size="line"
             title={t('common.unavailable')} /> : null}
     </>;
     const machineAway = chosen !== null && !answers(chosen);

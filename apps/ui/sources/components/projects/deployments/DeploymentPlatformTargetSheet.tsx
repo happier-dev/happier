@@ -321,6 +321,8 @@ export function DeploymentPlatformTargetEditor(
     resetFrom();
   });
   const needsConnect = target !== null && account === null && firstConnection.missing;
+  const connectionPending = firstConnection.pending;
+  const connectionNeeded = needsConnect || connectionPending;
   const source =
     useProjectSource(props.lifetime, props.environment.projectSourceId).source
       ?.source ?? null;
@@ -331,7 +333,7 @@ export function DeploymentPlatformTargetEditor(
 
   const draft = React.useMemo(
     () =>
-      form && account
+      form && account && !connectionPending
         ? buildPlatformTargetDraft({
             target: form,
             ownerAccountId: props.ownerAccountId,
@@ -346,6 +348,7 @@ export function DeploymentPlatformTargetEditor(
     [
       form,
       account,
+      connectionPending,
       props.ownerAccountId,
       props.lifetime.scope.serverId,
       props.environment,
@@ -589,11 +592,11 @@ export function DeploymentPlatformTargetEditor(
   }, [onPrepared, create, createIntentReady, draft, reviewNotice]);
   // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
-    || (create && props.onPrepared) || needsConnect ? null : {
+    || (create && props.onPrepared) || connectionNeeded ? null : {
     testID: create ? 'project-deployments.platform.create'
       : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
     loading: busy !== null,
-    disabled: busy !== null || !draft || !target || missing || needsConnect || !drawn.canCheck,
+    disabled: busy !== null || !draft || !target || missing || !drawn.canCheck,
     title: create ? t('projects.deployments.platformLink.create', { platform: target?.title ?? '' }) : ready && target && !props.onPrepared
       ? t('projects.deployments.platformLink.link', { platform: target.title })
       : outcome ? t('projects.deployments.platformLink.checkAgain') : t('projects.deployments.platformLink.check'),
@@ -666,7 +669,10 @@ export function DeploymentPlatformTargetEditor(
               // header action that cannot succeed yet is not drawn (DESIGN-ACCEPT C1 follow-up).
               ...(primary && (!primary.disabled || primary.loading) ? { action: <SectionActionButton {...primary} /> } : {}),
             } : { header: 'none' as const })}>
-              {needsConnect ? (
+              {connectionPending ? (
+                <SurfaceStateCard testID="project-deployments.platform.connectionPending" size="line" kind="loading"
+                  title={t('common.loading')} />
+              ) : needsConnect ? (
                 <SurfaceStateCard
                   testID="project-deployments.platform.connect"
                   size="line"
@@ -680,7 +686,7 @@ export function DeploymentPlatformTargetEditor(
                   }}
                 />
               ) : null}
-              {target.create && createAvailable && !needsConnect ? <SegmentedChoiceItem<'existing' | 'create'>
+              {target.create && createAvailable && !connectionNeeded ? <SegmentedChoiceItem<'existing' | 'create'>
                 // The row names the thing it chooses ("Cloudflare Pages project"), not the generic word (C3).
                 testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platformProject', { platform: target.title })}
                 value={mode} disabled={busy !== null || reviewingCreate}
@@ -716,7 +722,7 @@ export function DeploymentPlatformTargetEditor(
                 serverId={props.lifetime.scope.serverId} testIDPrefix="project-deployments.platform.access" /> : null}
               {create && !outcomeUnknown && props.environment.controllerMachineId ? <Item mode="info" testID="project-deployments.platform.controller"
                 title={t(provisioned ? 'projects.deployments.platformLink.finishLinkingOnMachine' : 'projects.deployments.platformLink.createOnMachine')} detail={controllerLabel ?? props.environment.controllerMachineId} /> : null}
-              {needsConnect ? null : <ConnectedAccountPurposeTargetChooser
+              {connectionNeeded ? null : <ConnectedAccountPurposeTargetChooser
                 key={target.key}
                 testID="project-deployments.platform.account"
                 localizedTextPluginId={form!.service.pluginId}
@@ -739,7 +745,7 @@ export function DeploymentPlatformTargetEditor(
                 // The only eligible connection is chosen for the person, as Add domain does (PAGE-ACCEPT-176 R7-D2).
                 onSelectSingleEligible={selectSoleConnection}
               />}
-              {!create && sourceMethod && !needsConnect ? <DeploymentSourceMethodChoice
+              {!create && sourceMethod && !connectionNeeded ? <DeploymentSourceMethodChoice
                 methods={target.sourceMethods}
                 value={sourceMethod}
                 disabled={busy !== null || reviewingCreate}
@@ -747,7 +753,7 @@ export function DeploymentPlatformTargetEditor(
                 onChange={(method) => { setSourceMethod(method); resetFrom(); }}
               /> : null}
               {/* Each provider choice is a row of the same sheet: the row names it, the control draws no label. */}
-              {draft && !needsConnect
+              {draft && !connectionNeeded
                 ? visibleFields.map((field) => {
                     const more = options.state(field).nextCursor !== undefined;
                     const back = (cursors[field.path]?.length ?? 0) > 0;

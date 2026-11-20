@@ -1358,6 +1358,31 @@ describe('Environment draft Machine Home', () => {
     });
   });
 
+  it('waits for declarations before calling a previously chosen platform unavailable', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-pending-platform.test', accountId: 'alice', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const { t } = await import('@/text');
+    const plugin = createDeploymentTargetsTestPlugin('com.example.draft-pending-platform');
+    const targetKey = `${plugin.manifest.id}/beta`;
+    const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+      phone={false} platformAvailable initialTargetKey={targetKey}
+      actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+      onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    try {
+      expect(screen.findHostByTestId('project-deployments.draft.target:loading')).not.toBeNull();
+      expect(screen.findHostByTestId(`project-deployments.draft.target:${targetKey}`)).toBeNull();
+      expect(screen.getTextContent()).not.toContain(t('common.unavailable'));
+      const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+        activate: api => plugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+        accountLifetime: account.accountLifetime, publishProjection: true });
+      try {
+        await waitForTestEvent(screen.subscribe,
+          () => screen.findHostByTestId(`project-deployments.draft.target:${targetKey}`), node => node !== null);
+        expect(screen.getTextContent()).toContain('Beta runtime');
+      } finally { await installed.dispose(); }
+    } finally { await screen.unmount(); standardCleanup(); account.dispose(); }
+  });
+
   it('offers the way to a platform when no plugin declares one, and says nothing of platforms to a viewer who cannot link', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-no-platforms.test', accountId: 'alice', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);

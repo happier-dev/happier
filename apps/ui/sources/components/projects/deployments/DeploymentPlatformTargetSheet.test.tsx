@@ -587,6 +587,7 @@ it('welcomes an Account with no platform account to add a token in place, then c
   const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
     activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
   const { storage } = await import('@/sync/domains/state/storageStore');
+  const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
   const { ConnectSheetContent } = await import('@/components/settings/connectedServices/setup/ConnectSheetContent');
   const previous = storage.getState().profile;
   try {
@@ -610,12 +611,21 @@ it('welcomes an Account with no platform account to add a token in place, then c
     const sheet = () => screen.root.findAllByType(ConnectSheetContent)[0];
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(sheet()).toBeDefined(); });
     expect(sheet()!.props.request).toMatchObject({ service, intent: 'add' });
-    await act(async () => sheet()!.props.onResult({ kind: 'connected', account: { service, accountId: 'new-token' } }));
+    const ref = { service, accountId: 'new-token' };
+    await act(async () => sheet()!.props.onResult({ kind: 'connected', account: ref }));
+    expect(screen.findByTestId('project-deployments.platform.connectionPending')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.connect')).toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.check')).toBeNull();
+    await act(async () => storage.setState({ profile: AccountProfileSchema.parse({ id: 'owner', connectedAccountsV4: [{
+      ref, status: 'connected', authenticationModeId: 'token', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null,
+      displayName: 'New cloud connection', scopes: [],
+    }] }) }));
     // The new account is chosen; the platform's own choices and its Check (the permission probe) follow.
     await waitForHomeGovernance(async () => {
       await act(async () => {});
       expect(screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.value)
-        .toEqual({ kind: 'account', account: { service, accountId: 'new-token' } });
+        .toEqual({ kind: 'account', account: ref });
     });
     expect(screen.findByTestId('project-deployments.platform.connect')).toBeNull();
     expect(screen.findByTestId('project-deployments.platform.check')).not.toBeNull();

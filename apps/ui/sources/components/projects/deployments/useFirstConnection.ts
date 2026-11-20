@@ -1,5 +1,6 @@
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import * as React from 'react';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -18,11 +19,24 @@ export function useFirstConnection(
   service: PluginContributionIdentityV1 | null,
   onConnected: (account: QualifiedConnectedAccountRef) => void,
 ) {
-  const hasServiceAccount = storage((state) => {
+  const [acknowledged, setAcknowledged] = React.useState<Readonly<{
+    account: QualifiedConnectedAccountRef;
+    lifetime: ServerAccountScopeLifetime | null;
+  }> | null>(null);
+  const awaiting = acknowledged && acknowledged.lifetime === lifetime && service
+    && buildQualifiedPluginContributionKey(acknowledged.account.service) === buildQualifiedPluginContributionKey(service)
+    ? acknowledged.account : null;
+  const inventory = storage((state) => {
     const accountId = lifetime?.scope.accountId ?? state.profileScope?.accountId ?? null;
-    if (!service || accountId === null || state.profile.id !== accountId) return null;
-    return connectedAccountPurposeServiceTargets(state.profile.connectedAccountsV4 ?? [], [], service).accounts.length > 0;
+    if (!service || accountId === null || state.profile.id !== accountId) return awaiting ? 'settling' : 'unknown';
+    const { accounts } = connectedAccountPurposeServiceTargets(state.profile.connectedAccountsV4 ?? [], [], service);
+    if (awaiting && !accounts.some(candidate => sameQualifiedConnectedAccountRef(candidate.ref, awaiting))) return 'settling';
+    return accounts.length > 0 ? 'available' : 'missing';
   }, inventoryKeys);
+  // Acknowledgement precedes the inventory push. Once present, the inventory alone decides availability.
+  React.useEffect(() => {
+    if (acknowledged && (!awaiting || inventory === 'available')) setAcknowledged(null);
+  }, [acknowledged, awaiting, inventory]);
   const connect = async () => {
     if (!service) return;
     const result = await presentConnectSheet({
@@ -31,7 +45,8 @@ export function useFirstConnection(
       intent: 'add',
     });
     if (result.kind === 'dismissed' || lifetime && !lifetime.isCurrent()) return;
+    setAcknowledged({ account: result.account, lifetime });
     onConnected(result.account);
   };
-  return { missing: hasServiceAccount === false, connect };
+  return { missing: inventory === 'missing', pending: inventory === 'settling', connect };
 }
