@@ -149,6 +149,16 @@ async function fsyncDirectory(path: string, platform: NodeJS.Platform): Promise<
   }
 }
 
+async function syncVerifiedPublicationDirectory(path: string, platform: NodeJS.Platform): Promise<void> {
+  try {
+    await fsyncDirectory(dirname(path), platform);
+  } catch {
+    process.emitWarning('Could not sync the parent of verified protected local state', {
+      code: 'HAPPIER_PROTECTED_LOCAL_STATE_SYNC_FAILED',
+    });
+  }
+}
+
 function fsyncDirectorySync(path: string, platform: NodeJS.Platform): void {
   if (platform === 'win32') return;
   const descriptor = openSync(path, 'r');
@@ -408,12 +418,12 @@ export async function createProtectedLocalStateDirectory(
       await chmod(path, 0o700);
     }
     await assertProtectedPath(path, 'directory', options);
-    await fsyncDirectory(dirname(path), resolvePlatform(options));
-    return path;
   } catch (error) {
     await rm(path, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+  await syncVerifiedPublicationDirectory(path, resolvePlatform(options));
+  return path;
 }
 
 export async function createProtectedLocalStateFileExclusive(
@@ -451,11 +461,11 @@ export async function createProtectedLocalStateFileExclusive(
 
   try {
     await assertProtectedPath(path, 'file', options);
-    await fsyncDirectory(dirname(path), platform);
   } catch (error) {
     await rm(path, { force: true }).catch(() => {});
     throw error;
   }
+  await syncVerifiedPublicationDirectory(path, platform);
 }
 
 /**
@@ -619,7 +629,6 @@ export async function writeProtectedLocalStateFileAtomic(
     await rename(temporaryPath, path);
     published = true;
     await assertProtectedPath(path, 'file', options);
-    await fsyncDirectory(dirname(path), resolvePlatform(options));
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => {});
     if (published) {
@@ -627,6 +636,7 @@ export async function writeProtectedLocalStateFileAtomic(
     }
     throw error;
   }
+  await syncVerifiedPublicationDirectory(path, resolvePlatform(options));
 }
 
 /**
@@ -651,8 +661,13 @@ export async function publishProtectedLocalStateFileIfAbsent(
       if (isErrno(error, 'EEXIST')) return false;
       throw error;
     }
-    await assertProtectedPath(path, 'file', options);
-    await fsyncDirectory(dirname(path), resolvePlatform(options));
+    try {
+      await assertProtectedPath(path, 'file', options);
+    } catch (error) {
+      await rm(path, { force: true }).catch(() => {});
+      throw error;
+    }
+    await syncVerifiedPublicationDirectory(path, resolvePlatform(options));
     return true;
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => {});

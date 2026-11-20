@@ -2,9 +2,11 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  createProtectedLocalStateDirectory,
+  createProtectedLocalStateFileExclusive,
   ensureProtectedLocalStateDirectory,
   ensureProtectedLocalStateDirectorySync,
   ensureProtectedLocalStateFileSync,
@@ -16,9 +18,29 @@ import {
   writeProtectedLocalStateFileAtomic,
 } from './protectedLocalState';
 
+const { directorySyncFailure } = vi.hoisted(() => ({
+  directorySyncFailure: { forPath: undefined as ((path: string) => Promise<boolean>) | undefined },
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    async open(...args: Parameters<typeof fs.open>) {
+      const handle = await fs.open(...args);
+      if (typeof args[0] === 'string' && args[1] === 'r' && await directorySyncFailure.forPath?.(args[0])) {
+        vi.spyOn(handle, 'sync').mockRejectedValueOnce(Object.assign(new Error('directory sync failed'), { code: 'EIO' }));
+      }
+      return handle;
+    },
+  };
+});
+
 const roots: string[] = [];
 
 afterEach(async () => {
+  directorySyncFailure.forPath = undefined;
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(async (root) =>
     await rm(root, { recursive: true, force: true })));
 });
@@ -212,6 +234,76 @@ describe('protected local state reads', () => {
 });
 
 describe('protected local state publication', () => {
+  it.runIf(posixOnly).each([
+    { name: 'exclusive create', publish: createProtectedLocalStateFileExclusive, result: undefined },
+    { name: 'atomic replacement', publish: writeProtectedLocalStateFileAtomic, result: undefined },
+    { name: 'hard-link publication', publish: publishProtectedLocalStateFileIfAbsent, result: true },
+  ])('retains verified bytes after the directory sync fails for $name', async ({ publish, result }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-protected-publication-'));
+    roots.push(directory);
+    const path = join(directory, 'state.json');
+    const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    directorySyncFailure.forPath = async (candidate) => (
+      candidate === directory && (await readdir(directory)).includes('state.json')
+    );
+
+    const outcome = await publish(path, 'saved').then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    directorySyncFailure.forPath = undefined;
+
+    await expect(readProtectedLocalStateFile(path)).resolves.toBe('saved');
+    expect(outcome).toEqual({ value: result });
+    expect(warning.mock.calls.some(([, options]) => (
+      typeof options === 'object' && options?.code === 'HAPPIER_PROTECTED_LOCAL_STATE_SYNC_FAILED'
+    ))).toBe(true);
+  });
+
+  it.runIf(posixOnly)('retains a verified new directory when syncing its parent fails', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-protected-directory-'));
+    roots.push(parent);
+    const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    directorySyncFailure.forPath = async (candidate) => candidate === parent;
+
+    const outcome = await createProtectedLocalStateDirectory(join(parent, 'state-')).then(
+      (path) => ({ path }),
+      (error: unknown) => ({ error }),
+    );
+    const entries = await readdir(parent);
+
+    expect(entries).toHaveLength(1);
+    const path = join(parent, entries[0]!);
+    await expect(listProtectedLocalStateDirectory(path)).resolves.toEqual([]);
+    expect(outcome).toEqual({ path });
+    expect(warning.mock.calls.some(([, options]) => (
+      typeof options === 'object' && options?.code === 'HAPPIER_PROTECTED_LOCAL_STATE_SYNC_FAILED'
+    ))).toBe(true);
+  });
+
+  it.each([
+    { name: 'exclusive create', publish: createProtectedLocalStateFileExclusive },
+    { name: 'atomic replacement', publish: writeProtectedLocalStateFileAtomic },
+    { name: 'hard-link publication', publish: publishProtectedLocalStateFileIfAbsent },
+  ])('removes published bytes when final protection fails for $name', async ({ publish }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-protected-refusal-'));
+    roots.push(directory);
+    const path = join(directory, 'state.json');
+    const protectionError = new Error('published file ACL could not be verified');
+
+    await expect(publish(path, 'saved', {
+      platform: 'win32',
+      windowsAclBoundary: {
+        async applyAndVerify() {},
+        async verify({ path: candidate }) {
+          if (candidate === path) throw protectionError;
+        },
+      },
+    })).rejects.toBe(protectionError);
+
+    await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('publishes complete bytes once and reports the loser without disturbing them', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-protected-local-state-publish-'));
     roots.push(root);
