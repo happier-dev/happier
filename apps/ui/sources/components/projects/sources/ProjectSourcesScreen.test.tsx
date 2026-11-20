@@ -9,10 +9,12 @@ await vi.hoisted(async () => {
 });
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainProjectAccountRowListFixture, createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, WidgetAreaLayoutV1Schema } from '@happier-dev/protocol/widgets';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable,
@@ -41,6 +43,7 @@ const shared = vi.hoisted(() => ({
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
   const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
   const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+  const { normalizeActionsSettingsV1, setActionApprovalOverride } = await import('@happier-dev/protocol/actions/actionSettings');
   const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
   const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
   const schemas = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
@@ -110,13 +113,26 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
     projectSourcesDelete: async input => schemas.ProjectSourcesDeleteOutputV1Schema.parse(await respond('projects.sources.delete', input)),
     scmActionExecute: ({ actionId, input }) => respond(actionId, input),
   }));
+  const directSourceWrites = (['projects.sources.create', 'projects.sources.delete'] as const)
+    .reduce((settings, actionId) => setActionApprovalOverride({
+      settings, actionId, surface: 'ui', approvalRequired: false,
+    }), normalizeActionsSettingsV1({ v: 1 }));
+  // The fixture host represents the signed-in person whose Account allows these Source writes on this surface.
+  const hostExecutor = {
+    ...executor,
+    execute: (...[actionId, input, context, ...rest]: Parameters<typeof executor.execute>) =>
+      executor.execute(actionId, input, actionId === 'projects.sources.create' || actionId === 'projects.sources.delete' ? {
+        ...context, authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account-1',
+        actionsSettings: directSourceWrites,
+      } : context, ...rest),
+  };
   const frontDoor = createFrontDoorActionExecuteForVitest(original);
   // Substitute the external host ports even when the hook supplies its default host executor.
   // Both public factories still run their real front-door implementation.
   return { ...original,
-    createFrontDoorActionExecute: () => frontDoor(executor),
+    createFrontDoorActionExecute: () => frontDoor(hostExecutor),
     createFrontDoorUiActionExecutor: (_injected?: Parameters<typeof original.createFrontDoorUiActionExecutor>[0],
-      scope?: Parameters<typeof original.createFrontDoorUiActionExecutor>[1]) => original.createFrontDoorUiActionExecutor(executor, scope),
+      scope?: Parameters<typeof original.createFrontDoorUiActionExecutor>[1]) => original.createFrontDoorUiActionExecutor(hostExecutor, scope),
   };
 });
 
@@ -191,6 +207,11 @@ function signIn() {
     machineListStatusByServerId: { 'server-1': 'idle' },
   });
   publishAppliedActiveServerSnapshot({ serverId: 'server-1', serverUrl: 'https://home.test', generation: previousAppliedServer.generation + 1 });
+}
+
+function publishAddressMachine() {
+  return publishMachineInventoryForTest({ serverId: 'server-1', accountId: 'account-1' },
+    [createMachineFixture({ id: 'm1', activeAt: Date.now() })]);
 }
 
 describe('Projects › Sources', () => {
@@ -450,7 +471,9 @@ describe('Projects › Sources', () => {
     const screen = await renderScreen(<ProjectSourcesScreen />);
     await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.delete')).toBeTruthy());
     await act(async () => screen.pressByTestId('projects.sources.detail.delete'));
-    await vi.waitFor(() => expect(shared.calls.some((call) => call.actionId === 'projects.sources.delete')).toBe(true));
+    await vi.waitFor(() => expect(shared.calls.filter((call) => call.actionId === 'projects.sources.delete')).toEqual([
+      { actionId: 'projects.sources.delete', input: { serverId: 'server-1', sourceId: 'source-1', expectedRevision: 1 } },
+    ]));
     expect(shared.confirm).not.toHaveBeenCalled();
   });
   it('invites the first Source when the authenticated catalog is empty, and Add opens the draft', async () => {
@@ -523,9 +546,7 @@ describe('Projects › Sources', () => {
       field.props.onSubmitEditing?.();
     });
     expect(shared.calls.some((call) => call.actionId === 'scm.hostingRepository.resolveAddress')).toBe(false);
-    await act(async () => {
-      storage.setState({ machineListStatusByServerId: { 'server-1': 'idle' } });
-    });
+    await act(publishAddressMachine);
     await vi.waitFor(() =>
       expect(
         shared.calls.some((call) => call.actionId === 'scm.hostingRepository.resolveAddress'),
@@ -556,6 +577,7 @@ describe('Projects › Sources', () => {
 
   it('recovers an unconfirmed create only after a complete inspection, retrying the same request', async () => {
     signIn();
+    await publishAddressMachine();
     shared.createOutcomes = ['unknown'];
     shared.routes.params = { source: 'new' };
     const screen = await renderScreen(<ProjectSourcesScreen />);
