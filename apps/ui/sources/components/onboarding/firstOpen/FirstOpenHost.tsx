@@ -46,10 +46,19 @@ export function FirstOpenHost({ decision, children }: Readonly<{
     const playing = typeof phase === 'object';
     const readBuildReady = usePrepareStepBuild(decision === 'in-app' && phase !== 'still' && phase !== 'settled');
     const settle = useCallback(() => setPhase('settled'), []);
+    const fadeToRest = useCallback(() => {
+        opacity.setValue(0.65);
+        setPhase('still');
+    }, [opacity]);
+    const skip = useCallback(() => {
+        if (!playing || !scene) return;
+        fadeToRest();
+        scene.skipFirstOpenDestination();
+    }, [fadeToRest, playing, scene]);
     const updateReady = useCallback((result: GlyphSurfaceReadiness) => {
         readiness.current = result;
-        if (result === 'still' && playing) scene?.skipFirstOpenDestination();
-    }, [playing, scene]);
+        if (result === 'still') skip();
+    }, [skip]);
 
     useLayoutEffect(() => {
         if (!waitingForReplica) return;
@@ -102,12 +111,12 @@ export function FirstOpenHost({ decision, children }: Readonly<{
             && resolveInAppFirstFrame(decision, readiness.current, readBuildReady()) === 'play') {
             const epoch = performance.now();
             setPhase({ epoch });
-            void scene.buildFirstOpenDestination(epoch).then(settle, settle);
+            const finishBuild = () => setPhase(current => current === 'still' ? current : 'settled');
+            void scene.buildFirstOpenDestination(epoch).then(finishBuild, finishBuild);
             return;
         }
-        opacity.setValue(0.65);
-        setPhase('still');
-    }, [decision, opacity, readBuildReady, scene, settle]);
+        fadeToRest();
+    }, [decision, fadeToRest, readBuildReady, scene, settle]);
 
     useEffect(() => {
         if (phase !== 'still') return;
@@ -118,7 +127,6 @@ export function FirstOpenHost({ decision, children }: Readonly<{
 
     useEffect(() => {
         if (!playing || !scene) return;
-        const skip = () => { scene.skipFirstOpenDestination(); settle(); };
         if (Platform.OS !== 'web') {
             const appState = AppState.addEventListener('change', (state) => { if (state !== 'active') skip(); });
             return () => appState.remove();
@@ -136,12 +144,9 @@ export function FirstOpenHost({ decision, children }: Readonly<{
             document.removeEventListener('pointerdown', skip, true);
             document.removeEventListener('visibilitychange', visibility);
         };
-    }, [playing, scene, settle]);
+    }, [playing, scene, skip]);
 
-    const skipTouch = playing && Platform.OS !== 'web' ? () => {
-        scene?.skipFirstOpenDestination();
-        settle();
-    } : undefined;
+    const skipTouch = playing && Platform.OS !== 'web' ? skip : undefined;
     const Scene = scene?.FirstOpenScene;
     return (
         <View style={{ flex: 1, position: 'relative' }} onTouchStart={skipTouch}>
