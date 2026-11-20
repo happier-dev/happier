@@ -17,7 +17,7 @@ import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actio
 import { isProjectWorkerCopyInspectActionIdV1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
-import { RuntimeActionIdV1Schema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isMachineAgentInventoryReadActionIdV1, RuntimeActionIdV1Schema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor/browser';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
@@ -634,7 +634,9 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         // Runtime Browser Actions use the signed Action executor rather than a
         // raw RPC binding. Its role owner above and the receiver's profile owner
         // govern guest access; absence of a raw binding is not a custody refusal.
+        // Agent inventory roots also use signed Action ingress, with no private RPC binding.
         if (!method && !access.owned && !requesterActionIngress && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
+            && !isMachineAgentInventoryReadActionIdV1(input.actionId)
             && !isStoredDeploymentExecutionActionIdV1(input.actionId)) {
             return { kind: 'denied', code: 'unsupported_operation' };
         }

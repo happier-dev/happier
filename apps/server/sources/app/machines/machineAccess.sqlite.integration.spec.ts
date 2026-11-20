@@ -136,6 +136,20 @@ describe('Machine current access (real SQLite)', () => {
         }
     });
 
+    it.each(['machines.agents.list', 'review.engines.list'])('admits %s for a Use recipient while refusing foreign Accounts and unsupported Actions', async actionId => {
+        const f = await fixture();
+        const requester = await account();
+        const outsider = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id, actionId }))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: outsider.id, machineId: f.machine.id, actionId }))
+            .toMatchObject({ kind: 'denied', code: 'access_denied' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
+            actionId: 'unsupported.inventory.read' }))
+            .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
+    });
+
     it('acquires encrypted recipient material once for a batch while refusing missing envelopes', async () => {
         const first = await fixture('e2ee');
         const second = await fixture('e2ee');
