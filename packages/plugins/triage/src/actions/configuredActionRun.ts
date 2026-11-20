@@ -1,4 +1,4 @@
-import type { JsonValue, PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { triageEntryRowKey } from '../projection/listWindow.js';
@@ -9,7 +9,6 @@ import { createTriageConfiguredActionHost } from './configuredActionHost.js';
 import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDataSources.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import {
-    TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,
     TriageRunConfiguredActionResultV1Schema,
     TriageRunConfiguredActionInputV1Schema,
     type TriageLegacyRunConfiguredActionResultV1,
@@ -137,8 +136,4 @@ export function createTriageRunConfiguredActionHandler() {
         }, { signal: context.signal });
         return finish(result);
     };
-}
-
-export function activate(api: PluginAccountApi): void {
-    api.actions.register(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, createTriageRunConfiguredActionHandler());
 }
