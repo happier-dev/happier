@@ -533,6 +533,7 @@ describe('Run a workflow trigger inputs', () => {
         });
         const portableHome = 'srv_trigger_turn_home';
         const served = await serveAccountHomes({ homes: [{ key: 'turns', serverUrl: 'https://trigger-turns.test', accountId: 'turn-account',
+            currentAccount: true,
             ...(hasPortableIdentity ? { serverIdentityId: portableHome } : {}) }],
             route: request => {
                 if (request.path === '/v2/sessions') return Response.json({ sessions, nextCursor: null, hasNext: false });
@@ -1015,7 +1016,7 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         } });
         const batch = createSessionReadBatchHttpBoundary(request => request.path === `/v2/sessions/${session.id}`
             ? Response.json({ session }) : undefined);
-        const served = await intent.run('bootstrap', () => serveAccountHomes({ homes: [{ key: 'prompt', serverUrl: 'https://trigger-demand.test', accountId: 'prompt-account' }],
+        const served = await intent.run('bootstrap', () => serveAccountHomes({ homes: [{ key: 'prompt', serverUrl: 'https://trigger-demand.test', accountId: 'prompt-account', currentAccount: true }],
             route: request => {
                 if (request.path === '/v2/sessions/read-batch') {
                     const initiator = intent.getStore();
@@ -1075,7 +1076,7 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         let failing = true;
         const batch = createSessionReadBatchHttpBoundary(request => request.path === `/v2/sessions/${session.id}`
             ? Response.json({ session }) : undefined);
-        const served = await serveAccountHomes({ homes: [{ key: 'retry', serverUrl: 'https://trigger-retry.test', accountId: 'retry-account' }],
+        const served = await serveAccountHomes({ homes: [{ key: 'retry', serverUrl: 'https://trigger-retry.test', accountId: 'retry-account', currentAccount: true }],
             route: request => {
                 if (request.path === '/v2/sessions') return Response.json({ sessions: [session], nextCursor: null, hasNext: false });
                 // The detailed inventory's own page fails; the Home itself stays reachable.
@@ -1115,7 +1116,7 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         } });
         const batch = createSessionReadBatchHttpBoundary(request => request.path === `/v2/sessions/${session.id}`
             ? Response.json({ session }) : undefined);
-        const served = await serveAccountHomes({ homes: [{ key: 'stored', serverUrl: 'https://trigger-stored.test', accountId: 'stored-account' }],
+        const served = await serveAccountHomes({ homes: [{ key: 'stored', serverUrl: 'https://trigger-stored.test', accountId: 'stored-account', currentAccount: true }],
             route: request => {
                 if (request.path === '/v2/sessions') return Response.json({ sessions: [session], nextCursor: null, hasNext: false });
                 if (request.path === '/v2/sessions/archived' || request.path === '/v2/sessions/active') {

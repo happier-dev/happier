@@ -192,6 +192,22 @@ describe('session trigger form', () => {
         expect(incompatible).toMatchObject([{ blocking: true, errorCode: 'missing_required_input' }]);
     });
 
+    it('leaves the lifecycle source to the occurrence while preserving an explicit or manual source', () => {
+        const when = { kind: 'turnEnds' } as const;
+        const originSession = { serverId: 'srv_trigger_test_home', sessionId: 'form-session' };
+        const explicitSession = { serverId: 'srv_trigger_test_home', sessionId: 'chosen-session' };
+        const declarations = [{ name: 'sourceSession', valueType: 'json', required: true,
+            inputType: { hostType: 'session' }, defaultFrom: 'origin_session' }] as const;
+        const project = (values: Readonly<Record<string, typeof originSession>>, manual = false) => {
+            const fields = projectSessionTriggerWorkflowInputFields({ when, inputs: declarations, values, originSession, manual });
+            expect(fields.some(field => field.blocking)).toBe(false);
+            return buildSessionTriggerWorkflowInputs({ when, fields, declarations, retainedInputs: values });
+        };
+        expect(project({})).toEqual({});
+        expect(project({ sourceSession: explicitSession })).toEqual({ sourceSession: explicitSession });
+        expect(project({}, true)).toEqual({ sourceSession: originSession });
+    });
+
     it.each(['session', 'account'] as const)('authors the selected Agent on a new %s prompt trigger', (scope) => {
         const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'acme.agents', localId: 'reviewer' } };
         const then = { kind: 'sendPrompt' as const, prompt: 'Review the changes', selection: { agentTarget } };

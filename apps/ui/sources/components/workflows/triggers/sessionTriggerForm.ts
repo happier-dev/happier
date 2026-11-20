@@ -108,12 +108,16 @@ export type TriggerFormValue = ExecutableTriggerFormValue | ObservationOnlyTrigg
 
 /** Trigger input presentation delegates ordinary fields to the shared authoring owner. */
 export function projectSessionTriggerWorkflowInputFields(
-    params: Parameters<typeof projectWorkflowRunInputFields>[0] & Readonly<{ when: TriggerWhenValue }>,
+    params: Parameters<typeof projectWorkflowRunInputFields>[0] & Readonly<{ when: TriggerWhenValue; manual?: boolean }>,
 ): readonly WorkflowRunInputFieldState[] {
     const inputs = params.when.kind === 'prComment' || params.when.kind === 'ciFailed'
         ? params.inputs.filter(input => input.name !== 'prUpdate' || input.valueType !== 'json')
         : params.inputs;
-    return projectWorkflowRunInputFields({ ...params, inputs });
+    // The admitted lifecycle occurrence supplies its own Session. Keep an
+    // explicit value, but do not turn the editor's context into a saved input.
+    const deferOriginSessionDefault = params.deferOriginSessionDefault || (!params.manual && isSessionLifecycleWhen(params.when));
+    return projectWorkflowRunInputFields({ ...params, inputs, deferOriginSessionDefault,
+        originSession: deferOriginSessionDefault ? undefined : params.originSession });
 }
 
 export function buildSessionTriggerWorkflowInputs(params: Readonly<{

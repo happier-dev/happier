@@ -428,7 +428,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             serverId: originServerId, sessionId: props.sessionId,
         } } : {}),
         deferOriginSessionDefault: props.creatingSession === true,
-    }), [when, inlineDefinition, workflow.definition, then, rawInputText, props.sessionId, props.creatingSession, originServerId]);
+        manual: props.manual,
+    }), [when, inlineDefinition, workflow.definition, then, rawInputText, props.sessionId, props.creatingSession, props.manual, originServerId]);
     const inputPresentation = resolveWorkflowBuiltinInputPresentation(then.kind === 'runWorkflow' ? then.ref : null);
     const changeThen = (next: TriggerThenValue) => {
         if (next.kind !== then.kind || (next.kind === 'runWorkflow' && then.kind === 'runWorkflow' && next.ref !== then.ref)) {
