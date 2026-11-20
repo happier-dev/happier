@@ -39,6 +39,10 @@ async function readFileRange(
   return buffer.subarray(0, bytesRead);
 }
 
+// Darwin's <sys/fcntl.h> flag rejects symlinks in every component at open time.
+// Node does not expose it in fs.constants.
+const DARWIN_O_NOFOLLOW_ANY = 0x20000000;
+
 /** One native member file. With no baseline, sample the end of the last existing row. */
 export async function readNativeMemberTranscript(
   target: Readonly<{ home: string; path: string }>,
@@ -46,19 +50,21 @@ export async function readNativeMemberTranscript(
   signal?: AbortSignal,
 ) {
   const refuse = () => Object.assign(new Error('Member transcript access denied'), { code: 'access_denied' });
-  if (process.platform !== 'linux') throw refuse();
+  const platform = process.platform;
+  if (platform !== 'linux' && platform !== 'darwin') throw refuse();
   const home = await realpath(target.home);
   const path = resolveNativeFilesystemPathForAuthorization(target.path);
   if (path === home || !isCanonicalAbsolutePathInsideRoot(home, path) || (range && range.path !== path)) throw refuse();
-  // Verify the opened descriptor before reading bytes. O_NOFOLLOW guards the leaf
-  // and the descriptor pathname catches a parent redirected during open.
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(error => {
+  const noFollow = platform === 'darwin' ? DARWIN_O_NOFOLLOW_ANY : constants.O_NOFOLLOW;
+  const file = await open(path, constants.O_RDONLY | noFollow | constants.O_NONBLOCK).catch(error => {
     if (error?.code === 'ENOENT') return null;
     throw refuse();
   });
   if (!file) return { path, fileIdentity: null, sizeBytes: 0, contentBase64: '' };
   try {
-    if (await realpath(`/proc/self/fd/${file.fd}`).catch(() => null) !== path) throw refuse();
+    // Linux checks the opened descriptor for parent redirects. On Darwin the
+    // kernel already refused redirects in any component of the canonical path.
+    if (platform === 'linux' && await realpath(`/proc/self/fd/${file.fd}`).catch(() => null) !== path) throw refuse();
     const stats = await file.stat();
     if (!stats.isFile()) throw refuse();
     const fileIdentity = `${stats.dev}:${stats.ino}`;

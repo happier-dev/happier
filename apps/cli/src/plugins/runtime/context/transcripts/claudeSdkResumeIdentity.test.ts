@@ -1,9 +1,9 @@
-import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     createEventsFixture,
@@ -26,6 +26,24 @@ import { createTranscriptFileFollowPathGrantRegistry } from './fileFollowGrants'
 import { createSessionHooksService } from '../../hooks/session/service';
 import { createFilesystemEffectChannel, initializeFilesystemEffectChannel } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import { runFilesystemEffectInternal } from '@/rpc/handlers/fileSystem/filesystemEffectInternal';
+
+const nativeOpenBoundary = vi.hoisted(() => ({
+    path: '',
+    redirect: undefined as undefined | (() => Promise<() => Promise<void>>),
+}));
+// Redirect a real parent only at the OS open boundary, after native path
+// authorization. The framed worker, identity proof and publication stay real.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+        const redirect = args[0] === nativeOpenBoundary.path ? nativeOpenBoundary.redirect : undefined;
+        if (!redirect) return actual.open(...args);
+        nativeOpenBoundary.redirect = undefined;
+        const restore = await redirect();
+        try { return await actual.open(...args); }
+        finally { await restore(); }
+    } };
+});
 
 async function createIdentityFixture(member = false) {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-sdk-proof-'));
@@ -104,14 +122,16 @@ function nativeRows(providerSessionId: string, prompt: string) {
 }
 
 describe('Claude SDK native resume proof with the host file follower', () => {
-    it.skipIf(process.platform !== 'linux').each([
-        'persisted', 'first file', 'disabled', 'historical', 'outside home', 'symlink escape', 'ordinary hook',
+    it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin').each([
+        'persisted', 'first file', 'disabled', 'historical', 'replaced', 'directory',
+        'outside home', 'symlink escape', 'parent redirect', 'ordinary hook',
     ] as const)(
         'requires a new row in the owned member transcript for cold Send (%s)', async kind => {
         const fixture = await createIdentityFixture(true);
         const outside = join(fixture.root, 'outside.jsonl');
         const path = kind === 'outside home' ? outside
             : kind === 'first file' ? join(dirname(fixture.path), '.claude', 'projects', 'native-session.jsonl')
+            : kind === 'parent redirect' ? join(dirname(fixture.path), 'nested', 'native-session.jsonl')
               : fixture.path;
         const prompt = 'accepted member prompt';
         const operations = createClaudeAgentSdkTurnOperations({ ctx: fixture.ctx, directory: fixture.root,
@@ -141,8 +161,24 @@ describe('Claude SDK native resume proof with the host file follower', () => {
                 await writeFile(outside, nativeRows(fixture.providerSessionId, prompt));
                 await symlink(outside, path);
             }
-            if (kind === 'historical' || kind === 'persisted') {
+            if (kind === 'historical' || kind === 'persisted' || kind === 'replaced') {
                 await writeFile(path, nativeRows(fixture.providerSessionId, prompt));
+            }
+            if (kind === 'directory') await mkdir(path);
+            if (kind === 'parent redirect') {
+                const parent = dirname(path);
+                const parked = `${parent}-original`;
+                const outsideParent = join(fixture.root, 'outside');
+                await mkdir(parent);
+                await mkdir(outsideParent);
+                await writeFile(path, nativeRows(fixture.providerSessionId, prompt));
+                await writeFile(join(outsideParent, 'native-session.jsonl'), nativeRows(fixture.providerSessionId, prompt));
+                nativeOpenBoundary.path = await realpath(path);
+                nativeOpenBoundary.redirect = async () => {
+                    await rename(parent, parked);
+                    await symlink(outsideParent, parent);
+                    return async () => { await unlink(parent); await rename(parked, parent); };
+                };
             }
             await operations.sendProviderTurnPrompt(prompt);
             const hook = { hook_event_name: 'UserPromptSubmit', transcript_path: path, prompt };
@@ -154,7 +190,12 @@ describe('Claude SDK native resume proof with the host file follower', () => {
                 await fixture.exec.emitSessionHook(fixture.providerSessionId, hook);
             }
             expect(events.filter(event => event.kind === 'session-id-publish')).toEqual([]);
-            if (kind !== 'disabled' && kind !== 'historical') {
+            if (kind === 'replaced') {
+                await rename(path, `${path}-original`);
+                // The replacement has a matching row beyond the old offset;
+                // its different inode must prevent promoting that row.
+                await writeFile(path, nativeRows(fixture.providerSessionId, prompt).repeat(2));
+            } else if (kind !== 'disabled' && kind !== 'historical' && kind !== 'directory') {
                 if (kind === 'first file') await mkdir(dirname(path), { recursive: true });
                 await appendFile(path, nativeRows(fixture.providerSessionId, prompt));
             }
@@ -163,7 +204,7 @@ describe('Claude SDK native resume proof with the host file follower', () => {
             await operations.waitForProviderTurnCompletion();
             expect(fixture.memberOpenCount()).toBe(kind === 'ordinary hook' ? 0 : 1);
             const publications = events.filter(event => event.kind === 'session-id-publish');
-            if (kind === 'outside home' || kind === 'symlink escape') {
+            if (kind === 'directory' || kind === 'outside home' || kind === 'symlink escape' || kind === 'parent redirect') {
                 expect(fixture.memberReadFailures).toContainEqual(expect.objectContaining({ code: 'access_denied' }));
             }
             if (kind !== 'persisted' && kind !== 'first file') {
@@ -192,6 +233,7 @@ describe('Claude SDK native resume proof with the host file follower', () => {
                     .toEqual(expect.arrayContaining(['--resume', fixture.providerSessionId]));
             } finally { await cold.disposeProviderSession(); }
         } finally {
+            nativeOpenBoundary.redirect = undefined;
             publication();
             await operations.disposeProviderSession();
             await rm(fixture.root, { recursive: true, force: true });
