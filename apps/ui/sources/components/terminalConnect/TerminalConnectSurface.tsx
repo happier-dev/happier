@@ -3,7 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useOptionalAuth } from '@/auth/context/AuthContext';
-import { UnauthenticatedRouteShell, UnauthenticatedStep } from '@/components/onboarding/unauthShell';
+import { UnauthenticatedRouteStep, type AuthRouteStepAction } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { FlowSurfaceActions, FlowSurfaceChrome } from '@/components/ui/flowSurface';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -85,22 +86,34 @@ type TerminalConnectFrameProps = Readonly<{
     titleLeading?: React.ReactNode;
     title: string;
     subtitle?: string;
-    renderFooter?: (placement: 'card' | 'column') => React.ReactNode;
+    /** Signed out: the step's actions, drawn by the step (its primary, a quiet second). */
+    step?: Readonly<{ primary?: AuthRouteStepAction; secondary?: AuthRouteStepAction; problem?: boolean }>;
+    /** Signed in: the card's footer. */
+    renderFooter?: () => React.ReactNode;
     children?: React.ReactNode;
 }>;
 
 /**
  * Signed out, a terminal link is one more step of the welcome split (it hands off to sign-in in
- * the same pane), so the brand stays beside it; signed in, it is the focused approval card.
+ * the same pane), drawn like every other link step: the terminal mark over its heading, and a link
+ * that leads nowhere standing lower as a problem step. Signed in, it is the focused approval card.
  */
 function TerminalConnectFrame(props: TerminalConnectFrameProps) {
     if (!props.signedIn) {
         return (
-            <UnauthenticatedRouteShell testID="unauth-shell-terminal-connect" stepId="terminal-connect">
-                <UnauthenticatedStep testID={props.testID} title={props.title} subtitle={props.subtitle} footer={props.renderFooter?.('column')}>
-                    {props.children ?? null}
-                </UnauthenticatedStep>
-            </UnauthenticatedRouteShell>
+            <UnauthenticatedRouteStep
+                shellTestID="unauth-shell-terminal-connect"
+                stepId="terminal-connect"
+                testID={props.testID ?? 'terminal-connect-surface'}
+                title={props.title}
+                subtitle={props.subtitle}
+                mark={<StepMark iconName="terminal" />}
+                status={props.step?.problem}
+                primary={props.step?.primary}
+                secondary={props.step?.secondary}
+            >
+                {props.children ?? null}
+            </UnauthenticatedRouteStep>
         );
     }
     return (
@@ -110,7 +123,7 @@ function TerminalConnectFrame(props: TerminalConnectFrameProps) {
             titleLeading={props.titleLeading}
             title={props.title}
             subtitle={props.subtitle}
-            footer={props.renderFooter?.('card')}
+            footer={props.renderFooter?.()}
         >
             {props.children}
         </FlowSurfaceChrome>
@@ -124,16 +137,8 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
 
     if (props.state.kind === 'message') {
         const action = props.state.action;
-        const renderMessageFooter = action
-            ? (placement: 'card' | 'column') => (
-                <FlowSurfaceActions
-                    placement={placement}
-                    primary={{ testID: action.testID, label: action.label, onPress: action.onPress }}
-                />
-            )
-            : undefined;
-        // In the welcome pane a message is a step: its heading and sentence carry it, and only
-        // real progress earns a mark, aligned with the column instead of centred under it.
+        // In the welcome pane a message is a step: the terminal mark, its heading and sentence carry it, and only
+        // real progress earns a spinner under them; a link that leads nowhere is a problem step.
         if (!signedIn) {
             return (
                 <TerminalConnectFrame
@@ -141,7 +146,10 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                     testID={props.testID}
                     title={props.state.title}
                     subtitle={props.state.description}
-                    renderFooter={renderMessageFooter}
+                    step={{
+                        problem: props.state.tone === 'critical',
+                        primary: action ? { testID: action.testID, label: action.label, onPress: action.onPress } : undefined,
+                    }}
                 >
                     {props.state.loading ? (
                         <View style={styles.paneProgress}>
@@ -157,7 +165,12 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                 testID={props.testID}
                 title={props.state.title}
                 subtitle={props.state.description}
-                renderFooter={renderMessageFooter}
+                renderFooter={action ? () => (
+                    <FlowSurfaceActions
+                        placement="card"
+                        primary={{ testID: action.testID, label: action.label, onPress: action.onPress }}
+                    />
+                ) : undefined}
             >
                 <View style={styles.message}>
                     {props.state.loading ? (
@@ -175,6 +188,10 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
     }
 
     const approval = props.state;
+    const approvalLabel = approval.isLoading ? t('terminal.connecting')
+        : approval.onRetry ? t('common.retry')
+            : approval.needsSignIn ? t('common.continue') : t('terminal.acceptConnection');
+    const approvalDisabled = approval.isLoading || (!approval.storageMode && !approval.needsSignIn && !approval.onRetry);
     return (
         <TerminalConnectFrame
             signedIn={signedIn}
@@ -186,16 +203,28 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
             )}
             title={t('terminal.connectTerminal')}
             subtitle={t('terminal.terminalRequestDescription')}
-            renderFooter={(placement) => (
+            step={{
+                primary: {
+                    testID: 'terminal-connect-approve',
+                    label: approvalLabel,
+                    onPress: approval.onRetry ?? approval.onApprove,
+                    disabled: approvalDisabled,
+                },
+                secondary: {
+                    testID: 'terminal-connect-reject',
+                    label: t('terminal.reject'),
+                    onPress: approval.onReject,
+                    disabled: approval.isLoading,
+                },
+            }}
+            renderFooter={() => (
                 <FlowSurfaceActions
-                    placement={placement}
+                    placement="card"
                     primary={{
                         testID: 'terminal-connect-approve',
-                        label: approval.isLoading ? t('terminal.connecting')
-                            : approval.onRetry ? t('common.retry')
-                                : approval.needsSignIn ? t('common.continue') : t('terminal.acceptConnection'),
+                        label: approvalLabel,
                         onPress: approval.onRetry ?? approval.onApprove,
-                        disabled: approval.isLoading || (!approval.storageMode && !approval.needsSignIn && !approval.onRetry),
+                        disabled: approvalDisabled,
                         loading: approval.isLoading,
                     }}
                     secondary={{

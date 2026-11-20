@@ -13,7 +13,8 @@ export function StepEntranceBody({ style, followHeading = true, ...props }: View
     const register = React.useCallback((view: View | null) => {
         if (Platform.OS !== 'web' || !entrance) return;
         if (mounted.current) for (const targets of entrance.targets) targets.delete(mounted.current);
-        mounted.current = view instanceof HTMLElement ? view : null;
+        // Web only; a DOM-less web renderer (tests under node) has no HTMLElement and nothing to animate.
+        mounted.current = typeof HTMLElement !== 'undefined' && view instanceof HTMLElement ? view : null;
         if (mounted.current && followHeading) for (const targets of entrance.targets) targets.add(mounted.current);
     }, [entrance, followHeading]);
     return <Animated.View {...props} ref={register} style={[style,

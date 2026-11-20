@@ -22,6 +22,8 @@ import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol
 import { TeamJoinScreen } from '@/components/teams/join/TeamJoinScreen';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 import { UnauthenticatedRouteStep, type AuthRouteStepAction } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 
@@ -42,6 +44,8 @@ function TeamSignInStateStep(props: Readonly<{
     onBack: () => void;
     primary?: AuthRouteStepAction;
     secondary?: AuthRouteStepAction;
+    /** Which dead end it is, as the mark over the heading (the same glyphs as the join route's dead ends). */
+    glyph: IconName;
 }>) {
     return (
         <UnauthenticatedRouteStep
@@ -53,6 +57,7 @@ function TeamSignInStateStep(props: Readonly<{
             onBack={props.onBack}
             primary={props.primary}
             secondary={props.secondary}
+            mark={<StepMark iconName={props.glyph} />}
             status
         />
     );
@@ -175,6 +180,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                     : 'team-sign-in-unknown-target'}
                 title={t('teams.entry.unknownTargetTitle')}
                 subtitle={t('teams.entry.unknownTargetBody')}
+                glyph="link-break"
                 onBack={goBackHome}
             />
         );
@@ -201,6 +207,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                 testID="team-sign-in-unreachable-home"
                 title={t('teams.join.unknownHomeTitle')}
                 subtitle={t('teams.join.unknownHomeBody')}
+                glyph="house"
                 onBack={goBackHome}
                 primary={{ testID: 'team-sign-in-unreachable-home-action', label: t('common.retry'), onPress: home.retry }}
                 secondary={{ testID: 'team-sign-in-unreachable-home-secondary-action', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
@@ -213,6 +220,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                 stepId="unknown-home"
                 testID="team-sign-in-add-home"
                 title={t('teams.join.unknownHomeTitle')}
+                glyph="house"
                 subtitle={t('teams.join.unknownHomeBody')}
                 onBack={goBackHome}
                 primary={{ testID: 'team-sign-in-add-home-action', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
@@ -266,6 +274,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                 testID="team-sign-in-post-auth-unavailable"
                 title={t('teams.join.inactiveTitle')}
                 subtitle={t('teams.join.askForNew')}
+                glyph="link"
                 onBack={goBackHome}
             />
         );

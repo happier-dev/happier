@@ -211,7 +211,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID={target.kind === 'ambiguous' ? 'team-join-ambiguous-home' : 'team-join-unresolved-home'}
                 title={t('teams.join.unresolvedHomeTitle')}
                 subtitle={t('teams.join.unresolvedHomeBody')}
-                glyph="unlink"
+                glyph="link-break"
                 onBack={exit}
             />
         );
@@ -240,7 +240,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID="team-join-unreachable-home"
                 title={t('teams.join.unknownHomeTitle')}
                 subtitle={t('teams.join.unknownHomeBody')}
-                glyph="server"
+                glyph="house"
                 onBack={exit}
                 primary={{ testID: 'team-join-retry-home', label: t('common.retry'), onPress: target.retry }}
                 secondary={{ testID: 'team-join-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
@@ -255,7 +255,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID="team-join-unknown-home"
                 title={t('teams.join.unknownHomeTitle')}
                 subtitle={t('teams.join.unknownHomeBody')}
-                glyph="server"
+                glyph="house"
                 onBack={exit}
                 primary={{ testID: 'team-join-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
             />

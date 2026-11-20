@@ -48,7 +48,7 @@ export function resolveTeamJoinPresentation(
             // tell somebody their action did nothing when it just succeeded.
             return Object.freeze({
                 ...base,
-                glyph: 'checkmark-circle',
+                glyph: 'check-circle',
                 title: teamName
                     ? t('teams.join.joinedTeamTitle', { team: teamName })
                     : t('teams.join.joinedTitle'),
@@ -57,7 +57,7 @@ export function resolveTeamJoinPresentation(
         case 'already_member':
             return Object.freeze({
                 ...base,
-                glyph: 'checkmark-circle',
+                glyph: 'check-circle',
                 title: t('teams.join.alreadyMemberTitle'),
                 openTeamId: result.teamId,
             });
@@ -72,7 +72,7 @@ export function resolveTeamJoinPresentation(
         case 'revoked':
             return Object.freeze({
                 ...base,
-                glyph: 'remove-circle',
+                glyph: 'x-circle',
                 title: t('teams.join.revokedTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -80,7 +80,7 @@ export function resolveTeamJoinPresentation(
         case 'used':
             return Object.freeze({
                 ...base,
-                glyph: 'checkmark-circle',
+                glyph: 'check-circle',
                 title: t('teams.join.usedTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -96,7 +96,7 @@ export function resolveTeamJoinPresentation(
         case 'account_inactive':
             return Object.freeze({
                 ...base,
-                glyph: 'people',
+                glyph: 'users',
                 title: t('teams.join.inactiveTitle'),
                 body: t('teams.join.inactiveBody'),
                 identityAction: 'use_another_account',
@@ -105,7 +105,7 @@ export function resolveTeamJoinPresentation(
             // The invitation is fine; this device is signed in as somebody else.
             return Object.freeze({
                 ...base,
-                glyph: 'mail',
+                glyph: 'envelope',
                 title: t('teams.join.mismatchTitle'),
                 body: t('teams.join.mismatchBody'),
                 identityAction: 'sign_in_with_invited',
@@ -113,7 +113,7 @@ export function resolveTeamJoinPresentation(
         case 'feature_unavailable':
             return Object.freeze({
                 ...base,
-                glyph: 'refresh',
+                glyph: 'arrows-clockwise',
                 title: t('teams.join.updateRequiredTitle'),
                 body: t('teams.join.updateRequiredBody'),
                 exitToHappier: true,

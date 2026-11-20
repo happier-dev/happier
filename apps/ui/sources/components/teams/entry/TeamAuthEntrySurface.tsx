@@ -1080,7 +1080,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 stepId={`team-auth-entry:${loadState.kind}`}
                 testID={testID}
                 status
-                mark={<StepMark iconName={named?.glyph ?? (isIncompatible ? 'refresh' : isOffline ? 'wifi-slash' : 'link')} />}
+                mark={<StepMark iconName={named?.glyph ?? (isIncompatible ? 'arrows-clockwise' : isOffline ? 'wifi-slash' : 'link')} />}
                 title={named?.title ?? (updateRequired
                     ? t('teams.join.updateRequiredTitle')
                     : isOffline
