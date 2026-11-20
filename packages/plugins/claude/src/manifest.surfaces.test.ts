@@ -18,13 +18,11 @@ describe('Claude session surface declarations', () => {
                 id: 'resolve-prerequisites',
                 on: 'agent.resolvePrerequisites',
                 filters: { agentId: 'claude' },
-                executionKind: 'decide',
             }),
             expect.objectContaining({
                 id: 'augment-spawn-env',
                 on: 'agent.spawnEnv.augment',
                 filters: { agentId: 'claude' },
-                executionKind: 'augment',
             }),
         ]);
     });
@@ -51,6 +49,7 @@ describe('Claude session surface declarations', () => {
             {
                 sourceKind: 'claudeConfig',
                 contentSearch: true,
+                terminalFollow: { userRowClassification: 'explicitV1' },
                 schema: {
                     fields: [
                         { name: 'kind', kind: 'literal', value: 'claudeConfig' },

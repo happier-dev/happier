@@ -24,13 +24,13 @@ describe('Claude plugin manifest', () => {
     expect(result.manifest.contributes.agents[0]?.capabilities.skills?.nativeRoots)
       .toEqual({ user: [['.claude', 'skills']], project: [['.claude', 'skills']] });
   });
-  it('makes both native team launch Actions callable across UI, agent, CLI and MCP with their strict input schemas', () => {
+  it('makes both native team launch Actions callable across UI, agent, CLI, MCP and plugins with their strict input schemas', () => {
     const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(admitted).toMatchObject({ ok: true });
     for (const id of ['subagent-team-launch', 'subagent-member-launch'] as const) {
       const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === id);
       expect(action).toMatchObject({
-        surfaces: ['ui', 'agent', 'cli', 'mcp'],
+        surfaces: ['ui', 'agent', 'cli', 'mcp', 'plugin'],
         hostAccess: ['claude-session-runtime-control'],
         inputSchema: { type: 'object', additionalProperties: false },
         inputHints: { fields: expect.arrayContaining([
@@ -115,11 +115,12 @@ describe('Claude plugin manifest', () => {
     expect(agent?.capabilities.sessions?.runtimeActivitySnapshots).toBe(true);
   });
 
-  it('declares the native Claude goal work-state source', () => {
+  it('declares the native Claude goal and todo work-state sources', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'claude');
 
     expect(agent?.capabilities.sessions?.workStateSources).toEqual([
       { id: 'goals', itemKinds: ['goal'] },
+      { id: 'todos', itemKinds: ['todo'] },
     ]);
   });
 
