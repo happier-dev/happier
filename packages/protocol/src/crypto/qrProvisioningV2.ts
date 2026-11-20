@@ -365,6 +365,17 @@ export function parseHomeQrInviteV2Payload(
   payload: string,
   options: Readonly<{ nowMs: number }>,
 ): HomeQrInviteV2 | null {
+  const inspection = inspectHomeQrInviteV2Payload(payload, options);
+  return inspection?.kind === 'valid' ? inspection.invite : null;
+}
+
+/** Expired payloads are recognized for recovery presentation without exposing pairing material. */
+export function inspectHomeQrInviteV2Payload(
+  payload: string,
+  options: Readonly<{ nowMs: number }>,
+): Readonly<{ kind: 'valid'; invite: HomeQrInviteV2 }>
+  | Readonly<{ kind: 'expired'; homeServerIdentityId: string; direction: HomeQrInviteDirectionV2 }>
+  | null {
   if (payload.length > Math.ceil(HOME_QR_INVITE_V2_MAX_PAYLOAD_UTF8_BYTES / 3) * 4) return null;
   if (!/^[A-Za-z0-9_-]+$/.test(payload)) return null;
   const bytes = decodeBase64(payload, 'base64url');
@@ -385,8 +396,10 @@ export function parseHomeQrInviteV2Payload(
   const { nowMs } = options;
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) return null;
   if (parsed.data.issuedAtMs > nowMs + HOME_QR_INVITE_V2_MAX_FUTURE_ISSUANCE_SKEW_MS) return null;
-  if (nowMs > parsed.data.expiresAtMs) return null;
-  return parsed.data;
+  if (nowMs > parsed.data.expiresAtMs) {
+    return { kind: 'expired', homeServerIdentityId: parsed.data.home.homeServerIdentityId, direction: parsed.data.direction };
+  }
+  return { kind: 'valid', invite: parsed.data };
 }
 
 export type HomeQrReverseInviteV2Material = Readonly<{
