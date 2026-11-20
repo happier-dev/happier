@@ -801,6 +801,38 @@ describe('WorkflowsColumn', () => {
         }
     });
 
+    it('groups Runs by saved Workflow title or a distinct label for each unavailable Workflow', async () => {
+        const definitionId = '10000000-0000-4000-8000-000000000009';
+        const runRows = [
+            ...[waiting, running].map(run => ({ ...run, sourceArtifactId: definitionId })),
+            { ...waiting, id: 'run-unavailable-a', sourceArtifactId: '10000000-0000-4000-8000-00000000000a' },
+            { ...waiting, id: 'run-unavailable-b', sourceArtifactId: '10000000-0000-4000-8000-00000000000b' },
+        ];
+        executeMock.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Release workflow' },
+                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available',
+                stepCount: 1, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+            }] satisfies WorkflowDefinitionListResultV1['definitions'] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: runRows, metadataByRunId: {
+                [waiting.id]: { kind: 'available', value: { title: 'Prepare the release' } },
+                [running.id]: { kind: 'unavailable', reason: 'content_unavailable' },
+            } } };
+            return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
+        });
+        const { settings } = storage.getState();
+        storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: {
+            ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
+        } } });
+        routeState.pathname = '/workflows/runs';
+        const screen = await renderScreen(<WorkflowsRunsRoute />, { wrapper: TestAuth });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Release workflow'));
+        expect(screen.getTextContent()).toContain('Prepare the release');
+        expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000a');
+        expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000b');
+        expect(executeMock.mock.calls.filter(([id]) => id === 'workflow.definition.list')).toHaveLength(1);
+    });
+
     it('reveals Account triggers from an old link even while the retained column shows Runs', async () => {
         answerLists();
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });

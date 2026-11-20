@@ -193,7 +193,7 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
         glyph: () => null,
         loadingGlyph: false,
         title: (row) => row.title,
-        byline: (row) => row.startedBy,
+        byline: (row) => row.subject,
         bylineLead: (row) =>
           readWorkflowRunResultTone(row) === 'quiet' ? null : (
             <WorkflowRunResult row={row} />

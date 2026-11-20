@@ -8,22 +8,33 @@ import {
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 
 import { createCollectionSpaceDraftStore, useCollectionSpaceFilter } from '@/components/ui/lists/collection/useCollectionSpaceFilter';
+import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
+import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
 import { useWorkflowRunDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
-import { useProjectAccountRows } from '@/sync/domains/state/storage';
-import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { useProjectAccountRows, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { formatAccountDisplayName, resolveViewerAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { createWorkflowRunListRowRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { t, usePreferredLanguage } from '@/text';
 
 import { describeWorkflowRunState } from '../presentation/workflowLifecyclePresentation';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '../presentation/workflowRunDisplayName';
-import { useWorkflowRunWindow } from './workflowLibraryReads';
+import { readWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
+import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
+import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
+import { describeAccountWorkflowLibraryRecord } from './workflowLibraryCollection';
+import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from './workflowLibraryReads';
+import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
 import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
 
 const runDraft = createCollectionSpaceDraftStore<'workflowRun'>();
 const RUN_ICON = { kind: 'icon', name: 'list' } as const;
+const ACCOUNT_INLINE = { scope: 'account_inline' } as const;
 type GroupLabel = Readonly<{ key: string; title: string }>;
 const DAY_MS = 86_400_000;
 export type WorkflowRunCollectionRow = Readonly<{
@@ -37,6 +48,7 @@ export type WorkflowRunCollectionRow = Readonly<{
     workflow: GroupLabel;
     result: string | null;
     startedBy: string | null;
+    subject: string | null;
     createdAt: number | undefined;
 }>;
 
@@ -46,7 +58,7 @@ const RUN_EXTENSION_FACTS = new Map<string, (row: WorkflowRunCollectionRow) => u
     ['createdAt', row => row.createdAt],
 ]);
 
-/** Runs derives all row and filter facts from the already-held Account window and Project census. */
+/** Both Runs surfaces project the same Account window and admitted display facts. */
 export function useWorkflowRunCollection(focused: boolean) {
     const runs = useWorkflowRunWindow('all', { demanded: focused });
     const binding = useCollectionSpaceFilter('workflowRun', { lifetime: runs.accountLifetime, draft: runDraft,
@@ -55,8 +67,42 @@ export function useWorkflowRunCollection(focused: boolean) {
     const extensions = useWorkflowListExtensions('workflowRun', RUN_EXTENSION_FACTS);
     const census = useProjectAccountRows();
     const language = usePreferredLanguage();
-    const projectDisplay = React.useMemo(() => census ? buildProjectGroupDisplayIndex(census.workspaceRefs, census.organizations) : null,
-        [census?.workspaceRefs, census?.organizations]);
+    const hasSavedWorkflow = runs.rows.some(run => run.summary?.sourceArtifactId != null);
+    const { definitions } = useWorkflowDefinitionLibrary({
+        enabled: hasSavedWorkflow,
+        demanded: focused,
+    });
+    const hasInlineWorkflow = runs.rows.some(run => !run.summary?.sourceArtifactId
+        && (run.summary?.origin.kind === 'automation' || run.automation !== null));
+    const { sets } = useWorkflowTriggerSets(ACCOUNT_INLINE, undefined, {
+        demanded: focused && hasInlineWorkflow,
+    });
+    const workflowTitles = React.useMemo(() => new Map([
+        ...sets.map(set => {
+            const record = describeAccountWorkflowLibraryRecord(set);
+            return [set.automationId, record.sourceGone ? null : record.name] as const;
+        }),
+        ...definitions.map(definition => [definition.definitionId, readWorkflowDefinitionLibraryTitle(definition)] as const),
+    ]), [definitions, language, sets]);
+    const starters = React.useMemo(() => focused ? runs.rows.flatMap(({ summary }) => summary?.startedBy === 'user'
+        ? [{ kind: 'person' as const, accountId: summary.ownerAccountId }] : []) : [], [focused, runs.rows]);
+    const { profiles, viewerAccountId } = useWorkflowSourcePeople(starters, runs.accountLifetime);
+    const viewerName = useSyncedAccountName(runs.accountLifetime?.scope ?? null)?.label;
+    const subjectAddresses = React.useMemo(() => runs.rows.flatMap(({ id, summary }) => {
+        const sessionId = summary?.origin.originSessionId;
+        return sessionId ? [{ key: id, sessionId, serverId: runs.serverId }] : [];
+    }), [runs.rows, runs.serverId]);
+    const subjectTitles = useSessionDisplayNameProjections(subjectAddresses, readableSessionDisplayTitle);
+    const subjects = React.useMemo(() => new Map(subjectAddresses.map(({ key }, index) => [key, subjectTitles[index] ?? null])),
+        [subjectAddresses, subjectTitles]);
+    const discussionAddresses = React.useMemo(() => runs.rows.flatMap(({ id, summary }) => {
+        const discussion = summary?.origin.kind === 'direct' ? summary.origin.discussion?.discussion : undefined;
+        return discussion ? [{ key: id, ...discussion }] : [];
+    }), [runs.rows]);
+    const discussionTitles = useDiscussionTitleProjections(discussionAddresses);
+    const discussions = React.useMemo(() => new Map(discussionAddresses.map(({ key }, index) => [key, discussionTitles[index] ?? null])),
+        [discussionAddresses, discussionTitles]);
+    const projectDisplay = useWorkflowProjectGroupDisplay(census, focused);
     const rows = React.useMemo(() => {
         const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: 'medium' });
         const dates = new Map<string, GroupLabel>();
@@ -72,7 +118,13 @@ export function useWorkflowRunCollection(focused: boolean) {
             const projectKey = project?.kind === 'resolved' ? projectGroupIdentityKey(project.projectKey) : null;
             const projectTitle = projectKey === null ? null : projectDisplay?.get(projectKey)?.title;
             const startedBy = summary?.startedBy;
-            const startedByLabel = startedBy == null ? null : t(`workflows.destination.display.starter.${startedBy}`);
+            const cause = (summary?.origin.kind === 'automation' ? summary.origin.cause : undefined) ?? run.automation?.cause;
+            const starterProfile = summary && profiles.get(summary.ownerAccountId)?.profile;
+            const startedByLabel = startedBy === 'user' && summary
+                ? summary.ownerAccountId === viewerAccountId ? resolveViewerAccountDisplayName(viewerName)
+                    : (starterProfile && formatAccountDisplayName(starterProfile)) || t('accountDisplay.unnamed')
+                : cause ? formatAutomationRunCauseLabel(cause)
+                    : startedBy == null ? null : t(`workflows.destination.display.starter.${startedBy}`);
             const createdAtSource = summary?.createdAt ?? run.automation?.createdAt;
             const timestamp = createdAtSource === undefined ? NaN : new Date(createdAtSource).getTime();
             const createdAt = Number.isFinite(timestamp) ? timestamp : undefined;
@@ -89,12 +141,16 @@ export function useWorkflowRunCollection(focused: boolean) {
                 dates.set(dateKey, date);
             }
             const result = summary?.state ?? run.automation?.workflowRunState;
+            const workflowTitle = workflowId ? workflowTitles.get(workflowId) : undefined;
             return {
                 key: run.id, title, route: createWorkflowRunListRowRoute(run, runs.serverId), run, date,
                 project: { key: projectKey ?? 'noProject', title: projectTitle ?? t('workflows.destination.sections.noProject') },
-                workflow: { key: workflowId ?? 'noWorkflow', title: workflowId ? title : t('workflows.destination.display.noWorkflow') },
+                workflow: { key: workflowId ?? 'noWorkflow', title: workflowTitle ?? (workflowId
+                    ? `${t('workflows.destination.display.workflow')} · ${workflowId.slice(-8)}`
+                    : t('workflows.destination.display.noWorkflow')) },
                 result: result === undefined ? null : describeWorkflowRunState(result).label,
                 startedBy: startedByLabel,
+                subject: discussions.get(run.id) ?? subjects.get(run.id) ?? null,
                 createdAt,
                 facts: {
                     workflows: workflowId,
@@ -104,7 +160,8 @@ export function useWorkflowRunCollection(focused: boolean) {
                 },
             };
         });
-    }, [census?.sessionProjectKeyResolver, language, projectDisplay, runs.rows, runs.serverId]);
+    }, [census?.sessionProjectKeyResolver, discussions, language, profiles, projectDisplay, runs.rows, runs.serverId, subjects,
+        viewerAccountId, viewerName, workflowTitles]);
     const match = React.useMemo(() => compileWorkflowRunListFilterV1(binding.filters), [binding.filters]);
     const needle = binding.searchQuery.trim().toLocaleLowerCase();
     const { visible, filterResult } = React.useMemo(() => {
@@ -159,7 +216,8 @@ export function useWorkflowRunCollectionHeader(model: WorkflowRunCollection, tes
         return { fields: {
             workflows: { label: t('workflows.destination.display.workflow'), valueOptions: options('workflows', row => row.workflow.title) },
             results: { label: t('workflows.destination.display.result'), valueOptions: options('results', row => row.result) },
-            startedBy: { label: t('workflows.destination.display.startedBy'), valueOptions: options('startedBy', row => row.startedBy) },
+            startedBy: { label: t('workflows.destination.display.startedBy'), valueOptions: options('startedBy', row =>
+                row.facts.startedBy ? t(`workflows.destination.display.starter.${row.facts.startedBy}`) : null) },
             projects: { label: t('workflows.destination.display.project'), valueOptions: options('projects', row => row.project.title) },
         } };
     }, [model.rows]);

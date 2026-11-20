@@ -172,17 +172,24 @@ export function formatWorkflowDefinitionContentUnavailableReason(reason: Workflo
     return t(WORKFLOW_CONTENT_REASON_KEYS[reason]);
 }
 
-/** A missing rejected-header title is unavailable, not a fabricated authored name. */
-export function formatWorkflowDefinitionLibraryTitle(definition: Readonly<{
+type WorkflowDefinitionLibraryTitleSource = Readonly<{
     metadata: WorkflowDefinitionMetadataV1 | null;
     definitionId?: string;
     contentUnavailableReason?: WorkflowDefinitionContentUnavailableReasonV1;
-}>): string {
+}>;
+
+/** The title admitted from the header, if one could be read. */
+export function readWorkflowDefinitionLibraryTitle(definition: WorkflowDefinitionLibraryTitleSource): string | null {
     if (definition.contentUnavailableReason === 'history_not_readable'
         && (!definition.metadata || definition.metadata.title === definition.definitionId)) {
-        return t('workflows.readState.historyTitle');
+        return null;
     }
-    return definition.metadata?.title ?? t('common.unavailable');
+    return definition.metadata?.title ?? null;
+}
+
+export function formatWorkflowDefinitionLibraryTitle(definition: WorkflowDefinitionLibraryTitleSource): string {
+    return readWorkflowDefinitionLibraryTitle(definition) ?? t(definition.contentUnavailableReason === 'history_not_readable'
+        ? 'workflows.readState.historyTitle' : 'common.unavailable');
 }
 
 function repairLabelFor(repair: WorkflowProblemRepair): string | null {

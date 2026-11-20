@@ -151,8 +151,7 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
     tone === 'working' || row.createdAt === undefined
       ? null
       : props.time.format(row.createdAt);
-  const line =
-    row.project.key === 'noProject' ? row.startedBy : row.project.title;
+  const line = row.subject;
   const stateWord =
     tone === 'attention'
       ? t('workflows.destination.sections.needsYou')
