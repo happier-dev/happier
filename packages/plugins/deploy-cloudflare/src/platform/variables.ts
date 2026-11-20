@@ -135,10 +135,12 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
     }
     const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path, 'send', method, payload, contentType)
       .catch((error: unknown) => {
-        // A received vendor refusal must not discard earlier successful ownership.
+        // A dispatched write outcome must not discard earlier successful ownership.
         // Host admission/custody errors retain their invocation-level semantics.
-        if (isPluginError(error) && error.data.failureCause?.phase === 'deployment.provider.send'
-          && typeof error.data.failureCause.httpStatus === 'number') return { code: 'provider_request_failed' as const };
+        if (isPluginError(error) && error.data.failureCause?.phase === 'deployment.provider.send') {
+          if (error.code === 'outcome_unknown') return { code: error.code };
+          if (typeof error.data.failureCause.httpStatus === 'number') return { code: 'provider_request_failed' as const };
+        }
         throw error;
       });
     if ('code' in reply) {

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
 import { activateAccount } from '../accountRuntime.js';
@@ -342,11 +343,15 @@ it('keeps successful per-key provenance and does not retry an unknown provider w
   } finally { await kit.dispose(); }
 });
 
-it('stops Worker replacement writes after an unknown outcome instead of dropping an unacknowledged key', async () => {
+it.each(['lost reply', '5xx envelope', 'response limit'])('stops Worker replacement writes after an unknown outcome (%s)', async (outcome) => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
-    if (request.method === 'PATCH') throw new Error('Provider accepted FIRST, but its response was lost');
+    if (request.method === 'PATCH') {
+      if (outcome === '5xx envelope') return response(null, 502);
+      if (outcome === 'response limit') throw new PluginError({ code: 'plugin_fetch_response_too_large' });
+      throw new Error('Provider accepted FIRST, but its response was lost');
+    }
     return response({ bindings: [] });
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });

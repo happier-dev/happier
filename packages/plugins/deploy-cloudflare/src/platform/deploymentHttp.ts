@@ -88,6 +88,10 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   if (phase === 'teardown' && response.status >= 500) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
     failureCause: { phase: 'deployment.provider.teardown', errorClass: 'Error', errorCode: null,
       ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status } });
+  if (mutation && response.status >= 500) return failure('outcome_unknown', phase, {
+    phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null,
+    ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status,
+  });
   if (response.status >= 400 && response.status < 500
     || isObject(body) && body.success === false
     || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {
@@ -98,7 +102,7 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   }
   // Preserve acknowledged results even when local cancellation races with the response.
   if (response.status < 200 || response.status >= 300) {
-    return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase, {
+    return failure('provider_request_failed', phase, {
       phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, httpStatus: response.status,
     });
   }
