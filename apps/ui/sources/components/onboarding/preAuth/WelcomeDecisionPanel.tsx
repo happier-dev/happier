@@ -187,8 +187,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         hasHome,
         serviceName,
         canRetryService: accountServiceEntry != null,
-        policy: props.restoreWays ? undefined : policyLock ? { kind: 'managed', field: policyField, lock: policyLock }
-            : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
+        policy: props.restoreWays ? undefined : policyLock ? {
+            kind: 'managed',
+            field: policyField,
+            display: { organization: policyLock.organization, hasSupport: Boolean(policyLock.supportUrl) },
+        } : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
     });
     usePublishFirstOpenWelcomeModel(props.restoreWays ? null : viewModel);
 
@@ -228,5 +231,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         onSelfHosting: props.onChangeRelay,
         waysLeading: props.waysLeading,
         onRetryRetention: options.retentionDisclosure?.kind === 'unreadable' ? options.retentionDisclosure.retry : undefined,
+        policySupportUrl: policyLock?.supportUrl,
     }} />;
 });

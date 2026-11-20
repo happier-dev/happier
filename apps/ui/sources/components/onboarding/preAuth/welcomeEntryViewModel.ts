@@ -1,9 +1,10 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
-import type { OrganizationPolicyField, OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import type { OrganizationPolicyField } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { describeHomeAuthenticationAction } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import type { RelayRetentionDisclosureModel } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
+import type { OrganizationPolicyManagedDisplay } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { t } from '@/text';
 
 import type { WelcomeAuthenticationMethod, WelcomeEntryModel } from './composeWelcomeEntryModel';
@@ -35,7 +36,7 @@ export type WelcomeEntryViewModel = Readonly<{
     /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
     trust?: string;
     retention?: RelayRetentionDisclosureModel;
-    policy?: Readonly<{ kind: 'managed'; field: OrganizationPolicyField; lock: OrganizationPolicyLock }>
+    policy?: Readonly<{ kind: 'managed'; field: OrganizationPolicyField; display: OrganizationPolicyManagedDisplay }>
         | Readonly<{ kind: 'invalid' }>;
     quietWaysTitle?: string;
     doors: readonly Readonly<{ index: number; display: Action }>[];

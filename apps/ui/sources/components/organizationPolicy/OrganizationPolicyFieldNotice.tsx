@@ -41,16 +41,25 @@ export function readOrganizationPolicyFieldState(
   };
 }
 
+export type OrganizationPolicyManagedDisplay = Readonly<{
+  organization: string;
+  hasSupport: boolean;
+}>;
+
 /**
  * The one "managed by your organization" affordance: a quiet line beside the value it governs,
  * with the administrator's help link when the policy names one. Consumers show the managed value
  * itself and leave out choices that cannot succeed, so this line never sits next to a dead control.
  */
-export function OrganizationPolicyManagedLine(
-  props: Readonly<{ lock: OrganizationPolicyLock; testID?: string; interactive?: boolean }>,
+export function OrganizationPolicyManagedLine(props:
+  | Readonly<{ lock: OrganizationPolicyLock; testID?: string }>
+  | Readonly<{ display: OrganizationPolicyManagedDisplay; supportUrl?: string; testID?: string }>,
 ) {
+  const organization = 'lock' in props ? props.lock.organization : props.display.organization;
+  const supportUrl = 'lock' in props ? props.lock.supportUrl : props.supportUrl;
+  const hasSupport = 'lock' in props ? Boolean(supportUrl) : props.display.hasSupport;
   const label = t('organizationPolicy.managedBy', {
-    organization: props.lock.organization,
+    organization,
   });
   return (
     <View testID={props.testID} style={styles.line}>
@@ -60,7 +69,7 @@ export function OrganizationPolicyManagedLine(
       >
         {label}
       </Text>
-      {props.lock.supportUrl ? (
+      {hasSupport ? (
         <>
           <Text
             style={styles.label}
@@ -70,9 +79,8 @@ export function OrganizationPolicyManagedLine(
             ·
           </Text>
           <SupportLink
-            url={props.lock.supportUrl}
+            url={supportUrl}
             testID={props.testID ? `${props.testID}-support` : undefined}
-            interactive={props.interactive}
           />
         </>
       ) : null}
@@ -133,16 +141,16 @@ export function OrganizationPolicyManagedState(props: Readonly<{
     );
 }
 
-function SupportLink(props: Readonly<{ url: string; label?: string; testID?: string; interactive?: boolean }>) {
-  const [, open] = useOpenExternalUrl(props.url);
+function SupportLink(props: Readonly<{ url?: string; label?: string; testID?: string }>) {
+  const [, open] = useOpenExternalUrl(props.url ?? '');
   const label = props.label ?? t('organizationPolicy.support');
   return (
     <HappierPressable
       testID={props.testID}
       accessibilityRole="link"
       accessibilityLabel={label}
-      disabled={props.interactive === false}
-      onPress={props.interactive === false ? undefined : open}
+      disabled={!props.url}
+      onPress={props.url ? open : undefined}
     >
       <Text style={styles.support}>{label}</Text>
     </HappierPressable>
@@ -169,10 +177,9 @@ export function OrganizationPolicyInvalidHelp({ interactive }: Readonly<{ intera
         ·
       </Text>
       <SupportLink
-        url={ORGANIZATION_POLICY_GUIDE_URL}
+        url={interactive === false ? undefined : ORGANIZATION_POLICY_GUIDE_URL}
         label={t('organizationPolicy.guide')}
         testID="organization-policy-invalid-next-step-guide"
-        interactive={interactive}
       />
     </View>
   );

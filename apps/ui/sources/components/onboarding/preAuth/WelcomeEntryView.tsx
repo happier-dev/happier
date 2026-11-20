@@ -29,6 +29,7 @@ export type WelcomeEntryViewInteraction = Readonly<{
     /** Marks the host puts first on the ways row (Approve: Back on a computer, then the recovery key). */
     waysLeading?: React.ReactNode;
     onRetryRetention?: () => void;
+    policySupportUrl?: string;
 }>;
 
 /** The doors' column (lab direction A: 380 px), narrower than the headline above it. */
@@ -88,8 +89,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     </Text>
                 ) : null}
             </View> : null}
-            {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine lock={model.policy.lock}
-                testID={`organization-policy-${model.policy.field}`} interactive={Boolean(interaction)} /> :
+            {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine display={model.policy.display}
+                testID={`organization-policy-${model.policy.field}`} supportUrl={interaction?.policySupportUrl} /> :
                 model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
             {model.signupNotice ? (
                 <Text testID="welcome-signup-disabled" style={[styles.statusText, styles.signupDisabledNotice]}>

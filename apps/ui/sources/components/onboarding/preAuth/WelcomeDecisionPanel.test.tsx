@@ -408,15 +408,29 @@ describe('WelcomeDecisionPanel', () => {
     });
 
     it('shows a Home fixed by organization policy as managed, leaving out the ways to pick another', async () => {
+        const supportUrl = 'https://support.example.test/organization';
         vi.stubGlobal('isTauri', true);
         vi.stubGlobal('document', {});
         vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
-            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co', supportUrl,
                 home: { url: 'https://home.example.test', locked: true } }),
         } });
         try {
-            const screen = await renderPanel().screenPromise;
+            const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();
+            const screen = await renderScreen(
+                <FirstOpenWelcomeModelContext.Provider value={publish}>
+                    <WelcomeDecisionPanel authEntryOptions={baseOptions} canScanQr onOpenRestore={vi.fn()}
+                        onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} onContinueWithHomeAuthentication={vi.fn()} />
+                </FirstOpenWelcomeModelContext.Provider>,
+            );
             expect(screen.findByTestId('organization-policy-home')).toBeTruthy();
+            const support = 'organization-policy-home-support';
+            expect(screen.findByTestId(support)).toBeTruthy();
+            expect(screen.findByTestId(support)?.props.accessibilityState?.disabled).toBeFalsy();
+            const serialized = JSON.stringify(publish.mock.calls[0]?.[0]);
+            expect(serialized).not.toContain(supportUrl);
+            const replica = await renderScreen(<WelcomeEntryView model={JSON.parse(serialized)} compact={false} />);
+            expect(replica.findByTestId(support)?.props.accessibilityState?.disabled).toBe(true);
             expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
             expect(screen.findByTestId('welcome-scan-existing-home')).toBeNull();
             expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
