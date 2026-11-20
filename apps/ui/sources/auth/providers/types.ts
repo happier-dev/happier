@@ -31,6 +31,10 @@ export type HomeOAuthRequestContext = Readonly<{
     }>;
 }>;
 
+export type HomeOAuthSignInRequestContext = HomeOAuthRequestContext & Readonly<{ signIn: true }>;
+
+export type ExternalOAuthStart = Readonly<{ url: string; desktopAttemptId?: string }>;
+
 /** OAuth started from an explicit Team entry. The server resolves the current
  * Team connection and mints the one-time admission continuation; the client
  * carries only the immutable Team ID. */
@@ -46,15 +50,13 @@ export type TeamOAuthRequestContext = Readonly<{
     }>;
 }>;
 
-export type TeamOAuthStart = Readonly<{
-    url: string;
+export type TeamOAuthStart = ExternalOAuthStart & Readonly<{
     purpose: 'team_admission';
     teamId: string;
     admissionReference: string;
 }>;
 
-export type AccountDirectoryOAuthStart = Readonly<{
-    url: string;
+export type AccountDirectoryOAuthStart = ExternalOAuthStart & Readonly<{
     purpose: 'account_directory';
     credentialTarget: 'account_directory';
     endpointUrl: string;
@@ -81,6 +83,10 @@ export interface GetConnectUrl {
 
 export interface GetExternalAuthUrl {
     (params: ExternalAuthStartInput): Promise<string>;
+    (
+        params: ExternalAuthStartInput,
+        context: HomeOAuthSignInRequestContext,
+    ): Promise<ExternalOAuthStart>;
     (
         params: ExternalAuthStartInput,
         context: HomeOAuthRequestContext,

@@ -36,7 +36,9 @@ import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { createHomeOAuthRequestContext } from '@/auth/providers/homeExternalAuthTarget';
 import { accountDirectoryAuthClient, acquireAccountServiceAuthTransport, createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
-import { launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { cancelAccountServiceOAuth, describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { OAuthBrowserWaitStep, type OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
+import { openExternalAuthenticationUrl } from '@/auth/flows/openExternalAuthenticationUrl';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
@@ -102,10 +104,10 @@ type HomeOAuthRetry = Readonly<{
     mode?: 'keyed' | 'keyless';
     returnTo: string;
 }>;
-type AccountDirectoryCallbackState = Readonly<{ providerName: string; endpointUrl: string }> & (
-    | Readonly<{ kind: 'progress'; stage: AccountDirectoryCallbackStage }>
-    | Readonly<{ kind: 'error'; failure: AccountServiceFailureCode }>
-);
+type AccountDirectoryCallbackState =
+    | Readonly<{ kind: 'progress'; stage: AccountDirectoryCallbackStage; providerName: string; endpointUrl: string }>
+    | Readonly<{ kind: 'error'; failure: AccountServiceFailureCode; providerName: string; endpointUrl: string }>
+    | Readonly<{ kind: 'browser_wait'; wait: OAuthBrowserWait; returnTo: string }>;
 type ExternalSignInFailure = Readonly<{
     presentation: ReturnType<typeof describeOAuthSignInFailure>;
     iconName: IconName;
@@ -1087,6 +1089,7 @@ function OAuthProviderReturnBody() {
                                 mode: 'keyed',
                                 entryIntent: pendingDirectoryAuth.entryIntent,
                                 returnTo: pendingDirectoryAuth.returnTo,
+                                accountEntryReturnTo: pendingDirectoryAuth.accountEntryReturnTo,
                                 ...(pendingDirectoryAuth.linkHomeServerIdentityId ? { linkHomeServerIdentityId: pendingDirectoryAuth.linkHomeServerIdentityId } : {}),
                                 ...(pendingDirectoryAuth.explicitHomeServerIdentityId ? { explicitHomeServerIdentityId: pendingDirectoryAuth.explicitHomeServerIdentityId } : {}),
                                 signal: controller.signal,
@@ -1094,14 +1097,26 @@ function OAuthProviderReturnBody() {
                             if (!isSafeExternalAuthUrl(keyedStart.url)) {
                                 throw new Error('Invalid keyed Account Service OAuth URL');
                             }
-                            await Linking.openURL(keyedStart.url);
+                            const keyedPending = keyedStart.pending;
+                            if (keyedPending.desktopAttemptId) {
+                                await openExternalAuthenticationUrl(keyedStart.url, keyedPending.desktopAttemptId);
+                                safeSetDirectoryJourney({
+                                    kind: 'browser_wait',
+                                    returnTo: keyedPending.accountEntryReturnTo ?? directoryReturnTo,
+                                    wait: {
+                                        providerName,
+                                        badgeIconName: oauthProviderIconName(providerId),
+                                        destination: { kind: 'find_homes' },
+                                        cancel: () => cancelAccountServiceOAuth(keyedPending),
+                                    },
+                                });
+                            } else {
+                                await Linking.openURL(keyedStart.url);
+                            }
                             return;
                         } catch {
                             if (keyedStart) {
-                                await TokenStorage.clearPendingAccountDirectoryAuth({
-                                    endpoint: keyedStart.pending.endpoint,
-                                    serverIdentityId: keyedStart.pending.serverIdentityId,
-                                }, { expected: keyedStart.pending }).catch(() => false);
+                                await cancelAccountServiceOAuth(keyedStart.pending);
                             }
                             safeSetDirectoryJourney({
                                 kind: 'error',
@@ -1787,6 +1802,11 @@ function OAuthProviderReturnBody() {
                                 authority: createVerifiedAccountServiceAuthority(discovery), execution: method.execution,
                                 intent: pending.entryIntent, returnTo: attempt.returnTo,
                                 accountEntryReturnTo: pending.accountEntryReturnTo, transport, signal,
+                                onBrowserHandoff: (handoff) => setAccountDirectoryJourney({
+                                    kind: 'browser_wait',
+                                    returnTo: pending.accountEntryReturnTo ?? attempt.returnTo,
+                                    wait: { ...handoff, ...describeAccountServiceAuthenticationProvider(method.method), destination: { kind: 'find_homes' } },
+                                }),
                             });
                             if (result !== 'failed') return;
                         }
@@ -1910,13 +1930,18 @@ function OAuthProviderReturnBody() {
     }
 
     if (visibleAccountDirectoryJourney) {
+        if (visibleAccountDirectoryJourney.kind === 'browser_wait') {
+            const { wait, returnTo } = visibleAccountDirectoryJourney;
+            return <OAuthBrowserWaitStep wait={wait} onBack={async () => {
+                await wait.cancel();
+                router.replace(admitInternalRouteHref(returnTo));
+            }} />;
+        }
         const canCancel = visibleAccountDirectoryJourney.kind === 'progress'
             && visibleAccountDirectoryJourney.stage === 'signing_in'
             && !accountDirectoryCredentialCommitStartedRef.current;
-        const directoryFailure = visibleAccountDirectoryJourney.kind === 'error'
-            ? describeOAuthSignInFailure(visibleAccountDirectoryJourney.failure)
-            : null;
-        if (directoryFailure) {
+        if (visibleAccountDirectoryJourney.kind === 'error') {
+            const directoryFailure = describeOAuthSignInFailure(visibleAccountDirectoryJourney.failure);
             // A failed sign-in is the step's own answer (lab direction A): the provider's mark, what happened, and
             // Start again; never a card under a "Signing in…" heading that is no longer true.
             return (

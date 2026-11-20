@@ -3,7 +3,7 @@ import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountS
 import { accountDirectoryAuthClient, type AccountDirectoryAuthTransport, type AccountDirectoryAuthenticationAction, type AccountDirectoryOAuthStartResult, type VerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { getAuthProvider } from '@/auth/providers/registry';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, type PendingAccountDirectoryAuth } from '@/auth/storage/tokenStorage';
 import { prepareAccountCredentialJourney } from '@/auth/flows/accountCredentialJourney';
 import { openExternalAuthenticationUrl, type OAuthBrowserHandoff } from '@/auth/flows/openExternalAuthenticationUrl';
 import { asIconName } from '@/components/ui/icons/asIconName';
@@ -39,6 +39,12 @@ async function startAccountServiceOAuthAuthentication(input: Readonly<{
 
 export type AccountServiceOAuthLaunchOutcome = 'opened' | 'cancelled' | 'failed';
 
+export async function cancelAccountServiceOAuth(pending: PendingAccountDirectoryAuth): Promise<void> {
+    await TokenStorage.clearPendingAccountDirectoryAuth({
+        endpoint: pending.endpoint, serverIdentityId: pending.serverIdentityId,
+    }, { expected: pending }).catch(() => false);
+}
+
 /**
  * Starts an account-service OAuth ceremony and hands its URL to the browser. The one launch
  * routine for every surface that offers account-service sign-in: a start the invoking surface no
@@ -57,7 +63,6 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
     onBrowserHandoff?: (handoff: OAuthBrowserHandoff) => void;
 }>): Promise<AccountServiceOAuthLaunchOutcome> {
     if (input.isCurrent?.() === false) return 'cancelled';
-    const target = { endpoint: input.authority.endpointUrl, serverIdentityId: input.authority.serverIdentityId };
     let started: AccountDirectoryOAuthStartResult | null = null;
     try {
         const move = prepareAccountCredentialJourney({ kind: 'account_directory', request: {
@@ -66,20 +71,20 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
         if (move) { await move(); return 'opened'; }
         started = await startAccountServiceOAuthAuthentication(input);
         const pending = started.pending;
-        const cancel = async () => { await TokenStorage.clearPendingAccountDirectoryAuth(target, { expected: pending }).catch(() => false); };
+        const cancel = () => cancelAccountServiceOAuth(pending);
         if (input.signal?.aborted || input.isCurrent?.() === false) {
             await cancel();
             return 'cancelled';
         }
         if (!isSafeExternalAuthUrl(started.url)) throw new Error('Unsafe account-service sign-in URL');
-        const handoff = await openExternalAuthenticationUrl(started.url);
+        const handoff = await openExternalAuthenticationUrl(started.url, pending.desktopAttemptId);
         // Once the browser owns the URL, a return may have already unmounted the launcher.
         if (input.signal?.aborted || input.isCurrent?.() === false) return 'cancelled';
         if (handoff === 'system_browser') input.onBrowserHandoff?.({ cancel });
         return 'opened';
     } catch {
         if (started) {
-            await TokenStorage.clearPendingAccountDirectoryAuth(target, { expected: started.pending }).catch(() => false);
+            await cancelAccountServiceOAuth(started.pending);
         }
         return input.signal?.aborted ? 'cancelled' : 'failed';
     }

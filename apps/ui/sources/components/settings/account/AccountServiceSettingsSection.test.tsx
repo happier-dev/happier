@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, renderScreen as renderBaseScreen } from '@/dev/testkit';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -12,7 +13,7 @@ async function renderScreen(element: React.ReactElement) {
     return renderBaseScreen(<AuthProvider initialCredentials={null}>{element}</AuthProvider>);
 }
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { TokenStorage, digestAccountDirectoryCredentialToken } from '@/auth/storage/tokenStorage';
 import {
@@ -77,6 +78,7 @@ describe('Account Service settings continuation composition', () => {
     afterEach(async () => {
         await screen?.unmount();
         screen = undefined;
+        vi.unstubAllGlobals();
         await cancelPendingDirectoryHomeEnrollment();
         await TokenStorage.removeCredentialsForServerUrl(fixture.home.canonicalServerUrl, {
             serverId: fixture.home.homeServerIdentityId,
@@ -403,12 +405,18 @@ describe('Account Service settings continuation composition', () => {
         await TokenStorage.removeCredentialsForServerUrl(profile.serverUrl, { serverId: 'srv_home_c' });
     });
 
-    it('offers the advertised ways in, the first OAuth sign-in first, and leaves for the provider directly', async () => {
+    it.each(['existing', 'tauri'] as const)('offers the advertised ways in, the first OAuth sign-in first, and opens the provider on %s', async (host) => {
         await TokenStorage.accountDirectoryAuthCredentials.logout({
             endpoint: fixture.service.endpointUrl,
             serverIdentityId: fixture.service.serverIdentityId,
         });
         const openURL = vi.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+        if (host === 'tauri') {
+            onTestFinished(installWebLockManagerMock().restore);
+            vi.stubGlobal('__TAURI_INTERNALS__', createDesktopSecureStorageBoundary());
+            vi.stubGlobal('HTMLElement', class {});
+            vi.stubGlobal('window', { location: { assign: openURL } });
+        }
         boundary.request.mockImplementation(async (requestEndpoint: string, path: string, init?: RequestInit) => {
             if (path === '/v1/auth/entry') {
                 return new Response(JSON.stringify({
@@ -427,6 +435,7 @@ describe('Account Service settings continuation composition', () => {
                     endpointUrl: fixture.service.endpointUrl, endpointServerIdentityId: fixture.service.serverIdentityId,
                     canonicalServerUrl: fixture.service.canonicalServerUrl,
                     expiresAt: new Date(Date.now() + 600_000).toISOString(),
+                    ...(host === 'tauri' ? { desktopAttemptId: 'settings-attempt' } : {}),
                 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
             }
             return fixture.request(requestEndpoint, path, init);
@@ -441,10 +450,19 @@ describe('Account Service settings continuation composition', () => {
         expect(button('settings-account-service-method-key_challenge-login-keyed')?.props.display).toBe('secondary');
         expect(screen.findByTestId('settings-account-service-method-key_challenge-provision-keyed')).not.toBeNull();
 
-        await act(async () => {
-            await screen!.findByTestId('settings-account-service-method-github-login-keyless')!.props.onPress();
-        });
-        await vi.waitFor(() => expect(openURL).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?client_id=happier'));
+        await screen.pressByTestIdAsync('settings-account-service-method-github-login-keyless');
+        if (host === 'tauri') {
+            await vi.waitFor(() => expect(boundary.request.mock.calls.some(([, path]) =>
+                String(path).startsWith('/v1/auth/external/github/params?') && String(path).includes('desktopCallbackScheme=happier'))).toBe(true));
+            await vi.waitFor(() => expect(screen?.findByTestId('oauth-browser-wait-title')).toBeTruthy());
+            const target = { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId };
+            expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ desktopAttemptId: 'settings-attempt' });
+            await screen.pressByTestIdAsync('oauth-browser-wait-back');
+            expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
+            expect(screen.findByTestId('settings-account-service-method-github-login-keyless')).toBeTruthy();
+        } else {
+            await vi.waitFor(() => expect(openURL).toHaveBeenCalledWith('https://github.com/login/oauth/authorize?client_id=happier'));
+        }
         expect(router.push).not.toHaveBeenCalled();
         openURL.mockRestore();
     });

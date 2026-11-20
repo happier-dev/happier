@@ -10,13 +10,17 @@ import {
     RetryableServerResponseError,
 } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { t } from '@/text';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
+import { resolveAppUrlScheme } from '@/utils/url/appScheme';
 
 import type {
     AccountDirectoryOAuthRequestContext,
     AccountDirectoryOAuthStart,
     AuthProvider,
     ExternalAuthStartInput,
+    ExternalOAuthStart,
     HomeOAuthRequestContext,
+    HomeOAuthSignInRequestContext,
     TeamOAuthRequestContext,
     TeamOAuthStart,
 } from '@/auth/providers/types';
@@ -50,6 +54,10 @@ export function createExternalOAuthProvider(params: {
     async function getExternalAuthUrl(input: ExternalAuthStartInput): Promise<string>;
     async function getExternalAuthUrl(
         input: ExternalAuthStartInput,
+        context: HomeOAuthSignInRequestContext,
+    ): Promise<ExternalOAuthStart>;
+    async function getExternalAuthUrl(
+        input: ExternalAuthStartInput,
         context: HomeOAuthRequestContext,
     ): Promise<string>;
     async function getExternalAuthUrl(
@@ -62,8 +70,8 @@ export function createExternalOAuthProvider(params: {
     ): Promise<TeamOAuthStart>;
     async function getExternalAuthUrl(
         input: ExternalAuthStartInput,
-        context?: AccountDirectoryOAuthRequestContext | HomeOAuthRequestContext | TeamOAuthRequestContext,
-    ): Promise<string | AccountDirectoryOAuthStart | TeamOAuthStart> {
+        context?: AccountDirectoryOAuthRequestContext | HomeOAuthSignInRequestContext | HomeOAuthRequestContext | TeamOAuthRequestContext,
+    ): Promise<string | ExternalOAuthStart | AccountDirectoryOAuthStart | TeamOAuthStart> {
         const directoryContext = context && 'purpose' in context
             && context.purpose === 'account_directory'
             ? context
@@ -72,6 +80,10 @@ export function createExternalOAuthProvider(params: {
             && context.purpose === 'team_admission'
             ? context
             : null;
+        const homeSignIn = context && 'signIn' in context && context.signIn === true;
+        const desktopCallbackQuery = (homeSignIn || directoryContext || teamContext) && desktopHostKind() === 'tauri'
+            ? `&desktopCallbackScheme=${encodeURIComponent(resolveAppUrlScheme())}`
+            : '';
         const query =
             input.mode === 'keyless'
                 ? (() => {
@@ -113,7 +125,7 @@ export function createExternalOAuthProvider(params: {
                 : '';
         const request = context?.request ?? serverFetch;
         const response = await request(
-            `/v1/auth/external/${encodeURIComponent(providerId)}/params?${query}${restrictedContextQuery ? `&${restrictedContextQuery}` : ''}`,
+            `/v1/auth/external/${encodeURIComponent(providerId)}/params?${query}${restrictedContextQuery ? `&${restrictedContextQuery}` : ''}${desktopCallbackQuery}`,
             teamContext?.invitationToken ? {
                 headers: { 'x-happier-team-invitation': teamContext.invitationToken },
             } : undefined,
@@ -137,15 +149,17 @@ export function createExternalOAuthProvider(params: {
             await response.json().catch(() => null),
         );
         if (!parsed.success) throw new Error('external-auth-unavailable');
+        const desktopAttemptId = desktopCallbackQuery ? parsed.data.desktopAttemptId : undefined;
+        const start = { url: parsed.data.url, ...(desktopAttemptId ? { desktopAttemptId } : {}) };
         if (teamContext) {
             if (!('purpose' in parsed.data)
                 || parsed.data.purpose !== 'team_admission'
                 || parsed.data.teamId !== teamContext.teamId) {
                 throw new Error('external-auth-unavailable');
             }
-            return parsed.data;
+            return { ...start, purpose: parsed.data.purpose, teamId: parsed.data.teamId, admissionReference: parsed.data.admissionReference };
         }
-        if (!directoryContext) return parsed.data.url;
+        if (!directoryContext) return homeSignIn ? start : start.url;
         if (!('purpose' in parsed.data) || parsed.data.purpose !== 'account_directory') {
             throw new Error('external-auth-unavailable');
         }
@@ -172,7 +186,7 @@ export function createExternalOAuthProvider(params: {
             throw new Error('external-auth-unavailable');
         }
         return {
-            url: row.url,
+            ...start,
             purpose: 'account_directory',
             credentialTarget: 'account_directory',
             endpointUrl,

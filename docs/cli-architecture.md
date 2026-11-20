@@ -8606,6 +8606,13 @@ to coexist; the CLI's default
 `happier://` link targets stable. Registration and cold/running/tray-only launches require live
 OS validation; macOS registration must be checked in the installed application bundle.
 
+In current development source, Tauri opens external OAuth sign-in in the system browser when
+the server acknowledges the installed channel's callback scheme. The server binds its existing
+OAuth attempt to that registered app URL. The desktop deep-link receiver matches the returned
+attempt against the initiating Home or Account Service sign-in before opening `/oauth/[provider]`.
+Back from the browser wait clears that attempt's local continuation. An older server can omit
+the acknowledgement, in which case sign-in stays in the renderer and keeps its existing return.
+
 
 A Happier home runs one CLI: the managed one, or a `happier` the person installed (npm, Homebrew, a
 manual copy). The answer lives in `<happier home>/cli-choice.json`

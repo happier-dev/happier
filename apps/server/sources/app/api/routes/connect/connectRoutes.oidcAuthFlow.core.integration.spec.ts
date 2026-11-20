@@ -73,6 +73,37 @@ describe("connectRoutes (OIDC callback) external auth flow (integration)", () =>
         await oidcStub.close();
     });
 
+    it("returns OIDC sign-in to the desktop attempt that opened the authorization URL", async () => {
+        harness.resetEnv({
+            AUTH_SIGNUP_PROVIDERS: "okta",
+            AUTH_PROVIDERS_CONFIG_JSON: JSON.stringify([{
+                id: "okta", type: "oidc", displayName: "Acme Okta",
+                issuer: oidcIssuer, clientId: "oidc_client", clientSecret: "oidc_secret",
+                redirectUrl: "https://api.example.test/v1/oauth/okta/callback",
+            }]),
+            HAPPIER_WEBAPP_URL: "https://app.example.test",
+        });
+        const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        const query = new URLSearchParams({
+            publicKey: privacyKit.encodeBase64(keyPair.publicKey), desktopCallbackScheme: "happier-dev",
+        });
+        const app = createTestApp();
+        connectRoutes(app);
+        await app.ready();
+        const start = await app.inject(`/v1/auth/external/okta/params?${query}`);
+        expect(start.statusCode, start.body).toBe(200);
+        const authorize = await fetch(start.json().url, { redirect: "manual" });
+        const callback = new URL(authorize.headers.get("location")!);
+        const response = await app.inject(`${callback.pathname}${callback.search}`);
+        expect(response.statusCode).toBe(302);
+        const redirect = new URL(response.headers.location as string);
+        expect(redirect.protocol).toBe("happier-dev:");
+        expect(redirect.host + redirect.pathname).toBe("oauth/okta");
+        expect(redirect.searchParams.get("pending")).toBeTruthy();
+        expect(start.json().desktopAttemptId).toBeTruthy();
+        expect(redirect.searchParams.get("desktopAttemptId")).toBe(start.json().desktopAttemptId);
+    });
+
     it("returns sanitized OIDC test diagnostics even when eligibility denies sign-in, without Account writes", async () => {
         harness.resetEnv({
             AUTH_SIGNUP_PROVIDERS: "okta",

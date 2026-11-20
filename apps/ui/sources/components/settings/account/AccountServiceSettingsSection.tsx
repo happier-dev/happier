@@ -8,9 +8,11 @@ import { AccountServiceHomeAuthenticationAdapter } from '@/components/account/au
 import { describeAccountDirectoryMutationFailure, describeAccountHomeUnlinkFailure, describeAccountServiceFailure } from '@/components/account/auth/accountServiceFailurePresentation';
 import {
     launchAccountServiceOAuthAuthentication,
+    describeAccountServiceAuthenticationProvider,
     projectAccountServiceMethodStrip,
     describeAccountServiceAuthenticationAction,
 } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { OAuthBrowserWaitStep, type OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
 import { useAccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
 import { resolveAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
 import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
@@ -181,6 +183,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
     const serviceKey = accountServiceKey(endpoint);
     const [busy, setBusy] = React.useState(false);
     const [pendingMethod, setPendingMethod] = React.useState<string | null>(null);
+    const [browserWait, setBrowserWait] = React.useState<Readonly<{ serviceKey: string; wait: OAuthBrowserWait }> | null>(null);
     const [credentialView, setCredentialView] = React.useState<AccountServiceCredentialView>({
         kind: 'loading',
         serviceKey,
@@ -466,6 +469,11 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 accountEntryReturnTo: '/settings/account',
                 transport: entry.transport,
                 isCurrent: () => serviceKeyRef.current === serviceKey,
+                onBrowserHandoff: (handoff) => setBrowserWait({ serviceKey, wait: {
+                    ...handoff,
+                    ...describeAccountServiceAuthenticationProvider(method.method),
+                    destination: { kind: 'find_homes' },
+                } }),
             });
             if (outcome === 'failed') {
                 await Modal.alertAsync(t('welcome.signInServiceUnavailableTitle'), t('errors.operationFailed'));
@@ -1013,6 +1021,13 @@ export function AccountServiceSettingsSection(): React.ReactElement {
         delete next[homeServerIdentityId];
         return next;
     });
+
+    if (browserWait?.serviceKey === serviceKey) {
+        return <OAuthBrowserWaitStep wait={browserWait.wait} onBack={async () => {
+            await browserWait.wait.cancel();
+            setBrowserWait(null);
+        }} />;
+    }
 
     return (
         <>

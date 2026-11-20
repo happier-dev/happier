@@ -912,6 +912,7 @@ export type PendingAccountDirectoryAuth = Readonly<{
     purpose: 'account_directory';
     /** Server-generated post-provider handle; absent before the provider redirect completes. */
     pending?: string;
+    desktopAttemptId?: string;
     createdAt: number;
     expiresAt: number;
     mode?: 'keyed' | 'keyless';
@@ -940,6 +941,7 @@ export type PendingAccountDirectoryAuthInput = Readonly<{
     provider: string;
     purpose: 'account_directory';
     pending?: string;
+    desktopAttemptId?: string;
     createdAt: number;
     expiresAt: number;
     mode?: 'keyed' | 'keyless';
@@ -962,6 +964,7 @@ type NormalizedPendingAccountDirectoryAuth = Readonly<{
     provider: string;
     purpose: 'account_directory';
     pending?: string;
+    desktopAttemptId?: string;
     createdAt: number;
     expiresAt: number;
     mode?: 'keyed' | 'keyless';
@@ -1039,6 +1042,7 @@ export function withAccountE2eeCustody(
 
 export interface PendingExternalAuth {
     provider: string;
+    desktopAttemptId?: string;
     /**
      * The Home's projected presentation of `provider` at start (teams-lane-03/01
      * §10.2), so the return route names a dynamic provider as its Home does.
@@ -1099,6 +1103,7 @@ export type PendingExternalAuthClearOptions = Readonly<{
 
 function matchesPendingExternalAuthExact(current: PendingExternalAuth, expected: PendingExternalAuth): boolean {
     return current.provider === expected.provider && current.proof === expected.proof
+        && current.desktopAttemptId === expected.desktopAttemptId
         && current.secret === expected.secret && current.intent === expected.intent
         && current.serverId === expected.serverId && current.serverUrl === expected.serverUrl
         && current.returnTo === expected.returnTo
@@ -1110,7 +1115,6 @@ function matchesPendingExternalAuthExact(current: PendingExternalAuth, expected:
 export interface PendingExternalConnect {
     provider: string;
     /** As on `PendingExternalAuth`: the start-time Home presentation, when one was projected. */
-    presentation?: AuthEntryProviderPresentationV1;
     returnTo: string;
     serverId?: string;
     serverUrl?: string;
@@ -1334,6 +1338,7 @@ const PendingAccountDirectoryAuthSchema = z.strictObject({
     endpoint: z.string(), serverIdentityId: z.string(), canonicalServerUrl: z.string(),
     credentialTarget: z.literal('account_directory'), purpose: z.literal('account_directory'),
     entryIntent: AccountContinuationIntentSchema, provider: z.string(), pending: z.optional(z.string()),
+    desktopAttemptId: z.optional(z.string().check(z.minLength(1))),
     createdAt: z.number(), expiresAt: z.number(), mode: z.optional(z.enum(['keyed', 'keyless'])),
     proof: z.optional(z.string()), secret: z.optional(z.string()), returnTo: z.optional(z.string()),
     accountEntryReturnTo: z.optional(z.string()), linkHomeServerIdentityId: z.optional(z.string()),
@@ -1367,6 +1372,7 @@ function normalizePendingAccountDirectoryAuth(
         provider: value.provider.trim(),
         purpose: 'account_directory',
         ...(value.pending ? { pending: value.pending.trim() } : {}),
+        ...(value.desktopAttemptId ? { desktopAttemptId: value.desktopAttemptId } : {}),
         createdAt: value.createdAt,
         expiresAt: value.expiresAt,
         ...(value.mode ? { mode: value.mode } : {}),
@@ -1402,6 +1408,7 @@ function pendingAccountDirectoryAuthMatchesExact(
         && current.provider === expected.provider
         && current.purpose === expected.purpose
         && current.pending === expected.pending
+        && current.desktopAttemptId === expected.desktopAttemptId
         && current.createdAt === expected.createdAt
         && current.expiresAt === expected.expiresAt
         && current.mode === expected.mode
@@ -1584,6 +1591,7 @@ function isPendingExternalAuthFieldsValid(value: unknown): value is PendingExter
 
 const PendingExternalAuthSchema = z.strictObject({
     provider: z.string(),
+    desktopAttemptId: z.optional(z.string().check(z.minLength(1))),
     presentation: zMini.optional(AuthEntryProviderPresentationV1Schema),
     proof: z.optional(z.string()),
     secret: z.optional(z.string()),

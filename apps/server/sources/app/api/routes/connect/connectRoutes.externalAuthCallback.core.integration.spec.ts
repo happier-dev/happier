@@ -533,7 +533,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         await app.close();
     });
 
-    it("binds the account_directory purpose and exact Account Service target through signed state, pending storage, and callback redirect", async () => {
+    it.each([undefined, "happier-preview", "https://untrusted.example"])("binds the Account Service target through OAuth with desktop scheme %s", async (desktopCallbackScheme) => {
         const endpointUrl = "https://accounts.example.test";
         applyGithubExternalAuthCallbackEnv(harness, {
             HAPPIER_PUBLIC_SERVER_URL: endpointUrl,
@@ -570,6 +570,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
             endpointServerIdentityId,
             canonicalServerUrl: endpointUrl,
         });
+        if (desktopCallbackScheme) query.set("desktopCallbackScheme", desktopCallbackScheme);
         const paramsRes = await app.inject({
             method: "GET",
             url: `/v1/auth/external/github/params?${query.toString()}`,
@@ -610,6 +611,15 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         });
         expect(callbackRes.statusCode).toBe(302);
         const redirect = new URL(callbackRes.headers.location as string);
+        if (desktopCallbackScheme === "happier-preview") {
+            expect(redirect.protocol).toBe(`${desktopCallbackScheme}:`);
+            expect(redirect.host + redirect.pathname).toBe("oauth/github");
+            expect(paramsBody.desktopAttemptId).toBeTruthy();
+            expect(redirect.searchParams.get("desktopAttemptId")).toBe(paramsBody.desktopAttemptId);
+        } else {
+            expect(redirect.origin).toBe("https://app.example.test");
+            expect(paramsBody).not.toHaveProperty("desktopAttemptId");
+        }
         expect(redirect.searchParams.get("flow")).toBe("auth");
         expect(redirect.searchParams.get("purpose")).toBe("account_directory");
         expect(redirect.searchParams.get("credentialTarget")).toBe("account_directory");

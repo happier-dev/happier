@@ -871,6 +871,7 @@ export const accountDirectoryAuthClient = {
             entryIntent: intent,
             provider: providerId,
             purpose: start.purpose,
+            ...(start.desktopAttemptId ? { desktopAttemptId: start.desktopAttemptId } : {}),
             createdAt: Date.now(),
             expiresAt: start.expiresAt,
             mode: input.mode,

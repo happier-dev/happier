@@ -1,10 +1,18 @@
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { getReleaseRingCatalogEntry, PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { resolveUiConfig } from "@/app/api/uiConfig";
 import { DEFAULT_WEBAPP_URL, resolveEffectiveWebappBaseUrl } from "../../../../serverUrls/effectiveServerUrls";
 
 export function isProviderResetEnabled(env: NodeJS.ProcessEnv): boolean {
     return isServerFeatureEnabledForRequest("auth.recovery.providerReset", env);
+}
+
+const desktopOAuthReturnSchemes = new Set<string>(PUBLIC_RELEASE_RING_IDS.map((ring) => getReleaseRingCatalogEntry(ring).appScheme));
+
+/** The client can request a registered app scheme. The server owns the rest of the URL. */
+export function resolveDesktopOAuthReturnScheme(requested: string | undefined): string | null {
+    return requested && desktopOAuthReturnSchemes.has(requested) ? requested : null;
 }
 
 function parseAllowedOAuthReturnSchemes(env: NodeJS.ProcessEnv): Set<string> {

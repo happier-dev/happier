@@ -401,6 +401,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     provider: providerId,
                     ...startPresentation,
                     proof,
+                    ...(start.desktopAttemptId ? { desktopAttemptId: start.desktopAttemptId } : {}),
                     ...(secret ? { secret } : {}),
                     ...callbackTarget,
                     teamContinuation: {
@@ -419,11 +420,13 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     options.signal,
                 );
                 if (!requestContext) throw new Error('Home OAuth target is unavailable');
-                url = await provider.getExternalAuthUrl(startInput, requestContext);
+                const start = await provider.getExternalAuthUrl(startInput, { ...requestContext, signIn: true });
+                url = start.url;
                 pending = {
                     provider: providerId,
                     ...startPresentation,
                     proof,
+                    ...(start.desktopAttemptId ? { desktopAttemptId: start.desktopAttemptId } : {}),
                     ...(secret ? { secret } : {}),
                     returnTo: options.accountContinuation?.returnTo ?? options.returnTo,
                     ...callbackTarget,
@@ -435,7 +438,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
             }
             if (options.signal?.aborted) throw new Error('Home authentication cancelled');
             if (!isSafeExternalAuthUrl(url)) throw new Error('Invalid Home OAuth URL');
-            const handoff = await openExternalAuthenticationUrl(url);
+            const handoff = await openExternalAuthenticationUrl(url, pending.desktopAttemptId);
             if (options.signal?.aborted) return;
             if (handoff === 'system_browser') {
                 options.onBrowserHandoff?.({

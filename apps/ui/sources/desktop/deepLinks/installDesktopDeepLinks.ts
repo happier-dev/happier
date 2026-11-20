@@ -3,11 +3,33 @@ import { desktopHostKind, getDesktopHostWindowLabel, invokeDesktopHost, listenDe
 import { isAcceptedHappierUrlProtocol } from '@/utils/url/appScheme';
 import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
 
-function resolveDesktopHref(url: string): string | null {
+function resolveDesktopHref(url: string): string | Promise<string | null> | null {
     let parsed: URL;
     try { parsed = new URL(url); } catch { return null; }
     if (!isAcceptedHappierUrlProtocol(parsed.protocol)) return null;
-    return resolveNativeAppLinkHref(url);
+    const href = resolveNativeAppLinkHref(url);
+    const providerPath = href?.match(/^\/oauth\/([^/?#]+)(?:[?#]|$)/)?.[1];
+    if (!href || !providerPath || parsed.searchParams.get('flow') !== 'auth') return href;
+    return admitOAuthReturn(href, providerPath, parsed.searchParams);
+}
+
+/** Keep cancelled or superseded browser returns from taking over the current sign-in UI. */
+async function admitOAuthReturn(href: string, providerPath: string, params: URLSearchParams): Promise<string | null> {
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const provider = decodeURIComponent(providerPath).toLowerCase();
+    const attempt = params.get('desktopAttemptId') ?? undefined;
+    if (params.get('purpose') === 'account_directory') {
+        const endpoint = params.get('endpointUrl');
+        const serverIdentityId = params.get('endpointServerIdentityId');
+        if (!endpoint || !serverIdentityId) return attempt === undefined ? href : null;
+        const pending = await TokenStorage.getPendingAccountDirectoryAuth({ endpoint, serverIdentityId });
+        if (attempt === undefined && pending?.desktopAttemptId === undefined) return href;
+        return pending?.provider === provider && pending.desktopAttemptId === attempt ? href : null;
+    }
+    const pending = await TokenStorage.readPendingExternalAuthContinuationState();
+    if (attempt === undefined && pending.value?.desktopAttemptId === undefined) return href;
+    return !pending.serverMismatch && pending.value?.provider === provider
+        && pending.value.desktopAttemptId === attempt ? href : null;
 }
 
 function startDesktopLinkDelivery(navigate: (href: string) => void) {
@@ -18,7 +40,12 @@ function startDesktopLinkDelivery(navigate: (href: string) => void) {
         if (disposed) return;
         for (const url of urls ?? []) {
             const href = resolveDesktopHref(url);
-            if (href) navigate(href);
+            if (typeof href === 'string') navigate(href);
+            else if (href) void href.then((admitted) => {
+                if (admitted && !disposed) navigate(admitted);
+            }).catch(() => {
+                console.error('Desktop OAuth return could not be admitted');
+            });
         }
     };
 

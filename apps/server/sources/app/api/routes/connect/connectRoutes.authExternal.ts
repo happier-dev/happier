@@ -21,6 +21,7 @@ import { ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } f
 import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import {
+    resolveDesktopOAuthReturnScheme,
     resolveOauthStateAttemptTtlMsFromEnv,
     resolveWebAppOAuthReturnUrlFromRequestHeaders,
 } from "./oauthExternal/oauthExternalConfig";
@@ -79,6 +80,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     teamId: z.optional(z.string()),
                     connectionId: z.optional(z.string()),
                     origin: z.optional(z.enum(["home", "team"])),
+                    desktopCallbackScheme: z.optional(z.string()),
                 }).check(z.refine((q) => {
                     if (q.purpose === "account_encryption_first_key" || q.purpose === "account_password_enrollment") {
                         return q.mode === "keyless"
@@ -361,11 +363,14 @@ export function connectAuthExternalRoutes(app: Fastify) {
         }
 
         try {
-            const webAppOAuthReturnUrl = resolveWebAppOAuthReturnUrlFromRequestHeaders({
-                env: requestHomeEnv,
-                providerId,
-                headers: request.headers as any,
-            });
+            const desktopCallbackScheme = resolveDesktopOAuthReturnScheme(request.query.desktopCallbackScheme);
+            const returnTarget = desktopCallbackScheme
+                ? { desktopCallbackScheme }
+                : {
+                    webAppOAuthReturnUrl: resolveWebAppOAuthReturnUrlFromRequestHeaders({
+                        env: requestHomeEnv, providerId, headers: request.headers,
+                    }),
+                };
             if (teamAdmission) {
                 const attempt = await createExternalAuthorizeAttempt({
                     flow: "auth",
@@ -378,7 +383,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     purpose: "team_admission",
                     ...(teamAdmissionBinding?.connection ? { connection: teamAdmissionBinding.connection } : {}),
                     admission: teamAdmissionBinding?.admission ?? null,
-                    ...(webAppOAuthReturnUrl ? { webAppOAuthReturnUrl } : {}),
+                    ...returnTarget,
                 });
                 if (!attempt) return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
                 return reply.send({
@@ -386,9 +391,10 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     purpose: "team_admission" as const,
                     teamId,
                     admissionReference: attempt.attemptId,
+                    ...(desktopCallbackScheme ? { desktopAttemptId: attempt.attemptId } : {}),
                 });
             }
-            const url = await createExternalAuthorizeUrl({
+            const attempt = await createExternalAuthorizeAttempt({
                 flow: "auth",
                 env: requestHomeEnv,
                 providerId,
@@ -408,14 +414,18 @@ export function connectAuthExternalRoutes(app: Fastify) {
                             accountDirectoryTarget.expiresAt,
                     }
                     : {}),
-                ...(webAppOAuthReturnUrl ? { webAppOAuthReturnUrl } : {}),
+                ...returnTarget,
             });
-            if (!url) {
+            if (!attempt) {
                 return reply.code(400).send({ error: OAUTH_STATE_UNAVAILABLE_CODE });
             }
+            const start = {
+                url: attempt.url,
+                ...(desktopCallbackScheme ? { desktopAttemptId: attempt.attemptId } : {}),
+            };
             return reply.send(accountDirectoryTarget
                 ? {
-                    url,
+                    ...start,
                     purpose: "account_directory" as const,
                     credentialTarget: "account_directory" as const,
                     endpointUrl: accountDirectoryTarget.endpointUrl,
@@ -426,7 +436,7 @@ export function connectAuthExternalRoutes(app: Fastify) {
                     expiresAt:
                         accountDirectoryTarget.expiresAt.toISOString(),
                 }
-                : { url });
+                : start);
         } catch (error) {
             if (error instanceof Error && error.message === OAUTH_NOT_CONFIGURED_ERROR) {
                 return reply.code(400).send({ error: OAUTH_NOT_CONFIGURED_ERROR });

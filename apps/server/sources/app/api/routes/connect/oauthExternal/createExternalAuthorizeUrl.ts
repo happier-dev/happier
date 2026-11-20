@@ -7,7 +7,7 @@ import type { ProviderReference } from "@/app/auth/providers/providerReference";
 import type { GitHubAppManagementAuthenticationV1 } from "@/app/integrations/github/githubManagedApp";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { resolveOauthStateAttemptTtlMsFromEnv } from "./oauthExternalConfig";
+import { buildRedirectUrl, resolveOauthStateAttemptTtlMsFromEnv } from "./oauthExternalConfig";
 import type { TeamOAuthAdmissionSeed } from "./teamAdmissionStartBinding";
 import { resolveOAuthSecurityBinding } from "./oauthSecurityBinding";
 import { AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR } from "./oauthExternalErrors";
@@ -32,6 +32,7 @@ type ExternalAuthorizeFlowParams =
           admission?: TeamOAuthAdmissionSeed;
           attemptExpiresAt?: Date;
           webAppOAuthReturnUrl?: string | null;
+          desktopCallbackScheme?: string;
       }>
     | Readonly<{
           flow: "connect";
@@ -115,6 +116,10 @@ export async function createExternalAuthorizeAttempt(
     let sid = "";
     for (let i = 0; i < 3; i++) {
         sid = randomKeyNaked(24);
+        const desktopScheme = params.flow === "auth" ? params.desktopCallbackScheme : undefined;
+        const webAppOAuthReturnUrl = desktopScheme
+            ? buildRedirectUrl(`${desktopScheme}://oauth/${encodeURIComponent(params.providerId)}`, { desktopAttemptId: sid })
+            : params.webAppOAuthReturnUrl;
         const admission = teamAdmissionSeed?.kind === "team_jit_identity"
             ? { ...teamAdmissionSeed, authAttemptId: sid }
             : teamAdmissionSeed;
@@ -170,7 +175,7 @@ export async function createExternalAuthorizeAttempt(
                             && params.connectFinalization
                             ? { connectFinalization: params.connectFinalization }
                             : {}),
-                        ...(params.webAppOAuthReturnUrl ? { webAppOAuthReturnUrl: params.webAppOAuthReturnUrl } : {}),
+                        ...(webAppOAuthReturnUrl ? { webAppOAuthReturnUrl } : {}),
                     }),
                     expiresAt: attemptExpiresAt,
                 },

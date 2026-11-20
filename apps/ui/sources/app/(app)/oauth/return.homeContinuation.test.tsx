@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { adoptHomeProfile, getActiveServerId, resetServerProfilesRuntimeForTests, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -22,7 +23,7 @@ import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwit
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn(), params: {
     provider: 'github', flow: 'auth', pending: 'provider-handle', purpose: '', admissionReference: '', accountMode: 'plain', code: 'mtls-code', error: '', error_description: '',
-    teamId: '', target: '',
+    teamId: '', target: '', mode: '', credentialTarget: '', endpointUrl: '', endpointServerIdentityId: '', canonicalServerUrl: '',
 } }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
     .createSocketIoClientBoundary(original));
@@ -72,8 +73,51 @@ afterEach(async () => {
     boundary.params.error_description = '';
     boundary.params.teamId = '';
     boundary.params.target = '';
+    Object.assign(boundary.params, { mode: '', credentialTarget: '', endpointUrl: '', endpointServerIdentityId: '', canonicalServerUrl: '' });
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+});
+
+it('waits for the OS browser again when an Account Service return requires keyed authentication', async () => {
+    const fixture = createDirectoryHttpFixture();
+    const { endpointUrl, serverIdentityId, canonicalServerUrl } = fixture.service;
+    const target = { endpoint: endpointUrl, serverIdentityId };
+    const entryIntent = { kind: 'enter', target: { kind: 'automatic' } } as const;
+    const returnTo = '/setup/wizard';
+    const providerId = 'corp-oidc';
+    const invoke = vi.fn(createDesktopSecureStorageBoundary().invoke);
+    onTestFinished(installWebLockManagerMock().restore);
+    vi.stubGlobal('HTMLElement', class {});
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    Object.assign(boundary.params, {
+        provider: providerId, mode: 'keyless', purpose: 'account_directory', credentialTarget: 'account_directory',
+        endpointUrl, endpointServerIdentityId: serverIdentityId, canonicalServerUrl,
+    });
+    expect(await TokenStorage.setPendingAccountDirectoryAuth({
+        ...target, canonicalServerUrl, provider: providerId, mode: 'keyless', proof: 'test-proof',
+        credentialTarget: 'account_directory', purpose: 'account_directory', entryIntent, returnTo,
+        createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+    })).toBe(true);
+    const url = 'https://idp.example.test/authorize';
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        if (path.endsWith(`/external/${providerId}/finalize-keyless`)) {
+            return Response.json({ error: 'keyed-authentication-required' }, { status: 403 });
+        }
+        if (path.startsWith(`/v1/auth/external/${providerId}/params?`)) {
+            return Response.json({ url, purpose: 'account_directory', credentialTarget: 'account_directory',
+                endpointUrl, endpointServerIdentityId: serverIdentityId, canonicalServerUrl,
+                expiresAt: new Date(Date.now() + 60_000).toISOString(), desktopAttemptId: 'keyed-attempt',
+            });
+        }
+        return fixture.request(endpoint, path, init);
+    });
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
+    await vi.waitFor(() => expect(screen?.findByTestId('oauth-browser-wait-title'), screen?.getTextContent()).toBeTruthy());
+    expect(invoke).toHaveBeenCalledWith('plugin:opener|open_url', { url });
+    expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ desktopAttemptId: 'keyed-attempt', mode: 'keyed' });
+    await screen.pressByTestIdAsync('oauth-browser-wait-back');
+    expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
+    expect(router.replace).toHaveBeenCalledWith(returnTo);
 });
 
 async function mountTeamEntry() {

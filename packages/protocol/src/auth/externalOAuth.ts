@@ -1,7 +1,11 @@
 import { z } from '../zodRuntimePolicy.js';
 import { TeamInvitationPostAuthContinuationV1Schema } from '../teams/invitation.js';
 
-const ExternalOAuthParamsBaseResponseSchema = z.strictObject({ url: z.string().check(z.minLength(1)) });
+const ExternalOAuthParamsBaseResponseSchema = z.strictObject({
+  url: z.string().check(z.minLength(1)),
+  /** Present only when the request opted in and the server bound a desktop app return. */
+  desktopAttemptId: z.optional(z.string().check(z.minLength(1))),
+});
 
 const AccountDirectoryOAuthParamsResponseSchema =
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ExternalOAuthParamsBaseResponseSchema, {

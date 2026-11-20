@@ -454,6 +454,11 @@ If you enable any external OAuth providers (GitHub and/or OIDC), the server must
 
 Otherwise, users will be redirected to the wrong place (or the redirect may be rejected as unsafe).
 
+With the 0.3 development desktop app and server, external OAuth sign-in opens your default
+browser. After you approve the provider connection, the browser returns to the app that started
+sign-in. Use **Back** in the app to cancel while you wait. Older servers keep their existing
+return configuration.
+
 ## Auth policy (env vars)
 
 Use these env vars to control who can create accounts and whether provider identity is enforced for ongoing access.

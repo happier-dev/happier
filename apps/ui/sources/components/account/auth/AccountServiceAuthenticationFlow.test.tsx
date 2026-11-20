@@ -16,6 +16,15 @@ import type { AccountServiceAuthenticationFlowProps } from './AccountServiceAuth
 const network = vi.hoisted(() => ({ request: vi.fn() }));
 const linking = vi.hoisted(() => ({ openURL: vi.fn(async () => {}) }));
 const host = vi.hoisted(() => ({ os: 'web', sameTab: vi.fn(), stored: new Map<string, string>() }));
+const desktop = vi.hoisted(() => ({ invoke: vi.fn(), receive: null as ((urls: string[]) => void) | null }));
+
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    listenDesktopHostEvent: async (_event: string, receive: (urls: string[]) => void) => {
+        desktop.receive = receive;
+        return () => { desktop.receive = null; };
+    },
+}));
 
 installTokenStorageWebPlatformMocks({ reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -33,6 +42,7 @@ vi.mock('@/text', async () => {
 });
 
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { installDesktopDeepLinks } = await import('@/desktop/deepLinks/installDesktopDeepLinks');
 const { AccountServiceAuthenticationFlow } = await import('./AccountServiceAuthenticationFlow');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
@@ -144,6 +154,51 @@ describe('AccountServiceAuthenticationFlow', () => {
         await screen.pressByTestIdAsync('oauth-browser-wait-back');
         expect(screen.findByTestId('account-service-auth-github-login-keyless')).toBeTruthy();
         expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
+    });
+
+    it('routes the desktop GitHub return only to the initiating wait and cancels it on Back', async () => {
+        desktop.invoke.mockReset().mockResolvedValue(null);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: desktop.invoke });
+        vi.stubGlobal('window', { location: { assign: host.sameTab } });
+        const nextAttempt = vi.fn().mockReturnValueOnce('desktop-attempt-one').mockReturnValueOnce('desktop-attempt-two');
+        network.request.mockImplementation(async () => Response.json({
+            ...await startResponse().json(), desktopAttemptId: nextAttempt(),
+        }));
+        const navigate = vi.fn();
+        const stop = installDesktopDeepLinks(navigate);
+        try {
+            const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent}
+                onPostAuthContinuation={() => {}} returnTo="/setup/wizard" onResult={vi.fn()}
+                onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);
+
+            await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
+            expect(desktop.invoke).toHaveBeenCalledWith('plugin:opener|open_url', { url: 'https://oauth.example.test/start' });
+            expect(host.sameTab).not.toHaveBeenCalled();
+            expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
+            expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ desktopAttemptId: 'desktop-attempt-one' });
+
+            await screen.pressByTestIdAsync('oauth-browser-wait-back');
+            expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
+            await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
+
+            const returnQuery = new URLSearchParams({
+                flow: 'auth', purpose: 'account_directory', endpointUrl: target.endpoint,
+                endpointServerIdentityId: target.serverIdentityId, pending: 'oauth-child-pending',
+            });
+            const returnLink = (id: string) => `happier://oauth/github?${returnQuery}&desktopAttemptId=${id}`;
+            await act(async () => {
+                desktop.receive?.([returnLink('desktop-attempt-one')]);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+            expect(navigate).not.toHaveBeenCalled();
+            expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
+            desktop.receive?.([returnLink('desktop-attempt-two')]);
+            await vi.waitFor(() => expect(navigate).toHaveBeenCalledExactlyOnceWith(
+                `/oauth/github?${returnQuery}&desktopAttemptId=desktop-attempt-two`,
+            ));
+        } finally {
+            stop();
+        }
     });
 
     it('shows a neutral launch error when the service starts OAuth but the browser handoff rejects', async () => {

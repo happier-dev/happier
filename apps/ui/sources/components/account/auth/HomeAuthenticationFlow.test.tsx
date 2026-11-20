@@ -26,7 +26,9 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({
+        translate: (key, params) => key === 'settingsAccount.accountServiceOAuth.browserWait.title' ? String(params?.provider) : key,
+    });
 });
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { Animated } = await import('react-native');
@@ -62,7 +64,7 @@ describe('HomeAuthenticationFlow', () => {
         boundary.request.mockImplementation(async () => Response.json({ error: 'signup-disabled' }, { status: 403 }));
         boundary.openURL.mockClear();
     });
-    afterEach(() => { setReducedMotionPreferenceOverride(null); vi.restoreAllMocks(); restoreLocks(); restoreStorage(); });
+    afterEach(() => { setReducedMotionPreferenceOverride(null); vi.restoreAllMocks(); vi.unstubAllGlobals(); restoreLocks(); restoreStorage(); });
     it('returns from exact key entry to the admitted method chooser', async () => {
         setReducedMotionPreferenceOverride(true);
         const animate = vi.spyOn(Animated, 'timing');
@@ -187,12 +189,28 @@ describe('HomeAuthenticationFlow', () => {
         expect(boundary.openURL).not.toHaveBeenCalled();
     });
 
-    it('waits for the system browser on an exact Home GitHub login', async () => {
-        boundary.platformOS = 'ios';
+    it.each([
+        ['ios', 'github', false, 'GitHub'],
+        ['tauri', 'github', true, 'GitHub'],
+        ['tauri', 'acme-oidc', true, 'Acme SSO'],
+        ['tauri', 'github', false, 'GitHub'],
+    ] as const)(
+    'opens Home sign-in on %s for %s (desktop callback negotiated: %s)', async (host, providerId, desktopCallback, displayName) => {
+        const invoke = vi.fn(async () => null);
+        const sameTab = vi.fn();
+        boundary.platformOS = host === 'tauri' ? 'web' : host;
+        if (host === 'tauri') {
+            vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+            vi.stubGlobal('window', { location: { assign: sameTab } });
+        }
         setReducedMotionPreferenceOverride(true);
-        boundary.request.mockImplementation(async () => Response.json({ url: 'https://github.example.test/authorize' }));
-        const github = actionFromEntry({ kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless', origin: 'home',
-            presentation: { displayName: 'GitHub' } });
+        boundary.request.mockImplementation(async () => Response.json({
+            url: 'https://github.example.test/authorize',
+            ...(desktopCallback ? { desktopAttemptId: 'home-attempt' } : {}),
+        }));
+        const action = actionFromEntry({ kind: 'authenticate', methodId: providerId, action: 'login', mode: 'keyless', origin: 'home',
+            presentation: { displayName } });
+        const testId = `home-auth-${providerId}-login-keyless`;
         const serverUrl = 'https://home.example.test';
         const serverId = 'srv_home';
         const screen = await renderScreen(<StepMotionStage><AuthProvider initialCredentials={null}>
@@ -208,7 +226,7 @@ describe('HomeAuthenticationFlow', () => {
                         endpoints: [{ kind: 'https', url: serverUrl }],
                     },
                 }}
-                actions={[github]}
+                actions={[action]}
                 homeLabel="My Home"
                 returnTo="/projects/setup"
                 onAuthenticated={vi.fn()}
@@ -216,15 +234,32 @@ describe('HomeAuthenticationFlow', () => {
             />
         </AuthProvider></StepMotionStage>);
 
-        await screen.pressByTestIdAsync('home-auth-github-login-keyless');
-        expect(boundary.openURL).toHaveBeenCalledExactlyOnceWith('https://github.example.test/authorize');
+        await screen.pressByTestIdAsync(testId);
+        if (host === 'tauri') {
+            const start = boundary.request.mock.calls.find(([url]) => String(url).includes(`/external/${providerId}/params`));
+            expect(new URL(String(start?.[0])).searchParams.get('desktopCallbackScheme')).toBe('happier');
+        }
+        if (host === 'tauri' && !desktopCallback) {
+            expect(sameTab).toHaveBeenCalledExactlyOnceWith('https://github.example.test/authorize');
+            expect(screen.findByTestId('oauth-browser-wait-title')).toBeNull();
+            return;
+        }
+        if (desktopCallback) {
+            expect(invoke).toHaveBeenCalledWith('plugin:opener|open_url', { url: 'https://github.example.test/authorize' });
+            expect(sameTab).not.toHaveBeenCalled();
+        } else {
+            expect(boundary.openURL).toHaveBeenCalledExactlyOnceWith('https://github.example.test/authorize');
+        }
         expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
-        expect(screen.findByTestId('home-auth-github-login-keyless')).toBeNull();
+        expect(screen.getTextContent()).toContain(displayName);
+        expect(screen.findByTestId(testId)).toBeNull();
         expect(await TokenStorage.readPendingExternalAuthStateForServerUrl(serverUrl, { serverId }))
-            .toMatchObject({ value: { provider: 'github', returnTo: '/projects/setup' } });
+            .toMatchObject({ value: { provider: providerId, returnTo: '/projects/setup',
+                ...(desktopCallback ? { desktopAttemptId: 'home-attempt' } : {}),
+            } });
 
         await screen.pressByTestIdAsync('oauth-browser-wait-back');
-        expect(screen.findByTestId('home-auth-github-login-keyless')).toBeTruthy();
+        expect(screen.findByTestId(testId)).toBeTruthy();
         expect((await TokenStorage.readPendingExternalAuthStateForServerUrl(serverUrl, { serverId })).value).toBeNull();
     });
 
