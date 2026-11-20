@@ -190,7 +190,7 @@ export function createActionAutomationPortV1(options: Readonly<{
   const rowsByAutomation = new Map<string, readonly ActionAutomationIndexRowV1[]>();
   const consents = new Map<string, Map<string, ActionAutomationIndexRowV1>>();
   const changedWhileSeeding = new Set<string>();
-  let loading: Promise<void> | undefined;
+  let loading: Promise<string | undefined> | undefined;
   let state: 'unloaded' | 'loading' | 'ready' | 'unavailable' = 'unloaded';
   let failureReason = 'automation_index_unavailable';
   const invalidate = () => {
@@ -257,10 +257,12 @@ export function createActionAutomationPortV1(options: Readonly<{
       }
       for (const [automationId, rows] of grouped) if (!changedWhileSeeding.has(automationId)) apply({ automationId, rows });
       state = 'ready';
+      return undefined;
     } catch (error) {
       // Report only a typed boundary code. Exception text may contain private HTTP data.
       if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') failureReason = error.code;
       state = 'unavailable';
+      return failureReason;
     } finally { changedWhileSeeding.clear(); }
   };
   const load = () => loading ??= readRows(async () => {
@@ -278,34 +280,38 @@ export function createActionAutomationPortV1(options: Readonly<{
     failureReason = 'automation_index_unavailable';
     buckets.clear(); rowsByAutomation.clear(); consents.clear(); changedWhileSeeding.clear();
   };
-  const ensureLoaded = async (signal?: AbortSignal, progress?: ActionExecutorContext['operationProgress']): Promise<void> => {
-      signal?.throwIfAborted();
-      if ((state === 'unavailable' || state === 'ready') && loading === undefined) resetIndex();
-      if (state === 'unloaded' || state === 'loading') {
-        progress?.update({ label: 'Checking automations…' });
-        const pending = load();
-        if (signal) {
-          await new Promise<void>((resolve, reject) => {
-            const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
-            signal.addEventListener('abort', abort, { once: true });
-            pending.then(() => { signal.removeEventListener('abort', abort); resolve(); }, reject);
-            if (signal.aborted) abort();
-          });
-        } else await pending;
-      }
-      signal?.throwIfAborted();
+  const ensureLoaded = async (signal?: AbortSignal, progress?: ActionExecutorContext['operationProgress']) => {
+    signal?.throwIfAborted();
+    // Home can recover transaction acquisition while the socket stays connected.
+    if (state === 'unavailable' && failureReason === 'database_connection_unavailable') loading = undefined;
+    if ((state === 'unavailable' || state === 'ready') && loading === undefined) resetIndex();
+    let refusal = state === 'unavailable' ? failureReason : undefined;
+    if (state === 'unloaded' || state === 'loading') {
+      progress?.update({ label: 'Checking automations…' });
+      const pending = load();
+      if (signal) {
+        refusal = await new Promise<string | undefined>((resolve, reject) => {
+          const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+          signal.addEventListener('abort', abort, { once: true });
+          pending.then(reason => { signal.removeEventListener('abort', abort); resolve(reason); }, reject);
+          if (signal.aborted) abort();
+        });
+      } else refusal = await pending;
+    }
+    signal?.throwIfAborted();
+    return refusal;
   };
   return {
     async hasAfterActions(actionIds: readonly string[]) {
-      await ensureLoaded();
-      if (state === 'unavailable') throw new Error(failureReason);
+      const refusal = await ensureLoaded();
+      if (refusal !== undefined) throw new Error(refusal);
       return actionIds.some(actionId => [...(buckets.get(actionId) ?? [])].some(row => row.phase === 'after'));
     },
     async select(args) {
       const signal = args.signal ?? args.context.signal;
-      await ensureLoaded(signal, args.context.operationProgress);
-      if (state === 'unavailable') return { status: 'unavailable', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [],
-        notices: [{ code: 'action_automations_not_checked', reason: failureReason }] };
+      const refusal = await ensureLoaded(signal, args.context.operationProgress);
+      if (refusal !== undefined) return { status: 'unavailable', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [],
+        notices: [{ code: 'action_automations_not_checked', reason: refusal }] };
       const before: ActionAutomationSelectedTriggerV1[] = [];
       const after: ActionAutomationSelectedTriggerV1[] = [];
       const notices: ActionAutomationNoticeV1[] = [];

@@ -55,6 +55,58 @@ it('matches a Machine subject from the admitted external target', async () => {
   expect(selection.before.map(row => row.automationId)).toEqual(['own']);
 });
 
+it('reopens an unavailable Action index on the next admission without retrying the failed request', async () => {
+  const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'machine' };
+  const row = { automationId: 'new-automation', triggerId: 'new-trigger', triggerRevision: 1,
+    workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'actor', actionIds: ['machines.command.run'],
+    phase: 'before', mode: 'wait', onFailure: 'ask', subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject) };
+  let reads = 0;
+  const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: async () => {
+    if (++reads === 1) throw Object.assign(new Error('Home cannot acquire a transaction'), { code: 'database_connection_unavailable' });
+    return { v: 1, rows: [row] };
+  } });
+  const args = { actionId: 'machines.command.run', input: { command: 'printf d14' },
+    context: { authority: 'account_automation' as const, serverIdentityId: subject.serverId,
+      externalActionTarget: { kind: 'machine' as const, machineId: subject.machineId } } };
+
+  expect(await port.select(args)).toMatchObject({ status: 'unavailable', before: [], notices: [{
+    code: 'action_automations_not_checked', reason: 'database_connection_unavailable',
+  }] });
+  expect(reads).toBe(1);
+  for (const selection of await Promise.all([port.select(args), port.select(args)])) {
+    expect(selection).toMatchObject({ status: 'ready', before: [row], notices: [] });
+  }
+  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [row] });
+  expect(reads).toBe(2);
+});
+
+it('keeps the refused admission unavailable while a concurrent admission reopens the index', async () => {
+  let finishRecovery: (() => void) | undefined;
+  const recovery = new Promise(resolve => { finishRecovery = () => resolve({ v: 1, rows: [] }); });
+  let reads = 0;
+  const port = createActionAutomationPortV1({
+    accountId: 'actor',
+    seed: () => ++reads === 1
+      ? Promise.reject(Object.assign(new Error('Home cannot acquire a transaction'), { code: 'database_connection_unavailable' }))
+      : recovery,
+    settle: async () => {},
+  });
+  const args = { actionId: 'machines.command.run', input: { command: 'printf d14' },
+    context: { authority: 'account_automation' as const } };
+
+  const failing = port.select(args);
+  // Let the seed reject, then start the next admission before the first caller receives its result.
+  await Promise.resolve();
+  await Promise.resolve();
+  const recovering = port.select(args);
+  expect(reads).toBe(2);
+  expect(await failing).toMatchObject({ status: 'unavailable', notices: [{
+    code: 'action_automations_not_checked', reason: 'database_connection_unavailable',
+  }] });
+  finishRecovery?.();
+  expect(await recovering).toMatchObject({ status: 'ready' });
+});
+
 it('checks pinned child revisions without rematerializing or reconciling unchanged consent', async () => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const root = WorkflowDefinitionV1Schema.parse({ version: 1,

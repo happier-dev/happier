@@ -6390,6 +6390,8 @@ supplies the same declaration to stored, intended and inline validation.
 The CLI and daemon retain one Action-trigger index per Account and Home across
 caller credentials. Pushed rows reach every retained consumer; each occurrence
 HTTP request keeps its originating caller's credential and currentness callback.
+If Home cannot acquire a transaction for an index read, the next Action
+admission can seed the index again on the same connection.
 
 In 0.3 development source, the Home derives shared Action-trigger reach when
 the trigger is written, using the subject's existing edit/manage owner. It
