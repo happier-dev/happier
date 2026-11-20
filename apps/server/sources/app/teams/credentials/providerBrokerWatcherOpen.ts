@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto';
+
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import {
     GITHUB_BROKER_WATCHER_V1,
     PROVIDER_BROKER_ROUTE_AUDIENCE_V1,
     type ProviderBrokerWatcherOpenRequestV1,
     type ProviderBrokerWatcherOpenResponseV1,
+    type ProviderBrokerWatcherRefreshRequestV1,
+    type ProviderBrokerWatcherRefreshResponseV1,
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import {
@@ -12,11 +17,12 @@ import {
     AutomationEventCurrentnessError,
     resolveCurrentAutomationEventManifestTx,
 } from '@/app/automations/automationEventCurrentness';
+import { isActiveAutomationEventWatcherDefinitionTx } from '@/app/automations/automationEventStoredDefinitionService';
 import { classifyMachineDaemonPresence } from '@/app/machines/machineDaemonPresence';
-import { signProviderBrokerRouteGrantV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
+import { signProviderBrokerRouteGrantV1, verifyProviderBrokerRouteGrantSignatureV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { admitProviderBrokerTopology, readProviderBrokerInitiatorEndpointInTx } from '@/app/providers/brokerConsumerAdmission';
 import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
-import { inTx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 
 import { brokerFailureForBindingRejection } from './brokerBindingFailure';
 import { readTeamCredentialBrokerPlacement, readTeamCredentialBrokerPresenceDemand, resolveTeamCredentialBrokerPlacementInTx } from './brokerPlacementResolver';
@@ -24,16 +30,85 @@ import type { TeamCredentialPoolSourceEligibilityReader } from './poolSourceElig
 import { PROVIDER_BROKER_ROUTE_GRANT_TTL_MS, type TeamCredentialProviderBrokerOpenInput } from './providerBrokerAdmission';
 import { admitTeamCredentialOperationBindingInTx } from './sessionBinding';
 
-type WatcherOpenInput = Pick<TeamCredentialProviderBrokerOpenInput,
-    'actorAccountId' | 'authentication' | 'readCurrentPresence' | 'nowMs' | 'grantId' | 'signingKey'> & Readonly<{
-    request: ProviderBrokerWatcherOpenRequestV1;
+type WatcherAdmissionInput = Pick<TeamCredentialProviderBrokerOpenInput,
+    'actorAccountId' | 'nowMs' | 'grantId' | 'signingKey'> & Readonly<{
     publisherInstallationId: string;
     serverIdentityId: string;
-    readPoolSourceEligibility: TeamCredentialPoolSourceEligibilityReader;
     signal: AbortSignal;
+}>;
+type WatcherOpenInput = WatcherAdmissionInput & Pick<TeamCredentialProviderBrokerOpenInput,
+    'authentication' | 'readCurrentPresence'> & Readonly<{
+    request: ProviderBrokerWatcherOpenRequestV1;
+    readPoolSourceEligibility: TeamCredentialPoolSourceEligibilityReader;
+}>;
+type WatcherRefreshInput = WatcherAdmissionInput & Readonly<{
+    request: ProviderBrokerWatcherRefreshRequestV1;
+    signingCapability: Parameters<typeof verifyProviderBrokerRouteGrantSignatureV1>[0]['signingCapability'];
 }>;
 
 const forbidden = { ok: false, reasonCode: 'resource_forbidden' } as const;
+
+function watcherActivationBinding(
+    input: WatcherAdmissionInput,
+    request: Pick<ProviderBrokerWatcherRefreshRequestV1, 'activation' | 'caller'>,
+): string {
+    return createHash('sha256').update(createCanonicalJsonSigningInput({
+        activation: request.activation,
+        caller: request.caller,
+        publisherInstallationId: input.publisherInstallationId,
+    })).digest('hex');
+}
+
+async function readCurrentWatcherActivationTx(
+    tx: Tx,
+    input: WatcherAdmissionInput,
+    request: ProviderBrokerWatcherOpenRequestV1,
+) {
+    const caller = {
+        pluginId: request.caller.pluginId,
+        machineId: request.initiatorMachineId,
+        machineInstallationId: input.publisherInstallationId,
+        materializationId: request.caller.materialization.materializationId,
+        sourceCustody: request.caller.sourceCustody,
+    };
+    const accountId = input.actorAccountId;
+    const current = await assertCurrentAutomationEventCallerMaterializationTx({
+        tx, accountId, serverIdentityId: input.serverIdentityId, caller,
+    });
+    if (request.activation && !await isActiveAutomationEventWatcherDefinitionTx({
+        tx, accountId, caller, callerVersion: current.version, selector: request.activation,
+    })) return null;
+    return { caller, version: current.version };
+}
+
+/** Re-sign the admitted binding while its exact Event assignment remains active. */
+export async function refreshTeamCredentialWatcherBroker(input: WatcherRefreshInput): Promise<ProviderBrokerWatcherRefreshResponseV1> {
+    const { request, actorAccountId, nowMs, signal, signingCapability } = input;
+    const previous = request.refreshAuthority;
+    const payload = previous.payload;
+    if (payload.resourceId !== request.resourceId
+        || payload.initiator.accountId !== actorAccountId
+        || payload.initiator.machineId !== request.initiatorMachineId
+        || payload.consumer.occurrenceId !== request.caller.occurrenceId
+        || payload.activationBinding !== watcherActivationBinding(input, request)
+        || !verifyProviderBrokerRouteGrantSignatureV1({ authority: previous, signingCapability, nowMs })) return forbidden;
+
+    signal.throwIfAborted();
+    const current = await inTx(tx => readCurrentWatcherActivationTx(tx, input, request), {
+        isolationLevel: 'Serializable',
+    }).catch(error => {
+        if (error instanceof AutomationEventCurrentnessError) return null;
+        throw error;
+    });
+    if (!current) return forbidden;
+    signal.throwIfAborted();
+    return {
+        ok: true,
+        authority: signProviderBrokerRouteGrantV1({ signingKey: input.signingKey, payload: {
+            ...payload, grantId: input.grantId, issuedAt: nowMs, expiresAt: nowMs + PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
+        } }),
+    };
+}
 
 /** Admit the current watcher and its Team binding once, then resolve the transport for that snapshot. */
 export async function openTeamCredentialWatcherBroker(input: WatcherOpenInput): Promise<ProviderBrokerWatcherOpenResponseV1> {
@@ -43,16 +118,9 @@ export async function openTeamCredentialWatcherBroker(input: WatcherOpenInput): 
 
     signal.throwIfAborted();
     const admitted = await inTx(async tx => {
-        const caller = {
-            pluginId: request.caller.pluginId,
-            machineId: request.initiatorMachineId,
-            machineInstallationId: input.publisherInstallationId,
-            materializationId: request.caller.materialization.materializationId,
-            sourceCustody: request.caller.sourceCustody,
-        };
-        const current = await assertCurrentAutomationEventCallerMaterializationTx({
-            tx, accountId: actorAccountId, serverIdentityId: input.serverIdentityId, caller,
-        });
+        const current = await readCurrentWatcherActivationTx(tx, input, request);
+        if (!current) return forbidden;
+        const { caller } = current;
         const manifest = await resolveCurrentAutomationEventManifestTx({
             tx, accountId: actorAccountId, pluginId: caller.pluginId, version: current.version,
             machineId: caller.machineId, machineInstallationId: caller.machineInstallationId,
@@ -141,11 +209,13 @@ export async function openTeamCredentialWatcherBroker(input: WatcherOpenInput): 
     const targetAddress = { machineId: broker.machineId, endpointId: endpoint.endpointId };
     const topology = admitProviderBrokerTopology(initiatorAddress, targetAddress);
     if (!topology.ok) return topology;
+    const activation = request.activation;
     const authority = signProviderBrokerRouteGrantV1({ signingKey: input.signingKey, payload: {
         v: 1, scope: request.scope, aud: PROVIDER_BROKER_ROUTE_AUDIENCE_V1, grantId: input.grantId,
         issuedAt: input.nowMs, expiresAt: input.nowMs + PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
         teamId: binding.teamId, resourceId: resource.id, resourceRevision: binding.resourceRevision, source,
         consumer: { occurrenceId: request.caller.occurrenceId, purpose },
+        ...(activation ? { activationBinding: watcherActivationBinding(input, { activation, caller: request.caller }) } : {}),
         initiator: { accountId: actorAccountId, ...initiatorAddress },
         target: { custodianAccountId: resource.custodianAccountId, ...targetAddress },
     } });

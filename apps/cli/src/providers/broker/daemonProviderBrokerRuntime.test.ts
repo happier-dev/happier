@@ -1285,7 +1285,7 @@ function takeHttpResponse(buffer: Buffer): Readonly<{ response: string; rest: Bu
 async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
   port: number;
   localCapability: string;
-  steps: ReadonlyArray<Readonly<{ method?: 'GET' | 'POST'; path: string; body: string; before?: () => void }>>;
+  steps: ReadonlyArray<Readonly<{ method?: 'GET' | 'POST'; path: string; body: string; headers?: Readonly<Record<string, string>>; before?: () => void }>>;
 }>): Promise<string[]> {
   const socket = connect({ host: '127.0.0.1', port: input.port });
   await once(socket, 'connect');
@@ -1323,6 +1323,7 @@ async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
         `Connection: ${index === input.steps.length - 1 ? 'close' : 'keep-alive'}`,
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(step.body)}`,
+        ...Object.entries(step.headers ?? {}).map(([name, value]) => `${name}: ${value}`),
         '',
         step.body,
       ].join('\r\n'), 'utf8');
@@ -1401,7 +1402,7 @@ it('serves only finite GitHub watcher reads through the signed machine/1 broker 
     v: 1, scope: 'automation_event_watcher', grantId: 'watcher-grant', aud: authority.payload.aud,
     teamId: authority.payload.teamId, resourceId: authority.payload.resourceId,
     initiator: authority.payload.initiator, target: authority.payload.target, issuedAt: 100, expiresAt: 200,
-    resourceRevision: 7, source, consumer: { occurrenceId: 'active-watcher', purpose },
+    resourceRevision: 7, source, activationBinding: 'f'.repeat(64), consumer: { occurrenceId: 'active-watcher', purpose },
   });
   const bindingOwner = createConnectedAccountPurposeBindingOwner({
     store: { read: refuseModelPath, update: refuseModelPath, subscribe: () => ({ dispose() {} }) },
@@ -1483,6 +1484,19 @@ it('serves only finite GitHub watcher reads through the signed machine/1 broker 
     expect(await rawRequestThroughApplicationTarget({ ...(await admit()), ...denied })).toMatch(/^HTTP\/1\.1 403/);
   }
   expect(upstream).toEqual(Array(2).fill('https://api.github.com/repos/acme/widgets/events?per_page=100'));
+  const renewed = signBrokerAuthority({ ...grant.payload, grantId: 'renewed-watcher-grant', issuedAt: 200, expiresAt: 300 });
+  const forged = { ...renewed, signature: grant.signature };
+  const otherActivation = signBrokerAuthority({ ...renewed.payload, activationBinding: 'a'.repeat(64) });
+  const withBearer = (signed: SignedProviderBrokerWatcherRouteGrantV1) => ({ authorization: `Bearer ${encodeProviderBrokerAuthorityV1(signed)}` });
+  const responses = await keepAliveRequestsThroughApplicationTarget({ ...(await admit()), steps: [
+    { method: 'GET', path, body: '', headers },
+    { method: 'GET', path, body: '', headers: withBearer(renewed), before: () => { nowMs = 200; } },
+    { method: 'GET', path, body: '', headers: withBearer(forged) },
+    { method: 'GET', path, body: '', headers: withBearer(otherActivation) },
+    { method: 'GET', path, body: '', headers },
+  ] });
+  expect(responses.map(response => /^HTTP\/1\.1 (\d+)/u.exec(response)?.[1])).toEqual(['200', '200', '403', '403', '403']);
+  nowMs = 150;
   const cancellation = new AbortController();
   const pending = rawRequestThroughApplicationTarget({ ...(await admit()), method: 'GET',
     path: '/v1/repos/acme/widgets/actions/runs/501/pending_deployments', headers, signal: cancellation.signal });

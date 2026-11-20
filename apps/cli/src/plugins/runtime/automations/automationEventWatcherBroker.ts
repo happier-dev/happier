@@ -14,7 +14,7 @@ import {
 } from '@/providers/broker/teamCredentialWatcherClient';
 import { logger } from '@/ui/logger';
 import type { PluginHttpRuntimeAdapter } from '../fetch/service';
-import type { AutomationEventAdoptedDefinitionSetV1 } from './automationEventAdoptedDefinitionSet';
+import { admissionKey, type AutomationEventAdoptedDefinitionSetV1 } from './automationEventAdoptedDefinitionSet';
 
 type WatcherKind = 'checkpointedPull' | 'durablePush';
 type WatcherRead = ReturnType<typeof createTeamCredentialWatcherRead>;
@@ -42,7 +42,7 @@ function watcherSourceKey(definition: AutomationEventSourceDefinitionV1, materia
 
 /** Retains only currently adopted GitHub source bindings, at the Event occurrence owner. */
 export function createAutomationEventWatcherBroker(transport: TeamCredentialWatcherTransport) {
-    type SourceEntry = { kind: WatcherKind; selectors: readonly AutomationEventAdmitDefinitionSelectorV1[]; read: WatcherRead };
+    type SourceEntry = { kind: WatcherKind; activation: AutomationEventAdmitDefinitionSelectorV1; read: WatcherRead };
     type Occurrence = Readonly<{
         sources: Map<string, SourceEntry>;
         materialization: PluginMachineMaterializationRefV1;
@@ -70,7 +70,8 @@ export function createAutomationEventWatcherBroker(transport: TeamCredentialWatc
             const attempt = sourceAttemptSchema.safeParse(request.input);
             if (!attempt.success) return null;
             const selectors = attempt.data.definitions;
-            const kind = selectors[0]!.observationTransport.kind;
+            const { observationTransport, ...activation } = selectors[0]!;
+            const kind = observationTransport.kind;
             const owner = resolveAdopted(kind);
             const projection = owner?.readPublicProjection({ definitions: selectors });
             if (projection?.kind !== 'available' || projection.definitions.length !== selectors.length) return null;
@@ -100,17 +101,19 @@ export function createAutomationEventWatcherBroker(transport: TeamCredentialWatc
             }
             const existing = occurrence.sources.get(key);
             if (existing) {
-                existing.selectors = selectors;
-                return existing.read.adapter;
+                const activeKey = admissionKey(existing.activation);
+                if (selectors.some(selector => admissionKey(selector) === activeKey)) return existing.read.adapter;
+                retire(existing);
             }
             const read = createTeamCredentialWatcherRead({
                 ...transport,
                 caller: { pluginId: caller.pluginId, contributionLocalId: caller.contribution.id,
                     occurrenceId: caller.occurrenceId, materialization, sourceCustody: caller.sourceCustody },
+                activation,
                 teamId: selected.teamId, resourceId: selected.selection.resourceId, purpose: selected.purpose,
                 repository: config.data.repository,
             });
-            occurrence.sources.set(key, { kind, selectors, read });
+            occurrence.sources.set(key, { kind, activation, read });
             return read.adapter;
         },
         resetOnReconnect() {
@@ -119,7 +122,7 @@ export function createAutomationEventWatcherBroker(transport: TeamCredentialWatc
         reconcileAdopted() {
             for (const occurrence of occurrences.values()) {
                 for (const [key, source] of occurrence.sources) {
-                    const projection = occurrence.resolveAdopted(source.kind)?.readPublicProjection({ definitions: source.selectors });
+                    const projection = occurrence.resolveAdopted(source.kind)?.readPublicProjection({ definitions: [source.activation] });
                     if (projection?.kind !== 'available' || projection.definitions.some(definition => (
                         watcherSourceKey(definition, occurrence.materialization) === key
                     ))) continue;

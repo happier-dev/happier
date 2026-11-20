@@ -1,7 +1,7 @@
 import { ProviderBrokerActionOpenRequestV3Schema, ProviderBrokerActionOpenResponseV3Schema, ProviderBrokerActionAdmissionV3Schema, ProviderBrokerActionAdmissionResponseV3Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { openTeamCredentialActionBroker, admitTeamCredentialActionBrokerRequest } from './actionBrokerAdmission';
 import { verifyProviderBrokerActionRouteGrantSignatureV3 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
-import { ProviderBrokerWatcherOpenRequestV1Schema, ProviderBrokerWatcherOpenResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerWatcherOpenRequestV1Schema, ProviderBrokerWatcherOpenResponseV1Schema, ProviderBrokerWatcherRefreshRequestV1Schema, ProviderBrokerWatcherRefreshResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerModelCatalogAuthorizationV1Schema, ProviderBrokerModelCatalogAuthorizationResponseV1Schema, ProviderBrokerOpenResponseV1Schema, ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerRequestAdmissionResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_ADMISSION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_TERMINAL_USAGE_HTTP_PATH_V1, TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1, TeamCredentialExternalProviderAdmissionResponseV1Schema, TeamCredentialExternalProviderAdmissionV1Schema, TeamCredentialExternalProviderTerminalUsageResponseV1Schema, TeamCredentialExternalProviderTerminalUsageV1Schema, TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema, TeamCredentialResourceTestAdmissionResponseV1Schema, TeamCredentialResourceTestAdmissionV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
@@ -42,7 +42,7 @@ import { readProvidersFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
 import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
-import { openTeamCredentialWatcherBroker } from './providerBrokerWatcherOpen';
+import { openTeamCredentialWatcherBroker, refreshTeamCredentialWatcherBroker } from './providerBrokerWatcherOpen';
 
 export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, personalApp: Fastify = app): void {
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
@@ -223,8 +223,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         }), { isolationLevel: "Serializable" /* Terminal observation replay remains in its existing write family. */ });
         return reply.send(admitResponse(TeamCredentialExternalProviderTerminalUsageResponseV1Schema, result));
     });
-    const brokerOpenSchema = z.union([ProviderBrokerOpenRequestV1Schema, ProviderBrokerActionOpenRequestV3Schema, ProviderBrokerWatcherOpenRequestV1Schema]);
-    const brokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerActionOpenResponseV3Schema, ProviderBrokerWatcherOpenResponseV1Schema]);
+    const brokerOpenSchema = z.union([ProviderBrokerOpenRequestV1Schema, ProviderBrokerActionOpenRequestV3Schema, ProviderBrokerWatcherOpenRequestV1Schema, ProviderBrokerWatcherRefreshRequestV1Schema]);
+    const brokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerActionOpenResponseV3Schema, ProviderBrokerWatcherOpenResponseV1Schema, ProviderBrokerWatcherRefreshResponseV1Schema]);
     const brokerAdmissionSchema = z.union([ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerActionAdmissionV3Schema]);
     const brokerAdmissionResponseSchema = z.union([ProviderBrokerRequestAdmissionResponseV1Schema, ProviderBrokerActionAdmissionResponseV3Schema]);
     app.post(PROVIDER_BROKER_OPEN_HTTP_PATH_V1, {
@@ -299,13 +299,22 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                 || publisher.machineId !== openRequest.caller.materialization.machineId) {
                 return reply.send({ ok: false, reasonCode: 'resource_forbidden' });
             }
-            const result = await openTeamCredentialWatcherBroker({
-                actorAccountId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request),
+            const watcherAdmission = {
+                actorAccountId: request.userId,
                 publisherInstallationId: publisher.installationId, serverIdentityId: await getOrCreateServerIdentityId(process.env),
-                request: openRequest, readCurrentPresence,
-                readPoolSourceEligibility: createTeamCredentialPoolSourceEligibilityReader(app.forwardRpcForUser),
                 nowMs: Date.now(), grantId: crypto.randomUUID(),
                 signingKey: { keyId: signing.keyId, secretKey: signing.secretKey }, signal: eligibilityAbort.signal,
+            };
+            if ('refreshAuthority' in openRequest) {
+                const result = await refreshTeamCredentialWatcherBroker({
+                    ...watcherAdmission, request: openRequest, signingCapability: signing.capability,
+                });
+                return reply.send(admitResponse(ProviderBrokerWatcherRefreshResponseV1Schema, result));
+            }
+            const result = await openTeamCredentialWatcherBroker({
+                ...watcherAdmission, request: openRequest, readCurrentPresence,
+                authentication: readSessionAccessAuthenticationFromRequest(request),
+                readPoolSourceEligibility: createTeamCredentialPoolSourceEligibilityReader(app.forwardRpcForUser),
             });
             return reply.send(admitResponse(ProviderBrokerWatcherOpenResponseV1Schema, result));
         }

@@ -67,14 +67,22 @@ Action contract.
 ## Automation Event watcher broker grants (unreleased 0.3)
 
 The existing signed Provider broker V1 grant supports an additive Automation
-Event watcher scope. The Home signs the current publisher, Team resource revision,
-and Machine route at activation. The watcher resolves repository details locally.
-Each finite GitHub read carries the
-grant over the existing carrier and uses its existing expiry and clock tolerance.
-The watcher receives a fresh grant at the next activation or reconnect and retains
-checkpoint and publication ownership on its assigned Machine. Older verifiers
-refuse the unknown watcher scope. Existing Session and Execution Run grants retain
-their wire shape and keep working across this change.
+Event watcher scope. At activation, Home verifies the publisher and signs the
+Team resource revision, Machine route, and an opaque binding to the assigned
+Event trigger. The watcher resolves repository details locally and retains
+checkpoint and publication ownership on its assigned Machine.
+
+Each finite GitHub read carries the grant over the existing carrier. At expiry,
+the next read asks Home to re-sign the same binding for another 15 minutes
+through the existing broker-open endpoint. Home verifies the previous grant
+and the current publisher, then checks that the exact Event trigger is still
+enabled and assigned. The daemon cancels reads when it retires the source.
+
+Earlier verifiers refuse the watcher scope. Older watcher opens can still
+receive a finite grant. Grants without the activation binding cannot refresh.
+Strict development readers need matching Home, watcher, and custodian
+Protocol shapes for refresh. Session and Execution Run grants keep their
+existing wire shapes.
 
 ## GitHub Automation Event credential references (unreleased 0.3)
 

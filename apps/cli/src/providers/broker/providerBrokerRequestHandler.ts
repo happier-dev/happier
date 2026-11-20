@@ -165,7 +165,7 @@ export type ProviderBrokerAuthenticatedStreamContext =
     | Readonly<{
         kind: 'automation_event_watcher';
         authority: SignedProviderBrokerWatcherRouteGrantV1;
-        read(request: ManagedServiceRequest): Promise<ProviderBrokerRequestHandlerResult>;
+        read(request: ManagedServiceRequest, authorization: string | undefined): Promise<ProviderBrokerRequestHandlerResult>;
     }>;
 
 /** Hub catalog/admission returns the same scoped managed-service access as a
@@ -192,6 +192,7 @@ export type ProviderBrokerRequestHandlerResult =
 export type ProviderBrokerRequestHandler = (input: Readonly<{
     context?: ProviderBrokerAuthenticatedStreamContext;
     carrierRequest?: TeamCredentialProviderBrokerApplicationCarrierRequestV1;
+    watcherAuthorization?: string;
     request: ManagedServiceRequest;
 }>) => Promise<ProviderBrokerRequestHandlerResult>;
 
@@ -377,12 +378,12 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             }),
         };
     };
-    return async ({ context, carrierRequest, request }) => {
+    return async ({ context, carrierRequest, watcherAuthorization, request }) => {
         if (!context) return { ok: false, reasonCode: 'transport_identity_mismatch' };
         if (context.kind === 'automation_event_watcher') {
             if (carrierRequest) return { ok: false, reasonCode: 'transport_identity_mismatch' };
             const sanitized = sanitizeProviderBrokerRequestV1(request);
-            return sanitized ? await context.read(sanitized) : { ok: false, reasonCode: 'request_malformed' };
+            return sanitized ? await context.read(sanitized, watcherAuthorization) : { ok: false, reasonCode: 'request_malformed' };
         }
         if (context.kind === 'account_connection') {
             if (carrierRequest || context.authenticatedRemoteEndpointId !== context.authority.payload.initiator.endpointId) {

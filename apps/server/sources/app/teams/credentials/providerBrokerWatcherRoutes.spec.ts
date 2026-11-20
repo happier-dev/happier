@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
+import { AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol';
 import {
     GITHUB_BROKER_WATCHER_V1,
     PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
@@ -12,11 +13,13 @@ import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v
 
 import { createServiceAccountTokenIdentityFields } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { disableAutomationInTx } from '@/app/automations/automationCrudService';
 import { resolvePeerMediationGrantSigningConfig } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
-import { verifyProviderBrokerRouteGrantSignatureV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
+import { signProviderBrokerRouteGrantV1, verifyProviderBrokerRouteGrantSignatureV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
 import { createEnvPatcher, peerMediationGrantSigningEnv } from '@/testkit/env';
 import { createLightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
@@ -24,7 +27,7 @@ import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInst
 import { PROVIDER_BROKER_ROUTE_GRANT_TTL_MS } from './providerBrokerAdmission';
 import { registerTeamCredentialProviderBrokerRoutes } from './providerBrokerRoutes';
 
-it('signs a watcher grant for its proven Machine, declared purpose, and selected resource, and refuses fresh opens after withdrawal', async () => {
+it('refreshes the same signed watcher only while its assigned Event trigger remains active', async () => {
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'watcher-broker-open-', initAuth: false });
     const app = createAuthenticatedTestApp();
     const signingVars = { ...peerMediationGrantSigningEnv(), HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' };
@@ -79,10 +82,33 @@ it('signs a watcher grant for its proven Machine, declared purpose, and selected
             sourceBindingJson: JSON.stringify(source), brokerMachineId: broker.id,
             memberGrants: { create: { teamMembershipId: requesterMembership.id, deliveryMode: 'brokered' } },
         } });
-        app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => [
+        const automation = await db.automation.create({ data: {
+            accountId: requester.id, name: 'Repository Automation', templateCiphertext: '{}',
+        } });
+        const triggerId = AutomationTriggerIdSchema.parse(crypto.randomUUID());
+        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(crypto.randomUUID());
+        const eventLocalId = manifest.contributes.events[0]!.id;
+        const trigger = await db.automationTrigger.create({ data: {
+            id: triggerId, automationId: automation.id, kind: 'pluginEvent', eventPluginId: manifest.id, eventLocalId,
+            sourceSelectorId, sourceContractVersion: 1, observationTransport: 'checkpointedPull',
+            watcherMachineId: initiatorMachineId, watcherMachineInstallationId: installationId, watcherPluginId: manifest.id,
+            watcherMaterializationId: materializationId,
+            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain',
+                binding: { v: 1, automationId: automation.id, triggerId, triggerRevision: 0, triggerKind: 'pluginEvent',
+                    eventRef: { pluginId: manifest.id, localId: eventLocalId }, sourceSelectorId },
+                definition: { v: 1, sourceInstanceId: 'fixture-source', sourceConfig: {}, displayLabel: 'Fixture source',
+                    filter: null, maximumObservationAgeMs: null },
+            })),
+        } });
+        const activation = {
+            automationId: automation.id, triggerId: trigger.id, triggerRevision: trigger.revision, sourceSelectorId,
+        };
+        let advertisePresence = true;
+        app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => advertisePresence ? [
             { data: { clientType: 'machine-scoped', userId: requester.id, machineId: initiatorMachineId } },
             { data: { clientType: 'machine-scoped', userId: custodian.id, machineId: broker.id } },
-        ] }) });
+        ] : [] }) });
         registerTeamCredentialProviderBrokerRoutes(app);
 
         const body = ProviderBrokerWatcherOpenRequestV1Schema.parse({
@@ -102,12 +128,12 @@ it('signs a watcher grant for its proven Machine, declared purpose, and selected
             keyPair, machineId: initiatorMachineId, installationId, path: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
             body: payload, nonce: crypto.randomUUID(),
         });
-        const open = (payload: typeof body, header = proof(payload)) => app.inject({
+        const open = <Payload extends typeof body>(payload: Payload, header = proof(payload)) => app.inject({
             method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
             headers: { 'x-test-user-id': requester.id, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: header },
             payload,
         });
-        const response = await open(body);
+        const response = await open({ ...body, activation });
         expect({ status: response.statusCode, body: response.json() }).toMatchObject({ status: 200, body: { ok: true } });
         const result = ProviderBrokerWatcherOpenResponseV1Schema.parse(response.json());
         if (!result.ok) throw new Error(result.reasonCode);
@@ -135,6 +161,37 @@ it('signs a watcher grant for its proven Machine, declared purpose, and selected
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect((await open({ ...body, caller: { ...body.caller, contributionLocalId: 'wrong-service' } })).json())
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        const expired = signProviderBrokerRouteGrantV1({
+            signingKey: { keyId: signing.keyId, secretKey: signing.secretKey },
+            payload: { ...result.authority.payload,
+                issuedAt: result.authority.payload.issuedAt - 2 * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
+                expiresAt: result.authority.payload.expiresAt - 2 * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS },
+        });
+        const refresh = { ...body, activation, refreshAuthority: expired };
+        expect((await open({ ...refresh, resourceId: 'different-resource' })).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect((await open({ ...refresh, activation: { ...activation, sourceSelectorId: crypto.randomUUID() } })).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect((await open({ ...refresh, refreshAuthority: { ...expired, payload: { ...expired.payload, resourceRevision: 42 } } })).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        advertisePresence = false;
+        const refreshResponse = (await open(refresh)).json();
+        advertisePresence = true;
+        expect(Object.keys(refreshResponse)).toEqual(['ok', 'authority']);
+        expect(refreshResponse).toMatchObject({ ok: true, authority: { payload: {
+            ...expired.payload,
+            grantId: expect.not.stringMatching(expired.payload.grantId),
+            issuedAt: expect.any(Number),
+            expiresAt: expect.any(Number),
+        } } });
+        expect(refreshResponse.authority.payload.expiresAt - refreshResponse.authority.payload.issuedAt)
+            .toBe(PROVIDER_BROKER_ROUTE_GRANT_TTL_MS);
+        expect(verifyProviderBrokerRouteGrantSignatureV1({
+            authority: refreshResponse.authority, signingCapability: signing.capability, nowMs: Date.now(),
+        })).toBe(true);
+        await inTx(tx => disableAutomationInTx(tx, { accountId: requester.id, automationId: automation.id }));
+        expect((await open(refresh)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect((await open({ ...body, activation })).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await db.pluginMachineMaterialization.update({ where: { machineId_materializationId: { machineId: initiatorMachineId, materializationId } },
             data: { enabled: false } });
         expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });

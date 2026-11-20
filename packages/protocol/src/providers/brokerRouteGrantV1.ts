@@ -4,6 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
+import { AutomationEventAdmitDefinitionSelectorV1Schema } from '../automations/automationEventAdmissionSelectorV1.js';
 import { AutomationEventActionHttpCallerV1Schema } from '../automations/automationEventV1.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposes.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -140,6 +141,9 @@ export const ProviderBrokerWatcherRouteGrantPayloadV1Schema = lazyZodSchema(() =
   resourceRevision: z.number().check(z.int(), z.nonnegative()),
   source: TeamCredentialSourceBindingV1Schema,
   consumer: z.strictObject({ occurrenceId: IdentitySchema, purpose: QualifiedConnectedAccountPurposeV1Schema }),
+  // Home's digest of its exact Event assignment and the installation's caller.
+  // The underlying selector is never disclosed to the custodian.
+  activationBinding: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/u))),
 }).check(z.superRefine((payload, context) => {
   if (payload.expiresAt <= payload.issuedAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Expiry must follow issue time' });
   if (payload.initiator.accountId === payload.target.custodianAccountId) context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Accounts must be distinct' });
@@ -197,6 +201,13 @@ export const ProviderBrokerWatcherOpenRequestV1Schema = lazyZodSchema(() => z.st
   resourceId: IdentitySchema,
   initiatorMachineId: IdentitySchema,
   caller: AutomationEventActionHttpCallerV1Schema,
+  activation: z.optional(AutomationEventAdmitDefinitionSelectorV1Schema),
+}));
+
+export const ProviderBrokerWatcherRefreshRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ProviderBrokerWatcherOpenRequestV1Schema.shape,
+  activation: AutomationEventAdmitDefinitionSelectorV1Schema,
+  refreshAuthority: SignedProviderBrokerWatcherRouteGrantV1Schema,
 }));
 
 export const ProviderBrokerRequestFactsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -332,6 +343,14 @@ export const ProviderBrokerWatcherOpenResponseV1Schema = lazyZodSchema(() => z.d
   ProviderBrokerAdmissionFailureV1Schema,
 ]));
 
+export const ProviderBrokerWatcherRefreshResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    authority: SignedProviderBrokerWatcherRouteGrantV1Schema,
+  }),
+  ProviderBrokerAdmissionFailureV1Schema,
+]));
+
 export const ProviderBrokerRequestAdmissionResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.strictObject({
     ok: z.literal(true),
@@ -367,6 +386,8 @@ export type ProviderBrokerModelCatalogAuthorizationV1 = z.infer<typeof ProviderB
 export type ProviderBrokerOpenResponseV1 = z.infer<typeof ProviderBrokerOpenResponseV1Schema>;
 export type ProviderBrokerWatcherOpenRequestV1 = z.infer<typeof ProviderBrokerWatcherOpenRequestV1Schema>;
 export type ProviderBrokerWatcherOpenResponseV1 = z.infer<typeof ProviderBrokerWatcherOpenResponseV1Schema>;
+export type ProviderBrokerWatcherRefreshRequestV1 = z.infer<typeof ProviderBrokerWatcherRefreshRequestV1Schema>;
+export type ProviderBrokerWatcherRefreshResponseV1 = z.infer<typeof ProviderBrokerWatcherRefreshResponseV1Schema>;
 export type ProviderBrokerRequestAdmissionResponseV1 = z.infer<typeof ProviderBrokerRequestAdmissionResponseV1Schema>;
 export type ProviderBrokerModelCatalogAuthorizationResponseV1 = z.infer<typeof ProviderBrokerModelCatalogAuthorizationResponseV1Schema>;
 

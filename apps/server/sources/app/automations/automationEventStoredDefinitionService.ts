@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { AutomationEventSourcesListInputV1Schema, type AutomationEventCheckpointRetirementCandidateV1, type AutomationEventSourcesListInputV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationEventSourcesListInputV1Schema, type AutomationEventAdmitDefinitionSelectorV1, type AutomationEventCheckpointRetirementCandidateV1, type AutomationEventSourcesListInputV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { AutomationEventStoredDefinitionProjectionV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, type AutomationEventStoredDefinitionsReadResultV1, type AutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
 import { PluginWebhookInvocationReferenceV1Schema, type PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -124,6 +124,28 @@ function decodeCursor(cursor: string): StoredDefinitionCursor | null {
     }
 }
 
+function activeEventDefinitionWhere(params: Readonly<{
+    accountId: string;
+    caller: AutomationEventStoredDefinitionsReadCallerV1;
+}>) {
+    return {
+        automation: { accountId: params.accountId, enabled: true, deletedAt: null },
+        enabled: true,
+        deletedAt: null,
+        kind: "pluginEvent" as const,
+        eventPluginId: params.caller.pluginId,
+    };
+}
+
+function assignedEventWatcherWhere(caller: AutomationEventStoredDefinitionsReadCallerV1) {
+    return {
+        watcherMachineId: caller.machineId,
+        watcherMachineInstallationId: caller.machineInstallationId,
+        watcherPluginId: caller.pluginId,
+        watcherMaterializationId: caller.materializationId,
+    };
+}
+
 function eventDefinitionWhere(params: Readonly<{
     accountId: string;
     caller: AutomationEventStoredDefinitionsReadCallerV1;
@@ -132,11 +154,7 @@ function eventDefinitionWhere(params: Readonly<{
     lastTriggerId?: string;
 }>) {
     const base = {
-        automation: { accountId: params.accountId, enabled: true, deletedAt: null },
-        enabled: true,
-        deletedAt: null,
-        kind: "pluginEvent" as const,
-        eventPluginId: params.caller.pluginId,
+        ...activeEventDefinitionWhere(params),
         ...(params.lastTriggerId === undefined ? {} : { id: { gt: params.lastTriggerId } }),
     };
     if (params.input.transport.kind === "checkpointedPull"
@@ -144,10 +162,7 @@ function eventDefinitionWhere(params: Readonly<{
         return {
             ...base,
             observationTransport: params.input.transport.kind,
-            watcherMachineId: params.caller.machineId,
-            watcherMachineInstallationId: params.caller.machineInstallationId,
-            watcherPluginId: params.caller.pluginId,
-            watcherMaterializationId: params.caller.materializationId,
+            ...assignedEventWatcherWhere(params.caller),
         };
     }
     return {
@@ -155,6 +170,39 @@ function eventDefinitionWhere(params: Readonly<{
         observationTransport: "durablePush" as const,
         webhookEndpointId: { in: params.durablePushEndpointIds ?? [] },
     };
+}
+
+/** Checks the same enabled trigger and assigned observer as the Event catalog.
+ * The definition contents and daemon-local occurrence never cross this read.
+ */
+export async function isActiveAutomationEventWatcherDefinitionTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    caller: AutomationEventStoredDefinitionsReadCallerV1;
+    callerVersion: string;
+    selector: AutomationEventAdmitDefinitionSelectorV1;
+}>): Promise<boolean> {
+    const trigger = await params.tx.automationTrigger.findFirst({
+        where: {
+            ...activeEventDefinitionWhere(params),
+            id: params.selector.triggerId,
+            automationId: params.selector.automationId,
+            revision: params.selector.triggerRevision,
+            sourceSelectorId: params.selector.sourceSelectorId,
+            OR: [
+                { observationTransport: "checkpointedPull", ...assignedEventWatcherWhere(params.caller) },
+                { observationTransport: "durablePush", webhookEndpointId: { not: null }, observationStartsAt: { not: null } },
+            ],
+        },
+        select: { observationTransport: true, webhookEndpointId: true },
+    });
+    if (trigger?.observationTransport === "checkpointedPull") return true;
+    if (!trigger?.webhookEndpointId) return false;
+    return await readCurrentAutomationEventDurablePushEndpointTargetTxV1({
+        ...params,
+        webhookEndpointId: trigger.webhookEndpointId,
+        purpose: "observation",
+    }) !== null;
 }
 
 /**

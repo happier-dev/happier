@@ -259,6 +259,9 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         }),
       } : {}),
       handshakeProvider: async () => {
+        // Watcher reads and new streams share the same cached authority. Only
+        // the watcher owner decides when that authority needs a Home refresh.
+        if (watcher && refreshBrokerOpen) return readFreshHandshake();
         if (fixedAdmission && firstHandshake) {
           if (releasing) throw new MachineCarrierError('broker_consumer_closed', 'Provider broker consumer has been withdrawn.');
           signal?.throwIfAborted();

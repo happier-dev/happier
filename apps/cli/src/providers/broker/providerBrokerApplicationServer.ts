@@ -1,7 +1,7 @@
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { encodeProviderBrokerAuthorityV1, PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import fastify, { errorCodes, type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
@@ -339,10 +339,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 if (localConsumer ? !localConsumer.authorize(headers) : !streamContext) {
                     return reply.code(403).send();
                 }
-                if (streamContext?.kind === 'automation_event_watcher'
-                    && headers.authorization !== `Bearer ${encodeProviderBrokerAuthorityV1(streamContext.authority)}`) {
-                    return writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode: 'transport_identity_mismatch' });
-                }
+                const watcherAuthorization = streamContext?.kind === 'automation_event_watcher' ? headers.authorization : undefined;
                 // The local bearer authenticates the tunnel. Only the
                 // custodian supplies the credential for the provider.
                 delete headers.authorization;
@@ -385,7 +382,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 recordClose('received');
                 const result = localConsumer
                     ? await localConsumer.request(forwardedRequest)
-                    : await input.handler({ context: streamContext, request: forwardedRequest });
+                    : await input.handler({ context: streamContext, request: forwardedRequest,
+                        ...(watcherAuthorization ? { watcherAuthorization } : {}) });
                 // The canonical handler returns 204 only after retirement.
                 if (result.ok && result.response.status === 204) recordClose('retirement_completed');
                 return await sendResponse(reply, result, controller.signal, request.id, streamContext);

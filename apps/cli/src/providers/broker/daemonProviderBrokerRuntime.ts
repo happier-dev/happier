@@ -12,7 +12,7 @@ import type {
   SignedProviderBrokerRouteGrantV1,
   UsageObservationTokens,
 } from '@happier-dev/protocol';
-import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema,
+import { decodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema,
   SignedProviderBrokerModelRouteGrantV1Schema, SignedProviderBrokerWatcherRouteGrantV1Schema,
   SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerModelRouteGrantV1,
   type SignedProviderBrokerWatcherRouteGrantV1, type SignedProviderBrokerRouteGrantV2,
@@ -885,19 +885,23 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
         if (!watcher.success || !read) return null;
         const authority = watcher.data;
         const expected = expectedBinding(authority);
-        const verifyRead = () => verify({ authority, expected,
+        const verifyRead = (authority: SignedProviderBrokerWatcherRouteGrantV1) => verify({ authority, expected,
           authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId, enforceExpiry: true });
-        if (!verifyRead().valid) return null;
+        if (!verifyRead(authority).valid) return null;
         return await application.createStreamTarget({
           kind: 'automation_event_watcher',
           authority,
-          async read(applicationRequest) {
-            // The request bearer was bound to this carrier by the application
-            // ingress. A keep-alive stream may outlast a finite grant.
-            const verified = verifyRead();
+          async read(applicationRequest, authorization) {
+            // A renewed bearer can keep using the same authenticated stream.
+            // The canonical verifier binds it to the stream's signed watcher.
+            const signed = authorization?.startsWith('Bearer ')
+              ? decodeProviderBrokerAuthorityV1(authorization.slice('Bearer '.length)) : null;
+            if (!signed || !('scope' in signed.payload)) return { ok: false, reasonCode: 'transport_identity_mismatch' };
+            const requestAuthority = { payload: signed.payload, signature: signed.signature };
+            const verified = verifyRead(requestAuthority);
             if (!verified.valid) return { ok: false,
               reasonCode: verified.reasonCode === 'grant_expired' ? 'grant_expired' : 'transport_identity_mismatch' };
-            return await read({ authority, requestId: input.createRequestId(), request: applicationRequest });
+            return await read({ authority: requestAuthority, requestId: input.createRequestId(), request: applicationRequest });
           },
         }, request.signal);
       }

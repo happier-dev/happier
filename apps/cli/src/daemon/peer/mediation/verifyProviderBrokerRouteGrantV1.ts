@@ -11,7 +11,7 @@ import { findRouteGrantTrustRoot, isRouteGrantIssuedTooFarInFuture, verifyRouteG
 type ProviderBrokerModelRouteGrantExpectedBindingV1 = Pick<ProviderBrokerModelRouteGrantPayloadV1,
     'teamId' | 'resourceId' | 'sourceRevision' | 'brokerPlacementFingerprint' | 'initiator' | 'target' | 'consumer' | 'application'>;
 type ProviderBrokerWatcherRouteGrantExpectedBindingV1 = Pick<ProviderBrokerWatcherRouteGrantPayloadV1,
-    'scope' | 'teamId' | 'resourceId' | 'resourceRevision' | 'source' | 'initiator' | 'target' | 'consumer'>;
+    'scope' | 'teamId' | 'resourceId' | 'resourceRevision' | 'source' | 'initiator' | 'target' | 'consumer' | 'activationBinding'>;
 export type ProviderBrokerRouteGrantExpectedBindingV1 =
     ProviderBrokerModelRouteGrantExpectedBindingV1 | ProviderBrokerWatcherRouteGrantExpectedBindingV1;
 
@@ -40,6 +40,7 @@ export function providerBrokerRouteGrantExpectedBindingV1(
         initiator: payload.initiator,
         target: payload.target,
         consumer: payload.consumer,
+        ...(payload.activationBinding ? { activationBinding: payload.activationBinding } : {}),
     };
     return {
         teamId: payload.teamId,
