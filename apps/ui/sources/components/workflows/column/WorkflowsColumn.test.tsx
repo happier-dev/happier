@@ -890,7 +890,13 @@ describe('WorkflowsColumn', () => {
     it('shares the open Runs search and conditions between the page and agent Actions', async () => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { WORKFLOW_RUN_VIEW_ACTION_IDS: { get, set, reset } } = await import('@happier-dev/protocol/actions/scopeActionIdsV1');
+        const { createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { collectionSpaceSettingRefs } = await import('@/components/settings/session/collectionSpaceSettings');
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
         answerLists();
+        const allRuns = createDefaultCollectionSpaceV1('workflowRun');
+        const results = { include: ['succeeded' as const], exclude: [] };
+        const saved = { ...allRuns, id: 'succeeded', name: 'Succeeded runs', filter: { results } };
         routeState.pathname = '/workflows/runs';
         const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
             <WorkflowsRunsRoute />
@@ -903,12 +909,25 @@ describe('WorkflowsColumn', () => {
             ok: true, result: { searchQuery: '', visibleKeys: expect.arrayContaining([waiting.id, running.id]) },
         }));
 
+        const table = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflow-runs:collection');
+        expect(table()?.props.presentation).toBe('table');
+        await act(async () => { screen.pressByTestId('workflow-runs:view'); });
+        for (const grouping of ['project', 'workflow', 'date'] as const) {
+            await act(async () => { screen.pressByTestId(`workflow-runs:view:group:${grouping}`); });
+            await vi.waitFor(() => expect(storage.getState().settings.collectionDisplayPreferencesV1?.workflowRun?.groupBy).toBe(grouping));
+            const model = table()?.props.model as CollectionProps<WorkflowRunCollectionRow>['model'] | undefined;
+            const section = model?.sections.find(candidate => candidate.items.some(row => row.key === waiting.id));
+            const row = section?.items.find(candidate => candidate.key === waiting.id);
+            expect(row).toBeDefined();
+            expect(section?.group).toMatchObject({ key: row![grouping].key, title: row![grouping].title });
+        }
+        await act(async () => { screen.pressByTestId('workflow-runs:view'); });
+
         await act(async () => { screen.changeTextByTestId('workflow-runs:search', 'release'); });
         expect(await action.execute(get, {}, context)).toMatchObject({
             ok: true, result: { searchQuery: 'release', visibleKeys: [waiting.id] },
         });
 
-        const results = { include: ['succeeded'], exclude: [] };
         await act(async () => {
             expect(await action.execute(set, { filters: { results }, searchQuery: 'test' }, context))
                 .toEqual({ ok: true, result: { ok: true } });
@@ -924,24 +943,66 @@ describe('WorkflowsColumn', () => {
         expect(await action.execute(get, {}, context)).toMatchObject({
             ok: true, result: { filters: {}, visibleKeys: expect.arrayContaining([waiting.id, running.id]) },
         });
+        await act(async () => {
+            expect(await action.execute('settings.invoke', {
+                anchor: collectionSpaceSettingRefs('workflowRun').spaces.anchor,
+                input: { kind: 'collection_space', entityKind: 'workflowRun', mutation: { op: 'create', space: saved } },
+            }, { ...context, surface: 'ui' })).toMatchObject({ ok: true, result: { status: 'completed' } });
+        });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-runs-space-strip:succeeded')).not.toBeNull());
+        await vi.waitFor(() => expect(action.execute(get, {}, context)).resolves.toMatchObject({
+            ok: true, result: { filters: { results }, visibleKeys: [] },
+        }));
+        await act(async () => { screen.pressByTestId(`workflow-runs-space-strip:${allRuns.id}`); });
+        await vi.waitFor(() => expect(action.execute(get, {}, context)).resolves.toMatchObject({
+            ok: true, result: { filters: {}, visibleKeys: expect.arrayContaining([waiting.id, running.id]) },
+        }));
+        await act(async () => { screen.pressByTestId('workflow-runs-space-strip:succeeded'); });
+        await vi.waitFor(() => expect(action.execute(get, {}, context)).resolves.toMatchObject({
+            ok: true, result: { filters: { results }, visibleKeys: [] },
+        }));
         await screen.unmount();
         expect(await action.execute(get, {}, context)).toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
     });
 
     it('groups Runs by saved Workflow title or a distinct label for each unavailable Workflow', async () => {
+        const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const definitionId = '10000000-0000-4000-8000-000000000009';
+        const laterDefinitionId = '10000000-0000-4000-8000-00000000000c';
+        const http = boundary!;
+        for (const [id, title] of [[definitionId, 'Release workflow'], [laterDefinitionId, 'Deploy workflow']] as const) {
+            http.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
+                id, title, isDecrypted: true, seq: 1, headerVersion: 1, bodyVersion: 1, createdAt: 1, updatedAt: 1,
+                rawHeader: { kind: 'workflow-definition.v1', definitionId: id, metadata: { title },
+                    revision: { headerVersion: 1, bodyVersion: 1 }, previewSteps: [] },
+            }, 'account-a'));
+        }
+        const exactReads: unknown[] = [];
+        setRuntimeFetch(async (url, init) => {
+            if (new URL(String(url)).pathname === '/v1/artifacts/read') exactReads.push(JSON.parse(String(init?.body)));
+            return http.request(url, init);
+        });
         const runRows = [
             ...[waiting, running].map(run => ({ ...run, sourceArtifactId: definitionId })),
             { ...waiting, id: 'run-unavailable-a', sourceArtifactId: '10000000-0000-4000-8000-00000000000a' },
             { ...waiting, id: 'run-unavailable-b', sourceArtifactId: '10000000-0000-4000-8000-00000000000b' },
         ];
-        executeMock.mockImplementation(async (actionId: string) => {
-            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
-                kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Release workflow' },
-                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available',
-                stepCount: 1, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
-            }] satisfies WorkflowDefinitionListResultV1['definitions'] } };
-            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: runRows, metadataByRunId: {
+        executeMock.mockImplementation(async (actionId: string, input: Record<string, unknown>) => {
+            if (actionId === 'workflow.definition.list') {
+                const definitions: WorkflowDefinitionListResultV1['definitions'] = [{
+                    kind: 'workflow-definition.v1',
+                    definitionId: '10000000-0000-4000-8000-000000000001',
+                    metadata: { title: 'Another workflow' }, revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available',
+                    stepCount: 1, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+                }];
+                return { ok: true, result: { definitions } };
+            }
+            if (actionId === 'workflow.run.list' && input.cursor === 'more-runs') return { ok: true, result: {
+                runs: [{ ...waiting, id: 'later-run', sourceArtifactId: laterDefinitionId }],
+                metadataByRunId: { 'later-run': { kind: 'available', value: { title: 'Deploy the release' } } },
+            } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: runRows, nextCursor: 'more-runs', metadataByRunId: {
                 [waiting.id]: { kind: 'available', value: { title: 'Prepare the release' } },
                 [running.id]: { kind: 'unavailable', reason: 'content_unavailable' },
             } } };
@@ -952,12 +1013,22 @@ describe('WorkflowsColumn', () => {
             ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
         } } });
         routeState.pathname = '/workflows/runs';
-        const screen = await renderScreen(<WorkflowsRunsRoute />, { wrapper: TestAuth });
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsRunsRoute />
+        </AppShellColumnContext.Provider>, { wrapper: TestAuth });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Release workflow'));
         expect(screen.getTextContent()).toContain('Prepare the release');
         expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000a');
         expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000b');
-        expect(executeMock.mock.calls.filter(([id]) => id === 'workflow.definition.list')).toHaveLength(1);
+        const sourceIds = [...new Set(runRows.map(run => run.sourceArtifactId))];
+        expect(exactReads).toEqual([expect.objectContaining({ projection: 'headers', artifactIds: expect.arrayContaining(sourceIds) })]);
+        expect(exactReads[0]).toMatchObject({ artifactIds: { length: sourceIds.length } });
+        await act(async () => { screen.pressByTestId('workflow-runs:collection:continuation:more'); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Deploy workflow'));
+        expect(screen.getTextContent()).toContain('Release workflow');
+        expect(exactReads.at(-1)).toMatchObject({ projection: 'headers', artifactIds: expect.arrayContaining([laterDefinitionId]) });
+        expect(executeMock.mock.calls.some(([id]) => id === 'workflow.definition.list' || id === 'workflow.definition.get')).toBe(false);
+        await screen.unmount();
     });
 
     it('reveals Account triggers from an old link even while the retained column shows Runs', async () => {

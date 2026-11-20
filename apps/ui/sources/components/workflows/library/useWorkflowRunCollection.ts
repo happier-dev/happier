@@ -27,11 +27,11 @@ import { t, usePreferredLanguage } from '@/text';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '../presentation/workflowRunDisplayName';
-import { readWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
+import { useWorkflowReferenceTitles } from '../presentation/workflowReferenceOptions';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
 import { describeAccountWorkflowLibraryRecord } from './workflowLibraryCollection';
-import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from './workflowLibraryReads';
+import { useWorkflowRunWindow } from './workflowLibraryReads';
 import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
 import { readCollectionPluginDetails, useCollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 
@@ -71,23 +71,18 @@ export function useWorkflowRunCollection(focused: boolean) {
     const extensions = useCollectionListExtensions('workflowRun', RUN_EXTENSION_FACTS);
     const census = useProjectAccountRows();
     const language = usePreferredLanguage();
-    const hasSavedWorkflow = runs.rows.some(run => run.summary?.sourceArtifactId != null);
-    const { definitions } = useWorkflowDefinitionLibrary({
-        enabled: hasSavedWorkflow,
-        demanded: focused,
-    });
+    const savedDefinitionIds = React.useMemo(() => runs.rows.flatMap(({ summary }) =>
+        summary?.sourceArtifactId ? [summary.sourceArtifactId] : []), [runs.rows]);
+    const savedWorkflowTitle = useWorkflowReferenceTitles(savedDefinitionIds, focused, runs.accountLifetime);
     const hasInlineWorkflow = runs.rows.some(run => !run.summary?.sourceArtifactId
         && (run.summary?.origin.kind === 'automation' || run.automation !== null));
     const { sets } = useWorkflowTriggerSets(ACCOUNT_INLINE, undefined, {
         demanded: focused && hasInlineWorkflow,
     });
-    const workflowTitles = React.useMemo(() => new Map([
-        ...sets.map(set => {
-            const record = describeAccountWorkflowLibraryRecord(set);
-            return [set.automationId, record.sourceGone ? null : record.name] as const;
-        }),
-        ...definitions.map(definition => [definition.definitionId, readWorkflowDefinitionLibraryTitle(definition)] as const),
-    ]), [definitions, language, sets]);
+    const inlineWorkflowTitles = React.useMemo(() => new Map(sets.map(set => {
+        const record = describeAccountWorkflowLibraryRecord(set);
+        return [set.automationId, record.sourceGone ? null : record.name] as const;
+    })), [language, sets]);
     const starters = React.useMemo(() => focused ? runs.rows.flatMap(({ summary }) => summary?.startedBy === 'user'
         ? [{ kind: 'person' as const, accountId: summary.ownerAccountId }] : []) : [], [focused, runs.rows]);
     const { profiles, viewerAccountId } = useWorkflowSourcePeople(starters, runs.accountLifetime);
@@ -145,7 +140,9 @@ export function useWorkflowRunCollection(focused: boolean) {
                 dates.set(dateKey, date);
             }
             const result = summary?.state ?? run.automation?.workflowRunState;
-            const workflowTitle = workflowId ? workflowTitles.get(workflowId) : undefined;
+            const workflowTitle = summary?.sourceArtifactId
+                ? savedWorkflowTitle(summary.sourceArtifactId)
+                : workflowId ? inlineWorkflowTitles.get(workflowId) : undefined;
             return {
                 key: run.id, title, route: createWorkflowRunListRowRoute(run, runs.serverId), run, date,
                 project: { key: projectKey ?? 'noProject', title: projectTitle ?? t('workflows.destination.sections.noProject') },
@@ -165,8 +162,8 @@ export function useWorkflowRunCollection(focused: boolean) {
                 },
             };
         });
-    }, [census?.sessionProjectKeyResolver, discussions, language, profiles, projectDisplay, runs.rows, runs.serverId, subjects,
-        viewerAccountId, viewerName, workflowTitles]);
+    }, [census?.sessionProjectKeyResolver, discussions, inlineWorkflowTitles, language, profiles, projectDisplay, runs.rows,
+        runs.serverId, savedWorkflowTitle, subjects, viewerAccountId, viewerName]);
     const match = React.useMemo(() => compileWorkflowRunListFilterV1(binding.filters), [binding.filters]);
     const needle = binding.searchQuery.trim().toLocaleLowerCase();
     const { visible, filterResult } = React.useMemo(() => {
