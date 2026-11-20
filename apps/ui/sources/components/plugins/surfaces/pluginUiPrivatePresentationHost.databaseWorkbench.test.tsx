@@ -9,9 +9,12 @@ import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestki
 import type { PluginUiHostApi, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import * as hostApi from '@happier-dev/plugin-ui/hostApi';
 import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
-import { workbenchTargetKey } from '../../../../../../packages/plugins/database-workbench/src/ui/workbench';
+import { createWorkbenchInstance, workbenchTargetKey } from '../../../../../../packages/plugins/database-workbench/src/ui/workbench';
 import { useWorkbenchMount } from '../../../../../../packages/plugins/database-workbench/src/ui/surface/mount';
-import { renderHook } from '@/dev/testkit';
+import { act, renderHook } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { useDatabaseActivity, WorkbenchProvider } from '../../../../../../packages/plugins/database-workbench/src/ui/hooks';
+import type { WorkbenchClient } from '../../../../../../packages/plugins/database-workbench/src/ui/models';
 import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
 
@@ -123,6 +126,65 @@ describe('mounted database workbench host owners', () => {
             await opened.demand();
             expect(executeAction).toHaveBeenCalledTimes(1);
         } finally { await mount.unmount(); await surface.dispose(); }
+    });
+
+    it('uses the Account cadence in the Workbench Activity hook and makes zero hidden reads', async () => {
+        vi.useFakeTimers();
+        const initial = storage.getState();
+        const setInterval = (interval: number) => {
+            const state = storage.getState();
+            state.applySettings({ ...state.settings, databaseActivityAutoRefreshIntervalMs: interval }, (state.settingsVersion ?? 0) + 1);
+        };
+        const host = createPluginUiPrivatePresentationHost(undefined);
+        const descriptor = { ...createDatabaseDescriptorV1Fixture(), target };
+        const targetKey = workbenchTargetKey(target);
+        const operation = vi.fn<WorkbenchClient['operation']>(async () => ({
+            ok: true, operation: 'stats.read',
+            observation: { ...observation('1', 1000), group: 'activity', data: [] },
+        }));
+        const instance = createWorkbenchInstance({
+            scope: { kind: 'environment', environment: target.environment },
+            location: { targetKey, mode: 'overview', sort: [], columns: [], page: { rows: 10, offset: 0 }, fkTrail: [] },
+            selectedTarget: descriptor, cataloguePageRows: 10, activityResource: host.databaseWorkbench.activityResource,
+            consoleStorage: () => ({ read: async () => null, write: async () => {} }), statementRanges: () => [],
+            client: { operation, targets: async () => ({ targets: [], completeness: { complete: true } }),
+                commit: async () => ({ ok: false, status: 'cancelled', code: 'database_cancelled' }),
+                access: async () => { throw new Error('Not requested'); }, subscribeOwnWrites: () => () => {},
+                cancel: async () => {}, navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: () => {} },
+        });
+        setInterval(12_000);
+        const activity = await renderHook((presented: boolean) => useDatabaseActivity(targetKey,
+            { kind: 'stats.read', group: 'activity', selection: { page: { rows: 10 } } }, presented), {
+            initialProps: false,
+            wrapper: ({ children }) => <PluginUiPresentationHostProviderInternal host={host}>
+                <WorkbenchProvider instance={instance}>{children}</WorkbenchProvider>
+            </PluginUiPresentationHostProviderInternal>,
+        });
+        const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+        try {
+            await advance(60_000);
+            expect(operation).not.toHaveBeenCalled();
+            await activity.rerender(true);
+            await advance(0);
+            expect(operation).toHaveBeenCalledTimes(1);
+            await advance(60_000);
+            expect(operation).toHaveBeenCalledTimes(6);
+            await act(async () => setInterval(0));
+            await advance(0);
+            const beforeManual = operation.mock.calls.length;
+            await advance(60_000);
+            expect(operation).toHaveBeenCalledTimes(beforeManual);
+            await act(async () => { await activity.getCurrent().refresh(); });
+            expect(operation).toHaveBeenCalledTimes(beforeManual + 1);
+            await activity.rerender(false);
+            await act(async () => { await activity.getCurrent().refresh(); });
+            await advance(60_000);
+            expect(operation).toHaveBeenCalledTimes(beforeManual + 1);
+        } finally {
+            await activity.unmount();
+            instance.close();
+            storage.setState(initial, true);
+        }
     });
 
     it('exposes one callable binding and leaves activity reads asleep without presented demand', async () => {

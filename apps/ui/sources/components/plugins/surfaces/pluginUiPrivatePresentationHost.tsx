@@ -123,6 +123,7 @@ import type { ExecutableParticipantPickerProps, SavedSecretChoiceListProps, Secr
 import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import { SavedSecretReferenceChoice } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useSetting } from '@/sync/store/settingsReadHooks';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
     useInstalledPluginBrandPresentation,
@@ -397,6 +398,9 @@ function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/c
 // The workbench keeps its resources for the mounted page. Rebuilding icon or
 // navigation presentation must preserve these direction-independent services.
 const DATABASE_WORKBENCH_HOST = Object.freeze({
+    useActivityRefreshIntervalMs: function useActivityRefreshIntervalMs() {
+        return useSetting('databaseActivityAutoRefreshIntervalMs');
+    },
     activityResource: createDatabaseActivityController,
     lastLook: createDatabaseStatsLastLook,
 });

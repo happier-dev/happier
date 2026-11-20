@@ -9,6 +9,7 @@ import type { WorkbenchInstance } from './workbench.js';
 import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatementsObservation, WorkbenchStatus } from './models.js';
 import type { WorkbenchResource } from './resource.js';
 import type { CodeEditorProps, CodeEditorSelectionRange } from '@happier-dev/plugin-ui/presentation';
+import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import { createDatabaseCompletionSource } from './completions.js';
 import { createWorkbenchPaneState, workbenchPaneKey, type WorkbenchPaneIdentity, type WorkbenchPaneState } from './state.js';
 import { selectRelationChanges } from './apply.js';
@@ -277,12 +278,13 @@ export function useStatementsLastLook(targetKey: string, observation: WorkbenchS
         [lastLook, observation, shown]);
 }
 
-/** D21: about 5 s while the Activity view is presented, zero while hidden (owner, 2026-11-16). */
-export const DATABASE_ACTIVITY_REFRESH_MS = 5000;
 const noActivity = { value: null, loading: true, error: null } as const;
+const useManualActivityRefreshInterval = () => 0;
 /** Live activity: the host's presented-demand owner refreshes it only while this view is shown. */
 export function useDatabaseActivity(targetKey: string, request: Extract<DatabaseStatsReadV1, { group: 'activity' }>, presented: boolean) {
     const instance = useWorkbenchInstance();
+    const useInterval = useHostDatabaseWorkbench()?.useActivityRefreshIntervalMs ?? useManualActivityRefreshInterval;
+    const intervalMs = useInterval();
     const resource = useMemo(() => {
         try { return instance.activity(targetKey, request); } catch { return null; }
         // The request is compared by value.
@@ -293,8 +295,8 @@ export function useDatabaseActivity(targetKey: string, request: Extract<Database
     const snapshot = useSyncExternalStore(subscribe, get, get);
     useEffect(() => {
         if (!resource || !presented) return;
-        return resource.retainAutoRefresh({ intervalMs: DATABASE_ACTIVITY_REFRESH_MS });
-    }, [resource, presented]);
+        return resource.retainAutoRefresh({ intervalMs });
+    }, [resource, presented, intervalMs]);
     return useMemo(() => ({ observation: snapshot.value ?? undefined, loading: snapshot.loading, error: snapshot.error,
         supported: resource !== null, refresh: () => resource?.refresh() }), [snapshot, resource]);
 }

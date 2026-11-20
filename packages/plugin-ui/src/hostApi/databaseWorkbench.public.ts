@@ -25,6 +25,8 @@ export type HostDatabaseLastLook = Readonly<{
 }>;
 
 export type HostDatabaseWorkbench = Readonly<{
+  /** Account preference for the selected surface's presented Activity demand. */
+  useActivityRefreshIntervalMs?(): number;
   activityResource<T>(source: Readonly<{
     read(options: Readonly<{ signal: AbortSignal }>): Promise<T>;
   }>): HostDatabaseActivityResource<T>;

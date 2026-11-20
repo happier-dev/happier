@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { DatabaseStatsObservationV1, DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { Metric, Row, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginSurfaceActivity } from '@happier-dev/plugin-ui/hostApi';
 import { useDatabaseActivity, useDatabaseInsights } from '../hooks.js';
 import { ACTIVITY_READ, ConnectionsMetric } from './insights/ActivityView.js';
 import { isStatsSetupReason } from './insights/InsightsSetup.js';
@@ -33,7 +34,7 @@ export function OverviewFacts(props: Readonly<{ targetKey: string }>) {
     props.targetKey,
     STATEMENTS_BY_TOTAL_TIME,
   ).observation as DatabaseStatsObservationV1 | undefined;
-  const activity = useDatabaseActivity(props.targetKey, ACTIVITY_READ, true);
+  const activity = useDatabaseActivity(props.targetKey, ACTIVITY_READ, usePluginSurfaceActivity().active);
   const sessions =
     (activity.observation as DatabaseStatsObservationV1 | undefined)?.status ===
     'available'

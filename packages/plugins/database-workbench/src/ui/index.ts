@@ -4,7 +4,7 @@ export {
     useDatabaseSchemaRelations, useRelationPage, useStructure, useWorkbenchLocation,
     useWorkbenchColumnWidths, useDatabaseAccess, useWorkbenchDraft, useWorkbenchCellState,
     useDatabaseConsole, useDatabaseCompletions,
-    useDatabaseInsights, useStatementsLastLook, useDatabaseActivity, DATABASE_ACTIVITY_REFRESH_MS,
+    useDatabaseInsights, useStatementsLastLook, useDatabaseActivity,
 } from './hooks.js';
 export { createWorkbenchInstance, WorkbenchOperationError, type WorkbenchInstance } from './workbench.js';
 export { createConsoleDeviceStorage } from './consoleDeviceStorage.js';
