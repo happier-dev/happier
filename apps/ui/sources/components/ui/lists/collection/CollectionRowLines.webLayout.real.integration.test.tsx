@@ -42,8 +42,8 @@ it.each([
     root = createRoot(host);
     const lines = Array.from({ length: lineCount }, (_, index) => ({
         key: `line-${index + 2}`,
-        start: <CollectionRowLine testID={`line-${index + 2}`} density="compact" textScale={scale}>Lift the draft into useSettingsDraft</CollectionRowLine>,
-        end: <CollectionRowLine density="compact" textScale={scale}>3/7</CollectionRowLine>,
+        start: <CollectionRowLine testID={`line-${index + 2}`} density="compact" touchCompact textScale={scale}>Lift the draft into useSettingsDraft</CollectionRowLine>,
+        end: <CollectionRowLine density="compact" touchCompact textScale={scale}>3/7</CollectionRowLine>,
     }));
     await act(async () => root!.render(
         <div style={{ width: 390 }}>
@@ -61,5 +61,13 @@ it.each([
     const title = layout.rect('title');
     const first = layout.rect('line-2');
     expect(first.height).toBeGreaterThan(0);
-    expect(title.bottom).toBeLessThanOrEqual(first.top + 0.5);
+    const { HAPPIER_COLLECTION_ROW_METRICS, resolveHappierCollectionRowLineMetrics } = await import('@happier-dev/plugin-ui/presentation');
+    const { gap, minHeight } = HAPPIER_COLLECTION_ROW_METRICS.detailLine;
+    const { lineHeight } = resolveHappierCollectionRowLineMetrics('compact', 'web', true);
+    const bandHeight = Math.max(minHeight, Math.ceil(lineHeight * scale));
+    const visualGap = first.top - title.bottom;
+    expect(visualGap).toBeGreaterThanOrEqual(0);
+    // The RNW fixture measures the text box inside its scaled, vertically centered detail band.
+    // The first band's top must follow the wrapped title by exactly the shared gap.
+    expect(visualGap - (bandHeight - first.height) / 2).toBeCloseTo(gap, 1);
 });

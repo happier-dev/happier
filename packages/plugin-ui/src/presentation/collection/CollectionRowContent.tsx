@@ -280,6 +280,7 @@ const titleRow: ViewStyle = {
   gap: M.titleGap,
   minWidth: 0,
 };
+const titleRowWithDetailLines: ViewStyle = { ...titleRow, marginBottom: 0 };
 const trailingBase: ViewStyle = {
   marginLeft: M.trailingGap,
   flexDirection: 'row',
@@ -401,6 +402,13 @@ const PAGE_CONTENT_GAP_STYLE = { marginLeft: HAPPIER_PAGE_METRICS.rowLeadingGapP
 export function HappierCollectionRowMain(
   props: HappierCollectionRowMainProps,
 ): ReactElement {
+  return renderCollectionRowMain(props, titleRow);
+}
+
+function renderCollectionRowMain(
+  props: HappierCollectionRowMainProps,
+  titleStyle: ViewStyle,
+): ReactElement {
   const touchCompact =
     props.touchCompact === true && props.density === 'compact';
   const identity = resolveHappierCollectionRowIdentityMetrics(
@@ -429,7 +437,7 @@ export function HappierCollectionRowMain(
               : null,
         ]}
       >
-        <View style={titleRow}>{props.title}</View>
+        <View style={titleStyle}>{props.title}</View>
         {props.children}
       </View>
     </>
@@ -469,16 +477,14 @@ export function HappierCollectionRowContent(
     fill ? { backgroundColor: paintColor(fill) } : null,
     props.style,
   ];
-  const content = (
-    <HappierCollectionRowMain
-      density={props.density}
-      touchCompact={touchCompact}
-      identity={props.identity}
-      title={props.title}
-    >
-      {props.children}
-    </HappierCollectionRowMain>
-  );
+  const lines = !beneath && !wraps && props.lines ? props.lines : null;
+  const content = renderCollectionRowMain({
+    density: props.density,
+    touchCompact,
+    identity: props.identity,
+    title: props.title,
+    children: props.children,
+  }, lines?.length ? titleRowWithDetailLines : titleRow);
   // Its own control can hold focus (a Session's request peek). Keyboard focus there engages the row, but the
   // status stays: hiding it would leave focus on a control that is invisible and out of the accessibility tree.
   const [restingFocused, setRestingFocused] = useState(false);
@@ -492,7 +498,6 @@ export function HappierCollectionRowContent(
   const titleEdge = props.identity != null
     ? resolveHappierCollectionRowIdentityMetrics(props.density, touchCompact).slotSize + M.contentGap[props.density]
     : 0;
-  const lines = !beneath && !wraps && props.lines ? props.lines : null;
   if (lines) {
     // The title line keeps the one-line row's place (same top inset); each detail line adds its pitch below it.
     const scale = Math.min(textScale, 2.5);
