@@ -7,7 +7,7 @@ import { observeMachineProvisionerNativeRead, defineMachineProvisionerReconcilia
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
-  type MachineProvisionerAuthorDefinitionV1,
+  projectMachineProvisionerOptionsFailure, readMachineProvisionerCredentialRefusal, type MachineProvisionerAuthorDefinitionV1,
   type MachineProvisionerNativeCauseV1, type MachineProvisionerPowerResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createFlyNativeClient, isLaunchAvailable, type FlyCleanup } from './machine/nativeClient.js';
@@ -182,9 +182,9 @@ export const PLUGIN = definePlugin({
         const organizationSlug = await organization(context);
         const facts = await runtime(context).options({ organizationSlug,
           ...(input.app?.ownership === 'existing' ? { appName: input.app.name } : input.appName ? { appName: input.appName } : {}) });
+        if (facts.kind !== 'available') return projectMachineProvisionerOptionsFailure(
+          readMachineProvisionerCredentialRefusal(facts.status), facts.nativeCause);
         const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
-        if (facts.kind !== 'available') return { dimensions: emptyDimensions, code: 'provider_unavailable',
-          ...(facts.nativeCause ? { nativeCause: facts.nativeCause } : {}) };
         const selected = resolveFlyLaunchQueryCandidate(input);
         if (selected.success) {
           const launch = selected.data;

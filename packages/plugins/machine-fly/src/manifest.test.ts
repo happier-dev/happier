@@ -27,7 +27,6 @@ import { connectedAccountRuntime } from './account.js';
 
 const resource = { app: { name: 'managed', ownership: 'existing' }, machineId: 'machine-1', volume: { id: 'vol-1', ownership: 'attached' } };
 const launch = { app: { name: 'managed', ownership: 'existing' }, region: 'ams', imageReference: 'ubuntu:24.04', guest: { cpuKind: 'shared', cpus: 1, memoryMb: 1024 }, volume: { kind: 'attach', volumeId: 'vol-1' } };
-const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
 function projectOptions(raw: unknown) {
   const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
   return projectMachineProvisionerSelectionV1({ options, launchSchema: exports.FlyLaunchV1Schema.jsonSchema,
@@ -327,14 +326,15 @@ describe('public fly machine provisioner', () => {
       nativeCause: { httpStatusClass: '4xx', code: 'insufficient_capacity' },
     });
   });
-  it('preserves the safe native cause through activated check, options and acquire contracts', async () => {
-    const nativeCause = { httpStatusClass: '4xx', code: 'insufficient_capacity' };
-    const { handlers, context } = await activated({ status: nativeCause.code, error: 'private reflected input', details: { token: 'private credential' } }, 403);
-    expect(await handlers.get('check')!({}, context)).toMatchObject({ available: false, nativeCause });
-    const options = await handlers.get('options')!({}, context);
-    expect(MachineProvisionerOptionsResultV1Schema.parse(options)).toEqual({ dimensions: emptyDimensions, code: 'provider_unavailable', nativeCause });
+  it('preserves the credential refusal through activated Check, Options and Acquire', async () => {
+    const nativeCause = { httpStatusClass: '4xx', code: 'unknown' };
+    const { handlers, context } = await activated(
+      { status: nativeCause.code, error: 'private reflected input' }, request => request.url.includes('/apps?') ? 403 : 200);
+    const refusal = { available: false, code: 'credential_unavailable', nativeCause };
+    expect(await handlers.get('check')!({}, context)).toMatchObject(refusal);
+    await expect(handlers.get('options')!(launch, context)).rejects.toMatchObject({ code: refusal.code, details: refusal });
     expect(await handlers.get('acquire')!({ launch, managedId: 'managed-retained' }, context))
-      .toEqual({ kind: 'rejected', code: 'provider_unavailable', nativeCause });
+      .toEqual({ kind: 'rejected', code: refusal.code, nativeCause });
   });
   it('keeps the native acquisition failure beside its exact retained recovery reference', async () => {
     const { handlers, context } = await activated(request => request.url.endsWith('/volumes')

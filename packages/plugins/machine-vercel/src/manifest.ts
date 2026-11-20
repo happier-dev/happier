@@ -7,7 +7,8 @@ import {
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   MachineProvisionerNativeCredentialApplyResultV1Schema,
-  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
+  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, projectMachineProvisionerOptionsFailure,
+  type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
 import { ACCOUNT_PURPOSE, nativeFetch, PROJECT_REQUIRED, readAccountScope } from './machine/credentials.js';
@@ -121,8 +122,7 @@ export const PLUGIN = definePlugin({
           const client = await runtime(context);
           const limits = await client.limits();
           context.signal.throwIfAborted();
-          if (limits.kind !== 'available') return { dimensions, code: 'provider_unavailable',
-            ...(limits.nativeCause ? { nativeCause: limits.nativeCause } : {}) };
+          if (limits.kind !== 'available') return projectMachineProvisionerOptionsFailure(limits.code, limits.nativeCause);
           const parsed = VercelLaunchSchema.safeParse({ ...input, timeoutMs: input.timeoutMs ?? limits.timeoutMs });
           if (!parsed.success) return { dimensions };
           const launch = parsed.data;
@@ -143,7 +143,7 @@ export const PLUGIN = definePlugin({
             } };
         } catch (error) {
           context.signal.throwIfAborted();
-          return projectMachineProvisionerActionFailure(error, () => ({ dimensions, code: 'provider_unavailable' as const }));
+          return projectMachineProvisionerActionFailure(error, () => projectMachineProvisionerOptionsFailure(errorCode(error)));
         }
       } },
     acquire: { ...defaults, title: label('confirmTitle'), confirmation, dangerLevel: 'writesRemote',

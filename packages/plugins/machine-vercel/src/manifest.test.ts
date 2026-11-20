@@ -298,21 +298,24 @@ describe('public Vercel provisioner composition', () => {
         }
       } finally { await kit.dispose(); }
     });
-  it.each([{ project: 404 }, { team: 503 }])('distinguishes native options unavailability from an incomplete draft (%j)', async status => {
-    const { kit } = await vendor(undefined, status);
+  it.each([404, 503])('distinguishes native options unavailability from an incomplete draft (%i)', async team => {
+    const { kit } = await vendor(undefined, { team });
     try {
       expect(await kit.invokeAction('options', launch, { surface: 'plugin' })).toEqual({ dimensions, code: 'provider_unavailable',
-        nativeCause: { httpStatusClass: status.project ? '4xx' : '5xx' } });
+        nativeCause: { httpStatusClass: team === 404 ? '4xx' : '5xx' } });
     } finally { await kit.dispose(); }
     const available = await vendor();
     try { expect(await available.kit.invokeAction('options', {}, { surface: 'plugin' })).toEqual({ dimensions }); }
     finally { await available.kit.dispose(); }
   });
-  it('reports unavailable options when the selected Account scope cannot be materialized', async () => {
+  it('reports the same credential refusal in Check and Options when the selected Account needs reauthorization', async () => {
     const { kit, calls } = await vendor(undefined, { accountFailure: true });
     try {
-      expect(await kit.invokeAction('options', launch, { surface: 'plugin' }))
-        .toEqual({ dimensions, code: 'provider_unavailable' });
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' }))
+        .toMatchObject({ available: false, code: 'credential_unavailable' });
+      await expect(kit.invokeAction('options', launch, { surface: 'plugin' })).rejects.toMatchObject({
+        code: 'credential_unavailable', details: { available: false, code: 'credential_unavailable' },
+      });
       expect(calls).toEqual([]);
     } finally { await kit.dispose(); }
   });
@@ -353,8 +356,11 @@ describe('public Vercel provisioner composition', () => {
       expect(ROLE_SCHEMAS.acquireInput.parse({ managedId: resource.managedId, launch: projection.launch }).launch).toEqual(launch);
       expect(projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: VercelLaunchSchema.jsonSchema }))
         .toMatchObject({ kind: 'incomplete' });
-      expect(calls).toHaveLength(4);
-      expect(calls.every(call => call.method === 'GET' && !/cmd|fs/.test(new URL(call.url).pathname))).toBe(true);
+      expect(calls.map(call => [call.method, new URL(call.url).pathname])).toEqual([
+        ['GET', '/v9/projects/' + scope.projectId],
+        ['GET', '/v2/teams/' + scope.teamId],
+        ['GET', '/v2/teams/' + scope.teamId],
+      ]);
       expect(calls.every(call => call.headers?.authorization === 'Bearer private-controller-token')).toBe(true);
     } finally { await kit.dispose(); }
   });
@@ -370,8 +376,9 @@ describe('public Vercel provisioner composition', () => {
   it('requires sandbox team-plan access at options and acquisition without broadening a project token', async () => {
     const { kit, calls } = await vendor(undefined, { team: 403 });
     try {
-      expect(await kit.invokeAction('options', launch, { surface: 'plugin' }))
-        .toMatchObject({ dimensions, code: 'provider_unavailable' });
+      await expect(kit.invokeAction('options', launch, { surface: 'plugin' })).rejects.toMatchObject({
+        code: 'credential_unavailable', details: { available: false, code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx' } },
+      });
       expect(await kit.invokeAction('acquire', { managedId: resource.managedId, launch }, { surface: 'plugin' }))
         .toMatchObject({ kind: 'rejected', code: 'credential_unavailable' });
       expect(calls.every(call => call.method === 'GET')).toBe(true);

@@ -2,7 +2,7 @@ import { definePlugin, PluginError, type PluginInvocationContext } from '@happie
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal, observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
+import { projectMachineProvisionerActionFailure, projectMachineProvisionerOptionsFailure, readMachineProvisionerCredentialRefusal, observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
   MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
@@ -156,7 +156,10 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
         try { return projectHetznerOptions(await (await runtime(context)).options()); }
-        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable', ...failureCause(error) })); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => {
+          const native = error instanceof HetznerNativeError ? error : undefined;
+          return projectMachineProvisionerOptionsFailure(readMachineProvisionerCredentialRefusal(native?.httpStatus), native?.nativeCause);
+        }); }
       },
     },
     acquire: { ...defaults, title: 'Acquire Hetzner resource', dangerLevel: 'destructive',

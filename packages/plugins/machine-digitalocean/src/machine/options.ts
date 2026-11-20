@@ -1,4 +1,5 @@
-import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerOptionsFailure, readMachineProvisionerCredentialRefusal,
+  type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { DIGITALOCEAN_NETWORK_LABELS } from '../ui/translations.js';
 import type { createDigitalOceanNativeClient } from './nativeClient.js';
 import type { NativeImage } from './schemas.js';
@@ -15,8 +16,8 @@ function supportsBootstrap(image: NativeImage): boolean {
 
 /** Native dimensions and constraints for reviewing a launch. */
 export function projectDigitalOceanOptions(facts: NativeOptions): MachineProvisionerOptionsResultV1 {
-  if (facts.kind !== 'available') return { dimensions: { size: [], image: [], location: [], network: [], duration: [] },
-    code: 'provider_unavailable', ...(facts.nativeCause ? { nativeCause: facts.nativeCause } : {}) };
+  if (facts.kind !== 'available') return projectMachineProvisionerOptionsFailure(
+    readMachineProvisionerCredentialRefusal(facts.status), facts.nativeCause);
   const images = facts.images.filter(supportsBootstrap);
   const regionIds = new Set(facts.regions.map(region => region.slug));
   // DigitalOcean identifies Droplets as amd64 hosts in its native platform contract:

@@ -263,16 +263,18 @@ describe('public digitalocean machine provisioner', () => {
     expect(pages).toEqual({ sizes: 2, images: 1, regions: 1 });
   });
 
-  it('carries native cause through activated check, options and acquire role schemas without throwing', async () => {
+  it('carries the credential refusal and native cause through activated Check, Options and Acquire', async () => {
     const runtime = await activated({ id: 'forbidden', message: 'captured-private request content', request_id: 'private-request' }, 403);
     const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' };
     const check = await runtime.handlers.get('check')!({}, runtime.context);
     expect(MachineProvisionerCheckResultV1Schema.parse(check)).toMatchObject({ available: false, code: 'credential_unavailable', nativeCause });
-    const options = await runtime.handlers.get('options')!({}, runtime.context);
-    expect(MachineProvisionerOptionsResultV1Schema.parse(options)).toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable', nativeCause });
+    const options = runtime.handlers.get('options')!({}, runtime.context);
+    await expect(options).rejects.toMatchObject({
+      code: 'credential_unavailable', details: { available: false, code: 'credential_unavailable', nativeCause },
+    });
     const acquire = await runtime.handlers.get('acquire')!({ launch, managedId: 'cmvnxb7gn009mmcagisyszwlh', bootstrapPublicKey: 'ssh-ed25519 public' }, runtime.context);
     expect(exports.ROLE_SCHEMAS.acquireResult.parse(acquire)).toEqual({ kind: 'rejected', code: 'credential_unavailable', nativeCause });
-    expect(JSON.stringify([check, options, acquire])).not.toMatch(/captured-private|request content|private-request/);
+    expect(JSON.stringify([check, await options.catch((error: unknown) => error), acquire])).not.toMatch(/captured-private|request content|private-request/);
   });
 
   it.each(['inspect', 'power', 'destroy'] as const)('admits the retained native failure role %s through its declared result schema', async role => {

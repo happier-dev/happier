@@ -9,7 +9,10 @@ describe('Modal public plugin activation', () => {
     const services = { connectedAccounts: { getBinding: async () => null } } as unknown as PluginTestServicesFixture;
     const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: MODAL_PLUGIN, services });
     try {
-      expect(await testkit.invokeAction('check', {})).toMatchObject({ available: false });
+      expect(await testkit.invokeAction('check', {})).toMatchObject({ available: false, code: 'credential_unavailable' });
+      await expect(testkit.invokeAction('options', {})).rejects.toMatchObject({
+        code: 'credential_unavailable', details: { available: false, code: 'credential_unavailable' },
+      });
       // No selected credential or vendor access is borrowed by an unconfigured
       // public host. Input admission runs before private/native construction.
       await expect(testkit.invokeAction('acquire', { launch: { timeoutMs: 1001 } })).rejects.toThrow();

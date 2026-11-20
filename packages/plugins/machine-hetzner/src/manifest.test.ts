@@ -620,10 +620,19 @@ describe('public hetzner machine provisioner', () => {
     const runtime = await activated({ error: { code: 'forbidden', message: 'private-content' } }, 403);
     const input = role === 'power' ? { resource, intent: 'stop' } : role === 'inspect' || role === 'destroy' ? { resource }
       : role === 'reconcile' ? { nativeOperation: { correlation: 'row-1' } } : {};
-    const result = await runtime.handlers.get(role)!(input, runtime.context);
+    const response = runtime.handlers.get(role)!(input, runtime.context);
+    if (role === 'options') {
+      await expect(response).rejects.toMatchObject({ code: 'credential_unavailable', details: {
+        available: false, code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' },
+      } });
+      expect(JSON.stringify(await response.catch((error: unknown) => error))).not.toContain('private-content');
+      return;
+    }
+    const result = await response;
     expect(result).toMatchObject({ nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
+    if (role === 'check') expect(result).toMatchObject({ code: 'credential_unavailable' });
     if (role === 'inspect') expect(result).toMatchObject({ availability: 'unavailable' });
-    const schema = role === 'check' ? MachineProvisionerCheckResultV1Schema : role === 'options' ? MachineProvisionerOptionsResultV1Schema
+    const schema = role === 'check' ? MachineProvisionerCheckResultV1Schema
       : role === 'inspect' ? MachineProvisionerObservationV1Schema : role === 'reconcile' ? exports.ROLE_SCHEMAS.acquireResult : MachineProvisionerPowerResultV1Schema;
     expect(schema.safeParse(result).success).toBe(true);
     expect(JSON.stringify(result)).not.toContain('private');

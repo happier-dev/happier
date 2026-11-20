@@ -3,7 +3,7 @@ import { machinePresentationLabel, machineCheckPresentation } from './ui/transla
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure,
+  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, projectMachineProvisionerOptionsFailure,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPutFileResultV1Schema,
@@ -103,7 +103,12 @@ export const MODAL_PLUGIN = definePlugin({
           description: configurationLabel('timeoutDescription') },
       ] } satisfies NonNullable<ActionContribution['inputHints']>,
       resultSchema: MachineProvisionerOptionsResultV1Schema, async run(input, context) {
-        return MachineProvisionerOptionsResultV1Schema.parse(await invokeScopedModalRole('options', input, context));
+        try { return MachineProvisionerOptionsResultV1Schema.parse(await invokeScopedModalRole('options', input, context)); }
+        catch (error) {
+          const reason = code(error);
+          if (reason !== 'credential_unavailable') throw error;
+          return projectMachineProvisionerActionFailure(error, () => projectMachineProvisionerOptionsFailure(reason));
+        }
       } },
     acquire: { ...defaults, ...effectConfirmation, title: 'Acquire finite Modal Sandbox', dangerLevel: 'writesRemote', inputSchema: MODAL_ROLE_SCHEMAS.acquireInput,
       resultSchema: MODAL_RECONCILIATION_SCHEMAS.result, async run(input, context) {
