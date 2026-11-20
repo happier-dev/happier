@@ -50,9 +50,27 @@ function retainValue(previous: unknown, next: unknown): unknown {
 /** Keep the current read clock while sharing equal admitted outcomes and their nested facts. */
 export function retainTriageObservation<T extends ProjectedObservationV1>(previous: T | undefined, next: T): T {
     if (previous === undefined || previous.sourceInstanceId !== next.sourceInstanceId) return next;
-    const outcome = retainTriageProjectionValue(previous.outcome, next.outcome);
+    const outcome = retainTriageProjectionValue(previous.outcome, keepExactReadFacts(previous.outcome, next.outcome));
     if (outcome === previous.outcome && next.observedAtMs === previous.observedAtMs) return previous;
     return outcome === next.outcome ? next : { ...next, outcome };
+}
+
+/**
+ * A list scan does not answer a pull request's head or branch names; only the exact read does. A later scan of
+ * the same unchanged entry (same provider clock) keeps them, so head-pinned writes still have the head the
+ * reader saw. A newer provider clock means the head may have moved: the scan's answer stands alone until the
+ * next exact read.
+ */
+function keepExactReadFacts<T extends ProjectedObservationV1['outcome']>(previous: T, next: T): T {
+    if (previous.kind !== 'present' || next.kind !== 'present'
+        || previous.sourceUpdatedAtMs === undefined || previous.sourceUpdatedAtMs !== next.sourceUpdatedAtMs) return next;
+    const { reviewRevision, branches } = previous.snapshot;
+    const carryRevision = reviewRevision !== undefined && next.snapshot.reviewRevision === undefined;
+    const carryBranches = branches !== undefined && next.snapshot.branches === undefined;
+    if (!carryRevision && !carryBranches) return next;
+    return { ...next, snapshot: { ...next.snapshot,
+        ...(carryRevision ? { reviewRevision } : {}),
+        ...(carryBranches ? { branches } : {}) } };
 }
 
 /**
