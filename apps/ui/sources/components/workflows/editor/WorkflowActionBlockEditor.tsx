@@ -3,9 +3,8 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { WorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
-import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
+import { readWorkflowActionFieldRequests } from '@/components/workflows/presentation/workflowActionFieldRequests';
 import type { AuthoringComposerScope } from '@/components/sessions/authoring/ScopedAuthoringComposer';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/actions';
@@ -62,12 +61,11 @@ type ActionFieldRow = Readonly<{
  * any field already bound that the declaration no longer lists (kept visible,
  * never dropped).
  */
-function resolveActionFieldRows(spec: WorkflowActionSpec | null, input: WorkflowActionLeafV1['input']): readonly ActionFieldRow[] {
+function resolveActionFieldRows(fields: readonly EffectiveActionInputField[], input: WorkflowActionLeafV1['input']): readonly ActionFieldRow[] {
     const rows: ActionFieldRow[] = [];
     const seen = new Set<string>();
-    const literals = Object.fromEntries(Object.entries(input).flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : []));
-    for (const field of spec === null ? [] : resolveEffectiveActionInputFields(spec, literals)) {
-        if (field.path.includes('.') || seen.has(field.path)) continue;
+    for (const field of fields) {
+        if (seen.has(field.path)) continue;
         seen.add(field.path);
         rows.push({
             key: field.path,
@@ -123,12 +121,12 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const editable = props.editable !== false;
     const catalog = useWorkflowActionCatalog(props.composerScope);
     const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs), [block.actionId, catalog.specs]);
-    const rows = React.useMemo(() => resolveActionFieldRows(spec, block.input), [block.input, spec]);
-    const literalInput = React.useMemo(() => Object.fromEntries(Object.entries(block.input)
-        .flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : [])), [block.input]);
+    const requests = React.useMemo(() => spec === null ? [] : readWorkflowActionFieldRequests({ blocks: [block] }, [spec])
+        .requests.filter(({ field }) => !field.path.includes('.')), [block, spec]);
+    const rows = React.useMemo(() => resolveActionFieldRows(requests.map(({ field }) => field), block.input), [block.input, requests]);
     const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, sessionId: catalog.sessionId, serverId: catalog.serverId,
         enabled: editable && spec !== null && spec.projectionError === undefined,
-        requests: rows.flatMap((row) => row.hint ? [{ field: row.hint, actionId: block.actionId, draftInput: literalInput }] : []) });
+        requests });
     const resolveFieldOptions = parseQualifiedPluginActionId(block.actionId) ? fieldOptions.resolveOptions
         : props.resolveFieldOptions ?? fieldOptions.resolveOptions;
     const actionTitle = spec?.title ?? t('workflows.page.blocks.menuAction');

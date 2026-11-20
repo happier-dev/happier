@@ -3,7 +3,8 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { HappierInputField, type HappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
-import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowActionLeafV1, WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { renderScreen, findAllHostTestInstances, pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
@@ -18,6 +19,8 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
+import { readWorkflowActionFieldRequests } from '../presentation/workflowActionFieldRequests';
+import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), action: vi.fn(),
     failure: vi.fn<() => { errorCode: string; error: string } | null>(), actionSignals: [] as Array<AbortSignal | null | undefined> }));
@@ -497,6 +500,49 @@ describe('Workflow inputs through real Action option resolution', () => {
         expect(onChangeValues.mock.calls).toEqual(outcome === 'selected' ? [[{ repository: review }]] : []);
         expect(rpc.action).toHaveBeenCalledWith({ consumer: { kind: 'workflow', workflow }, fieldPath: 'repository',
             optionsSourceId: `plugin-input:${repositoryInputTypeRef.pluginId}/repository`, draftInput: {} });
+    });
+
+    it('reads Workflow Action block options once on open and again only when a declared operand changes', async () => {
+        const { serverId } = await mount();
+        const inputType = { pluginId: 'happier.deploy.fixture', localId: 'environment' };
+        const actionId = formatQualifiedPluginActionId({ pluginId: inputType.pluginId, localId: 'inspect' });
+        const catalog: readonly WorkflowActionSpec[] = [{
+            id: actionId, title: 'Inspect',
+            inputHints: { fields: [{ path: 'environment', title: 'Environment', widget: 'select', inputType,
+                optionsDraftDependencies: ['project.id'] }] },
+        }];
+        const block = (projectId: string, description: string): WorkflowActionLeafV1 => ({
+            id: 'inspect', kind: 'action', actionId,
+            input: {
+                project: { kind: 'literal', value: { id: projectId } },
+                description: { kind: 'literal', value: description },
+            },
+        });
+        const fieldPath = 'environment';
+        const options = [{ value: 'production', label: 'Production' }];
+        rpc.action.mockResolvedValue({ actionId, fieldPath, optionsSourceId: null, options });
+        const hook = await renderHook(({ enabled, projectId, description }) => {
+            const { requests } = readWorkflowActionFieldRequests({ blocks: [block(projectId, description)] }, catalog);
+            return useInputFieldOptions({ requests, enabled, serverId, machineId: 'input-relay' });
+        }, { initialProps: { enabled: false, projectId: 'one', description: 'initial' } });
+
+        expect(rpc.action).not.toHaveBeenCalled();
+        await hook.rerender({ enabled: true, projectId: 'one', description: 'initial' });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().snapshot[0]).toMatchObject({ status: 'ready', options }));
+        expect(rpc.action).toHaveBeenCalledTimes(1);
+        expect(rpc.action).toHaveBeenLastCalledWith(expect.objectContaining({
+            actionId, fieldPath, draftInput: { machineId: 'input-relay', project: { id: 'one' } },
+        }));
+
+        await hook.rerender({ enabled: true, projectId: 'one', description: 'unrelated edit' });
+        await flushHookEffects();
+        expect(rpc.action).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({ enabled: true, projectId: 'two', description: 'unrelated edit' });
+        await waitForHomeGovernance(() => expect(rpc.action).toHaveBeenCalledTimes(2));
+        expect(rpc.action).toHaveBeenLastCalledWith(expect.objectContaining({
+            actionId, fieldPath, draftInput: { machineId: 'input-relay', project: { id: 'two' } },
+        }));
     });
 
     it('coalesces demanded reads, ignores free text, retains options during refresh, and cancels on last release', async () => {
