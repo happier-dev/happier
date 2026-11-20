@@ -297,11 +297,13 @@ export function createCliMachineActionTransport(
     const admittedRequesterOperationRead = managedBinding?.requesterOperationRead
       && input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
       && readRetainedVerifiedExternalActionRequester(executionAuthorization) !== undefined;
+    const reviewedChild = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
-      && managedBinding.actionId === input.effectActionId
+      && (managedBinding.actionId === input.effectActionId
+        || readSessionAgentReadinessChildActionV1(managedBinding, reviewedChild) === input.effectActionId)
       && (managedBinding.requesterOperationRead ? admittedRequesterOperationRead
-        : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
+        : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding, undefined, reviewedChild) === input.effectActionId));
     // This in-process admission was installed only after opening the exact
     // controller codec at Home. Reuse it for the two scoped reads; serializing
     // a self-RPC would lose that private receiver authority. A foreign requester

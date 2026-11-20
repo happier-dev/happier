@@ -149,12 +149,13 @@ describe('signed Session Agent readiness receiver', () => {
       };
       const response = await invoke(scenario.request);
       expect(response).toEqual({ accepted: true });
-      expect(localChildEffects).toEqual([]);
-      if (scenario.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
-        expect(homeChildRequests).toEqual(['Bearer requester-account']);
-      }
+      expect(localChildEffects).toEqual(scenario.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        ? [scenario.request] : []);
+      expect(homeChildRequests).toEqual([]);
       expect(effects).toEqual([scenario.request]);
       expect(post.mock.calls.filter(([url]) => String(url).endsWith('/admission/verify'))).toHaveLength(1);
+      expect(get.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/profile'))).toHaveLength(1);
+      expect(get.mock.calls.filter(([url]) => String(url).endsWith('/v2/account/settings'))).toHaveLength(1);
       expect(await invoke(scenario.request, { ...reviewedChild, role: 'forged' })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       expect(await invoke(scenario.request, { ...reviewedChild, inputDigest: 'A'.repeat(43) })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
       if (scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.inventory) {

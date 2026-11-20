@@ -26,8 +26,101 @@ import { buildReviewEngineInventory } from '../inventory/buildReviewEngineInvent
 import { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 import { createCliMachineInventoryActionDeps } from './machineInventory';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 afterEach(() => vi.restoreAllMocks());
+
+it.each(['owner', 'member'] as const)('prepares a signed Session with %s Machine facts without a serialized self-RPC', async accountId => {
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'spawn-admission', binding: {
+    accountId, custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+    accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'session.spawn_new', requestId: 'spawn',
+    machineId: 'machine', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+  } });
+  const context: RpcActionExecutorContext = { surface: 'cli', authority: 'present_user', serverId: 'home',
+    machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+    externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+  const methods: string[] = [];
+  // Only installed RPC and network transport are substituted. The signed child,
+  // public Action, inventory projection and pre-birth decision remain real.
+  const invoke: MachineActionDirectTargetTransport['invoke'] = async (method, _request, options) => {
+    methods.push(method);
+    expect(options?.rpcContext?.machineAdmission?.actorAccountId).toBe(accountId);
+    expect(options?.localActionContext?.externalActionExecutionAuthorization).toBe(authorization);
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+      protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+        codex: { id: 'codex', title: 'Codex', capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } },
+      } },
+    };
+    if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+      'cli.codex': { ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
+        update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
+        platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
+    } };
+    throw new Error(`Unexpected readiness method: ${method}`);
+  };
+  const network = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Self-RPC must not repeat requester preparation', 'permission_denied'));
+  const params = { credentials: { token: 'custodian', encryption: null, credentialProvenance: 'stored_session' as const },
+    serverId: 'home', serverIdentityId: 'home',
+    externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(64),
+    machineActionDirectTargetTransport: { machineId: 'machine', invoke } };
+  const transport = createCliMachineActionTransport(params);
+  const inventoryDeps = createCliActionInventoryDeps({ ...params, token: 'custodian', sessionId: '', mode: 'plain', ctx: null });
+  const machineDeps = createCliMachineInventoryActionDeps(params, { inventoryDeps, callMachineAction: transport.callMachineAction });
+  const executor = createActionExecutor({ machinesAgentsList: machineDeps.machinesAgentsList });
+  const result = await prepareSessionAgentReadiness({ machineId: 'machine', serverId: 'home', agentId: 'codex',
+    invoke: async (actionId, input) => invokeHostAdmittedSignedReviewedChildV1({ context,
+      child: { actionId, role: SESSION_AGENT_READINESS_CHILDREN_V1.inventory.role,
+        inputDigest: computeActionInputApprovalDigestV1(actionId, input), input: projectNativeJsonValueForTransport(input) },
+      execute: (childInput, childContext) => executor.execute(actionId, childInput, childContext),
+    }),
+  });
+  expect(result).toBeNull();
+  expect(methods).toEqual([RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, RPC_METHODS.CAPABILITIES_DETECT]);
+  expect(network).not.toHaveBeenCalled();
+});
+
+it.each(['admitted', 'missing-proof', 'wrong-role', 'foreign-machine', 'foreign-installation', 'foreign-account', 'unrelated-method'] as const)(
+  'retains authenticated transport for a readiness child with %s', async control => {
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'spawn-admission', binding: {
+      accountId: 'member', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'session.spawn_new', requestId: 'spawn',
+      machineId: 'machine', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const context: RpcActionExecutorContext = { surface: 'cli', authority: 'present_user', serverId: 'home',
+      machineAdmission: { actorAccountId: control === 'foreign-account' ? 'other-member' : 'member',
+        custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+    const local = vi.fn<MachineActionDirectTargetTransport['invoke']>().mockResolvedValue({ localAdmission: true });
+    const network = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ authenticatedTransport: true });
+    const transport = createCliMachineActionTransport({ credentials: { token: 'member', encryption: null, credentialProvenance: 'stored_session' },
+      serverId: 'home', serverIdentityId: 'home',
+      externalActionMachineInstallationId: control === 'foreign-installation' ? 'other-installation' : 'installation',
+      externalActionMachineRequestPrivateKey: new Uint8Array(64),
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: local } });
+    const child = SESSION_AGENT_READINESS_CHILDREN_V1.inventory;
+    const input = { machineId: 'machine', serverId: 'home', agentId: 'codex', refresh: true };
+    const call = (childContext: RpcActionExecutorContext) => transport.callMachineAction({
+      serverId: 'home',
+      machineId: control === 'foreign-machine' ? 'other-machine' : 'machine',
+      method: control === 'unrelated-method' ? RPC_METHODS.STOP_SESSION : RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+      effectActionId: child.action, request: { machineId: 'machine', selection: 'agents' }, context: childContext,
+    });
+    const result = control === 'missing-proof' ? await call(context)
+      : await invokeHostAdmittedSignedReviewedChildV1({ context, child: { actionId: child.action,
+        role: control === 'wrong-role' ? 'forged' : child.role,
+        inputDigest: computeActionInputApprovalDigestV1(child.action, input), input }, execute: (_input, childContext) => call(childContext) });
+    expect(result).toEqual(control === 'admitted' ? { localAdmission: true } : { authenticatedTransport: true });
+    expect(local).toHaveBeenCalledTimes(control === 'admitted' ? 1 : 0);
+    expect(network).toHaveBeenCalledTimes(control === 'admitted' ? 0 : 1);
+  },
+);
 
 it('delivers the reviewed Agent install operand to Home and retains the receiving installer failure', async () => {
   const target = { kind: 'machine' as const, machineId: 'machine' };
