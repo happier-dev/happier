@@ -19359,6 +19359,7 @@ settingsSession: {
         domainIngressChoose: "Escolher um túnel",
         domainIngressEmpty: "Nenhum túnel elegível. Verifique a conta, a zona e o conector e tente novamente.",
         domainIngressCreateTunnel: ({ name }: { name: string }) => `Novo túnel “${name}”, criado pelo Happier`,
+        domainTunnelCheckPlan: ({ host }: { host: string }) => `O Happier aponta ${host} para o túnel com um registro CNAME com proxy e depois o verifica de fora.`,
         domainIngressUnavailable: "Não foi possível carregar os túneis. Verifique a conexão e tente novamente.",
         domainFieldHost: "Domínio",
         domainFieldService: "Serviço",

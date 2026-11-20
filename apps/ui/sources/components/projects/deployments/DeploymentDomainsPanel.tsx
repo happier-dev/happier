@@ -44,6 +44,7 @@ import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, projectDeploymentDomainDraftCheckV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { DOMAIN_ADD_OPEN, useDomainAddDraftField } from './domainAddDraft';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
@@ -113,7 +114,9 @@ export function DeploymentDomainsPanel(
   const unavailableDockerDesktop = props.runtimeProjections?.some(projection =>
     presentMachineAuthorityV1({ engine: projection.engineKind }).deployment.domains === 'unavailableDockerDesktop') ?? false;
   const editing = unavailableDockerDesktop ? null : props.editing;
-  const [adding, setAdding] = React.useState(false);
+  // The open Add domain form survives a remount (a width change that recomposes the page), per Environment.
+  const draftKey = `${props.controller.scope.serverId}:${props.environmentId}`;
+  const [adding, setAdding] = useDomainAddDraftField(draftKey, DOMAIN_ADD_OPEN, false);
   const [dnsFor, setDnsFor] = React.useState<DomainItem | null>(null);
   const [checkSetup, setCheckSetup] = React.useState<Readonly<{
     item: DomainItem; anchorRef: React.RefObject<View | null>;
@@ -260,6 +263,7 @@ export function DeploymentDomainsPanel(
       ) : null}
       {adding && editing?.targetLink ? (
         <DomainAddForm
+          draftKey={draftKey}
           phone={props.phone === true}
           busy={running}
           taken={items.map((item) => item.content.hostname)}
@@ -413,6 +417,8 @@ function domainOperands(environmentId: string, editing: DeploymentDomainEditing,
  */
 function DomainAddForm(
   props: Readonly<{
+    /** Where this form keeps what was typed while it is open (`useDomainAddDraftField`). */
+    draftKey: string;
     phone: boolean;
     busy: boolean;
     taken: readonly string[];
@@ -437,15 +443,15 @@ function DomainAddForm(
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
 ) {
-  const [hostname, setHostname] = React.useState('');
+  const [hostname, setHostname] = useDomainAddDraftField(props.draftKey, 'hostname', '');
   const host = hostname.trim().toLowerCase();
   const [committedHostname, setCommittedHostname] = React.useState(host);
   const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
     ? props.initialService ?? '' : '';
-  const [target, setTarget] = React.useState<Readonly<{
+  const [target, setTarget] = useDomainAddDraftField<Readonly<{
     selectedService: string | null;
     enteredPort: Readonly<{ service: string; value: string }> | null;
-  }>>({ selectedService: null, enteredPort: null });
+  }>>(props.draftKey, 'target', { selectedService: null, enteredPort: null });
   const service = target.selectedService ?? initialService;
   const changeService = (next: string) => {
     setTarget(current => next === (current.selectedService ?? initialService)
@@ -458,19 +464,19 @@ function DomainAddForm(
       enteredPort: { service: current.selectedService ?? initialService, value },
     }));
   };
-  const [path, setPath] = React.useState('');
-  const [checkPath, setCheckPath] = React.useState('');
-  const [checkStatus, setCheckStatus] = React.useState('');
-  const [advanced, setAdvanced] = React.useState(false);
-  const [redirectTo, setRedirectTo] = React.useState('');
-  const [certificate, setCertificate] = React.useState<'managed' | 'custom'>('managed');
-  const [basicAuthUser, setBasicAuthUser] = React.useState('');
+  const [path, setPath] = useDomainAddDraftField(props.draftKey, 'path', '');
+  const [checkPath, setCheckPath] = useDomainAddDraftField(props.draftKey, 'checkPath', '');
+  const [checkStatus, setCheckStatus] = useDomainAddDraftField(props.draftKey, 'checkStatus', '');
+  const [advanced, setAdvanced] = useDomainAddDraftField(props.draftKey, 'advanced', false);
+  const [redirectTo, setRedirectTo] = useDomainAddDraftField(props.draftKey, 'redirectTo', '');
+  const [certificate, setCertificate] = useDomainAddDraftField<'managed' | 'custom'>(props.draftKey, 'certificate', 'managed');
+  const [basicAuthUser, setBasicAuthUser] = useDomainAddDraftField(props.draftKey, 'basicAuthUser', '');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
   // Port is either an entry for this Service or its one declared container port.
   const port = target.enteredPort?.service === service ? target.enteredPort.value
     : servicePorts.length === 1 ? String(servicePorts[0]) : '';
-  const [ingressMode, setIngressMode] = React.useState<IngressMode>(props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
+  const [ingressMode, setIngressMode] = useDomainAddDraftField<IngressMode>(props.draftKey, 'ingressMode', props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
   const needsZone = props.provider?.providerEnvironment?.kind === 'script';
   const principal = props.provider?.credentialPrincipal;
@@ -518,7 +524,7 @@ function DomainAddForm(
       },
       ...(healthCheck?.success ? { healthCheck: healthCheck.data } : {}),
       ...(needsSelection && ingress ? { ingress } : {}),
-      ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
+      ...(props.credentials && !needsSelection && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
       ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
     };
   };
@@ -626,6 +632,8 @@ function DomainAddForm(
           header={state => <Item testID="project-deployments.environment.domains.add.advanced.header" {...state.headerProps}
             title={t('projects.deployments.domainIngressAdvanced')} />}
         >
+        {/* The form's own field rhythm: a hint never sits against the next label (PAGE-ACCEPT R6-D4). */}
+        <View style={styles.form}>
         {ingressAdvanced}
         <FieldItem
           label={t('projects.deployments.domainFieldPath')}
@@ -657,7 +665,8 @@ function DomainAddForm(
         </FieldItem>
         {props.credentials ? (
           <>
-            <FieldItem label={t('projects.deployments.editors.certificate')}>
+            {/* Through a tunnel Cloudflare answers visitors with its own certificate; the choice applies to Caddy only. */}
+            {needsSelection ? null : <FieldItem label={t('projects.deployments.editors.certificate')}>
               <SegmentedTabBar<'managed' | 'custom'>
                 testIDPrefix="project-deployments.environment.domains.add.certificate"
                 accessibilityLabel={t('projects.deployments.editors.certificate')}
@@ -671,7 +680,7 @@ function DomainAddForm(
                   { id: 'custom', label: t('projects.deployments.editors.certificateOwn') },
                 ]}
               />
-            </FieldItem>
+            </FieldItem>}
             <FieldItem
               label={t('projects.deployments.editors.basicAuthUser')}
               supportingText={t('projects.deployments.editors.basicAuthHint')}
@@ -713,9 +722,17 @@ function DomainAddForm(
             />
           </FieldItem>
         </View>
+        </View>
         </ExpandableItem>
         </> : null}
         {dnsDraft && props.checkDns ? <DomainDnsCheck content={dnsDraft} machine={props.machine} check={props.checkDns} /> : null}
+        {/* A tunnel hostname never reaches the Machine: the check that applies is the record Happier writes and the
+            outside check after adding (PAGE-ACCEPT R6-D2), said once instead of a Machine DNS check. */}
+        {checkPlan?.kind === 'cloudflareTunnel' && ingress ? (
+          <Text testID="project-deployments.environment.domains.add.tunnelCheck" variant="meta" style={styles.needs}>
+            {t('projects.deployments.domainTunnelCheckPlan', { host })}
+          </Text>
+        ) : null}
         {missingField ? (
           <Text testID="project-deployments.environment.domains.add.needs" variant="meta" style={styles.needs}>
             {t('projects.deployments.editors.addNeeds', { field: missingField })}

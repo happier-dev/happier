@@ -167,15 +167,17 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           if (!parsed.success) { valid = false; break; }
           options.push({ label: row.label, selection: parsed.data });
         }
-        // The provider's own create choice (a tunnel Happier creates and manages) follows the existing ones.
+        // The provider's own create choice (a tunnel Happier creates and manages) comes first and is the default: a new
+        // hostname gets its own tunnel unless the person picks an existing one below it (PAGE-ACCEPT R6-D3).
         const create = isRecord(value) && isRecord(value.createOption) && typeof value.createOption.label === 'string'
           ? AccessProviderSelectionV1Schema.safeParse(value.createOption.selection) : null;
-        if (valid && create?.success && isRecord(value) && isRecord(value.createOption)) {
-          options.push({ label: t('projects.deployments.domainIngressCreateTunnel', { name: String(value.createOption.label) }),
+        const offersCreate = valid && create?.success === true && isRecord(value) && isRecord(value.createOption);
+        if (offersCreate && create?.success && isRecord(value) && isRecord(value.createOption)) {
+          options.unshift({ label: t('projects.deployments.domainIngressCreateTunnel', { name: String(value.createOption.label) }),
             selection: create.data });
         }
         setTunnels(valid ? { key: readTunnelKey, kind: 'ready', options } : { key: readTunnelKey, ...unavailable });
-        setTunnelChoice(valid && options.length === 1 ? '0' : null);
+        setTunnelChoice(valid && (offersCreate || options.length === 1) ? '0' : null);
       }
     } catch (error) {
       // A read this form stopped settles as stopped (Retry is offered), never as a provider refusal.
@@ -274,7 +276,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           accessibilityLabel={t('projects.deployments.domainDnsTtl')} keyboardType="number-pad" editable={!props.busy} />
       </FieldItem> : null}
       {/* A search, not a refresh glyph: a disabled refresh arrow reads as a stuck spinner (JOURNEY-OPUS-88 F2). */}
-      <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
+      {/* The Find actions start on the fields' leading edge, not centred between fields (PAGE-ACCEPT R6-D3). */}
+      <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')} style={styles.find}
         icon="magnifying-glass" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
       {zonesNeed ? (
         <Text testID={`${id}.zones.needs`} variant="meta" style={styles.needs}>{zonesNeed}</Text>
@@ -297,7 +300,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         title={currentZones.remedy} diagnosticCode={currentZones.reason} diagnosticDetail={currentZones.diagnosticDetail}
         action={{ label: t('common.retry'), testID: `${id}.zones.retry`, onPress: () => { void inspect('zones'); } }} /> : null}
       {!zonesOnly && zoneId ? (
-        <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')}
+        <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')} style={styles.find}
           icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
       ) : null}
       {!zonesOnly && zoneId ? readState('tunnels') : null}
@@ -325,5 +328,6 @@ function matchingZone(zones: readonly Zone[], hostname: string): Zone | undefine
 
 const styles = StyleSheet.create(theme => ({
   fields: { gap: theme.space.s12 },
-  needs: { color: theme.colors.text.secondary, textAlign: 'center' },
+  needs: { color: theme.colors.text.secondary },
+  find: { alignSelf: 'flex-start' },
 }));

@@ -19078,6 +19078,7 @@ settingsSession: {
         domainIngressChoose: "Wybierz tunel",
         domainIngressEmpty: "Brak odpowiednich tuneli. Sprawdź konto, strefę i łącznik, a następnie spróbuj ponownie.",
         domainIngressCreateTunnel: ({ name }: { name: string }) => `Nowy tunel „${name}”, utworzony przez Happier`,
+        domainTunnelCheckPlan: ({ host }: { host: string }) => `Happier kieruje ${host} do tunelu rekordem CNAME przez proxy, a potem sprawdza go z zewnątrz.`,
         domainIngressUnavailable: "Nie udało się wczytać tuneli. Sprawdź połączenie i spróbuj ponownie.",
         domainFieldHost: "Domena",
         domainFieldService: "Usługa",

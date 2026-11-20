@@ -19167,6 +19167,7 @@ settingsSession: {
         domainIngressChoose: "トンネルを選択",
         domainIngressEmpty: "利用可能なトンネルがありません。アカウント、ゾーン、コネクターを確認して再試行してください。",
         domainIngressCreateTunnel: ({ name }: { name: string }) => `新しいトンネル「${name}」(Happier が作成)`,
+        domainTunnelCheckPlan: ({ host }: { host: string }) => `Happier は ${host} をプロキシ経由の CNAME レコードでトンネルに向け、外部から確認します。`,
         domainIngressUnavailable: "トンネルを読み込めませんでした。接続を確認して再試行してください。",
         domainFieldHost: "ドメイン",
         domainFieldService: "サービス",

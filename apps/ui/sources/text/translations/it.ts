@@ -19255,6 +19255,7 @@ settingsSession: {
         domainIngressChoose: "Scegli un tunnel",
         domainIngressEmpty: "Nessun tunnel idoneo. Controlla account, zona e connettore e riprova.",
         domainIngressCreateTunnel: ({ name }: { name: string }) => `Nuovo tunnel “${name}”, creato da Happier`,
+        domainTunnelCheckPlan: ({ host }: { host: string }) => `Happier punta ${host} al tunnel con un record CNAME in proxy, poi lo controlla dall’esterno.`,
         domainIngressUnavailable: "Impossibile caricare i tunnel. Controlla la connessione e riprova.",
         domainFieldHost: "Dominio",
         domainFieldService: "Servizio",

@@ -22652,6 +22652,7 @@ const enProjects = {
       domainIngressChoose: "Choose a tunnel",
       domainIngressEmpty: "No eligible tunnels. Check the account, zone and connector, then try again.",
       domainIngressCreateTunnel: ({ name }: { name: string }) => `New tunnel “${name}”, created by Happier`,
+      domainTunnelCheckPlan: ({ host }: { host: string }) => `Happier points ${host} at the tunnel with a proxied CNAME record, then checks it from outside.`,
       domainIngressUnavailable: "Couldn’t load tunnels. Check the connection and try again.",
       domainFieldHost: "Domain",
       domainFieldService: "Service",

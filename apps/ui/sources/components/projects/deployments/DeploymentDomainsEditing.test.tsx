@@ -65,7 +65,10 @@ vi.mock('@/sync/ops/actions/actionAccountContext', () => ({
     dispose() {},
   })),
 }));
-afterEach(standardCleanup);
+afterEach(async () => {
+  standardCleanup();
+  (await import('./domainAddDraft')).forgetDomainAddDraftsForTest();
+});
 
 const { DeploymentEnvironmentDetail } =
   await import('./DeploymentEnvironmentDetail');
@@ -1281,15 +1284,32 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('lists existing tunnels beside the new one and waits for a choice', async () => {
+  it('starts on the new tunnel, listed first, and keeps the existing tunnels to change it (PAGE-ACCEPT R6-D3)', async () => {
     const { screen, controller, actions } = await findChoices([{ label: 'office', selection: adopted }]);
     try {
       await vi.waitFor(async () => expect((await tunnelSelect(screen))?.props.items).toHaveLength(2));
-      expect((await tunnelSelect(screen))?.props.selectedId ?? null).toBeNull();
+      const select = await tunnelSelect(screen);
+      expect(select?.props.selectedId).toBe(select?.props.items[0].id);
+      expect(select?.props.items[1].title).toBe('office');
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).not.toHaveBeenCalled();
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        content: expect.objectContaining({ ingress: created }),
+      }));
     } finally { await screen.unmount(); controller.retire(); }
   });
+
+  it('offers no certificate choice for a tunnel Domain (PAGE-ACCEPT R6-D4)', async () => {
+    const { screen, controller } = await findChoices([]);
+    try {
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
+      // Cloudflare answers visitors at its edge with its own certificate; the sign-in name still applies at the origin.
+      expect(screen.findByTestId(`${id}.certificate:custom`)).toBeNull();
+      expect(screen.findByTestId(`${id}.basicAuth`)).not.toBeNull();
+      // The check that applies is said instead: the record Happier writes and the outside check (R6-D2).
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.tunnelCheck`)).not.toBeNull());
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('never offers a Machine DNS preview for a tunnel Domain even when the Action is available', async () => {
     const previewDomainDns = vi.fn(async () => { throw new Error('Tunnel preview is not supported'); });
     const { screen, controller } = await findChoices([], previewDomainDns);
@@ -1306,5 +1326,32 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
         probe: 'outsideHttp',
       });
     } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
+describe('Environment → Domains: an open Add domain survives a remount (PAGE-ACCEPT R6-D4, window resize)', () => {
+  it('reopens with what was typed after the page remounts, and forgets it once cancelled', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const first = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await first.settle(id)).not.toBeNull();
+      await first.screen.pressByTestIdAsync(id);
+      await act(async () => {
+        first.screen.changeTextByTestId(`${id}.host`, 'keep.example.test');
+        first.screen.changeTextByTestId(`${id}.port`, '4321');
+      });
+    } finally { await first.screen.unmount(); first.controller.retire(); }
+    const second = await renderDomains(detail, [], domainActions(detail));
+    try {
+      await vi.waitFor(() => expect(second.screen.findByTestId(`${id}.host`)?.props.value).toBe('keep.example.test'));
+      expect(second.screen.findByTestId(`${id}.port`)?.props.value).toBe('4321');
+      await second.screen.pressByTestIdAsync(`${id}.cancel`);
+    } finally { await second.screen.unmount(); second.controller.retire(); }
+    const third = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await third.settle(id)).not.toBeNull();
+      expect(third.screen.findByTestId(`${id}.host`)).toBeNull();
+    } finally { await third.screen.unmount(); third.controller.retire(); }
   });
 });
