@@ -65,7 +65,9 @@ import {
 } from '../state/wizardAdvance';
 import { renderOnboardingWizardStepBody } from './OnboardingWizardSurface.renderWizardStepBody';
 import { onboardingWizardSurfaceStylesheet } from './OnboardingWizardSurface.styles';
-import { renderWizardChoiceList, type WizardChoiceListItem } from './WizardChoiceList';
+import { RelayChoiceActions, type RelayChoiceAction } from './RelayChoiceActions';
+import { WideStepColumn } from '../unauthShell/stepBack';
+import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
 import {
     buildDefaultRelaySelection,
     ensureCanonicalCloudRelayProfile,
@@ -141,6 +143,17 @@ export type OnboardingWizardController = Readonly<{
 export type OnboardingWizardHomeContext = Readonly<{
     relayUrl: string;
     status: 'active' | 'selected';
+}>;
+
+/** Two choice cards side by side wherever two fit (a computer), one per line on a phone. */
+const RELAY_CHOICE_MIN_TILE_WIDTH_PX = 220;
+
+/** One "Where should your Home live?" option: its card, how choosing it applies, and its own operations. */
+type RelayChoiceItem = SelectionTile<string> & Readonly<{
+    selected: boolean;
+    onSelect: () => void;
+    secondaryAction?: Readonly<{ testID: string; title: string; onPress: () => void }>;
+    menuActions?: ReadonlyArray<RelayChoiceAction>;
 }>;
 
 export function useOnboardingWizardController(props: OnboardingWizardSurfaceProps): OnboardingWizardController {
@@ -597,7 +610,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     }, [state.context.relaySelection.locked]);
 
-    const buildRelayChoiceItem = (choice: WizardChoice | WizardProfileChoice): WizardChoiceListItem => {
+    const buildRelayChoiceItem = (choice: WizardChoice | WizardProfileChoice): RelayChoiceItem => {
         if ((choice as WizardProfileChoice).kind === 'profile') {
             const profile = choice as WizardProfileChoice;
             const selected = state.context.relaySelection.choiceId === 'customUrl'
@@ -609,12 +622,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 || state.context.relaySelection.locked
                 ;
             return {
-                itemKey: `profile:${profile.id}`,
+                id: `profile:${profile.id}`,
                 testID: `${props.testID ?? 'onboarding-wizard'}-relay:profile:${profile.id}`,
                 selected,
                 disabled,
-                dimmed: unavailable || blocked,
-                onPress: () => selectProfileRelay(profile),
+                onSelect: () => selectProfileRelay(profile),
                 icon: 'link',
                 title: profile.name,
                 subtitle: toServerUrlDisplay(profile.serverUrl),
@@ -650,12 +662,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             || state.context.relaySelection.locked
             || (fixed.id === 'cloud' && (cloudUnavailable || cloudBlocked) && !selected);
         return {
-            itemKey: fixed.id,
+            id: fixed.id,
             testID: `${props.testID ?? 'onboarding-wizard'}-relay:${fixed.id}`,
             selected,
             disabled,
-            dimmed: cloudUnavailable || cloudBlocked,
-            onPress: () => {
+            onSelect: () => {
                 selectRelayChoice(fixed.id);
             },
             icon: fixed.icon,
@@ -670,7 +681,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         };
     };
 
-    const buildManualRelayChoiceItem = (): WizardChoiceListItem | null => {
+    const buildManualRelayChoiceItem = (): RelayChoiceItem | null => {
         const rawServerUrl = state.context.relaySelection.serverUrl
             ? String(state.context.relaySelection.serverUrl).trim()
             : '';
@@ -679,11 +690,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             && !selectedSavedRelayProfile;
 
         return {
-            itemKey: 'customUrl',
+            id: 'customUrl',
             testID: `${props.testID ?? 'onboarding-wizard'}-relay:customUrl`,
             selected,
             disabled: state.context.relaySelection.locked && !selected,
-            onPress: () => {
+            onSelect: () => {
                 relayAccessRunnerRef.current = undefined;
                 relayAccessRemoteHostRef.current = undefined;
                 setRelayAccessTarget(null);
@@ -1346,9 +1357,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessShareUrl,
         relayAccessTarget,
     });
-    const relaySelectBody = renderWizardChoiceList({
-        accessibilityLabel: t('setupOnboarding.preAuthTitle'),
-        items: [
+    const relayChoices = ([
             ...profileChoices.map(buildRelayChoiceItem),
             ...addHomePaths.map((path) => {
                 if (path.id === 'direct') return buildManualRelayChoiceItem();
@@ -1368,8 +1377,31 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     icon: 'laptop',
                 });
             }),
-        ],
-    });
+    ] as ReadonlyArray<RelayChoiceItem | null>).filter((choice): choice is RelayChoiceItem => choice !== null);
+    // Where should your Home live? Option F cards: two columns where they fit, one on a phone (plan 03 shared
+    // components 1); a choice's own operations stand beside its card, outside the choice.
+    const relaySelectBody = (
+        <WideStepColumn>
+            <SelectionTiles
+                variant="card"
+                accessibilityLabel={t('setupOnboarding.preAuthTitle')}
+                options={relayChoices as Array<SelectionTile<string>>}
+                value={relayChoices.find((choice) => choice.selected)?.id ?? null}
+                onChange={(id) => {
+                    if (id !== null) relayChoices.find((choice) => choice.id === id)?.onSelect();
+                }}
+                maximumColumns={2}
+                minimumTileWidth={RELAY_CHOICE_MIN_TILE_WIDTH_PX}
+                footerPlacement="trailing"
+                renderOptionFooter={({ option }) => {
+                    const choice = relayChoices.find((candidate) => candidate.id === option.id);
+                    return choice && (choice.secondaryAction || choice.menuActions?.length)
+                        ? <RelayChoiceActions testID={choice.testID ?? choice.id} retry={choice.secondaryAction} menuActions={choice.menuActions} />
+                        : null;
+                }}
+            />
+        </WideStepColumn>
+    );
     const restoreTargetProfileId = stepId === 'auth_restore'
         ? resolveReverseQrTargetProfileId(activeServerSnapshot.serverId) ?? undefined
         : undefined;

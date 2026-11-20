@@ -30,9 +30,8 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { EnrolledComputerSetup } from './EnrolledComputerSetup';
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
-import { STEP_ROW_BUTTON_PX, StepRowBackButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
+import { StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 
 const RESTORE_MANUAL_TEST_ID = 'restore-open-manual';
 
@@ -374,8 +373,10 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     </View>
                 ) : null}
 
-                {/* Embedded, the step's own heading says what to do with the code (Approve from a device you use). */}
-                {embedded && (pendingCode || pairing.phase === 'ready') ? null : (
+                {/* Embedded, the step's own heading says what to do with the code (Approve from a device you use). Signing
+                    in, it stays through Approved: the code's check and pill say it, so nothing above them moves. Adding a
+                    Home, the outcome line says what changed (the Home was added; the focused one did not change). */}
+                {embedded && (pendingCode || pairing.phase === 'ready' || (approvedCode !== null && props.entryIntent === 'enter_home')) ? null : (
                     <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
                         {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
                     </Text>
@@ -416,8 +417,9 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     ) : null}
                 </View>}
 
-                {!claimOwnsNavigation && pairing.phase !== 'succeeded' && embedded ? (
-                    <View style={styles.embeddedActions}>
+                {!claimOwnsNavigation && (pairing.phase !== 'succeeded' || approvedCode !== null) && embedded ? (
+                    // Approved, the ways stay where they were (nothing below the code moves) but no longer act.
+                    <View style={styles.embeddedActions} pointerEvents={approvedCode !== null ? 'none' : 'auto'}>
                         {recoveryButton ? (
                             <View style={styles.embeddedPrimary}>
                                 <RoundButton {...recoveryButton} size="large" />
@@ -431,24 +433,21 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                         {(() => {
                             const leading = <>
                                 {rowBack ? <StepRowBackButton onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
-                                <IconButton
+                                <StepRowWayButton
                                     testID={RESTORE_MANUAL_TEST_ID}
                                     nativeID={Platform.OS === 'web' ? undefined : RESTORE_MANUAL_TEST_ID}
                                     accessibilityLabel={t('connect.secretKeyInputLabel')}
                                     tooltip={t('connect.secretKeyInputLabel')}
                                     iconName="key"
-                                    size={STEP_ROW_BUTTON_PX}
-                                    variant="outlined"
                                     onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
                                 />
+                                {/* The link is the code's secret: it goes the moment the code is approved. */}
                                 {pairing.phase === 'ready' ? (
-                                    <IconButton
+                                    <StepRowWayButton
                                         testID="restore-requester-link-details"
                                         accessibilityLabel={t('connect.showPairingLink')}
                                         tooltip={t('connect.showPairingLink')}
                                         iconName="link"
-                                        size={STEP_ROW_BUTTON_PX}
-                                        variant="outlined"
                                         expanded={pairingLinkShown}
                                         onPress={() => setPairingLinkShown((shown) => !shown)}
                                     />

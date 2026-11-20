@@ -20,6 +20,33 @@ const stylesheet = StyleSheet.create((theme) => ({
     camera: {
         ...StyleSheet.absoluteFillObject,
     },
+    // A host-sized preview is a window on the page: the camera's dark before the first frame, the card radius.
+    hostedPreview: {
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 'auto',
+        width: '100%',
+        overflow: 'hidden',
+        borderRadius: theme.borderRadius.xl,
+        backgroundColor: theme.colors.overlay.stageImmersive,
+    },
+    finder: {
+        position: 'absolute',
+        top: '22%',
+        bottom: '22%',
+        left: '22%',
+        right: '22%',
+    },
+    finderCorner: {
+        position: 'absolute',
+        width: 28,
+        height: 28,
+        borderColor: theme.colors.overlay.foreground,
+    },
+    finderTopLeft: { top: 0, left: 0, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 10 },
+    finderTopRight: { top: 0, right: 0, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 10 },
+    finderBottomLeft: { bottom: 0, left: 0, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 10 },
+    finderBottomRight: { bottom: 0, right: 0, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 10 },
     overlay: {
         ...StyleSheet.absoluteFillObject,
         paddingHorizontal: theme.space.s20,
@@ -133,6 +160,11 @@ export interface QrCodeScannerViewProps {
      * a consistent outer shell (e.g. the onboarding wizard modal) without duplicate headers.
      */
     embedded?: boolean;
+    /**
+     * The preview's height when the host sizes it (a step column that keeps its status and ways under the camera);
+     * omitted, the scanner sizes its own preview.
+     */
+    previewHeight?: number;
 }
 
 export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: QrCodeScannerViewProps) {
@@ -149,9 +181,10 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
 
     const canUseCamera = scannerActive && canUseCurrentDeviceQrScanner();
     const previewMinHeight = React.useMemo(() => {
+        if (props.previewHeight != null) return null;
         if (Platform.OS !== 'web' && !props.embedded) return null;
         return Math.max(280, Math.min(Math.round(height * 0.6), 520));
-    }, [height, props.embedded]);
+    }, [height, props.embedded, props.previewHeight]);
 
     React.useEffect(() => {
         if (!canUseCamera) return;
@@ -310,6 +343,8 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                         minHeight: previewMinHeight,
                     }
                     : null,
+                props.previewHeight != null ? styles.hostedPreview : null,
+                props.previewHeight != null ? { height: props.previewHeight } : null,
             ]}
         >
             <View ref={props.previewRef} style={StyleSheet.absoluteFill} collapsable={props.previewRef == null}
@@ -321,6 +356,13 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                     onBarcodeScanned={onBarcodeScanned}
                     testID={`${props.testIDPrefix}-camera`}
                 />
+            </View>
+            {/* The finder: four corners that say where the code goes, centred in whatever the preview's size. */}
+            <View style={styles.finder} pointerEvents="none" testID={`${props.testIDPrefix}-finder`}>
+                <View style={[styles.finderCorner, styles.finderTopLeft]} />
+                <View style={[styles.finderCorner, styles.finderTopRight]} />
+                <View style={[styles.finderCorner, styles.finderBottomLeft]} />
+                <View style={[styles.finderCorner, styles.finderBottomRight]} />
             </View>
             <View style={styles.overlay} pointerEvents="box-none">
                 <View style={styles.topRow} pointerEvents="box-none">

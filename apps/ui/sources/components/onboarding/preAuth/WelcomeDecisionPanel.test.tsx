@@ -907,18 +907,24 @@ describe('WelcomeDecisionPanel', () => {
     });
 
     it('keeps Home authentication usable when the optional service is unsupported', async () => {
-        const { screenPromise } = renderPanel({}, {
+        const retry = vi.fn();
+        const { callbacks, screenPromise } = renderPanel({}, {
             effectiveSignInService: { kind: 'no_target_default', endpoint: 'https://ordinary-home.test' },
             endpoint: { url: 'https://ordinary-home.test', source: 'user' },
             status: 'unsupported',
             discovery: null,
             transport: {},
-            retry: vi.fn(),
+            retry,
         });
         const screen = await screenPromise;
 
         expect(screen.findByTestId('welcome-account-service-recovery')).toBeTruthy();
         expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
+        // Retrying an address that cannot sign in here never helps: the notice's way on is another service.
+        expect(screen.findByTestId('welcome-account-service-retry')).toBeNull();
+        await screen.pressByTestIdAsync('welcome-account-service-choose-another');
+        expect(callbacks.onChooseAccountService).toHaveBeenCalledTimes(1);
+        expect(retry).not.toHaveBeenCalled();
     });
 
     it('promotes login and explains the policy when the server exposes no signup action', async () => {

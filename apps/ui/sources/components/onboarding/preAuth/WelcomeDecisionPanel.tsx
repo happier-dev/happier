@@ -18,7 +18,7 @@ import { getOrganizationPolicyFieldLock, readOrganizationPolicy } from '@/sync/d
 import { useReturningGreeting } from './useReturningGreeting';
 import type { WelcomeActionAdmission } from './WelcomeActionList';
 import { WelcomeEntryView } from './WelcomeEntryView';
-import { projectWelcomeEntryViewModel } from './welcomeEntryViewModel';
+import { CHOOSE_ANOTHER_SERVICE_TEST_ID, projectWelcomeEntryViewModel } from './welcomeEntryViewModel';
 import {
     composeWelcomeEntryModel,
     type WelcomeAuthenticationMethod,
@@ -192,6 +192,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             field: policyField,
             display: { organization: policyLock.organization, hasSupport: Boolean(policyLock.supportUrl) },
         } : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
+        canChooseService: props.onChooseAccountService != null,
     });
     usePublishFirstOpenWelcomeModel(props.restoreWays ? null : viewModel);
 
@@ -219,15 +220,16 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             }
         }
     };
-    const onRetry = (testID: string) => {
-        if (testID === 'welcome-account-service-retry') accountServiceEntry?.retry();
+    const onNoticeAction = (testID: string) => {
+        if (testID === CHOOSE_ANOTHER_SERVICE_TEST_ID) void props.onChooseAccountService?.();
+        else if (testID === 'welcome-account-service-retry') accountServiceEntry?.retry();
         else options.retryServerCheck();
     };
     return <WelcomeEntryView model={viewModel} compact={compactViewport} interaction={{
         admission: actionAdmission,
         getActionId: (index) => model.actions[index]?.id,
         onAction,
-        onRetry,
+        onNoticeAction,
         onSelfHosting: props.onChangeRelay,
         waysLeading: props.waysLeading,
         onRetryRetention: options.retentionDisclosure?.kind === 'unreadable' ? options.retentionDisclosure.retry : undefined,

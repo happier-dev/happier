@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
-import { Platform, ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
@@ -44,6 +44,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
+import { PairingStatusPill, PairingStatusWaitingDot, pairingStatusStyles } from '@/components/auth/pairing/PairingStatusPill';
+import { StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 import { trackAccountRestored, trackAuthEnrollmentTransientRetry } from '@/track';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { promptAccountConnectApprovalRequired } from './accountConnectApprovalGuidance';
@@ -185,6 +187,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     embeddedSubtitle: {
         textAlign: 'left',
     },
+    cameraStep: {
+        width: '100%',
+        alignItems: 'center',
+        gap: theme.space.s16,
+    },
     embeddedFooter: {
         marginTop: theme.space.s16,
         alignItems: 'flex-start',
@@ -212,7 +219,13 @@ export type RestoreScanComputerQrViewProps = Readonly<{
     /** False when the host already draws the way back (the welcome pane's chevron, the setup card's back). */
     showBack?: boolean;
     onOpenSecretKeyLogin?: () => void;
-    additionalSignInWays?: React.ReactNode;
+    /**
+     * The step's other ways in (the model's ways row). Called with this view's own leading way (the recovery key, whose
+     * view also takes a pairing link) for the live camera's row, and with none under the unavailable state.
+     */
+    renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode) => React.ReactNode;
+    /** Whether the camera is live (the host's heading says "Point at your computer" only while it is). */
+    onCameraLiveChange?: (live: boolean) => void;
     onOpenPairingLinkEntry?: () => void;
     onShowQrInstead?: () => void;
     initialResult?: 'legacy_pairing' | 'expired';
@@ -257,6 +270,10 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
     const [phase, setPhase] = React.useState<'idle' | 'requesting' | 'securing'>('idle');
     const scannerFocal = useStepFocal();
+    const rowBack = useStepRowBack();
+    const { height: windowHeight } = useWindowDimensions();
+    // The camera takes about a third of the screen (lab), so its status and the ways stay above the planet.
+    const cameraPreviewHeight = Math.round(windowHeight * 0.3);
     const [enrollmentResult, setEnrollmentResult] = React.useState<HomeEnrollmentScannerResult | null>(props.initialResult ?? null);
     // A pasted terminal link that expired is a link, not a QR: its message says so.
     const [expiredTerminalLink, setExpiredTerminalLink] = React.useState(false);
@@ -1095,6 +1112,13 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     // Home) there is nothing to frame, so no empty capsule is drawn.
     const showStatusCard = enrollmentPresentation.activity
         || (enrollmentPresentation.contextualFacts !== 'none' && activeInvite != null);
+    // The same conditions that draw the live camera below (no desktop or requester result in front of it).
+    const cameraLive = (pairingState === 'enabled' || pairingState === 'unknown') && !enrollmentResult
+        && !desktopEnrollment && !pendingRequesterApproval && phase === 'idle';
+    const onCameraLiveChange = props.onCameraLiveChange;
+    React.useEffect(() => {
+        onCameraLiveChange?.(cameraLive);
+    }, [cameraLive, onCameraLiveChange]);
 
     if (pairingState === 'unknown' && !enrollmentResult) {
         const frame = (
@@ -1110,7 +1134,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
                         {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}
                         {props.onShowQrInstead ? renderAlternative('restore-show-qr-instead', t('connect.showQrInstead'), openShowQrInstead) : null}
-                        {props.additionalSignInWays}
+                        {props.renderAdditionalSignInWays?.()}
                         {showBack ? renderAlternative('restore-scan-cancel', t('common.back'), handleBack) : null}
                     </View>
                 </View>
@@ -1215,6 +1239,48 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         );
         return embedded ? frame : (
             <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>{frame}</ScrollView>
+        );
+    }
+
+    if (phase === 'idle' && !enrollmentResult && embedded && props.renderAdditionalSignInWays) {
+        // The camera step (lab "Point at your computer"): the camera as a window on the column, its one status line,
+        // then the same ways row as Approve, with this view's own ways leading it.
+        const leading = <>
+            {rowBack ? <StepRowBackButton onPress={rowBack} /> : null}
+            {/* The key's view also takes a pairing link and offers this device's own code (as Approve's key does). */}
+            <StepRowWayButton
+                testID="restore-open-manual"
+                accessibilityLabel={t('connect.secretKeyInputLabel')}
+                tooltip={t('connect.secretKeyInputLabel')}
+                iconName="key"
+                onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
+            />
+        </>;
+        return (
+            <View style={styles.cameraStep}>
+                <QrCodeScannerView
+                    previewRef={scannerFocal}
+                    active={isFocused}
+                    testIDPrefix="restore-scan"
+                    title={t('connect.pointAtComputerTitle')}
+                    permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
+                    embedded
+                    previewHeight={cameraPreviewHeight}
+                    onScan={async (data) => {
+                        if (typeof data === 'string' && data.trim()) {
+                            setInviteOrigin('scanned');
+                            await processPairingLink(data.trim());
+                        }
+                    }}
+                />
+                <PairingStatusPill testID="restore-scan-status">
+                    <View style={pairingStatusStyles.line}>
+                        <PairingStatusWaitingDot />
+                        <Text style={pairingStatusStyles.text}>{t('connect.lookingForCode')}</Text>
+                    </View>
+                </PairingStatusPill>
+                {props.renderAdditionalSignInWays(undefined, leading)}
+            </View>
         );
     }
 

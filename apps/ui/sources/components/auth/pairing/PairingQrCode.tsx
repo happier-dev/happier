@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
+import Animated from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { QRCode } from '@/components/qr/QRCode';
@@ -24,31 +25,41 @@ export const PairingQrCode = React.memo(function PairingQrCode(props: Readonly<{
     /** The paper's outer size, in px. */
     size: number;
     testID?: string;
+    /**
+     * A style for the code and its mark only, so a caller can soften them while the paper keeps its crisp edge
+     * (the approved entrance). The paper clips it, so a blur never bleeds past the paper's edge.
+     */
+    codeStyle?: StyleProp<ViewStyle>;
+    /** Drawn over the code inside the paper, unaffected by `codeStyle` (the approved check). */
+    overlay?: React.ReactNode;
 }>) {
     const marked = React.useMemo(() => isPairingQrMarked(props.link), [props.link]);
     const codeSize = props.size - (2 * PAPER_PADDING_PX);
     return (
         <View testID={props.testID} style={[styles.paper, { width: props.size, height: props.size }]}>
-            <QRCode
-                data={props.link}
-                size={codeSize}
-                errorCorrectionLevel={marked ? 'quartile' : 'medium'}
-                // The paper's padding is the code's quiet zone, so the code fills the paper inside it and may take
-                // half of that padding when whole-pixel modules need it (at least six pixels of white stay around it).
-                quietZone={false}
-                bleed={PAPER_PADDING_PX / 2}
-            />
-            {marked ? (
-                <View pointerEvents="none" style={styles.markSlot}>
-                    <View style={styles.mark}>
-                        <Image
-                            source={require('@/assets/images/logo-black.png')}
-                            contentFit="contain"
-                            style={styles.markImage}
-                        />
+            <Animated.View style={[styles.code, props.codeStyle]}>
+                <QRCode
+                    data={props.link}
+                    size={codeSize}
+                    errorCorrectionLevel={marked ? 'quartile' : 'medium'}
+                    // The paper's padding is the code's quiet zone, so the code fills the paper inside it and may take
+                    // half of that padding when whole-pixel modules need it (at least six pixels of white stay around it).
+                    quietZone={false}
+                    bleed={PAPER_PADDING_PX / 2}
+                />
+                {marked ? (
+                    <View pointerEvents="none" style={styles.markSlot}>
+                        <View style={styles.mark}>
+                            <Image
+                                source={require('@/assets/images/logo-black.png')}
+                                contentFit="contain"
+                                style={styles.markImage}
+                            />
+                        </View>
                     </View>
-                </View>
-            ) : null}
+                ) : null}
+            </Animated.View>
+            {props.overlay ?? null}
         </View>
     );
 });
@@ -61,6 +72,12 @@ const styles = StyleSheet.create(() => ({
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: PAIRING_QR_PALETTE.edge,
         boxShadow: `0 8px 22px ${PAIRING_QR_PALETTE.shadow}`,
+        overflow: 'hidden',
+    },
+    code: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     markSlot: {
         ...StyleSheet.absoluteFillObject,

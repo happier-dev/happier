@@ -2,12 +2,27 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import { UNAUTH_BACK_TEST_ID } from './BackChevron';
+
+/** Back's test id wherever a step draws it; the reversed step morph keys on it. */
+export const UNAUTH_BACK_TEST_ID = 'unauth-shell-back-chevron';
 
 /** The drawn size of Back and of the ways beside it (lab direction A: 44 px round wells). */
 export const STEP_ROW_BUTTON_PX = 44;
+/** Their glyph: the default icon step, so a well reads as a quiet mark rather than a filled tile (lab: 20 px). */
+const STEP_ROW_GLYPH_PX = ICON_SIZE.md;
+
+/**
+ * One round well on a step's row: Back and every way beside it are the same object (direction A, owner 2026-11-19),
+ * so their size, glyph and edge are decided here once.
+ */
+export function StepRowWayButton(
+  props: Readonly<Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant'>>,
+) {
+  return <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="outlined" />;
+}
 
 type StepBackSlot = Readonly<{
   onBack: () => void;
@@ -68,14 +83,12 @@ export function useStepRowBack(): (() => void) | null {
 /** Back as a round well, the same object as the ways beside it; the reversed step morph keys on its test id. */
 export function StepRowBackButton(props: Readonly<{ onPress: () => void }>) {
   return (
-    <IconButton
+    <StepRowWayButton
       testID={UNAUTH_BACK_TEST_ID}
       nativeID={Platform.OS === 'web' ? undefined : UNAUTH_BACK_TEST_ID}
       accessibilityLabel={t('common.back')}
       tooltip={t('common.back')}
       iconName="caret-left"
-      size={STEP_ROW_BUTTON_PX}
-      variant="outlined"
       onPress={props.onPress}
     />
   );
@@ -85,4 +98,21 @@ export function StepRowBackButton(props: Readonly<{ onPress: () => void }>) {
 export function StepRowBack() {
     const back = useStepRowBack();
     return back ? <StepRowBackButton onPress={back} /> : null;
+}
+
+/** A choice step's column (lab "Where should your Home live?"): two option cards side by side at a readable width. */
+export const WIDE_STEP_COLUMN_PX = 680;
+
+/** Claims the wide column for the step that renders it; the shell gives the column back when it unmounts. */
+export const WideStepColumnContext = React.createContext<(() => () => void) | null>(null);
+
+export function useWideStepColumn(): void {
+  const claim = React.useContext(WideStepColumnContext);
+  useIsomorphicLayoutEffect(() => (claim ? claim() : undefined), [claim]);
+}
+
+/** Renders its children in the wide step column (see {@link useWideStepColumn}). */
+export function WideStepColumn(props: Readonly<{ children: React.ReactNode }>) {
+  useWideStepColumn();
+  return <>{props.children}</>;
 }

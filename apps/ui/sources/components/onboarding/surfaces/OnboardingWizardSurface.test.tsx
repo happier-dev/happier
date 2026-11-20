@@ -233,6 +233,7 @@ nativeTasks.bridge.subscribe.mockImplementation(async (taskId, listener) => {
 
 // Install transport/platform ports before evaluating the actual Home and UI graph.
 const { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen: renderScreenWithProviders, standardCleanup } = await import('@/dev/testkit');
+const { collectNodeText } = await import('@/dev/testkit/harness/toolViewTestHelpers');
 const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -240,7 +241,6 @@ const profiles = await import('@/sync/domains/server/serverProfiles');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { WizardModalShell } = await import('../ui/WizardModalShell');
-const { WizardChoiceRow } = await import('../ui/WizardChoiceRow');
 const { clearPendingSetupIntent, getPendingSetupIntent } = await import('@/sync/domains/pending/pendingSetupIntent');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { RestoreIndexEmbedded } = await import('@/components/onboarding/restore/RestoreIndexEmbedded');
@@ -283,6 +283,52 @@ function homeProfileRef(alias: string): string {
 
 function homeRowTestId(alias: string): string {
     return `onboarding-wizard-relay:profile:${homeProfileRef(alias)}`;
+}
+
+type RelayTileScreen = Readonly<{
+    findByTestId(testID: string): ReactTestInstance | null;
+    findAllByTestId(testID: string): ReactTestInstance[];
+    pressByTestIdAsync(testID: string): Promise<void>;
+}>;
+
+/** A Home choice's SelectionTiles card: the actionable host that carries its checked and disabled state. */
+function relayTile(screen: RelayTileScreen, testID: string): ReactTestInstance {
+    const tile = screen.findAllByTestId(testID).reverse().find((node) => (
+        typeof node.type === 'string' && node.props.accessibilityState != null
+    ));
+    if (!tile) throw new Error(`Home choice "${testID}" is not rendered as a tile`);
+    return tile;
+}
+
+function isRelayTileChecked(screen: RelayTileScreen, testID: string): boolean {
+    return relayTile(screen, testID).props.accessibilityState.checked === true;
+}
+
+function isRelayTileDisabled(screen: RelayTileScreen, testID: string): boolean {
+    return relayTile(screen, testID).props.accessibilityState.disabled === true;
+}
+
+function relayTileText(screen: RelayTileScreen, testID: string): string[] {
+    return relayTile(screen, testID).findAllByType('Text' as never).flatMap(collectNodeText);
+}
+
+async function pressRelayTile(screen: RelayTileScreen, testID: string): Promise<void> {
+    const tile = relayTile(screen, testID);
+    await act(async () => {
+        await tile.props.onPress?.();
+    });
+}
+
+/** Opens a Home choice's "…" menu and picks one of its items through the shared DropdownMenu. */
+async function chooseRelayMenuAction(screen: RelayTileScreen, tileTestID: string, actionId: string): Promise<void> {
+    await screen.pressByTestIdAsync(`${tileTestID}-menu`);
+    // Opening measures the trigger before the menu's rows become pressable.
+    await vi.waitFor(() => {
+        const option = screen.findByTestId(`dropdown-option-${actionId}`);
+        expect(option).not.toBeNull();
+        for (let node = option; node; node = node.parent) expect(node.props.visible).not.toBe(false);
+    });
+    await screen.pressByTestIdAsync(`dropdown-option-${actionId}`);
 }
 
 async function focusHomeAtAddress(serverUrl: string, name: string = serverUrl) {
@@ -1266,8 +1312,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const before = screen.findByProps({ testID: homeRowTestId('active') });
-        expect(before.props.subtitle).toBe('https://relay.example.test');
+        expect(relayTileText(screen, homeRowTestId('active'))).toContain('https://relay.example.test');
 
         await act(async () => {
             await focusHomeAtAddress('https://relay-other.example.test');
@@ -1275,8 +1320,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const after = screen.findByProps({ testID: homeRowTestId('active') });
-        expect(after.props.subtitle).toBe('https://relay-other.example.test');
+        expect(relayTileText(screen, homeRowTestId('active'))).toContain('https://relay-other.example.test');
     });
 
     it('stores an awaiting-auth resume intent when continuing past relay selection', async () => {
@@ -1986,21 +2030,16 @@ describe('OnboardingWizardSurface', () => {
         browser?.reconfigureUrl('http://localhost:53288');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        // A desktop shell offers "On this computer" only while a Personal Home admission is mounted.
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-                initialStepId: 'relay_select',
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={vi.fn()}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="relay_select" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        await act(async () => {
-            await thisComputerRow.props.onPress?.();
-        });
+        await pressRelayTile(screen, 'onboarding-wizard-relay:thisComputer');
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
@@ -2029,13 +2068,10 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const thisComputerRow = screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' });
-        expect(thisComputerRow.props.disabled).toBe(false);
-        expect(thisComputerRow.props.title).toBe('setupOnboarding.relayOnYourComputerTitle');
+        expect(isRelayTileDisabled(screen, 'onboarding-wizard-relay:thisComputer')).toBe(false);
+        expect(relayTileText(screen, 'onboarding-wizard-relay:thisComputer')).toContain('setupOnboarding.relayOnYourComputerTitle');
 
-        await act(async () => {
-            await thisComputerRow.props.onPress?.();
-        });
+        await pressRelayTile(screen, 'onboarding-wizard-relay:thisComputer');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
@@ -2616,12 +2652,10 @@ describe('OnboardingWizardSurface', () => {
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByProps({ testID: homeRowTestId('relay-a') } as never)).toBeTruthy();
-        const relayRow = screen.findByProps({ testID: homeRowTestId('relay-b') } as never);
-        expect(relayRow).toBeTruthy();
-        expect(relayRow?.props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(false);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-b'))).toBe(true);
         expect(screen.findByTestId('onboarding-wizard-relay:customUrl')).toBeTruthy();
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' } as never)?.props.selected).toBe(false);
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(false);
     });
 
     it('continues from the default active saved relay without requiring the user to reselect it', async () => {
@@ -2652,9 +2686,7 @@ describe('OnboardingWizardSurface', () => {
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByProps({
-            testID: homeRowTestId('relay-real'),
-        } as never)?.props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-real'))).toBe(true);
 
         await pressOnboarding(screen, 'onboarding-wizard-primary');
 
@@ -2688,24 +2720,13 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const relayRow = screen.findByProps({ testID: homeRowTestId('relay-offline') } as never);
-        expect(relayRow?.props.disabled).toBe(false);
-        expect(relayRow?.props.dimmed).toBe(true);
-        expect(relayRow?.props.menuActions?.some((action: any) => action.id === 'retry')).toBe(true);
-        const selectableRow = screen.findByProps({
-            testID: homeRowTestId('relay-offline'),
-            variant: 'selectable',
-        } as never);
-        expect(selectableRow?.props.title).toBe('Offline Relay');
-        expect(selectableRow?.props.disabled).toBe(false);
+        const offlineTile = homeRowTestId('relay-offline');
+        expect(isRelayTileDisabled(screen, offlineTile)).toBe(false);
+        expect(relayTileText(screen, offlineTile)).toEqual(expect.arrayContaining(['Offline Relay', 'common.unreachable']));
 
         const callCountBefore = runtimeFetchMock.mock.calls.length;
-        await act(async () => {
-            const retryAction = relayRow?.props.menuActions?.find((action: any) => action.id === 'retry');
-            retryAction?.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-        expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(callCountBefore);
+        await chooseRelayMenuAction(screen, offlineTile, 'retry');
+        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(callCountBefore));
     });
 
     it('does not auto-select another relay when removing the selected saved relay', async () => {
@@ -2743,21 +2764,17 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const relayRow = screen.findByProps({ testID: homeRowTestId('relay-a') } as never);
-        expect(relayRow?.props.selected).toBe(true);
+        const relayATile = homeRowTestId('relay-a');
+        const relayBTile = homeRowTestId('relay-b');
+        expect(isRelayTileChecked(screen, relayATile)).toBe(true);
 
-        await act(async () => {
-            const removeAction = relayRow?.props.menuActions?.find((action: any) => action.id === 'remove');
-            await removeAction?.onPress?.();
-        });
+        await chooseRelayMenuAction(screen, relayATile, 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
 
-        const relayARowsAfter = screen.findAllByProps({ testID: homeRowTestId('relay-a') } as never);
-        const relayBRowAfter = screen.findByProps({ testID: homeRowTestId('relay-b') } as never);
-        expect(relayARowsAfter).toHaveLength(0);
-        expect(relayBRowAfter?.props.selected).toBe(false);
+        expect(screen.findAllByTestId(relayATile)).toHaveLength(0);
+        expect(isRelayTileChecked(screen, relayBTile)).toBe(false);
         expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(true);
     });
 
@@ -2799,19 +2816,12 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const relayRow = screen.findByProps({ testID: homeRowTestId('relay-a') } as never);
-        await act(async () => {
-            const removeAction = relayRow?.props.menuActions?.find((action: any) => action.id === 'remove');
-            await removeAction?.onPress?.();
-        });
+        await chooseRelayMenuAction(screen, homeRowTestId('relay-a'), 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(modalShowMock).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledTimes(1));
         expect(profiles.getServerProfileById(profile.id)).not.toBeNull();
-        const relayRowAfter = screen.findByProps({
-            testID: homeRowTestId('relay-a'),
-        } as never);
-        expect(relayRowAfter?.props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(true);
         expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(false);
     });
 
@@ -2852,14 +2862,10 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const relayRow = screen.findByProps({ testID: homeRowTestId('relay-a') } as never);
-        expect(relayRow?.props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(true);
 
         expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).not.toBeNull();
-        await act(async () => {
-            const removeAction = relayRow?.props.menuActions?.find((action: any) => action.id === 'remove');
-            await removeAction?.onPress?.();
-        });
+        await chooseRelayMenuAction(screen, homeRowTestId('relay-a'), 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
@@ -2885,26 +2891,20 @@ describe('OnboardingWizardSurface', () => {
         ]);
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        // A desktop shell offers "On this computer" only while a Personal Home admission is mounted.
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={vi.fn()}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="relay_select" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        await act(async () => {
-            await thisComputerRow.props.onPress?.();
-        });
+        await pressRelayTile(screen, 'onboarding-wizard-relay:thisComputer');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const localRelayRow = screen.findByProps({ testID: homeRowTestId('local-relay') } as never);
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(true);
-        expect(localRelayRow?.props.selected).toBe(false);
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:thisComputer')).toBe(true);
+        expect(isRelayTileChecked(screen, homeRowTestId('local-relay'))).toBe(false);
     });
 
     it('renders a single-line relay footer and keeps Cloud from showing a custom URL footer', async () => {
@@ -2975,20 +2975,15 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const offlineRow = screen.findByProps({ testID: homeRowTestId('relay-offline') } as never);
-        expect(offlineRow?.props.selected).toBe(true);
-        expect(offlineRow?.props.disabled).toBe(false);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-offline'))).toBe(true);
+        expect(isRelayTileDisabled(screen, homeRowTestId('relay-offline'))).toBe(false);
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
         expect(continueButton.props.disabled).toBe(true);
 
-        const cloudRow = screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' } as never);
-        expect(cloudRow?.props.selected).toBe(false);
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(false);
 
-        const okRow = screen.findByProps({ testID: homeRowTestId('relay-ok') } as never);
-        await act(async () => {
-            await okRow?.props.onPress?.();
-        });
+        await pressRelayTile(screen, homeRowTestId('relay-ok'));
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const continueButtonAfter = screen.findByTestId('onboarding-wizard-primary')!;
@@ -3302,10 +3297,11 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const localRelayRow = screen.findByProps({ testID: homeRowTestId('active') } as never);
-        expect(localRelayRow?.props.selected).toBe(true);
-        expect(localRelayRow?.props.disabled).toBe(false);
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(false);
+        expect(isRelayTileChecked(screen, homeRowTestId('active'))).toBe(true);
+        expect(isRelayTileDisabled(screen, homeRowTestId('active'))).toBe(false);
+        expect(screen.findAllByTestId('onboarding-wizard-relay:thisComputer').some((node) => (
+            node.props.accessibilityState?.checked === true
+        ))).toBe(false);
         expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
         expect(screen.getTextContent()).toContain('setupOnboarding.activeRelaySummaryTitle');
 
@@ -3348,8 +3344,10 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(screen.findByProps({ testID: homeRowTestId('local-relay') } as never)?.props.selected).toBe(true);
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never)?.props.selected).toBe(false);
+        expect(isRelayTileChecked(screen, homeRowTestId('local-relay'))).toBe(true);
+        expect(screen.findAllByTestId('onboarding-wizard-relay:thisComputer').some((node) => (
+            node.props.accessibilityState?.checked === true
+        ))).toBe(false);
         expect(screen.getTextContent()).toContain('http://localhost:53288');
     });
 
@@ -3392,10 +3390,10 @@ describe('OnboardingWizardSurface', () => {
         // The profile writer and reader coalesce equivalent unqualified endpoints.
         // A second saved fixture must not create a second selected surface row.
         expect(homeProfileRef('dup-1')).toBe(homeProfileRef('dup-2'));
-        const rows = screen.findAllByType(WizardChoiceRow as never)
-            .filter(row => row.props.testID === homeRowTestId('dup-1'));
+        const rows = screen.findAllByTestId(homeRowTestId('dup-1'))
+            .filter(row => typeof row.type === 'string' && row.props.accessibilityState?.checked !== undefined);
         expect(rows).toHaveLength(1);
-        expect(rows[0]?.props.selected).toBe(true);
+        expect(rows[0]?.props.accessibilityState.checked).toBe(true);
     });
 
     it('disables continuing when the canonical cloud relay is unreachable and offers a retry affordance', async () => {
@@ -3431,21 +3429,19 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' }).props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(true);
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true));
         expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
 
-        const cloudChoice = screen.root.findAll((node) => {
-            const props = node.props as Record<string, unknown>;
-            return props.testID === 'onboarding-wizard-relay:cloud'
-                && typeof props.badge === 'string'
-                && props.secondaryAction != null;
-        })[0] as unknown as ReactTestInstance | undefined;
-
-        expect(cloudChoice?.props.badge).toBe('common.unreachable');
-        expect(cloudChoice?.props.secondaryAction?.testID).toBe('onboarding-wizard-relay:cloud-retry');
+        expect(relayTileText(screen, 'onboarding-wizard-relay:cloud')).toContain('common.unreachable');
+        // The chosen unreachable Cloud stays chosen and selectable; its Retry probes the endpoint again.
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(true);
+        expect(isRelayTileDisabled(screen, 'onboarding-wizard-relay:cloud')).toBe(false);
+        const probesBeforeRetry = runtimeFetchMock.mock.calls.length;
+        await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud-retry');
+        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(probesBeforeRetry));
 
         runtimeFetchMock.mockImplementation(
             previousFetchImpl
@@ -3470,21 +3466,16 @@ describe('OnboardingWizardSurface', () => {
         await saveHomeProfiles([]);
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        // A desktop shell offers "On this computer" only while a Personal Home admission is mounted.
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={vi.fn()}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="relay_select" authEntryOptions={baseAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const hostRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        await act(async () => {
-            await hostRow.props.onPress?.();
-        });
+        await pressRelayTile(screen, 'onboarding-wizard-relay:thisComputer');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const continueButtonAfter = screen.findByTestId('onboarding-wizard-primary')!;
@@ -3543,7 +3534,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' }).props.selected).toBe(true);
+        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(true);
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const nextButton = screen.findByTestId('onboarding-wizard-primary')!;

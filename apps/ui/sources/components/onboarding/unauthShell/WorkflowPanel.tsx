@@ -8,29 +8,24 @@ import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { FIRST_RUN_WORKFLOW_LAYER, StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
-import { t } from '@/text';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 
-import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
-import { StepBackContext, useStepBackSlot } from './stepBack';
+import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
 import { ShellCornerContext, type ShellCornerDoor } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
-// Mobile welcome wordmark sits at the same coordinates as the brand hero's
-// wordmark (24px top + 24px left, plus the safe-area insets) so users see
-// the logo in the identical spot across both mobile screens.
+/** The wordmark's corner (lab direction A): 24 px tall, 24 px in from a phone's side and 20 px down. */
 const MOBILE_WORDMARK_INSET_PX = 24;
-const MOBILE_WORDMARK_HEIGHT_PX = 30;
-/**
- * A later step that keeps the wordmark (a Team entry) centres it in the back
- * row instead of the welcome corner, where it would sit under the back chevron
- * and over the step's own heading; the column starts below that row.
- */
-const MOBILE_ROW_WORDMARK_HEIGHT_PX = 24;
-const MOBILE_ROW_WORDMARK_TOP_PX = 4;
+const MOBILE_WORDMARK_TOP_PX = 20;
+const WORDMARK_HEIGHT_PX = 24;
+/** The welcome column starts this far below a phone's corner wordmark. */
 const MOBILE_ROW_WORDMARK_CLEARANCE_PX = 24;
+/** A phone's Back row (lab phone steps): the round Back well a little in from the corner, the column below it. */
+const MOBILE_BACK_ROW_TOP_PX = 12;
+const MOBILE_BACK_ROW_CLEARANCE_PX = 8;
+const MOBILE_BACK_ROW_HEIGHT_PX = MOBILE_BACK_ROW_TOP_PX + STEP_ROW_BUTTON_PX + MOBILE_BACK_ROW_CLEARANCE_PX;
 
 /**
  * Matches the legacy WizardCardLayout card-width hint (`size: 'md'`, `width: 500`).
@@ -52,6 +47,10 @@ const WORKFLOW_MOBILE_BOTTOM_PADDING = 28;
 const WORKFLOW_DESKTOP_HORIZONTAL_GUTTER = 64;
 /** The desktop wordmark's corner inset, on the page's outer gutter (lab direction A). */
 const DESKTOP_WORDMARK_INSET_PX = 40;
+/** A computer's wordmark sits 52 px down, its centre on the corner pill's (lab direction A). */
+const DESKTOP_WORDMARK_TOP_PX = 52;
+const CORNER_PILL_HEIGHT_PX = 40;
+const DESKTOP_PANE_BOTTOM_PADDING_PX = 28;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
     flex: 1,
     minHeight: 0,
@@ -89,7 +88,7 @@ export type WorkflowPanelProps = Readonly<{
 /**
  * The workflow pane of the desktop split (or the full-screen content area on
  * mobile-workflow). Registers the step body with the app motion stage and
- * renders a slim BackChevron when the wizard/route
+ * renders the round Back well when the wizard/route
  * supports back navigation; renders the welcome footer links only when the
  * current step is the welcome decision screen.
  *
@@ -123,9 +122,15 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // its own horizontal padding — i.e. the visible right block is at most
     // 500px wide, with the padding absorbed inside that cap. On mobile the
     // cap is undefined so the pane fills the screen.
+    // A choice step claims the wide column (two option cards side by side), and gives it back when it leaves.
+    const [wideColumnClaims, setWideColumnClaims] = React.useState(0);
+    const claimWideColumn = React.useCallback(() => {
+        setWideColumnClaims((count) => count + 1);
+        return () => setWideColumnClaims((count) => count - 1);
+    }, []);
     const paneMaxWidth = isMobile
         ? undefined
-        : Math.min(cardDimensions.width, layoutMaxWidth);
+        : Math.min(wideColumnClaims > 0 ? WIDE_STEP_COLUMN_PX : cardDimensions.width, layoutMaxWidth);
     // Padding lives on the inner scroll content (not the outer pane) so the
     // back-chevron stays anchored to the viewport while the welcome content +
     // footer flow through a single vertically-scrollable column. On tall
@@ -135,7 +140,9 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // footer always remain reachable instead of overlapping.
     // The wordmark stands top-left on every welcome step and wherever a step asks for it (direction A).
     const showMobileWordmark = !isMobile || props.isWelcomeStep || props.showMobileWordmark === true;
+    // A later step that keeps the wordmark (a Team entry) centres it in the Back row, clear of Back and the heading.
     const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep;
+    const mobileBackRow = isMobile && props.onBack != null && !isFullBleed;
     const contentPaddingStyle: ViewStyle = isMobile
         ? isFullBleed
             ? styles.contentMobileFullBleedPadding
@@ -143,8 +150,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 // A welcome column taller than a short phone scrolls from below the corner wordmark,
                 // never under it.
                 paddingTop: (showMobileWordmark && !wordmarkInBackRow
-                    ? MOBILE_WORDMARK_INSET_PX + MOBILE_WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX
-                    : WORKFLOW_MOBILE_TOP_PADDING + (wordmarkInBackRow ? MOBILE_ROW_WORDMARK_CLEARANCE_PX : 0))
+                    ? MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX
+                    : mobileBackRow || wordmarkInBackRow ? MOBILE_BACK_ROW_HEIGHT_PX : WORKFLOW_MOBILE_TOP_PADDING)
                     + safeAreaInsets.top,
                 paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
                 paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
@@ -165,19 +172,20 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         styles.mobileWordmark,
                         wordmarkInBackRow
                             ? {
-                                top: MOBILE_ROW_WORDMARK_TOP_PX + safeAreaInsets.top,
+                                top: MOBILE_BACK_ROW_TOP_PX + (STEP_ROW_BUTTON_PX - WORDMARK_HEIGHT_PX) / 2
+                                    + safeAreaInsets.top,
                                 left: safeAreaInsets.left,
                                 right: safeAreaInsets.right,
                                 alignItems: 'center',
                             }
                             : isMobile ? {
-                                top: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.top,
+                                top: MOBILE_WORDMARK_TOP_PX + safeAreaInsets.top,
                                 left: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.left,
                             } : styles.desktopWordmark,
                     ]}
                     pointerEvents="box-none"
                 >
-                    <BrandWordmark height={wordmarkInBackRow ? MOBILE_ROW_WORDMARK_HEIGHT_PX : MOBILE_WORDMARK_HEIGHT_PX} />
+                    <BrandWordmark height={WORDMARK_HEIGHT_PX} />
                 </View>
             ) : null}
             {backSlot && isFullBleed ? (
@@ -185,15 +193,12 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     style={[
                         styles.backChevronContainer,
                         isMobile ? {
-                            top: 12 + safeAreaInsets.top,
-                            left: 12 + safeAreaInsets.left,
+                            top: MOBILE_BACK_ROW_TOP_PX + safeAreaInsets.top,
+                            left: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
                         } : null,
                     ]}
                 >
-                    <BackChevron
-                        onPress={backSlot.onBack}
-                        accessibilityLabel={t('common.back')}
-                    />
+                    <StepRowBackButton onPress={backSlot.onBack} />
                 </View>
             ) : null}
             {backSlot && !isFullBleed && cornerBack ? (
@@ -203,16 +208,13 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         styles.backRowFloating,
                         isMobile
                             ? {
-                                top: -4 + safeAreaInsets.top,
-                                left: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left - 17,
+                                top: MOBILE_BACK_ROW_TOP_PX + safeAreaInsets.top,
+                                left: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
                             }
                             : styles.backRowDesktop,
                     ]}
                 >
-                    <BackChevron
-                        onPress={backSlot.onBack}
-                        accessibilityLabel={t('common.back')}
-                    />
+                    <StepRowBackButton onPress={backSlot.onBack} />
                 </View>
             ) : null}
 
@@ -224,6 +226,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             ) : null}
             <ShellCornerContext.Provider value={cornerSlot}>
             <StepBackContext.Provider value={backSlot}>
+            <WideStepColumnContext.Provider value={isMobile ? null : claimWideColumn}>
             <ScrollView
                 testID="unauth-shell-workflow-scroll"
                 style={styles.scrollFill}
@@ -286,10 +289,14 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 {props.children}
                             </StepMotionLayer>
                             <View style={styles.welcomeTrail} />
-                            <WelcomeFooterLinks
-                                variant="desktop"
-                                trailing={props.footerAccessory}
-                            />
+                            {/* The links stand on the wordmark's corner grid (40 px from the window's edges), not the pane's
+                                gutter (lab direction A). */}
+                            <View style={styles.desktopFooterCorner}>
+                                <WelcomeFooterLinks
+                                    variant="desktop"
+                                    trailing={props.footerAccessory}
+                                />
+                            </View>
                         </>
                     )
                 ) : (
@@ -331,6 +338,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     </>
                 )}
             </ScrollView>
+            </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
             </ShellCornerContext.Provider>
         </View>
@@ -357,7 +365,7 @@ const stylesheet = StyleSheet.create(() => ({
     contentDesktopPadding: {
         paddingTop: 56,
         paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
-        paddingBottom: 28,
+        paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
     },
     contentMobileFullBleedPadding: {
         paddingTop: 0,
@@ -403,13 +411,13 @@ const stylesheet = StyleSheet.create(() => ({
     },
     // Under the wordmark on the page's outer gutter (lab direction A), for a step without its own row.
     backRowDesktop: {
-        top: 84,
-        left: DESKTOP_WORDMARK_INSET_PX - 8,
+        top: DESKTOP_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + 16,
+        left: DESKTOP_WORDMARK_INSET_PX,
     },
     cornerDoor: {
         position: 'absolute',
         zIndex: 1,
-        top: DESKTOP_WORDMARK_INSET_PX - 2,
+        top: DESKTOP_WORDMARK_TOP_PX + (WORDMARK_HEIGHT_PX - CORNER_PILL_HEIGHT_PX) / 2,
         right: 32,
     },
     mobileWordmark: {
@@ -422,8 +430,13 @@ const stylesheet = StyleSheet.create(() => ({
         width: '100%',
         alignSelf: 'center',
     },
+    desktopFooterCorner: {
+        marginHorizontal: DESKTOP_WORDMARK_INSET_PX - WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
+        // The links' own bottom padding is the corner inset; the pane's is not added under it.
+        marginBottom: -DESKTOP_PANE_BOTTOM_PADDING_PX,
+    },
     desktopWordmark: {
-        top: DESKTOP_WORDMARK_INSET_PX,
+        top: DESKTOP_WORDMARK_TOP_PX,
         left: DESKTOP_WORDMARK_INSET_PX,
     },
 }));

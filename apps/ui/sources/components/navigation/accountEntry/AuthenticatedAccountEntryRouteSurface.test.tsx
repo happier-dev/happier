@@ -70,9 +70,6 @@ vi.mock('@/components/onboarding/ui/WizardModalShell', () => ({
         React.createElement('WizardModalShell', props, props.children),
 }));
 
-vi.mock('@/components/onboarding/ui/WizardChoiceRow', () => ({
-    WizardChoiceRow: (props: Record<string, unknown>) => React.createElement('WizardChoiceRow', props),
-}));
 
 vi.mock('@/components/account/auth/AccountDirectoryKeyLoginForm', () => ({
     AccountDirectoryKeyLoginForm: (props: Record<string, unknown>) => React.createElement('AccountDirectoryKeyLoginForm', props),
@@ -228,7 +225,7 @@ describe('AuthenticatedAccountEntryRouteSurface', () => {
         );
 
         await vi.waitFor(() => expect(screen.findByTestId('authenticated-account-entry-unavailable')).toBeTruthy());
-        expect(screen.findAllByType('WizardChoiceRow')).toHaveLength(0);
+        expect(screen.findByTestId('account-service-another-choice')).toBeFalsy();
     });
 
     it('consumes a recorded OAuth return through the canonical coordinator instead of redisplaying methods', async () => {

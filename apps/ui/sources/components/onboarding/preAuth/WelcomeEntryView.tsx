@@ -1,6 +1,6 @@
 import { HAPPIER_BALANCED_TEXT_WRAP, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -24,7 +24,8 @@ export type WelcomeEntryViewInteraction = Readonly<{
     admission: WelcomeActionAdmission;
     getActionId: (index: number) => string | undefined;
     onAction: (index: number) => Promise<void> | void;
-    onRetry: (testID: string) => void;
+    /** A notice's one way on (Try again, or the alternative choice), by its test id. */
+    onNoticeAction: (testID: string) => void;
     onSelfHosting: () => void;
     /** Marks the host puts first on the ways row (Approve: Back on a computer, then the recovery key). */
     waysLeading?: React.ReactNode;
@@ -68,8 +69,18 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
         testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction?.onSelfHosting,
     } : null);
     const hasWays = model.quietWays.length > 0 || waysLeading != null;
+    // A greeting says "Loading" as one quiet line in the reserved place under the trust line, where the retention
+    // summary later stands; only a notice that asks for something takes the slot above the doors.
+    const loadingInRetentionSlot = Boolean(model.trust);
+    const quietLoading = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind === 'loading') : [];
+    const slotNotices = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind !== 'loading') : model.notices;
+    const [noticeSlotHeight, setNoticeSlotHeight] = React.useState(0);
+    const onNoticeSlotLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = Math.ceil(event.nativeEvent.layout.height);
+        setNoticeSlotHeight((current) => (height > current ? height : current));
+    }, []);
     const renderNotice = (notice: WelcomeEntryViewModel['notices'][number]) => (
-        <WelcomeNotice key={notice.slot} notice={notice} onRetry={interaction?.onRetry} />
+        <WelcomeNotice key={notice.slot} notice={notice} onAction={interaction?.onNoticeAction} />
     );
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
@@ -99,14 +110,21 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             ) : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
-                    {model.notices.map(renderNotice)}
+                    {/* The notices' slot keeps the tallest height it has held, so a notice that settles or arrives later
+                        never moves the doors (plan 03 "Door-width notice"). */}
+                    {slotNotices.length > 0 || noticeSlotHeight > 0 ? (
+                        <View testID="welcome-notice-slot" style={[styles.noticeSlot, { minHeight: noticeSlotHeight }]}
+                            onLayout={onNoticeSlotLayout}>
+                            {slotNotices.map(renderNotice)}
+                        </View>
+                    ) : null}
                     <View style={styles.ways}>
                         <View style={styles.doors}>{model.doors.map(renderAction)}</View>
                         {hasWays ? (
                             // The ways row (owner 2026-11-19): a centred "or", then round marks without captions.
                             <View testID="welcome-quiet-ways" style={styles.quietWays}>
                                 <StepOrDivider label={t('common.or')} />
-                                <View role="group" aria-label={model.quietWaysTitle} style={styles.waysRow}>
+                                <View role="group" aria-label={model.quietWaysTitle} style={[styles.waysRow, compact ? styles.waysRowCompact : null]}>
                                     {waysLeading}
                                     {model.quietWays.map(renderWay)}
                                 </View>
@@ -117,7 +135,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
                             <View style={styles.retention}>
-                                {model.retention ? (
+                                {quietLoading.length > 0 ? quietLoading.map(renderNotice) : model.retention ? (
                                     <RelayRetentionDisclosure testID="welcome-retention"
                                         disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
                                 ) : null}
@@ -137,11 +155,11 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     );
 });
 
-function WelcomeNotice({ notice, onRetry }: Readonly<{
+function WelcomeNotice({ notice, onAction }: Readonly<{
     notice: WelcomeEntryViewModel['notices'][number];
-    onRetry?: (testID: string) => void;
+    onAction?: (testID: string) => void;
 }>) {
-    const { retry } = notice;
+    const { action } = notice;
     return (
         <HappierBodyEdgeContext.Provider value>
             <StepTransitionFrame transitionKey={notice.testID} direction="replace" notice>
@@ -153,8 +171,11 @@ function WelcomeNotice({ notice, onRetry }: Readonly<{
                     title={notice.title}
                     reason={notice.reason}
                     accessibilitySemantics="status"
-                    actionGlyph="retry"
-                    action={retry ? { ...retry, disabled: !onRetry, onPress: onRetry ? () => onRetry(retry.testID) : noAction } : undefined}
+                    actionGlyph={action?.glyph}
+                    action={action ? {
+                        testID: action.testID, label: action.label, disabled: !onAction,
+                        onPress: onAction ? () => onAction(action.testID) : noAction,
+                    } : undefined}
                 />
             </StepTransitionFrame>
         </HappierBodyEdgeContext.Provider>
@@ -209,6 +230,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: WELCOME_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
+    noticeSlot: {
+        width: '100%',
+        gap: theme.space.s12,
+        justifyContent: 'flex-end',
+    },
     ways: {
         width: '100%',
     },
@@ -227,6 +253,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'center',
         justifyContent: 'center',
         gap: theme.space.s20,
+    },
+    // A phone spreads the row across the column (lab phone Approve), so every way fits on the one line.
+    waysRowCompact: {
+        alignSelf: 'stretch',
+        justifyContent: 'space-between',
+        gap: 0,
     },
     intro: {
         ...Typography.variant('body'),

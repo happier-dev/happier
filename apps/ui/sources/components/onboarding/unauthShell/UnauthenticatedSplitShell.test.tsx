@@ -278,7 +278,8 @@ describe('UnauthenticatedSplitShell', () => {
 
         const workflowScroll = screen.findByTestId('unauth-shell-workflow-scroll');
         const workflowStyle = flattenStyle(workflowScroll?.props.contentContainerStyle);
-        expect(workflowStyle.paddingTop).toBe(72);
+        // The column starts under the phone's Back row (12 + the 44 px Back well + 8), inside the 44 px safe top.
+        expect(workflowStyle.paddingTop).toBe(108);
         expect(workflowStyle.paddingBottom).toBe(62);
 
         const transitionHost = screen.findByTestId('unauth-shell-step-transition');

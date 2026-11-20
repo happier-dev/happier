@@ -8,7 +8,7 @@ import type { SshAuthMode, SshCredentialsDraft } from '@/components/ssh/SshCrede
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { WizardChoiceRow } from '../../ui/WizardChoiceRow';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';
@@ -54,13 +54,15 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
         icon: IconName;
         onPress: () => void;
     }>) => (
-        <WizardChoiceRow
-            testID={params.testID}
-            selected={params.selected}
-            onPress={params.onPress}
-            icon={params.icon}
-            title={params.title}
-            subtitle={params.subtitle}
+        // One option F card that is checked or not (multiple selection over a single option reads as a checkbox).
+        <SelectionTiles
+            variant="card"
+            selectionMode="multiple"
+            accessibilityLabel={params.title}
+            options={[{ id: 'on', testID: params.testID, icon: params.icon, title: params.title, subtitle: params.subtitle }]}
+            value={params.selected ? ['on'] : []}
+            onChange={params.onPress}
+            maximumColumns={1}
         />
     ), []);
 

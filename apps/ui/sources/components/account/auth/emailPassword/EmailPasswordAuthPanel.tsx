@@ -12,6 +12,7 @@ import {
     provisionEmailPasswordAccount,
 } from '@/auth/password/provisionEmailPasswordAccount';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import {
     WelcomeActionAdmissionContext,
@@ -607,37 +608,27 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                 <FieldItem
                     label={t('settingsAccount.nativePassword.accountProtection')}
                     labelStyle={stepFieldLabelStyle()}
-                    supportingText={accountMode === 'e2ee'
-                        ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
-                        : t('settingsAccount.nativePassword.protectionPlainDetail')}
                 >
-                    <View
-                        style={styles.choices}
-                        accessibilityRole="radiogroup"
-                        role="radiogroup"
+                    {/* A protection is a choice, not a command: option F cards, each saying what it means. */}
+                    <SelectionTiles
+                        variant="card"
                         accessibilityLabel={t('settingsAccount.nativePassword.accountProtection')}
-                    >
-                        {permittedModes.map((candidate) => (
-                            <WelcomeActionCard
-                                key={candidate}
-                                testID={`email-password-protection-${candidate}`}
-                                title={candidate === 'e2ee'
-                                    ? tLoose('settingsAccount.nativePassword.protectionE2ee')
-                                    : t('settingsAccount.nativePassword.protectionPlain')}
-                                subtitle={candidate === 'e2ee'
-                                    ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
-                                    : t('settingsAccount.nativePassword.protectionPlainDetail')}
-                                // A protection is a choice, not a command: it is
-                                // announced as the selected option instead of as
-                                // one more button that happens to look primary.
-                                selectionRole="radio"
-                                selected={accountMode === candidate}
-                                primary={accountMode === candidate}
-                                iconName={candidate === 'e2ee' ? 'lock' : 'cloud'}
-                                onPress={() => setAccountMode(candidate)}
-                            />
-                        ))}
-                    </View>
+                        testIdPrefix="email-password-protection"
+                        options={permittedModes.map((candidate) => ({
+                            id: candidate,
+                            testID: `email-password-protection-${candidate}`,
+                            title: candidate === 'e2ee'
+                                ? tLoose('settingsAccount.nativePassword.protectionE2ee')
+                                : t('settingsAccount.nativePassword.protectionPlain'),
+                            subtitle: candidate === 'e2ee'
+                                ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
+                                : t('settingsAccount.nativePassword.protectionPlainDetail'),
+                            icon: candidate === 'e2ee' ? 'lock' as const : 'cloud' as const,
+                        }))}
+                        value={accountMode}
+                        onChange={(next) => { if (next) setAccountMode(next); }}
+                        maximumColumns={1}
+                    />
                 </FieldItem>
             ) : provisioning && collectsCredentials ? (
                 <Text testID="email-password-protection-fixed" style={styles.hint}>
@@ -691,5 +682,4 @@ const styles = StyleSheet.create((theme) => ({
     title: { ...Typography.variant('title'), color: theme.colors.text.primary },
     hint: { ...Typography.variant('body'), color: theme.colors.text.secondary },
     formError: { ...Typography.variant('body') },
-    choices: { gap: theme.space.s8 },
 }));

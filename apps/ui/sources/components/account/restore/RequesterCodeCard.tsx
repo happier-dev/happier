@@ -18,6 +18,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
 import { PairingQrCode } from '@/components/auth/pairing/PairingQrCode';
+import { PairingStatusPill, PairingStatusWaitingDot, pairingStatusStyles } from '@/components/auth/pairing/PairingStatusPill';
 import { PAIRING_QR_PALETTE } from '@/components/auth/pairing/pairingQrPalette';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -39,10 +40,13 @@ export const REQUESTER_CODE_SIZE_PX = 228;
 const APPROVED_ENTRANCE = {
   riseMs: 900,
   risePx: 18,
+  /** The rising words come into focus as they rise (web; native draws no blur on a view). */
+  riseBlurPx: 8,
   softenMs: 450,
   pillDelayMs: 140,
-  softenedBlurPx: 6,
-  softenedOpacity: 0.32,
+  softenedBlurPx: 5,
+  /** What remains of the code once it has let go: a trace of the code that was approved, under the check. */
+  softenedOpacity: 0.45,
   easing: Easing.bezier(0.16, 1, 0.3, 1),
 } as const;
 
@@ -106,40 +110,36 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
     );
   }, [pill, progress, props.approved, props.onApprovedSettled, reducedMotion]);
 
+  const web = Platform.OS === 'web';
   const codeStyle = useAnimatedStyle(() => {
     // The softening runs on the first half of the entrance, so the check rises over a code that has already let go.
     const soften = Math.min(
       1,
       progress.value * (APPROVED_ENTRANCE.riseMs / APPROVED_ENTRANCE.softenMs),
     );
-    return Platform.OS === 'web'
+    const opacity = 1 - soften * (1 - APPROVED_ENTRANCE.softenedOpacity);
+    return web
       ? ({
           filter: `blur(${(soften * APPROVED_ENTRANCE.softenedBlurPx).toFixed(2)}px)`,
-          opacity: 1 - soften * 0.35,
+          opacity,
         } as ViewStyle)
       : // Native draws no blur on a view: the code fades back instead (accepted refinement).
-        { opacity: 1 - soften * (1 - APPROVED_ENTRANCE.softenedOpacity) };
+        { opacity };
   });
-  const checkStyle = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    transform: [
-      {
-        translateY: reducedMotion
-          ? 0
-          : (1 - progress.value) * APPROVED_ENTRANCE.risePx,
-      },
-    ],
-  }));
-  const approvedStyle = useAnimatedStyle(() => ({
-    opacity: pill.value,
-    transform: [
-      {
-        translateY: reducedMotion
-          ? 0
-          : (1 - pill.value) * (APPROVED_ENTRANCE.risePx / 2),
-      },
-    ],
-  }));
+  // The check and the approved words share the welcome words' rise: up into place, coming into focus.
+  const rise = (value: number) => {
+    'worklet';
+    if (reducedMotion) return { opacity: value };
+    const style = {
+      opacity: value,
+      transform: [{ translateY: (1 - value) * APPROVED_ENTRANCE.risePx }],
+    };
+    return web && value < 0.98
+      ? ({ ...style, filter: `blur(${((1 - value) * APPROVED_ENTRANCE.riseBlurPx).toFixed(2)}px)` } as ViewStyle)
+      : style;
+  };
+  const checkStyle = useAnimatedStyle(() => rise(progress.value));
+  const approvedStyle = useAnimatedStyle(() => rise(pill.value));
 
   const onWaitingLayout = React.useCallback(
     (event: LayoutChangeEvent) => {
@@ -147,6 +147,24 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
       setWaitingPillWidth(event.nativeEvent.layout.width);
     },
     [props.approved],
+  );
+
+  const approvedCheck = (
+    <Animated.View
+      testID="restore-requester-approved-check"
+      pointerEvents="none"
+      style={[styles.checkSlot, checkStyle]}
+    >
+      <View
+        style={[
+          styles.checkDisc,
+          { backgroundColor: theme.colors.state.success.border },
+        ]}
+      >
+        {/* Drawn in the code's own paper white, so it reads the same over the softened code in both themes. */}
+        <Icon name="check" size={28} color={PAIRING_QR_PALETTE.paper} />
+      </View>
+    </Animated.View>
   );
 
   return (
@@ -158,69 +176,45 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
         accessibilityLabel={props.link === null ? t('common.loading') : undefined}
         style={styles.codeFrame}
       >
-        {props.link === null ? <ActivitySpinner size="small" /> : (
-          <Animated.View style={codeStyle}>
-            {props.qrAvailable ? (
-              <PairingQrCode link={props.link} size={REQUESTER_CODE_SIZE_PX} />
-            ) : (
-              <View style={styles.codeFallback}>
-                <Text style={styles.codeFallbackText}>
-                  {t('connect.pairingQrTooLargeBody')}
-                </Text>
-              </View>
-            )}
-          </Animated.View>
+        {props.link === null ? <ActivitySpinner size="small" /> : props.qrAvailable ? (
+          <PairingQrCode
+            link={props.link}
+            size={REQUESTER_CODE_SIZE_PX}
+            // The paper keeps its edge; only the code inside it lets go.
+            codeStyle={codeStyle}
+            overlay={props.approved ? approvedCheck : null}
+          />
+        ) : (
+          <>
+            <Animated.View style={[styles.codeFallback, codeStyle]}>
+              <Text style={styles.codeFallbackText}>
+                {t('connect.pairingQrTooLargeBody')}
+              </Text>
+            </Animated.View>
+            {props.approved ? approvedCheck : null}
+          </>
         )}
-        {props.approved ? (
-          <Animated.View
-            testID="restore-requester-approved-check"
-            pointerEvents="none"
-            style={[styles.checkSlot, checkStyle]}
-          >
-            <View
-              style={[
-                styles.checkDisc,
-                { backgroundColor: theme.colors.state.success.border },
-              ]}
-            >
-              {/* Drawn in the code's own paper white, so it reads the same over the softened code in both themes. */}
-              <Icon name="check" size={28} color={PAIRING_QR_PALETTE.paper} />
-            </View>
-          </Animated.View>
-        ) : null}
       </View>
       {/* One status line in one box: approved, its words rise into the place the waiting words held. */}
-      {props.link !== null ? <View
+      {props.link !== null ? <PairingStatusPill
         testID="restore-requester-status"
-        accessibilityLiveRegion="polite"
-        role="status"
-        style={[
-          styles.pill,
-          props.approved && waitingPillWidth !== null
-            ? { width: waitingPillWidth }
-            : null,
-        ]}
+        style={props.approved && waitingPillWidth !== null ? { width: waitingPillWidth } : undefined}
         onLayout={onWaitingLayout}
       >
         {props.approved ? null : (
-          <View style={styles.pillLine}>
-            <View
-              style={[
-                styles.waitingDot,
-                { backgroundColor: theme.colors.state.warning.foreground },
-              ]}
-            />
+          <View style={pairingStatusStyles.line}>
+            <PairingStatusWaitingDot />
             {props.expiresAtMs !== null ? (
               <PairingCountdown
                 testID="restore-requester-countdown"
                 expiresAtMs={props.expiresAtMs}
-                style={styles.pillText}
+                style={pairingStatusStyles.text}
                 formatLabel={(time) =>
                   t('connect.waitingForApprovalNewCodeIn', { time })
                 }
               />
             ) : (
-              <Text style={styles.pillText}>
+              <Text style={pairingStatusStyles.text}>
                 {t('connect.waitingForApproval')}
               </Text>
             )}
@@ -229,19 +223,19 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
         {props.approved ? (
           <Animated.View
             testID="restore-requester-approved"
-            style={[styles.pillLine, approvedStyle]}
+            style={[pairingStatusStyles.line, approvedStyle]}
           >
             <Icon
               name="check"
               size={14}
               color={theme.colors.state.success.foreground}
             />
-            <Text style={[styles.pillText, styles.pillTextApproved]}>
+            <Text style={[pairingStatusStyles.text, pairingStatusStyles.textSettled]}>
               {t('connect.requesterApproved')}
             </Text>
           </Animated.View>
         ) : null}
-      </View> : null}
+      </PairingStatusPill> : null}
     </View>
   );
 });
@@ -280,35 +274,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderRadius: CHECK_DISC_PX / 2,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  // The status line is a quiet capsule on the page: hairline edge, the page's own paper, one line of meta text.
-  pill: {
-    minHeight: 32,
-    paddingHorizontal: theme.space.s12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border.default,
-    backgroundColor: theme.colors.surface.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-  },
-  waitingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  // The countdown changes every second, so its figures are tabular: "4:52" → "4:51" changes no width.
-  pillText: {
-    ...Typography.variant('meta'),
-    color: theme.colors.text.secondary,
-    fontVariant: ['tabular-nums'],
-  },
-  pillTextApproved: {
-    color: theme.colors.text.primary,
   },
 }));

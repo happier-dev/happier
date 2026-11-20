@@ -90,6 +90,8 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     const [ways, setWays] = React.useState<Readonly<{ history: readonly RestoreWay[]; direction: StepTransitionDirection; pastedLink?: string }>>({
         history: [], direction: 'replace',
     });
+    // The camera says where to point it while it is live; a scan's result keeps the step's own heading.
+    const [scannerLive, setScannerLive] = React.useState(() => !props.initialPairingLink && !props.initialResult);
     const defaultView = props.initialView ?? (showScannerFirst ? 'scanner' : 'qr');
     const activeView = ways.history.at(-1) ?? defaultView;
     const move = (kind: 'step' | 'back', history: readonly RestoreWay[], pastedLink?: string) => {
@@ -141,7 +143,9 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
             </View>
         ) : activeView === 'scanner' ? (
             <View style={VIEW_STYLE}>
-            <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />
+            {scannerLive && props.entryIntent === 'enter_home'
+                ? <UnauthenticatedStepHeading title={t('connect.pointAtComputerTitle')} subtitle={t('connect.pointAtComputerSubtitle')} />
+                : <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />}
             <RestoreScanComputerQrView
                 entryIntent={props.entryIntent}
                 embedded
@@ -150,7 +154,8 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 onBack={onBack}
                 showBack={false}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-                additionalSignInWays={props.renderAdditionalSignInWays?.()}
+                renderAdditionalSignInWays={props.renderAdditionalSignInWays}
+                onCameraLiveChange={setScannerLive}
                 onOpenPairingLinkEntry={openPasteEntry}
                 onShowQrInstead={openQr}
                 onNavigationLockChange={props.onNavigationLockChange}

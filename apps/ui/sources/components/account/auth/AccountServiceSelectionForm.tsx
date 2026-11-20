@@ -6,7 +6,7 @@ import type { AccountServiceEndpointV1 } from '@/sync/domains/server/serverProfi
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { WizardChoiceRow } from '@/components/onboarding/ui/WizardChoiceRow';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { SelectAccountServiceEndpointResult } from '@/sync/ops/accountDirectory/selectAccountServiceEndpoint';
@@ -81,28 +81,34 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
     return (
         <View testID="account-service-selection-form" style={styles.root}>
             <View style={styles.choices}>
-                {currentEndpoint ? (
-                    <WizardChoiceRow
-                        testID="account-service-current-choice"
-                        disabled={policy.disabled && !policy.lock}
-                        selected={false}
-                        icon="globe"
-                        title={endpointLabel(currentEndpoint)}
-                        subtitle={currentEndpoint.url}
-                        onPress={() => select(currentEndpoint.url)}
-                    />
-                ) : null}
-                <WizardChoiceRow
-                    testID="account-service-another-choice"
-                    disabled={policy.disabled}
-                    dimmed={policy.disabled}
-                    selected={showUrlInput}
-                    icon="plus-circle"
-                    title={t('homeAdd.otherSignInService')}
-                    subtitle={policy.lock ? t('organizationPolicy.lockedExplanation') : t('homeAdd.otherSignInServiceSubtitle')}
-                    onPress={() => {
-                        setShowUrlInput(true);
+                {/* Option F cards: the current service signs in at once; "Other" opens its address field below. */}
+                <SelectionTiles
+                    variant="card"
+                    accessibilityLabel={t('homeAdd.signInServiceAddress')}
+                    options={[
+                        ...(currentEndpoint ? [{
+                            id: 'current' as const,
+                            testID: 'account-service-current-choice',
+                            disabled: policy.disabled && !policy.lock,
+                            icon: 'globe' as const,
+                            title: endpointLabel(currentEndpoint),
+                            subtitle: currentEndpoint.url,
+                        }] : []),
+                        {
+                            id: 'another' as const,
+                            testID: 'account-service-another-choice',
+                            disabled: policy.disabled,
+                            icon: 'plus-circle' as const,
+                            title: t('homeAdd.otherSignInService'),
+                            subtitle: policy.lock ? t('organizationPolicy.lockedExplanation') : t('homeAdd.otherSignInServiceSubtitle'),
+                        },
+                    ]}
+                    value={showUrlInput ? 'another' : null}
+                    onChange={(id) => {
+                        if (id === 'current' && currentEndpoint) void select(currentEndpoint.url);
+                        if (id === 'another') setShowUrlInput(true);
                     }}
+                    maximumColumns={1}
                 />
                 <OrganizationPolicyFieldNotice field="accountService" />
                 <OrganizationPolicyInvalidNextStep />

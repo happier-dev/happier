@@ -200,7 +200,7 @@ import PlusSignSquareIcon from '@hugeicons/core-free-icons/PlusSignSquareIcon';
 import PreviousIcon from '@hugeicons/core-free-icons/PreviousIcon';
 import Pulse01Icon from '@hugeicons/core-free-icons/Pulse01Icon';
 import PuzzleIcon from '@hugeicons/core-free-icons/PuzzleIcon';
-import QrCode01Icon from '@hugeicons/core-free-icons/QrCode01Icon';
+import QrCodeIcon from '@hugeicons/core-free-icons/QrCodeIcon';
 import QuotesIcon from '@hugeicons/core-free-icons/QuotesIcon';
 import RadioButtonIcon from '@hugeicons/core-free-icons/RadioButtonIcon';
 import RadioIcon from '@hugeicons/core-free-icons/RadioIcon';
@@ -466,7 +466,7 @@ export const HUGE_ICON_REGISTRY = {
     'push-pin': PinIcon,
     'push-pin-slash': PinOffIcon,
     'puzzle-piece': PuzzleIcon,
-    'qr-code': QrCode01Icon,
+    'qr-code': QrCodeIcon,
     'question': HelpCircleIcon,
     'quotes': QuotesIcon,
     'radio': RadioIcon,

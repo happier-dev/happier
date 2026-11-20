@@ -3426,6 +3426,9 @@ const enConnect = {
   waitingForApproval: 'Waiting for approval…',
   waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `Waiting for approval · new code in ${time}`,
   requesterApproved: 'Approved',
+  pointAtComputerTitle: "Point at your computer",
+  pointAtComputerSubtitle: "Open Happier on a signed-in computer, then Settings → Add your phone.",
+  lookingForCode: "Looking for a code…",
   securingCredentials: 'Securing credentials…',
   showQrInstead: 'Other recovery options',
   addPhoneQrInstructions:
@@ -18951,6 +18954,7 @@ const enWelcome = {
   signInOptionsPartialTitle: 'Some sign-in options couldn’t be loaded',
   signInServiceUnsupportedBody:
     'This address is a Home, or it does not offer account sign-in. Choose another sign-in service.',
+  chooseAnotherSignInService: "Choose another service",
   useDifferentHome: 'Use a different Home',
   keyEntryDescription: "Paste your recovery key.",
   certificateDescription: 'Use the certificate installed on this device.',

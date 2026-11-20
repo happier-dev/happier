@@ -5,7 +5,7 @@ import type { SkImage } from '@shopify/react-native-skia';
 import { expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { UNAUTH_BACK_TEST_ID } from '@/components/onboarding/unauthShell/BackChevron';
+import { UNAUTH_BACK_TEST_ID } from '@/components/onboarding/unauthShell/stepBack';
 import { StepRowBackButton } from '@/components/onboarding/unauthShell/stepBack';
 
 import { readNativeStepAnchor } from './capturePressedElement.native';

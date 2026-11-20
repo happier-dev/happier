@@ -4,8 +4,7 @@ import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { STEP_ROW_BUTTON_PX } from '@/components/onboarding/unauthShell/stepBack';
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { StepRowWayButton } from '@/components/onboarding/unauthShell/stepBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -53,19 +52,11 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
      */
     escape?: boolean;
     /**
-     * This card is one option in a selection, not a command. A caller that owns
-     * a group of mutually exclusive choices says so here, and the card is then
-     * announced with its checked state instead of as one more button that
-     * happens to look primary.
-     */
-    selectionRole?: 'radio';
-    /**
      * The action cannot run right now (its service is unreachable, or still being checked). The card
      * keeps saying what it is for — the subtitle carries why it cannot — and stops being a button:
      * `accessory` (Retry, a spinner) is its only control, so no disabled button wraps a live one.
      */
     unavailable?: Readonly<{ accessory?: React.ReactNode }>;
-    selected?: boolean;
     disabled?: boolean;
     controlRef?: React.ComponentProps<typeof HappierPressable>['controlRef'];
     onPress: () => Promise<void> | void;
@@ -114,10 +105,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             testID={props.testID}
             nativeID={web ? undefined : props.testID}
             controlRef={props.controlRef}
-            accessibilityRole={props.selectionRole ?? 'button'}
-            {...(props.selectionRole
-                ? { checked: props.selected === true, selected: props.selected === true }
-                : {})}
+            accessibilityRole="button"
             accessibilityLabel={props.title}
             accessibilityHint={props.subtitle}
             describedById={subtitleId}
@@ -207,15 +195,13 @@ export const WelcomeWayButton = React.memo(function WelcomeWayButton(props: Read
     const admission = React.useContext(WelcomeActionAdmissionContext);
     const actionId = props.actionId ?? props.testID;
     return (
-        <IconButton
+        <StepRowWayButton
             testID={props.testID}
             nativeID={Platform.OS === 'web' ? undefined : props.testID}
             accessibilityLabel={props.title}
             accessibilityHint={props.subtitle}
             tooltip={props.title}
             iconName={props.iconName ?? 'arrow-right'}
-            size={STEP_ROW_BUTTON_PX}
-            variant="outlined"
             disabled={props.disabled || admission.pendingActionId !== null}
             busy={admission.pendingActionId === actionId}
             onPress={() => admission.run(actionId, props.onPress)}

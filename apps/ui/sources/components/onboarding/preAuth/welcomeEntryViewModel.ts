@@ -25,7 +25,8 @@ type Notice = Readonly<{
     kind: 'loading' | 'unavailable' | 'warning';
     title: string;
     reason?: string;
-    retry?: Readonly<{ testID: string; label: string }>;
+    /** The notice's one way on: Try again (`retry`), or the alternative choice (`forward`, a chevron). */
+    action?: Readonly<{ testID: string; label: string; glyph: 'retry' | 'forward' }>;
 }>;
 
 /** Display-only payload shared by live Welcome and the opening window. */
@@ -127,6 +128,9 @@ function describeAction(
     }
 }
 
+/** The way on from a sign-in service that cannot sign in here. */
+export const CHOOSE_ANOTHER_SERVICE_TEST_ID = 'welcome-account-service-choose-another';
+
 export function projectWelcomeEntryViewModel(
     model: WelcomeEntryModel,
     input: Readonly<{
@@ -138,6 +142,8 @@ export function projectWelcomeEntryViewModel(
         serviceName: string | null;
         canRetryService: boolean;
         policy?: WelcomeEntryViewModel['policy'];
+        /** A different sign-in service can be chosen (the way on when this one cannot sign in here). */
+        canChooseService: boolean;
     }>,
 ): WelcomeEntryViewModel {
     const { options } = input;
@@ -146,7 +152,7 @@ export function projectWelcomeEntryViewModel(
     const service = input.serviceName ?? t('welcome.yourSignInService');
     const returning = model.heading === 'returning';
     const status = model.showHomeStatus && input.hasHome ? options.serverAvailability : null;
-    const retry = (testID: string) => ({ testID, label: t('common.retry') });
+    const retry = (testID: string) => ({ testID, label: t('common.retry'), glyph: 'retry' as const });
     const doors: WelcomeEntryViewModel['doors'][number][] = [];
     const quietWays: WelcomeEntryViewModel['quietWays'][number][] = [];
     model.actions.forEach((row, index) => {
@@ -163,7 +169,7 @@ export function projectWelcomeEntryViewModel(
             testID: 'welcome-auth-blocked', kind: 'unavailable',
             title: t(incompatible ? 'welcome.serverIncompatibleTitle' : 'welcome.serverUnavailableTitle'),
             reason: t(incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: home }),
-            retry: retry('welcome-auth-blocked-retry'),
+            action: retry('welcome-auth-blocked-retry'),
         });
     }
     const notice = model.notice;
@@ -186,7 +192,13 @@ export function projectWelcomeEntryViewModel(
                 ? notice.hasUsableHomeMethods ? t('welcome.signInServiceUnavailableHomeBody')
                     : t('welcome.signInServiceUnavailableBody', { service: notice.serviceName ?? service })
                 : t(methodless ? 'welcome.signInServiceMethodlessBody' : 'welcome.signInServiceUnsupportedBody'),
-            retry: input.canRetryService ? retry('welcome-account-service-retry') : undefined,
+            // Unreachable can come back, so it retries; a service that cannot sign in here never will, so its way on is
+            // choosing another one.
+            action: unavailable
+                ? input.canRetryService ? retry('welcome-account-service-retry') : undefined
+                : input.canChooseService
+                    ? { testID: CHOOSE_ANOTHER_SERVICE_TEST_ID, label: t('welcome.chooseAnotherSignInService'), glyph: 'forward' as const }
+                    : undefined,
         });
     }
     const signupClosed = (status === 'ready' || status === 'legacy') && options.showAuthActions
@@ -212,7 +224,7 @@ export function projectWelcomeEntryViewModel(
         closingNotice: status && options.authEntryUnavailable ? {
             slot: 'recovery',
             testID: 'welcome-auth-entry-degraded', kind: 'warning', title: t('welcome.signInOptionsPartialTitle'),
-            retry: retry('welcome-auth-entry-degraded-retry'),
+            action: retry('welcome-auth-entry-degraded-retry'),
         } : undefined,
         selfHosting: model.showSelfHostingFooter ? {
             display: { testID: 'welcome-self-hosting', title: t('welcome.welcomeRunYourOwnHome'), presentation: 'pill', iconName: 'hard-drives' },
