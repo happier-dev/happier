@@ -10146,10 +10146,11 @@ Action and audience, including their narrower Machine or Environment rows (Q1).
 A Session resource row is the most specific rung. A target owner's Ask, and an
 inherited Team Ask on the Action rung, still win.
 
-Two parts of that last claim depend on Coordination. The Team-derived bit is
-read from Session metadata, which the Machine side can rewrite (design F-5).
-Beating a member's own exact-scope Allowed is Coordination's pending precedence
-change.
+A Team, Group or project profile is a default rather than a lock: the
+creation-stamped bit marks it, and the person's own explicit choice clears it.
+An inherited Ask beating a member's own exact-scope Allowed (including a Session
+Machine or Environment row) is Coordination's precedence change
+(COORD-APPROVAL-FLOOR-1120).
 
 **Admission.** The executor binds `context.sessionApprovalConsents` once per
 admission from `deps.readSessionApprovalConsents` and replaces any
@@ -10162,6 +10163,13 @@ consent Artifact change on the Account feed refreshes the held rows, and the
 next admission waits for that refresh. A requester's Session on another person's
 Machine reads its rows at each admission. A read failure applies no rows, so
 the ordinary Ask returns.
+
+The stored approval request carries `approvalScope` (`{ kind: 'machine', machineId }`
+or `{ kind: 'environment', environmentId }`) when scope admission resolved one for
+the invocation; an inherited Environment template is recorded as the template id
+the preference reader answers on. It is presentation only: the approval sheet
+offers the "on this Machine or Environment in this Session" rung exactly when it is
+present, and replay re-admits its own scope.
 
 The receiving Machine of a signed cross-Machine call runs its daemon-level
 executor, whose bound Session is not the caller's. Rows therefore never apply

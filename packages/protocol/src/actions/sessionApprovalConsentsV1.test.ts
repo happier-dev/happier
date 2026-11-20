@@ -9,6 +9,7 @@ import {
 import { getActionSpec } from './actionSpecs.js';
 import { getArtifactKindPolicyV1 } from '../artifacts/artifactSharingV1.js';
 import type { BoundApprovalProfileV1 } from './approvalProfiles.js';
+import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import { executeSessionApprovalConsentPolicyV1, isSessionApprovalConsentEligibleV1 } from './sessionApprovalConsentPolicyV1.js';
 import {
@@ -128,8 +129,8 @@ describe('Session rungs on the approval-preference ladder', () => {
     ).toBe(true);
   });
 
-  // The inherited Team Ask wins only while its Team-derived bit is honest. Coordination owns
-  // reading that bit from the server-owned Team policy (F-5); these cases inject it directly.
+  // An inherited Team or Group profile is marked by the creation-stamped bit; it is a default,
+  // not a lock, so the person's own explicit choice clears it (managedDefaults owner).
   const teamAsk: BoundApprovalProfileV1 = {
     profile: {
       id: 'team',
@@ -157,9 +158,9 @@ describe('Session rungs on the approval-preference ladder', () => {
       }),
     ).toBe(false);
   });
-  // Prerequisite: Coordination's precedence change "an inherited Ask beats a member's own
-  // exact-scope Allowed" (ORCH-TOP 17:26Z ruling 2). Flip to it() when that lands.
-  it.fails('keeps an inherited Team Ask above the Session Machine row (needs Coordination precedence change)', () => {
+  // Expected failure until COORD-APPROVAL-FLOOR-1120 patch A lands ("an inherited Ask beats a
+  // member's own exact-scope Allowed", ORCH-TOP 17:26Z ruling 2); then this becomes it().
+  it.fails('keeps an inherited Team Ask above the Session Machine row (expected failure until COORD-APPROVAL-FLOOR-1120 patch A)', () => {
     expect(
       route(
         {
@@ -467,5 +468,69 @@ describe('admission binds the Session rows once, from the host', () => {
 
   it('replaces caller-supplied rows with the host lookup', async () => {
     expect(await run(null, allowPost)).toEqual({ lookups: 1, seen: [null] });
+  });
+});
+
+describe('an agent asks to change its own Session rows (F-6)', () => {
+  it('asks with the policy Action\'s own Ask, then the person\'s approval writes the row', async () => {
+    const records = new Map<string, { header: Readonly<Record<string, unknown>>; body: string; version: number }>();
+    const store: SessionApprovalConsentsStoreV1 = {
+      list: async () => ({ items: [...records].map(([artifactId, row]) => ({ artifactId, header: row.header, body: row.body,
+        access: 'owner' as const, revision: { headerVersion: row.version, bodyVersion: row.version } })) }),
+      create: async ({ header, body }) => { records.set('consents', { header, body, version: 1 });
+        return { artifactId: 'consents', revision: { headerVersion: 1, bodyVersion: 1 } }; },
+      update: async ({ artifactId, header, body }) => { const version = (records.get(artifactId)?.version ?? 0) + 1;
+        records.set(artifactId, { header, body, version }); return { ok: true, revision: { headerVersion: version, bodyVersion: version } }; },
+    };
+    const requests = new Map<string, unknown>();
+    const executor = createActionExecutor({
+      readActionsSettings: () => empty,
+      // Both hosts answer the Session target through this one owner.
+      settingsDeclarationAction: async ({ actionId, input }) => {
+        if (actionId !== 'actions.policy.get' && actionId !== 'actions.policy.set' && actionId !== 'actions.policy.reset') return {};
+        const { ActionPolicyInputSchemas } = await import('./actionPolicyActionFamily.js');
+        return await executeSessionApprovalConsentPolicyV1(store, actionId, ActionPolicyInputSchemas[actionId].parse(input)) ?? {};
+      },
+      approvalsCreate: async ({ request }) => { requests.set('policy-change', request); return { artifactId: 'policy-change' }; },
+      approvalsGet: async ({ artifactId }) => (requests.get(artifactId) ?? null) as never,
+      approvalsUpdate: async ({ artifactId, request }) => { requests.set(artifactId, request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const input = { actionId, audience: 'agent', session: { sessionId: 's1' }, mode: 'allowed' } as const;
+    const agentContext: ActionExecutorContext = { surface: 'agent', serverId: 'home-a', defaultSessionId: 's1',
+      actionRequestId: 'agent-policy-change' };
+    expect(await executor.execute('actions.policy.set', input, agentContext)).toMatchObject({ ok: true });
+    expect(requests.get('policy-change')).toMatchObject({ status: 'open', actionId: 'actions.policy.set', actionArgs: input });
+    expect(records.size).toBe(0);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'policy-change', decision: 'approve' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home-a' })).toMatchObject({ ok: true });
+    expect(await executeSessionApprovalConsentPolicyV1(store, 'actions.policy.get', { session: { sessionId: 's1' } }))
+      .toEqual({ session: { sessionId: 's1' }, rows: [{ actionId, audience: 'agent', mode: 'allowed' }] });
+    // The person's own write from their app is direct: no second confirmation.
+    const before = requests.size;
+    expect(await executor.execute('actions.policy.set', { ...input, mode: 'ask_first' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home-a', actionCaller: { kind: 'host' } }))
+      .toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+    expect(requests.size).toBe(before);
+  });
+});
+
+describe('the approval request carries the admitted scope for the "On {Machine}" rung', () => {
+  it('records the Machine that scope admission resolved, so the sheet can offer that rung', async () => {
+    const created: unknown[] = [];
+    const input = { serverId: 'server-1', machineId: 'machine-1', expectedInstallationId: 'installation' };
+    const executor = createActionExecutor({
+      readActionsSettings: () => empty,
+      approvalsCreate: async ({ request }) => { created.push(request); return { artifactId: 'reboot-approval' }; },
+      machineRebootReferences: async () => ({ homeId: 'stable-home', machineId: input.machineId, coverage: 'complete',
+        references: [], nextCursor: null }),
+      machineServiceAction: async () => ({ kind: 'snapshot', services: [] }),
+      machineReboot: async () => ({ kind: 'unavailable', reason: 'admission_unavailable' }),
+    });
+    const result = await executor.execute('machines.reboot', input, { surface: 'agent', serverId: input.serverId,
+      defaultSessionId: 's1', actionRequestId: 'reboot-1' });
+    expect(created, JSON.stringify(result)).toHaveLength(1);
+    expect(created[0]).toMatchObject({ actionId: 'machines.reboot', approvalScope: { kind: 'machine', machineId: 'machine-1' } });
+    expect(ApprovalRequestV2Schema.safeParse(created[0]).success).toBe(true);
   });
 });

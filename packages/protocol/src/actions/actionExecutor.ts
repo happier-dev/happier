@@ -375,7 +375,7 @@ import {
 import { projectActionSpecSchemaSections } from './actionSpecSections.js';
 import { parseInputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { readInputFieldOptionsSourceId } from '../inputs/inputTypeRuntime.js';
-import { isSharedRequesterActionV1, isSignedCliMachineGrantReviewInvocationV1, resolveActionApprovalRouting, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
+import { isSharedRequesterActionV1, isSignedCliMachineGrantReviewInvocationV1, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
 import { readActionCallerLedSubtreeSessionIds } from './executor/sessionLedSubtree.js';
 import { resolveApprovalRequestApproveAdmission, readPluginInstallApprovalPendingReview } from './actionApprovalPresentation.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
@@ -944,6 +944,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     humanApprovalRequired?: boolean;
     sessionCreationDirectoryApproval?: ApprovalRequestV2['sessionCreationDirectoryApproval'];
     handoffTargetReplacementApproval?: ApprovalRequestV2['handoffTargetReplacementApproval'];
+    /** The scope admission's result for this invocation; the Session resource rung keys on it. */
+    approvalScope?: ActionApprovalPolicyScopeV1;
   }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
     const { actionId, input, context: ctx } = args;
@@ -980,6 +982,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(args.discussionDraftReview ? { discussionDraftReview: true as const } : {}),
       ...(args.sessionCreationDirectoryApproval ? { sessionCreationDirectoryApproval: args.sessionCreationDirectoryApproval } : {}),
       ...(args.handoffTargetReplacementApproval ? { handoffTargetReplacementApproval: args.handoffTargetReplacementApproval } : {}),
+      // The effective scope the preference reader answers on: an inherited Environment template keys the rung.
+      ...(args.approvalScope ? { approvalScope: args.approvalScope.kind === 'machine'
+        ? { kind: 'machine' as const, machineId: args.approvalScope.machineId }
+        : { kind: 'environment' as const, environmentId: args.approvalScope.inheritedEnvironmentId ?? args.approvalScope.environmentId } } : {}),
       ...(automaticChecks ? { automaticChecks } : {}),
       approval: args.approval, actionId, actionArgs: args.actionArgs,
       summary: buildApprovalSummary(getActionSpec(actionId), input, args.preview), preview: args.preview,
@@ -3915,7 +3921,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               || spec.approvalResultCustody === 'live_only' || retainHostOperationApproval;
             const created = await createActionApprovalRequest({ actionId, input: admittedInput,
               actionArgs: prepared.actionArgs, preview: prepared.preview, context: ctx, sharedRequesterRequest,
-              humanApprovalRequired: false, approval: { flow: retainsAutomaticInvocation ? 'blocking' : 'deferred', result: baseApprovalRouting.result } });
+              humanApprovalRequired: false, approval: { flow: retainsAutomaticInvocation ? 'blocking' : 'deferred', result: baseApprovalRouting.result },
+              ...(approvalScope ? { approvalScope } : {}) });
             if (!created.ok) return created;
             // Mount the incumbent pending card before a recorded Run can hold
             // this invocation, so Checking and Cancel stay reachable.
@@ -4097,6 +4104,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(discussionDraftReviewRequired ? { discussionDraftReview: true } : {}),
           ...(requiredDirectoryApproval ? { sessionCreationDirectoryApproval: requiredDirectoryApproval } : {}),
           ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
+          ...(approvalScope ? { approvalScope } : {}),
         });
         if (!created.ok) return created;
         const { request, artifactId } = created;

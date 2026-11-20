@@ -23,6 +23,7 @@ import {
 } from '../sessions/creation/sessionCreationTargetPreparationV1.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { ActionRequiredAuthoritySchema, ActionSurfaceSchema } from '../actions/metadata.js';
+import { ActionApprovalScopeV1Schema } from '../actions/actionSettings.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import type { ActionId } from '../actions/actionIds.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
@@ -726,6 +727,7 @@ export const ApprovalRequestV2Schema: z.ZodMiniObject<{
   requestInputDigest: z.ZodMiniOptional<z.ZodMiniString>;
   requesterConfirmation: z.ZodMiniOptional<typeof ApprovalRequesterConfirmationV1Schema>;
   discussionDraftReview: z.ZodMiniOptional<z.ZodMiniLiteral<true>>;
+  approvalScope: z.ZodMiniOptional<typeof ActionApprovalScopeV1Schema>;
   decision: z.ZodMiniOptional<typeof ApprovalDecisionV2Schema>;
   automaticChecks: z.ZodMiniOptional<typeof ApprovalAutomaticChecksV1Schema>;
   execution: z.ZodMiniOptional<typeof ApprovalExecutionV2Schema>;
@@ -744,6 +746,12 @@ export const ApprovalRequestV2Schema: z.ZodMiniObject<{
   requesterConfirmation: z.optional(ApprovalRequesterConfirmationV1Schema),
   /** Immutable private presentation fact; it grants no publication or decision authority. */
   discussionDraftReview: z.optional(z.literal(true)),
+  /**
+   * The Machine or Environment that scope admission resolved for this invocation, never raw
+   * input. Presentation only: the approval sheet offers "allow on this Machine/Environment in
+   * this Session" exactly when it is present. Replay re-admits its own scope.
+   */
+  approvalScope: z.optional(ActionApprovalScopeV1Schema),
   approval: zMini.optional(ActionApprovalSchema),
   actionId: ActionIdSchema,
   actionArgs: z.unknown(),
