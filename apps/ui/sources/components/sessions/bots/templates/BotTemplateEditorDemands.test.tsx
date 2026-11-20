@@ -10,6 +10,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { t } from '@/text';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -81,5 +82,13 @@ describe('template editor catalog demand', () => {
         await act(async () => { clearDaemonMergedProjectionCacheForTests(); });
         await screen.pressByTestIdAsync('bot-template-agent-trigger');
         await vi.waitFor(async () => { await act(async () => {}); expect(reads()).toHaveLength(2); });
+        await screen.pressByTestIdAsync('bot-template-agent-trigger');
+        await act(async () => {
+            buffer.edit(draft => {
+                const { suggestedAgent: _previous, ...content } = draft.content;
+                return { ...draft, content };
+            });
+        });
+        expect(screen.getTextContent()).toContain(t('botTemplates.chooseAgent'));
     });
 });

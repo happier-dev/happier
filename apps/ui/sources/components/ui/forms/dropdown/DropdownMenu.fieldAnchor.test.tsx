@@ -159,7 +159,7 @@ it('checks a searchable select’s current value, including an explicit None cho
   expect(checked('web')).toBe(false);
 });
 
-it('never checks a prompt row ("Choose…") as the current value, while an explicit None stays checkable', async () => {
+it('keeps an empty-id prompt on the trigger and an explicit None as a checkable option', async () => {
   const { DropdownMenu } = await import('./DropdownMenu');
   const { ListPresentationProvider } =
     await import('@/components/ui/lists/listPresentation');
@@ -188,9 +188,10 @@ it('never checks a prompt row ("Choose…") as the current value, while an expli
       .find((value) => value !== undefined);
   const promptScreen = await render(true);
   await vi.waitFor(() =>
-    expect(promptScreen.findAllHostsByTestId('member:empty').length).toBeGreaterThan(0),
+    expect(promptScreen.findAllHostsByTestId('member:worker').length).toBeGreaterThan(0),
   );
-  expect(checked(promptScreen, 'empty')).not.toBe(true);
+  expect(promptScreen.getTextContent()).toContain('Choose an agent');
+  expect(promptScreen.findAllHostsByTestId('member:empty')).toHaveLength(0);
   await promptScreen.unmount();
   const noneScreen = await render(false);
   await vi.waitFor(() =>
@@ -199,7 +200,7 @@ it('never checks a prompt row ("Choose…") as the current value, while an expli
   expect(checked(noneScreen, 'empty')).toBe(true);
 });
 
-it('treats a select whose current value is its prompt as having no value: no other row reads as a checkbox', async () => {
+it('shows Choose a branch only on the trigger and leaves real options unchecked', async () => {
   const { DropdownMenu } = await import('./DropdownMenu');
   const { ListPresentationProvider } =
     await import('@/components/ui/lists/listPresentation');
@@ -222,5 +223,6 @@ it('treats a select whose current value is its prompt as having no value: no oth
   const states = (id: string) => screen.findAllHostsByTestId(`member:${id}`)
     .map((node) => [node.props.role ?? node.props.accessibilityRole, node.props['aria-checked'] ?? (node.props.accessibilityState as { checked?: boolean } | undefined)?.checked]);
   expect(states('other').some(([role]) => role === 'checkbox' || role === 'radio')).toBe(false);
-  expect(states('default').some(([, checked]) => checked === true)).toBe(false);
+  expect(screen.getTextContent()).toContain('Choose a branch');
+  expect(screen.findAllHostsByTestId('member:default')).toHaveLength(0);
 });

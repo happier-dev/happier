@@ -24,7 +24,7 @@ afterEach(() => {
   standardCleanup();
 });
 
-async function renderRefSelect(compact: boolean) {
+async function renderRefSelect(compact: boolean, needsBranch = false) {
   const { ProjectRefSelect } = await import('./ProjectRefSelect');
   const { DropdownMenu } =
     await import('@/components/ui/forms/dropdown/DropdownMenu');
@@ -35,8 +35,9 @@ async function renderRefSelect(compact: boolean) {
       <ProjectRefSelect
         testID="ref"
         title="Branch"
-        value="release/0.4"
-        defaultLabel="v0.3 (default)"
+        value={needsBranch ? null : 'release/0.4'}
+        defaultLabel={needsBranch ? 'Choose a branch' : 'v0.3 (default)'}
+        defaultIsPrompt={needsBranch}
         compact={compact}
         onChange={() => {}}
       />
@@ -59,6 +60,11 @@ describe('ProjectRefSelect', () => {
   it('is a bordered field select on a computer', async () => {
     const { hasFieldBox } = await renderRefSelect(false);
     expect(hasFieldBox()).toBe(true);
+  });
+
+  it.each([false, true])('keeps the unselected branch prompt on its trigger (compact=%s)', async (compact) => {
+    const { screen } = await renderRefSelect(compact, true);
+    expect(screen.getTextContent()).toContain('Choose a branch');
   });
 
   it('is a value row on a phone: the label and the chosen ref, as the same menu\'s trigger', async () => {

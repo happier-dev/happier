@@ -61,10 +61,7 @@ export type DropdownMenuItem = Readonly<{
     destructive?: boolean;
     /** Current choice state, independent of keyboard highlight. */
     checked?: boolean;
-    /**
-     * A prompt row ("Choose a branch", "Choose an agent") asks for a value; it is never a current value, so it is never
-     * checked, even when the select has no value or the caller marks it. An explicit "None" choice is not a prompt.
-     */
+    /** The empty trigger's placeholder ("Choose a branch"). Only actual choices appear in the menu. */
     prompt?: boolean;
     /**
      * One of several independent on/off choices (a menu's filters): a box that checks, announced as a checkbox,
@@ -440,7 +437,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : DROPDOWN_MENU_MAX_WIDTH_PX);
-    const describedFieldMenu = matchTriggerWidth && menuItems.some((item) => Boolean(item.subtitle));
+    const describedFieldMenu = matchTriggerWidth && menuItems.some((item) => !item.prompt && Boolean(item.subtitle));
     // A menu is as tall as its content and the window allow (the Popover clamps to the room on its
     // side); it never cuts a list off at a fixed height. A caller's explicit cap still wins.
     const { height: windowHeight } = usePresentationWindowDimensions();
@@ -466,11 +463,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
 
     // A select (an item trigger naming a value) checks its current value as the one choice among its rows, searched or
     // not. An empty value is a choice too when a row stands for it (an explicit "None"); otherwise it means nothing is chosen.
-    const selectValue = props.itemTrigger && typeof props.selectedId === 'string' ? props.selectedId.trim() : null;
-    // A select whose value is its prompt row ("Choose a branch") has no value yet: nothing among its rows is checked.
-    const currentRow = selectValue === null ? undefined : findMenuItem(selectValue);
-    const selectCheckedId = selectValue !== null && currentRow?.prompt !== true && (selectValue !== '' || currentRow !== undefined)
-        ? selectValue : null;
+    const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : null;
+    const currentRow = selectedId === null ? undefined : findMenuItem(selectedId);
+    const selectCheckedId = props.itemTrigger && selectedId !== null && !currentRow?.prompt && (selectedId !== '' || currentRow)
+        ? selectedId : null;
+    const triggerPrompt = props.itemTrigger
+        ? currentRow?.prompt ? currentRow : !selectedId && !currentRow ? menuItems.find(item => item.prompt) : undefined
+        : undefined;
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
@@ -481,7 +480,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 accessibilityLabel: item.accessibilityLabel,
                 category: item.category,
                 disabled: item.disabled,
-                checked: item.prompt === true ? undefined : item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
+                checked: item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
                 multiSelect: item.multiSelect,
                 swatch: item.swatch,
                 segments: item.segments,
@@ -506,13 +505,24 @@ export function DropdownMenu(props: DropdownMenuProps) {
     };
     // A shut menu is a trigger: its rows are built when it opens (a row menu per list row would otherwise
     // build and group every row's items at rest). The trigger reads the raw items only for the selected one.
-    const selectableItems = React.useMemo(() => props.open ? menuItems.map(toSelectableItem) : NO_SELECTABLE_ITEMS,
-        [hasHardwareKeyboard, menuItems, props.open, selectCheckedId, theme.colors.state.danger.textForeground, theme.colors.text.secondary]);
-    const selectableItemSource: SelectableMenuItemSource | undefined = props.open && props.itemSource ? {
+    const selectableItems = React.useMemo(() => {
+        if (!props.open) return NO_SELECTABLE_ITEMS;
+        const items: SelectableMenuItem[] = [];
+        for (const item of menuItems) {
+            if (!item.prompt) items.push(toSelectableItem(item));
+        }
+        return items;
+    }, [hasHardwareKeyboard, menuItems, props.open, selectCheckedId, theme.colors.state.danger.textForeground, theme.colors.text.secondary]);
+    const itemSource = props.itemSource;
+    const sourceHasPrompts = selectableItems.length !== menuItems.length;
+    const selectableItemSource: SelectableMenuItemSource | undefined = props.open && itemSource ? {
         items: selectableItems,
-        indexById: props.itemSource.indexById,
+        indexById: sourceHasPrompts ? new Map(selectableItems.map((item, index) => [item.id, index])) : itemSource.indexById,
         getItem(index) {
-            const item = props.itemSource?.getItem(index);
+            const visibleItem = selectableItems[index];
+            if (!visibleItem) return undefined;
+            const sourceIndex = sourceHasPrompts ? itemSource.indexById.get(visibleItem.id) : index;
+            const item = sourceIndex === undefined ? undefined : itemSource.getItem(sourceIndex);
             return item ? toSelectableItem(item) : undefined;
         },
     } : undefined;
@@ -561,13 +571,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         openMenu();
     }, [openMenu, props]);
 
-    const selectedItemForTrigger = React.useMemo((): DropdownMenuItem | null => {
-        const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : '';
-        if (!selectedId) return null;
-        const found = findMenuItem(selectedId) ?? null;
-        if (!found || found.disabled) return null;
-        return found;
-    }, [findMenuItem, props.selectedId]);
+    const selectedItemForTrigger = selectedId && currentRow && !currentRow.disabled ? currentRow : null;
     const activeSubmenuItem = React.useMemo((): DropdownMenuItem | null => {
         if (!activeSubmenu) return null;
         return findMenuItem(activeSubmenu.itemId) ?? null;
@@ -585,29 +589,23 @@ export function DropdownMenu(props: DropdownMenuProps) {
     );
     // A page field names whatever is stored, including an option that can no longer be chosen; only
     // an empty selection asks for a choice.
-    const pageSelectedItem = React.useMemo((): DropdownMenuItem | null => {
-        if (!pageTrigger) return null;
-        const selectedId = typeof props.selectedId === 'string' ? props.selectedId.trim() : '';
-        if (!selectedId) return null;
-        return findMenuItem(selectedId) ?? null;
-    }, [pageTrigger, findMenuItem, props.selectedId]);
+    const pageSelectedItem = pageTrigger && selectedId ? currentRow : undefined;
     const triggerNode = React.useMemo(() => {
         if (props.itemTrigger) {
             const cfg = props.itemTrigger;
             const showSelectedDetail = cfg.showSelectedDetail !== false;
             const showSelectedSubtitle = cfg.showSelectedSubtitle !== false;
-            const formattedDetail = showSelectedDetail || pageTrigger
-                ? (cfg.detailFormatter
-                    ? cfg.detailFormatter(selectedItemForTrigger)
-                    : (selectedItemForTrigger?.title ?? null))
+            const selectedOption = triggerPrompt ? null : selectedItemForTrigger;
+            const formattedDetail = !triggerPrompt && (showSelectedDetail || pageTrigger)
+                ? (cfg.detailFormatter ? cfg.detailFormatter(selectedOption) : selectedOption?.title ?? null)
                 : null;
             // A page field always shows the value; `showSelectedDetail: false` only means the grouped
             // row carries it in its description instead.
-            const detail = pageTrigger ? (formattedDetail || pageSelectedItem?.title || null) : formattedDetail;
+            const detail = pageTrigger && !triggerPrompt ? (formattedDetail || pageSelectedItem?.title || null) : formattedDetail;
             const resolvedSubtitle =
                 cfg.subtitleFormatter
-                    ? cfg.subtitleFormatter(selectedItemForTrigger)
-                    : (showSelectedSubtitle ? (selectedItemForTrigger?.subtitle ?? cfg.subtitle ?? null) : (cfg.subtitle ?? null));
+                    ? cfg.subtitleFormatter(selectedOption)
+                    : (showSelectedSubtitle ? (selectedOption?.subtitle ?? cfg.subtitle ?? null) : (cfg.subtitle ?? null));
             // The field shows the value, so a description that only restates it is dropped.
             const subtitle = pageTrigger && detail && resolvedSubtitle === detail ? null : resolvedSubtitle;
 
@@ -625,7 +623,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         detailDensity: resolvedTriggerDensity,
                         field: fieldColors,
                         boxRef: fieldAnchored ? fieldBoxRef : undefined,
-                        placeholder: pageTrigger ? cfg.placeholder ?? t('common.choose') : undefined,
+                        placeholder: triggerPrompt?.title ?? (pageTrigger ? cfg.placeholder ?? t('common.choose') : undefined),
                         placeholderColor: theme.colors.input.placeholder,
                         // A field its row places under the label spans the row, like every stacked control.
                         fieldSpan: cfg.itemProps?.accessoryLayout === 'stacked' ? 'row' : pageTrigger ? 'column' : 'content',
@@ -662,7 +660,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             }), props.open);
         }
         return withExpandedTriggerState(props.trigger, props.open);
-    }, [closeMenu, fieldAnchored, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle]);
+    }, [closeMenu, fieldAnchored, fieldColors, openMenu, pageSelectedItem, pageTrigger, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.input.placeholder, theme.colors.text.secondary, theme.colors.text.tertiary, toggle, triggerPrompt]);
 
     const resultsRef = React.useRef<SelectableMenuResultsHandle>(null);
     // The highlighted row scrolls into view only when the keyboard moves it (or on opening its current choice):
