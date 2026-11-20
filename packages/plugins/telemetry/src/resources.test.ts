@@ -55,12 +55,16 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(reads).toBe(1);
                 await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
                 expect(invalidations).toBe(0);
-                await lease.runtime.store.write([{ id: 'more', kind: 'span', spanKind: 2, source: 'otlp',
-                    worktree: 'environment:app', serviceName: 'third', durationMs: 1, at: 2100 }]);
+                const batch = ['app', 'empty'].map(environmentId => ({ id: 'more', kind: 'span' as const, spanKind: 2,
+                    source: 'otlp' as const, worktree: `environment:${environmentId}`, serviceName: 'third', durationMs: 1, at: 2100 }));
+                await lease.runtime.store.write(batch);
+                expect(invalidations).toBe(1);
+                await lease.runtime.store.write(batch);
                 expect(invalidations).toBe(1);
                 vi.setSystemTime(2200);
                 expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ result: { items: [
-                    { environmentId: 'app', result: { measurements: { value: 3, window: { since: 1200, until: 2200 } } } }, { environmentId: 'empty' },
+                    { environmentId: 'app', result: { measurements: { value: 3, window: { since: 1200, until: 2200 } } } },
+                    { environmentId: 'empty', result: { measurements: { value: 1 } } },
                 ] } });
                 expect(reads).toBe(2);
                 await observation.dispose(); await producer.dispose();

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { connect, createServer } from 'node:net';
 import { once } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { DaemonDatabase, DaemonDatabaseRow, DaemonDatabaseService, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
@@ -52,14 +52,18 @@ describe('local capture background lifecycle', () => {
     .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
    production = await owner.acquireRuntime({ signal: serviceLifetime.signal, services: { storage: { daemon: storage } } });
    expect(owner.readRuntime()).toBe(production.runtime);
-   settlement = owner.run({ signal: lifetime.signal, services: { storage: { daemon: storage }, events: { host: { subscribe() { return { dispose() {} }; } } } } });
-   await vi.waitFor(() => expect(owner.readRuntime()).toBe(production!.runtime));
+   const ready = Promise.withResolvers<void>();
+   settlement = owner.run({ signal: lifetime.signal, services: { storage: { daemon: storage }, events: { host: { subscribe() {
+    ready.resolve();
+    return { dispose() {} };
+   } } } } });
+   await Promise.race([ready.promise, settlement]);
    expect(owner.readRuntime()).toBe(production.runtime);
-   const first: string[][] = [], other: string[][] = [];
-   const offFirst = owner.subscribe('first', keys => first.push([...keys]));
-   const offOther = owner.subscribe('other', keys => other.push([...keys]));
-   const capture = await vi.waitFor(() => owner.acquireLocalCapture({ enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [{ name: 'DATABASE_URL', original,
-    upstream: { host: '127.0.0.1', port: address.port }, hostSpan: { start: 'postgresql://'.length, end: 'postgresql://'.length + upstreamAuthority.length }, assignedPort: 0 }], signal: serviceLifetime.signal, otlpPort: 0 }));
+   let first = 0, other = 0;
+   const offFirst = owner.subscribe(['first'], () => first++);
+   const offOther = owner.subscribe(['other'], () => other++);
+   const capture = await owner.acquireLocalCapture({ enabled: true, projectScope, ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [{ name: 'DATABASE_URL', original,
+    upstream: { host: '127.0.0.1', port: address.port }, hostSpan: { start: 'postgresql://'.length, end: 'postgresql://'.length + upstreamAuthority.length }, assignedPort: 0 }], signal: serviceLifetime.signal, otlpPort: 0 });
    const forwarded = new URL(capture.replacements.DATABASE_URL!);
    client = connect({ host: forwarded.hostname, port: Number(forwarded.port) });
    await once(client, 'connect');
@@ -74,8 +78,8 @@ describe('local capture background lifecycle', () => {
     body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano: '1700000000000000000', body: { stringValue: 'captured' } }] }] }] }) });
    expect(response.status).toBe(200);
    await owner.readRuntime()?.ingest.settled();
-   expect([...new Set(first.flat())]).toEqual(['first']);
-   expect(other).toEqual([]);
+   expect(first).toBe(1);
+   expect(other).toBe(0);
    await owner.stopProjectCapture({ ...projectScope, projectId: 'other' }, 'account');
    await owner.stopProjectCapture(projectScope, 'another-account');
    expect((await fetch(`${capture.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);

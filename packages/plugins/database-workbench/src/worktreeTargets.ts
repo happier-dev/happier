@@ -101,12 +101,13 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             return (await entry.readEnvironment()).projectedEnvironment[source.variable];
         } };
     }
-    const descriptor = (target: DatabaseWorktreeTargetV1, connectionString: string, request: Request,
-        agentAccess: DatabaseAgentAccessV1): DatabaseDescriptorV1 | undefined => {
+    const descriptor = async (target: DatabaseWorktreeTargetV1, connectionString: string, request: Request,
+        admittedAccess?: DatabaseAgentAccessV1): Promise<DatabaseDescriptorV1 | undefined> => {
         const { source, workspace } = target;
         if (source.kind === 'sqlite_file') return undefined;
         const selected = findDatabaseConnectionDescriptor(connectionString, request.databaseEngines);
         if (!selected) return undefined;
+        const agentAccess = admittedAccess ?? await readLevel(request, target);
         const origin = source.kind === 'service' ? source.serviceId : source.path;
         const machine = workspace.kind === 'managed' ? workspace.controller : workspace;
         return { target, label: `${origin} · ${source.variable}`, ...selected, capabilities: [...selected.capabilities],
@@ -145,7 +146,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
                     try {
                         const target: DatabaseWorktreeTargetV1 = { ...entry.scope, kind: 'worktree',
                             source: { kind: 'service', serviceId: entry.serviceId, variable } };
-                        const selected = descriptor(target, value, request, await readLevel(request, target));
+                        const selected = await descriptor(target, value, request);
                         if (selected) targets.push(selected);
                     }
                     catch (error) {
@@ -174,7 +175,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             const connectionString = await readConnectionString();
             if (connectionString === undefined) return unavailable();
             try {
-                const selected = descriptor(target, connectionString, request, agentAccess);
+                const selected = await descriptor(target, connectionString, request, agentAccess);
                 if (!selected) return unavailable();
                 return { descriptor: selected,
                     connection: await openDatabaseConnection({ connectionString, access: request.access,

@@ -36,28 +36,35 @@ it('reports the missing host fact and recovery when discovery has no admitted Ma
 });
 
 it('discovers the selected launched service from prepared originals, isolates custody and removes it on service release', async () => {
-    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { storage } });
+    let accessReads = 0;
+    const measuredStorage = { ...storage, daemon: { ...storage.daemon, async get() { accessReads++; return null; } } };
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { storage: measuredStorage } });
+    const observer = kit.registration('serviceLaunchEnvironments', 'database-discovery');
+    let release: (() => Promise<void>) | undefined;
     try {
-        const observer = kit.registration('serviceLaunchEnvironments', 'database-discovery');
         expect(observer, 'The enabled workbench must observe prepared service launch input').toBeDefined();
         if (!observer) throw new Error('Missing database discovery contribution');
         const original = 'postgresql://app:private-selected@localhost:5432/selected';
+        const unrelatedVariables = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`APP_SETTING_${i}`, `value-${i}`]));
         const launch = {
             workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
             project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
             serviceId: 'postgres', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://capture@localhost/replacement' }, provenance: {} }; },
-            async readDeclaredEnvironment() { return { projectedEnvironment: { API_URL: 'https://api.example.test', CUSTOM_DATABASE: original },
+            async readDeclaredEnvironment() { return { projectedEnvironment: { ...unrelatedVariables, API_URL: 'https://api.example.test', CUSTOM_DATABASE: original },
                 provenance: { CUSTOM_DATABASE: { source: 'dotenv', file: '.env' } } }; },
         } satisfies PluginServiceLaunchEnvironmentInputV1;
         const retained = await observer.prepare(launch);
+        if (retained.kind === 'replace') release = () => retained.release();
         expect(retained).toMatchObject({ kind: 'replace' });
         const list = (selectedScope: typeof scope = scope) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
             { scope: selectedScope }, identity);
-        expect(await list()).toMatchObject({ targets: [{ engine: 'postgresql', target: { ...scope,
+        const result = await list();
+        expect(result).toMatchObject({ targets: [{ engine: 'postgresql', access: { canRead: true, canWrite: true }, target: { ...scope,
             source: { kind: 'service', serviceId: 'postgres', variable: 'CUSTOM_DATABASE' } } }], completeness: { complete: true } });
-        expect(JSON.stringify(await list())).not.toContain('private-selected');
-        expect(JSON.stringify(await list())).not.toContain(original);
+        expect(accessReads).toBe(1);
+        expect(JSON.stringify(result)).not.toContain('private-selected');
+        expect(JSON.stringify(result)).not.toContain(original);
         await expect(kit.invokeAction(databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1), {
             operation: 'describe',
             target: { ...scope, source: { kind: 'service', serviceId: 'postgres', variable: 'API_URL' } },

@@ -170,12 +170,20 @@ it('keeps typed filters, full FK Back state and loaded-only export on the same c
 it('projects target facts from the connection and Machine owners without inventing a catalogue count', async () => {
     const { describeDatabaseConnection } = await import('../connection.js');
     let known = true;
+    const machineReads: { serverId: string; machineId: string }[] = [];
     const selected = { ...descriptor, ...describeDatabaseConnection('postgresql://alice:private@localhost:5432/billing?token=private') ,
         capabilities: [...descriptor.capabilities] };
+    const sameMachine = Array.from({ length: 24 }, (_, index) => ({ ...selected,
+        target: { ...descriptor.target, source: { kind: 'service' as const, serviceId: `service-${index}`, variable: 'DATABASE_URL' } },
+    }));
+    const otherHome = { ...selected, placement: { ...selected.placement, serverId: 'other-home' } };
     const unexpected = async (): Promise<never> => { throw new Error('Listing must not open a database'); };
     const client: WorkbenchClient = {
-        targets: async () => ({ targets: [known ? selected : descriptor], completeness: { complete: true } }),
-        machineDisplayName: async () => known ? { status: 'ready', displayName: 'MacBook Pro' } : { status: 'unavailable' },
+        targets: async () => ({ targets: known ? [...sameMachine, otherHome] : [descriptor], completeness: { complete: true } }),
+        machineDisplayName: async (request) => {
+            machineReads.push(request);
+            return known ? { status: 'ready', displayName: request.serverId === 'home' ? 'MacBook Pro' : 'Other Mac' } : { status: 'unavailable' };
+        },
         operation: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
         navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: unexpected, saveExport: unexpected,
     };
@@ -188,11 +196,14 @@ it('projects target facts from the connection and Machine owners without inventi
         await resource.demand();
         expect(resource.get().data?.targets[0]).toMatchObject({ engineLabel: 'PostgreSQL', endpointLabel: 'localhost:5432',
             machineLabel: 'MacBook Pro', relationCount: null });
+        expect(resource.get().data?.targets.map(target => target.machineLabel)).toEqual([...sameMachine.map(() => 'MacBook Pro'), 'Other Mac']);
+        expect(machineReads).toHaveLength(2);
         expect(JSON.stringify(resource.get().data)).not.toContain('private');
         known = false;
         resource.invalidate();
         await resource.demand();
         expect(resource.get().data?.targets[0]).toMatchObject({ engineLabel: 'PostgreSQL', endpointLabel: null,
             machineLabel: null, relationCount: null });
+        expect(machineReads).toHaveLength(3);
     } finally { instance.close(); }
 });

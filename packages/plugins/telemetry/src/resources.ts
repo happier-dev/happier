@@ -59,10 +59,7 @@ export function createCaptureResourceRuntime(options: Readonly<{
                             ? snapshot.result.items.map(item => telemetryPartition(item.environmentId))
                             : snapshot.result.ok ? [captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId)] : [];
                         if (!partitions.length) unsubscribe();
-                        else if (!stop && !context.signal.aborted) {
-                            const stops = partitions.map(partition => options.subscribe(partition, () => invalidate?.()));
-                            stop = () => stops.forEach(dispose => dispose());
-                        }
+                        else if (!stop && !context.signal.aborted) stop = options.subscribe(partitions, () => invalidate?.());
                         return JSON.stringify(snapshot);
                     } catch (error: unknown) { unsubscribe(); throw error; }
                 },

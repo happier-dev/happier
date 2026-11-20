@@ -12,7 +12,7 @@ export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'ru
  projectScope: CaptureProjectScope; ownerAccountId: string; physicalRootIdentity: string;
 }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
-type PartitionListener = (partitions: readonly string[]) => void;
+type PartitionListener = () => void;
 type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: DaemonDatabaseService; account?: PluginAccountStorageScope } } };
 type RunningCapture = {
  runtime: CaptureRuntime;
@@ -29,7 +29,9 @@ export function createCaptureBackgroundOwner() {
  let shared: { runtime: CaptureRuntime; bindings: Set<Binding> } | null = null;
  const listeners = new Map<string, Set<PartitionListener>>();
  function publish(partitions: readonly string[]) {
-  for (const partition of partitions) for (const listener of listeners.get(partition) ?? []) listener([partition]);
+  const affected = new Set<PartitionListener>();
+  for (const partition of partitions) for (const listener of listeners.get(partition) ?? []) affected.add(listener);
+  for (const listener of affected) listener();
  }
  const databaseDefinition = { ...captureDatabaseDefinition, onRetention(change: DaemonDatabaseRetentionChange) { publish(change.keys); } };
  async function acquireRuntime(context: CaptureRuntimeContext): Promise<{ runtime: CaptureRuntime; release(): Promise<void> }> {
@@ -102,11 +104,18 @@ export function createCaptureBackgroundOwner() {
   },
   run: run satisfies BackgroundServiceRunner,
   readRuntime(): CaptureRuntime | null { return shared?.runtime ?? null; },
-  subscribe(partition: string, listener: PartitionListener): () => void {
-   const selected = listeners.get(partition) ?? new Set<PartitionListener>();
-   listeners.set(partition, selected);
-   selected.add(listener);
-   return () => { selected.delete(listener); if (!selected.size) listeners.delete(partition); };
+  subscribe(partitions: readonly string[], listener: PartitionListener): () => void {
+   for (const partition of partitions) {
+    const selected = listeners.get(partition) ?? new Set<PartitionListener>();
+    listeners.set(partition, selected);
+    selected.add(listener);
+   }
+   return () => {
+    for (const partition of partitions) {
+     const selected = listeners.get(partition);
+     if (selected?.delete(listener) && !selected.size) listeners.delete(partition);
+    }
+   };
   },
   async acquireLocalCapture(input: LocalCaptureInput): Promise<LocalCaptureLease> {
    const state = running;

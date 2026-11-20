@@ -168,12 +168,17 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         targets(scope: DatabaseTargetsListInputV1['scope']) {
             return resource<DatabaseTargets>(key(['targets', scope]), async () => {
                 const result = await client.targets({ scope }, reads.signal);
+                const machineReads = new Map<string, ReturnType<NonNullable<typeof client.machineDisplayName>>>();
                 return { targets: await Promise.all(result.targets.map(async descriptor => {
                     const targetKey = workbenchTargetKey(descriptor.target);
                     targets.set(targetKey, descriptor);
                     const source = descriptor.target.kind === 'worktree' ? descriptor.target.source : undefined;
-                    const machine = await client.machineDisplayName?.({ serverId: descriptor.placement.serverId,
-                        machineId: descriptor.placement.machineId }, { signal: reads.signal });
+                    const { serverId, machineId } = descriptor.placement;
+                    const machineKey = key([serverId, machineId]);
+                    if (client.machineDisplayName && !machineReads.has(machineKey)) {
+                        machineReads.set(machineKey, client.machineDisplayName({ serverId, machineId }, { signal: reads.signal }));
+                    }
+                    const machine = await machineReads.get(machineKey);
                     return { targetKey, target: descriptor.target, name: descriptor.label, engineLabel: databaseEngineName(descriptor.engine),
                         origin: source?.kind === 'service' ? { variable: source.variable, serviceName: source.serviceId } : { connectedBy: descriptor.origin.label },
                         endpointLabel: descriptor.endpointLabel ?? null, relationCount: null,
