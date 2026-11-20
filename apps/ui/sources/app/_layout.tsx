@@ -80,6 +80,7 @@ import { configureNotificationCategories } from '@/activity/notifications/config
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 import { runAppBootSequence, reportDesktopAppBootPhase, type AppBootPhase, type AppBootReadyState } from '@/boot/runAppBootSequence';
 import { AppBootPendingSurface } from '@/boot/AppBootPendingSurface';
+import { AppLaunchState } from '@/components/appShell/workspace/AppLaunchState';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { prepareWarmCacheStorage } from '@/sync/domains/state/warmCachePersistence';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
@@ -756,9 +757,12 @@ function AppBoot() {
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
     const { opening, admitOpening } = useFirstOpenBoot();
-    const renderFirstOpen = (content: React.ReactNode) => opening
-        ? <FirstOpenHost opening={opening}>{content}</FirstOpenHost>
-        : content;
+    const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
+        <>
+            {launch}
+            {opening ? <FirstOpenHost opening={opening} bootPending={launch !== undefined}>{content}</FirstOpenHost> : content}
+        </>
+    );
 
     React.useEffect(() => {
         clearSessionSurfaceVisibilityForNonSessionRoute(pathname);
@@ -835,7 +839,10 @@ function AppBoot() {
 
     if (bootError) throw bootError;
     if (!initState) {
-        return renderFirstOpen(<AppBootPendingSurface phase={bootPhase} />);
+        const pending = <AppBootPendingSurface phase={bootPhase} />;
+        return primaryRealm && Platform.OS === 'web'
+            ? renderFirstOpen(null, <AppLaunchState testID="app-boot-loading">{pending}</AppLaunchState>)
+            : renderFirstOpen(pending);
     }
 
     //

@@ -30,6 +30,24 @@
         flex: 1;
       }
     </style>
+    <style>
+      html.launch-shell body { margin: 0; }
+      html.launch-shell #root:empty {
+        background: #f5f5f5 url("/launch-planet-light.png") center / 256px no-repeat;
+      }
+      @media (prefers-color-scheme: dark) {
+        html.launch-shell #root:empty {
+          background-color: #141212;
+          background-image: url("/launch-planet-dark.png");
+        }
+      }
+    </style>
+    <script>
+      // Embed previews and desktop auxiliary webviews own their canvas, including transparent presenters.
+      if (!location.pathname.startsWith('/desktop/') && !location.pathname.startsWith('/embed/')) {
+        document.documentElement.classList.add('launch-shell');
+      }
+    </script>
   </head>
 
   <body>

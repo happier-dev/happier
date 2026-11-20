@@ -27,15 +27,36 @@ export const travellerGlyphLayer = (options) => ({ kind: 'traveller', ...options
 export const frontGlyphLayer = (options) => ({ kind: 'front', ...options });
 export const placedGlyphLayer = (cells) => ({ kind: 'placed', cells });
 
+export const loadingPlanetSize = 256;
+const loadingPlanetCentre = loadingPlanetSize / 2;
+const loadingPlanetOrigin = { cx: loadingPlanetCentre, cy: loadingPlanetCentre, R: 57 };
+const loadingPlanetHalo = { top: 1, right: 1, bottom: 1, left: 1 };
+
+/** The launch poster is this scene at time zero. The same traveller tiles carry its floating digits. */
+export function createLoadingPlanetScene() {
+    const count = 14;
+    const particles = new Float32Array(count * 8);
+    const floatingDigits = travellerGlyphLayer({ particles, ink: 'sunrise', small: true, alpha: 0.62, presentationTimeS: 0 });
+    for (let index = 0; index < count; index++) particles[index * 8 + 7] = cellHash(index, 32);
+    return (seconds, origin = loadingPlanetOrigin, orbitOpacity = 1) => {
+        const phase = seconds / 3.6 * Math.PI * 2;
+        const radius = origin.R * (1 + 0.018 * (1 - Math.cos(phase)));
+        for (let index = 0; index < count; index++) {
+            const at = index * 8;
+            const seed = particles[at + 7];
+            const angle = Math.PI * 2 * (index + seed * 0.55) / count + seconds * (0.21 + seed * 0.12);
+            const orbit = radius * (1.28 + seed * 0.43 + 0.035 * Math.sin(phase + index));
+            particles[at] = particles[at + 2] = origin.cx + Math.cos(angle) * orbit;
+            particles[at + 1] = particles[at + 3] = origin.cy + Math.sin(angle) * orbit * 0.89;
+        }
+        const planet = planetGlyphLayer({ geometry: { ...origin, R: radius, rotate: -1.5, halo: loadingPlanetHalo }, digits: true, digitTimeS: 0 });
+        return [planet, orbitOpacity === 1 ? floatingDigits : { ...floatingDigits, alpha: floatingDigits.alpha * orbitOpacity }];
+    };
+}
+
 function frontEdge(shape, dx, dy, front, ragged, i, j) {
     const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : Math.max(dx, dy);
     return distance - front + (cellHash(i, j) - 0.5) * ragged;
-}
-
-function planetDecode(planet, fx, fy, i, j) {
-    if (planet.decode >= 1) return 1;
-    const edge = frontEdge('superellipse', fx, fy + 0.8, 2.8 * planet.decode, 0.18, i, j);
-    return 1 - fadeBetween(edge, -0.07, 0.05);
 }
 
 function writeSprite(out, x, y, glyph, color, alpha) {
@@ -69,7 +90,6 @@ function planetPresentation(layer, time) {
         halo: geometry.halo,
         gain: layer.gain ?? 1,
         ring: layer.ring,
-        decode: layer.decode ?? 1,
         assembly: layer.assemble ? clamp((time - (layer.assemble.startS ?? 0)) / layer.assemble.durationS) : 1,
     };
 }
@@ -118,7 +138,7 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
     const { cx, cy, R, spin, rotate, light, reveal, glow, assembly, halo } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, glow, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, glow, assembly, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
     const size = cols * rows;
     const reuse = previous?.body.rgba.length === size * 4;
@@ -154,8 +174,6 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
             const fx = (x - cx) / R;
             const distance = Math.hypot(fx, fy);
             if (distance > haloReach) continue;
-            const decoded = planetDecode(planet, fx, fy, i, j);
-            if (decoded === 0) continue;
             const shade = shadePlanetDot(fx * cosine - fy * sine, fx * sine + fy * cosine, i, j, sample);
             const appearance = (assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2)) * fadeBetween(assembly, 0, 0.12);
             const n = j * cols + i;
@@ -164,12 +182,12 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
                 rgba[n * 4] = shade.rgb[0];
                 rgba[n * 4 + 1] = shade.rgb[1];
                 rgba[n * 4 + 2] = shade.rgb[2];
-                cells.wash[n] = glyphWash * decoded * appearance;
+                cells.wash[n] = glyphWash * appearance;
             }
             const sides = inside ? 1 : ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (distance * distance || 1);
             const amount = shade.light * sides;
             if (amount < 0.04) continue;
-            const base = decoded * appearance * foot;
+            const base = appearance * foot;
             // The lattice: dots on a fixed 4 px pitch, each lit when the cell's light passes its ordered dither.
             const peak = Math.max(shade.rgb[0], shade.rgb[1], shade.rgb[2]);
             for (let c = 0; c < 3; c++) dot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - shade.rgb[c]) * 1.4, 0, 255)) : shade.rgb[c];

@@ -16,7 +16,6 @@ export type PlanetGlyphOptions = Readonly<{
     digitTimeS?: number;
     fade?: Readonly<{ from: number; to: number }>;
     assemble?: Timing;
-    decode?: number;
     fall?: Timing & Readonly<{ from: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'> }>;
     settle?: Timing;
     gain?: number;
@@ -107,6 +106,10 @@ export function planetGlyphLayer(options: PlanetGlyphOptions): PlanetGlyphLayer;
 export function markGlyphLayer(options: MarkGlyphOptions): MarkGlyphLayer;
 export function markGlyphTone(layer: Pick<MarkGlyphOptions, 'centre' | 'size'>, x: number, y: number): number;
 export function travellerGlyphLayer(options: TravellerGlyphOptions): TravellerGlyphLayer;
+export const loadingPlanetSize: number;
+export function createLoadingPlanetScene(): (
+    seconds: number, origin?: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'>, orbitOpacity?: number,
+) => readonly [PlanetGlyphLayer, TravellerGlyphLayer];
 export function frontGlyphLayer(options: FrontGlyphOptions): FrontGlyphLayer;
 /** Pre-positioned cells packed as CSS x, CSS y, atlas index, R, G, B, and opacity. */
 export function placedGlyphLayer(cells: Float32Array): PlacedGlyphLayer;

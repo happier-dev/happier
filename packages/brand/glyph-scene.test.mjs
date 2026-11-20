@@ -42,14 +42,24 @@ test('the default planet ink is full-colour across signed-out poses', () => {
     }
 });
 
-test('the Loading front decodes into the same planet at its selected intensity', () => {
-    const geometry = horizonPlanetGeometry({ width: 390, height: 844 }, { phone: true, composerTop: 290 });
-    const layer = planetGlyphLayer({ geometry, intensity: 'full', digits: true });
-    const resting = render([layer]);
-    const decoding = render([{ ...layer, decode: 0.4 }]);
-    const alpha = (frame) => frame.body.rgba.filter((value, index) => index % 4 === 3 && value > 0).length;
-    assert.ok(alpha(decoding) > 0 && alpha(decoding) < alpha(resting));
-    assert.deepEqual(render([{ ...layer, decode: 1 }]), resting);
+test('the launch planet breathes on a slow cycle while its outer digits orbit', async () => {
+    const { createLoadingPlanetScene, loadingPlanetSize } = await import('./glyph-scene.mjs');
+    const sample = createLoadingPlanetScene();
+    const draw = (time) => glyphFrame({ view: { w: loadingPlanetSize, h: loadingPlanetSize }, dpr: 1, theme: 'dark', layers: sample(time) });
+    const still = draw(0);
+    const peak = draw(1.8);
+    const cycle = draw(3.6);
+    assert.equal(still.body.disc.cx, loadingPlanetSize / 2);
+    assert.equal(still.body.disc.cy, loadingPlanetSize / 2);
+    assert.ok(peak.body.disc.R > still.body.disc.R * 1.02 && peak.body.disc.R < still.body.disc.R * 1.06);
+    assert.equal(cycle.body.disc.R, still.body.disc.R);
+    const orbit = (frame) => [...frame.sprites.glyph].flatMap((tile, index) => tile >= 10 && tile < 20
+        ? [[frame.sprites.at[index * 2], frame.sprites.at[index * 2 + 1]]]
+        : []);
+    assert.ok(orbit(still).length > 0, 'the pre-bundle Still frame contains the floating digits');
+    assert.equal(orbit(still).length, orbit(peak).length);
+    assert.notDeepEqual(orbit(still), orbit(peak));
+    assert.deepEqual(draw(0), still, 'the Still frame has no time dependence');
 });
 
 test('travellers land at the specified endpoint and fronts sample deterministically', () => {

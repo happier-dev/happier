@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, AppState, Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Animated, AppState, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
@@ -23,9 +23,10 @@ export function useFirstOpenContentLayout() {
 }
 
 /** Presents the prepared decoration if available at the destination's first usable layout. */
-export function FirstOpenHost({ opening, children }: Readonly<{
+export function FirstOpenHost({ opening, children, bootPending = false }: Readonly<{
     opening: FirstOpenAdmission;
     children: ReactNode;
+    bootPending?: boolean;
 }>) {
     const { decision } = opening;
     const scene = decision === 'in-app' ? opening.scene : null;
@@ -173,7 +174,8 @@ export function FirstOpenHost({ opening, children }: Readonly<{
     const skipTouch = playing && Platform.OS !== 'web' ? () => skip() : undefined;
     const Scene = scene?.FirstOpenScene;
     return (
-        <View style={{ flex: 1, position: 'relative' }} onTouchStart={skipTouch}>
+        <View style={bootPending ? [StyleSheet.absoluteFillObject, { opacity: 0 }] : { flex: 1, position: 'relative' }}
+            pointerEvents={bootPending ? 'none' : undefined} onTouchStart={skipTouch}>
             <Animated.View style={{ flex: 1, opacity }}>
                 <FirstOpenContentLayout.Provider value={phase === 'preparing' ? onFirstLayout : null}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>

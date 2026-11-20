@@ -20,6 +20,13 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
     splitStreamingRevealTextParts: () => { throw new Error('Markdown is outside this Account restoration journey'); },
 }));
 
+vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: media === '(prefers-reduced-motion: reduce)',
+    addEventListener: () => {},
+    removeEventListener: () => {},
+}));
+
 await initializeRealAppRuntimeForTests();
 const { AuthProvider, InjectedAuthProvider, useAuth } = await import('@/auth/context/AuthContext');
 const { AppShellPluginUiProjectionProvider } = await import('../plugins/AppShellPluginUiProjection');
@@ -155,9 +162,7 @@ it('shows the startup state, then the Home Retry, while the first Account waits 
         expect(storage.getState().isDataReady).toBe(false);
         expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(0);
         expect(byTestId('workspace-account-restoring').length).toBeGreaterThan(0);
-        // Startup is the app's own launch state (its mark and a quiet progress cue), not a list's skeleton:
-        // nothing is known yet about the page that will open (owner 2026-11-11, item 01).
-        expect(byTestId('workspace-account-restoring-mark').length).toBeGreaterThan(0);
+        expect(byTestId('workspace-account-restoring-planet-still').length).toBeGreaterThan(0);
         expect(screen.root.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.includes('skeleton'))).toHaveLength(0);
         // The Home stops answering: the same unreachable state and Retry the app shows elsewhere.
         await act(async () => {

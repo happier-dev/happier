@@ -2,11 +2,12 @@ import * as React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet';
+import { createLoadingPlanetScene } from '@happier-dev/brand/glyph-scene';
 import { measureInWindow } from '@/components/ui/popover/measure';
 import { GlyphSurface } from '../glyph/GlyphSurface';
 import type { HomePane } from '../homePlanetPlacement';
 import {
-  loadingPlanetLayer,
+  loadingPlanetLayers,
   loadingPlanetOrigin,
   loadingPlanetPhase,
   type LoadingPlanetPhase,
@@ -223,7 +224,7 @@ function HomeLoadingGlyph(props: Readonly<{
   onStage: (stage: LoadingPlanetStage, fast: boolean, still: boolean) => void;
 }>) {
   const { pane, onStage } = props;
-  const { GRACE, RESOLVE } = PLANET_MOMENT_TIMINGS.L4;
+  const { GRACE } = PLANET_MOMENT_TIMINGS.L4;
   const ready = props.ready && props.target !== null;
   const target = props.target?.kind === 'planet' ? props.target : null;
   const [backend, setBackend] = React.useState<GlyphSurfaceReadiness | null>(null);
@@ -261,7 +262,7 @@ function HomeLoadingGlyph(props: Readonly<{
     }
     if (!still && previous.kind === next.kind) drawAtRef.current?.(seconds);
   }, [coverOpacity, onStage, planetOpacity, ready, still, target]);
-  const durationS = ready ? Infinity : GRACE + (still ? 0 : RESOLVE);
+  const durationS = !ready && still ? GRACE : Infinity;
   const paused = props.paused || kind === 'landed';
   const motion = React.useMemo(() => ({ kind: 'elapsed' as const, durationS, paused }), [durationS, paused]);
   useGlyphClock(motion, 'ready', sample);
@@ -269,13 +270,13 @@ function HomeLoadingGlyph(props: Readonly<{
   React.useEffect(() => {
     if (ready && phase.current.kind !== 'landed') onStage('resolving', false, still);
   }, [onStage, ready, still]);
+  const loadingScene = React.useMemo(createLoadingPlanetScene, []);
   const scene = React.useCallback((_seconds: number, readiness?: GlyphSurfaceReadiness) => {
     const visualPhase = readiness === 'still'
       ? loadingPlanetPhase(GRACE, null, { reducedMotion: true, toPlanet: target !== null })
       : phase.current;
-    const layer = loadingPlanetLayer(visualPhase, pane, props.origin ?? loadingPlanetOrigin(pane), target);
-    return layer ? [layer] : [];
-  }, [GRACE, pane, props.origin, target]);
+    return loadingPlanetLayers(loadingScene, visualPhase, props.origin ?? loadingPlanetOrigin(pane), target);
+  }, [GRACE, loadingScene, pane, props.origin, target]);
   const onFinalPaint = React.useCallback(() => { onStage('landed', false, still); }, [onStage, still]);
   const travel = kind === 'travel' || kind === 'landed';
   const size = travel && target ? target.pane : pane;
@@ -298,7 +299,7 @@ function HomeLoadingGlyph(props: Readonly<{
 }
 
 /**
- * The setup surface's mark: the room the Loading cloud gathers in, sized to it. Outside a Loading host
+ * The setup surface's mark: the room for the loading planet, sized to it. Outside a Loading host
  * it keeps a fixed room so the copy below it does not move.
  */
 export function LoadingPlanetSlot(props: Readonly<{ fallbackSize: number; style?: StyleProp<ViewStyle>; testID?: string }>) {

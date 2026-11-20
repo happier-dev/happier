@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { PixelRatio, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { createLoadingPlanetScene, fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import { createThemeHorizonGlyphSampler, themeHorizonGlyphCell } from '@happier-dev/brand/planet-moments';
 
 import { PairingQrMomentCanvas } from '@/components/auth/pairing/PairingQrMoment';
 import { GlyphSurface } from '@/components/atmosphere/glyph/GlyphSurface';
 import { sessionRippleLayer } from '@/components/atmosphere/sessionRipple';
-import { loadingPlanetLayer, loadingPlanetOrigin, loadingPlanetPhase } from '@/components/atmosphere/moments/planetMomentTimeline';
+import { loadingPlanetLayers, loadingPlanetOrigin, loadingPlanetPhase } from '@/components/atmosphere/moments/planetMomentTimeline';
 import { homeRiseFootFade } from '@/components/atmosphere/homePlanetPlacement';
 
 const pane = { width: 390, height: 520 };
@@ -30,6 +30,7 @@ export default function GlyphSpecimen() {
     const dark = theme === 'dark';
     const palette = dark ? 'dark' : 'light';
     const themeFrame = React.useMemo(createThemeHorizonGlyphSampler, []);
+    const loadingFrame = React.useMemo(createLoadingPlanetScene, []);
     const layers = React.useMemo(() => {
         const geometry = horizonPlanetGeometry(pane, { phone: true });
         const options = { geometry, intensity: 'quiet', digits: true } as const;
@@ -46,11 +47,10 @@ export default function GlyphSpecimen() {
         if (moment === 'loading') {
             const target = { kind: 'planet', layer: planetGlyphLayer(options), pane } as const;
             const phase = loadingPlanetPhase(seconds, seconds < 1 ? null : 1, { reducedMotion: false, toPlanet: true });
-            const layer = loadingPlanetLayer(phase, pane, loadingPlanetOrigin(pane), target);
-            return layer ? [layer] : [];
+            return loadingPlanetLayers(loadingFrame, phase, loadingPlanetOrigin(pane), target);
         }
         return scene;
-    }, [at, dark, moment, palette, themeFrame]);
+    }, [at, dark, loadingFrame, moment, palette, themeFrame]);
     const cycles = requested === '20' ? 20 : 1;
     const [draws, setDraws] = React.useState(0);
     const [status, setStatus] = React.useState('warming');

@@ -590,17 +590,20 @@ const baseExpoConfig = {
             [
                 'expo-splash-screen',
                 {
+                    imageWidth: 256,
                     ios: {
+                        image: "./public/launch-planet-light.png",
                         backgroundColor: "#F2F2F7",
                         dark: {
+                            image: "./public/launch-planet-dark.png",
                             backgroundColor: "#1C1C1E",
                         }
                     },
                     android: {
-                        image: "./sources/assets/images/splash-android-light.png",
+                        image: "./public/launch-planet-light.png",
                         backgroundColor: "#F5F5F5",
                         dark: {
-                            image: "./sources/assets/images/splash-android-dark.png",
+                            image: "./public/launch-planet-dark.png",
                             backgroundColor: "#1e1e1e",
                         }
                     }

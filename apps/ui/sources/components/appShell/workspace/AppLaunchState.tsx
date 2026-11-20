@@ -1,44 +1,77 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Image, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { createLoadingPlanetScene, loadingPlanetSize } from '@happier-dev/brand/glyph-scene';
 
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
+import type { GlyphMotion, GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 
-/** The launch mark's size: the app icon's presence, not a page title's. */
-const LAUNCH_MARK_SIZE = 44;
-
 /**
- * The app's own startup state, before the shell knows which page it will open: the Happier mark centred on the
- * window's canvas with the person's chosen spinner as a quiet progress cue (the web counterpart of the native
- * splash). A list's skeleton promises rows; at startup there is no list yet, so it would promise a structure
- * that may never come (owner 2026-11-11). Lists keep their own skeletons once the shell is up.
+ * Startup stays on the shell's Still frame until the Brand surface has painted.
+ * Boot and initial Account restore own how long this state stays mounted.
  */
 export const AppLaunchState = React.memo(function AppLaunchState(
-  props: Readonly<{ testID: string }>,
+  { testID, children }: React.PropsWithChildren<Readonly<{ testID: string }>>,
 ) {
+  const { theme } = useUnistyles();
+  const colourScheme = theme.dark ? 'dark' : 'light';
+  const reduced = useReducedMotionPreference();
   return (
-    <View
-      testID={props.testID}
-      style={styles.root}
-      accessibilityRole="progressbar"
-      accessibilityLabel={t('common.loading')}
-    >
-      <View testID={`${props.testID}-mark`} style={styles.mark}>
-        <HeaderLogo size={LAUNCH_MARK_SIZE} inset={0} />
+    <View style={styles.root}>
+      <View testID={testID} style={styles.planet} accessibilityRole="progressbar" accessibilityLabel={t('common.loading')}>
+        {reduced
+          ? <StillPlanet theme={colourScheme} testID={`${testID}-planet-still`} />
+          : <LivePlanet theme={colourScheme} testID={testID} />}
       </View>
-      <ActivitySpinner size="small" />
+      {children}
     </View>
   );
 });
+
+type LaunchPlanetProps = Readonly<{ theme: 'light' | 'dark'; testID: string }>;
+
+function StillPlanet({ theme, testID }: LaunchPlanetProps) {
+  const source = { uri: `/launch-planet-${theme}.png` };
+  return <Image accessible={false} accessibilityIgnoresInvertColors testID={testID} source={source} fadeDuration={0} style={styles.planet} />;
+}
+
+function LivePlanet({ theme, testID }: LaunchPlanetProps) {
+  const [surface, setSurface] = React.useState<typeof import('@/components/atmosphere/glyph/GlyphSurface').GlyphSurface | null>(null);
+  const [ready, setReady] = React.useState(false);
+  React.useEffect(() => {
+    let mounted = true;
+    void import('@/components/atmosphere/glyph/GlyphSurface').then(({ GlyphSurface }) => {
+      if (mounted) setSurface(() => GlyphSurface);
+    }, () => {});
+    return () => { mounted = false; };
+  }, []);
+  const scene = React.useMemo<GlyphSurfaceProps['scene']>(() => {
+    const load = createLoadingPlanetScene();
+    return (seconds, readiness) => load(readiness === 'still' ? 0 : seconds);
+  }, []);
+  const motion = React.useMemo<GlyphMotion>(() => {
+    let start: number | undefined;
+    return { kind: 'sequence', readTimeS: (now) => (now - (start ??= now)) / 1000, continues: () => true };
+  }, []);
+  const onReady = React.useCallback<NonNullable<GlyphSurfaceProps['onReady']>>(status => setReady(status === 'ready'), []);
+  const Surface = surface;
+  return <>
+    {!ready && <StillPlanet theme={theme} testID={`${testID}-planet-still`} />}
+    {Surface && <View pointerEvents="none" style={[styles.live, { opacity: ready ? 1 : 0 }]}>
+      <Surface testID={`${testID}-planet-live`} theme={theme} width={loadingPlanetSize} height={loadingPlanetSize}
+        scene={scene} motion={motion} onReady={onReady} />
+    </View>}
+  </>;
+}
 
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: theme.space.s24,
+    backgroundColor: theme.colors.background.canvas,
   },
-  mark: { alignItems: 'center', justifyContent: 'center' },
+  planet: { width: loadingPlanetSize, height: loadingPlanetSize },
+  live: { position: 'absolute', top: 0, left: 0 },
 }));
