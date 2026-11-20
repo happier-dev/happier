@@ -79,6 +79,35 @@ Passing source and component tests does not establish packaged desktop,
 iOS, or Android support; those loaded-runtime checks remain required before
 publication.
 
+## Happier controls in inline HTML (in development)
+
+In 0.3 development source, every inline `hostedHtml` document gets Happier's own
+look for a few controls without importing anything. The host's guest bootstrap,
+which already starts the SDK client, adds them. They are the same controls Happier
+draws elsewhere: sizes come from `@happier-dev/plugin-ui`'s own metrics, and colours come
+from the viewer's theme through the `--happier-plugin-color-*` properties the frame
+already receives.
+
+Write native HTML inside a `happier-*` wrapper. Your script keeps reading names,
+values and events from the native elements, and the page still works, plainly,
+where the wrapper is not styled:
+
+- `happier-tabs` (radio inputs in `<label>`s), `happier-slider` (one
+  `<input type="range">`, with `label` and `unit`), `happier-select` (one
+  `<select>`) and `happier-toggle` (a checkbox, drawn as a switch)
+- `happier-button`, `happier-stats` / `happier-stat`, `happier-legend` and
+  `happier-table`
+
+```html
+<happier-slider label="Base delay" unit="ms">
+  <input type="range" name="delay" min="100" max="2000" step="50" value="400">
+</happier-slider>
+```
+
+Each element's attributes and accessibility notes are in
+[Happier controls in authored HTML](/sessions/session-board#happier-controls-in-authored-html-in-development).
+The controls add no host methods or network access.
+
 ## Widget operations in development
 
 In 0.3 development / Developer Preview authoring, hosted HTML pages do not

@@ -8276,6 +8276,19 @@ Hosted HTML deliberately has no inline binding bridge, and unsupported hosts kee
 bound commits disabled or read-only, without a raw-call fallback. Action.Control
 continues to use its host slot outside the hosted HTML iframe.
 
+Hosted HTML documents (agent visuals and plugin `hostedHtml` bundles) get the
+Happier HTML control kit (`happier-tabs`, `-slider`, `-select`, `-toggle`,
+`-button`, `-stats`, `-legend`, `-table`) from the one guest bootstrap. The kit lives in
+`packages/plugin-ui/src/hostedHtml/hostedHtmlKit.ts`. It draws every size from the plugin-ui
+presentation metric modules that the React controls also read, for example
+`HAPPIER_SLIDER_METRICS`, which core's `Slider` draws too. It names its theme
+properties through `buildPluginUiThemeCssVariables`. The app's
+`ensureWorkspacePackagesBuilt.mjs` passes it as `presentationKit` to the SDK's
+`buildHostedHtmlGuestBootstrap.mjs`, because plugin-sdk cannot import plugin-ui. The kit
+wraps native elements, so values and events stay with the authored page, and it adds no
+host API. The author-facing description is in the published hosted web and
+Session Board pages.
+
 For author tests, `createPluginUiActionControlTestHost(execute)` from
 `@happier-dev/plugin-sdk/testing` supplies the host gesture/executor boundary.
 Pass its `handler` as the existing UI testkit's `actionControl` handler, mount
