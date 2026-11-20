@@ -739,11 +739,14 @@ exact-worker package typechecks and the controller declaration comparison as
 `gate-declaration-comparison`. The broker learns each class and selected-project
 identity in the ordinary queue. Syntax, eager cycles, manifests and ordinary
 CAS need no admission slot. Report-mode entry loads queue under the same owner.
-After two lost attempts, the final entry recheck obtains admission before
-taking the commit lock and retains it through the ref update. While locked,
-it loads only the packet's entry graphs whose inputs changed since the last
-unlocked pass. If admission is refused, the gate reports an incomplete result
-and leaves the ref at the winning commit.
+After two lost attempts, the final replay reserves its entry and declaration
+admission before taking the commit lock and retains the grants through the
+ref update. If both are needed, the second request must settle immediately.
+While locked, the gate loads only entry graphs and compares only Protocol
+and Plugin SDK declaration scopes whose inputs changed since the last
+unlocked pass. The final declaration comparison uses the preadmitted
+controller and its published install. If an admission or exact comparison
+is incomplete, the ref stays at the winning commit.
 
 For Protocol and Plugin SDK declarations, the controller admits the original
 comparison, materializing one exact Git tree at a time. The dispatcher removes

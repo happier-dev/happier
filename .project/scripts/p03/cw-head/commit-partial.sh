@@ -26,6 +26,7 @@ done
 branch=$(git symbolic-ref --short HEAD)
 tooling=$(cd -- "$(dirname "$SELF")/../../../.." && pwd -P)
 entry_phase=${P03_CP_ENTRY_PHASE:-0}
+declaration_phase=${P03_CP_DECLARATION_PHASE:-0}
 entry_block=0
 if [[ ${HAPPIER_COMMIT_TREE_GATE:-} =~ ^[[:space:]]*block[[:space:]]*$ ]]; then entry_block=1; fi
 # The gate is a separate process; P03_COMMIT_GATE replaces it in scratch-repo selftests.
@@ -62,7 +63,7 @@ cacheRoot=$(realpath -m -- "${P03_GATE_CACHE:-$HOME/.happier-stack/cache/p03-com
 packetDir=
 exec 9>"$LOCK"
 trap 'rc=$?; unlock 2>/dev/null || true; cleanup_gate; [ -z "$packetDir" ] || rm -rf -- "$packetDir";
-      if [ "$entry_phase" = 1 ] && [ "$rc" = 1 ]; then exit 10; fi' EXIT
+      if [ "$entry_phase:$declaration_phase" != 0:0 ] && [ "$rc" = 1 ]; then exit 10; fi' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p "$cacheRoot/head"
@@ -246,23 +247,76 @@ entry_admission_incomplete() {
   printf 'commit gate incomplete (tree entry loads): {"code":"entry-load-admission-unavailable","status":%s}\n' "$1"
   exit 11
 }
-# The caller has released the commit lock. Reserve the packet's reachable graph
-# set because HEAD may keep moving in the broker queue. The admitted child
-# selects the exact smaller set again from the landed commits after locking.
-admit_final_entry_phase() {
-  [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ] || return 0
+declaration_admission_incomplete() {
+  printf 'commit gate incomplete (package declarations): {"code":"declaration-comparison-incomplete","reason":"admission-unavailable","status":%s}\n' "$1"
+  return 11
+}
+run_final_declaration_phase() {
+  local launcher=$1 projects=$2
+  local no_wait=() status=()
+  # A second grant must be independent from entry admission. The broker must
+  # settle it immediately so no entry holder waits on a declaration holder.
+  if [ "$entry_phase" = 1 ]; then no_wait=(--no-wait); fi
+  (
+    export P03_GATE_ENTRY_ADMISSION_SLOT=${HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT:-}
+    unset HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB
+    "$launcher" --heavyweight-admission --class=gate-declaration-comparison --machine=local "--projects=$projects" \
+      --identity-arg=node --identity-arg=scripts/workspaces/commitGateTypecheck.mjs "${no_wait[@]}" \
+      -- bash -c 'export P03_CP_DECLARATION_PHASE=1; exec bash "$@"' commit-declaration-phase "$SELF" "${ARGS[@]}"
+  ) 9>&- | awk '
+    /^HAPPIER_DECLARATION_COMPARISON_INCOMPLETE / {
+      sub(/^[^ ]+ /, "")
+      print "commit gate incomplete (package declarations): {\"code\":\"declaration-comparison-incomplete\",\"stall\":" $0 "}"
+      stalled = 1
+      fflush()
+      next
+    }
+    { print; fflush() }
+    END { if (stalled) exit 11 }'
+  status=("${PIPESTATUS[@]}")
+  if [ "${status[1]}" = 11 ]; then return 11; fi
+  case ${status[0]} in
+    0|3|10|11|130|143) return "${status[0]}";;
+    *) declaration_admission_incomplete "${status[0]}";;
+  esac
+}
+# Reserve for the frozen packet's reachable set while the lock is free.
+# The gate narrows both comparisons to the actual new commits after locking.
+admit_final_phase() {
+  [ "$declaration_phase" = 0 ] && [ "$cas_losses" -ge 2 ] || return 0
   [ "$(git rev-parse HEAD)" != "$head" ] || return 0
-  local projects launcher=$tooling/apps/stack/bin/hstack-exec rc=0
-  projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
-  [ -n "$projects" ] || return 0
+  local entry_projects declaration_projects launcher=$tooling/apps/stack/bin/hstack-exec rc=0
   [ ! -x ./apps/stack/bin/hstack-exec ] || launcher=./apps/stack/bin/hstack-exec
+  if [ "$entry_phase" = 1 ]; then
+    [ -n "${P03_CP_DECLARATION_PROJECTS:-}" ] || return 0
+    P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses \
+      P03_CP_RECHECKED_AFTER_RELEASE=0 P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
+      run_final_declaration_phase "$launcher" "$P03_CP_DECLARATION_PROJECTS" || rc=$?
+    packetDir=
+    exit "$rc"
+  fi
+  entry_projects=
+  if [ "$entry_block" = 1 ]; then
+    entry_projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
+  fi
+  declaration_projects=$(node "$tooling/scripts/workspaces/commitGate.mjs" --select-declarations "--base=$head" "--tree=$gated") || {
+    declaration_admission_incomplete "$?"
+    exit 11
+  }
+  [ -n "$entry_projects$declaration_projects" ] || return 0
   while [ "$(git rev-parse HEAD)" != "$head" ]; do
     rc=0
-    P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=0 \
-      P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
-      "$launcher" --heavyweight-admission --class=gate-entry-loads --machine=local "--projects=$projects" \
-      --identity-arg=node --identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs \
-      -- bash -c 'export P03_CP_ENTRY_PHASE=1; exec bash "$@"' commit-entry-phase "$SELF" "${ARGS[@]}" 9>&- || rc=$?
+    export P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=0
+    export P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds P03_CP_DECLARATION_PROJECTS=$declaration_projects
+    if [ -n "$entry_projects" ]; then
+      "$launcher" --heavyweight-admission --class=gate-entry-loads --machine=local "--projects=$entry_projects" \
+        --identity-arg=node --identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs \
+        -- bash -c 'export P03_CP_ENTRY_PHASE=1; exec bash "$@"' commit-entry-phase "$SELF" "${ARGS[@]}" 9>&- || rc=$?
+    else
+      run_final_declaration_phase "$launcher" "$declaration_projects" || rc=$?
+    fi
+    unset P03_CP_FROZEN P03_CP_GATED P03_CP_CAS_LOSSES P03_CP_RECHECKED_AFTER_RELEASE
+    unset P03_CP_FINAL_PREPARED P03_CP_ROUNDS P03_CP_DECLARATION_PROJECTS
     case $rc in
       0|11|130|143) exit "$rc";;
       10) exit 1;;
@@ -281,12 +335,13 @@ admit_final_entry_phase() {
   done
 }
 locked_recheck() {
-  local rc=0 t0=$SECONDS prior=$gated final_entry_recheck=
+  local rc=0 t0=$SECONDS prior=$gated final_entry_recheck= final_declaration_recheck=
   while :; do
     replay_onto_now
     if [ "$cas_losses" -ge 2 ]; then
       echo "two CAS losses; final scoped recheck under the commit lock"
       if [ "$entry_phase" = 1 ]; then final_entry_recheck=1; fi
+      if [ "$declaration_phase" = 1 ]; then final_declaration_recheck=1; fi
     fi
     if both_sides_deps; then
       prior=
@@ -295,6 +350,7 @@ locked_recheck() {
     else
       rc=0
       P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$prior P03_GATE_FINAL_ENTRY_RECHECK=$final_entry_recheck \
+        P03_GATE_FINAL_DECLARATION_RECHECK=$final_declaration_recheck \
         rungate "$GATE" "$now" "$commit" || rc=$?
     fi
     case $rc in
@@ -307,8 +363,8 @@ locked_recheck() {
     echo "recheck needs the full path (exit $rc); releasing the commit lock"
     if [ "$cas_losses" -lt 2 ]; then requeue_after_full_gate "$prior"; fi
     unlock
-    # Non-entry preparation must leave the entry slot before it queues.
-    if [ "$entry_phase" = 1 ]; then packetDir=; exit 3; fi
+    # Preparation must release both broker grants before it queues.
+    if [ "$entry_phase:$declaration_phase" != 0:0 ]; then packetDir=; exit 3; fi
     if [ "$final_prepared" -eq 1 ]; then final_recheck_incomplete; fi
     final_prepared=1
     P03_GATE_PRIOR=$prior check_gate "$now" final
@@ -332,14 +388,14 @@ reexec_if_replaced
 if [ "$rechecked_after_release" -eq 1 ] && [ "$(git rev-parse HEAD)" != "$head" ]; then
   cas_losses=$((cas_losses + 1)); rechecked_after_release=0
 fi
-admit_final_entry_phase
+admit_final_phase
 lock
 now=$(git rev-parse HEAD)
 if [ "$now" != "$head" ]; then
   rounds=$((rounds + 1))
   if [ "$rechecked_after_release" -eq 1 ]; then cas_losses=$((cas_losses + 1)); fi
-  if [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ]; then
-    unlock; admit_final_entry_phase; lock
+  if [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$cas_losses" -ge 2 ]; then
+    unlock; admit_final_phase; lock
     now=$(git rev-parse HEAD)
   fi
   if [ "$now" != "$head" ]; then locked_recheck; fi
@@ -352,8 +408,8 @@ while ! git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)
   echo "CAS lost to a commit outside the wrapper (reflog: $(git reflog -1 --format=%gs "refs/heads/$branch" 2>/dev/null | cut -c1-80)); replaying the frozen packet"
   cas_losses=$((cas_losses + 1))
   rounds=$((rounds + 1))
-  if [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ]; then
-    unlock; admit_final_entry_phase; lock
+  if [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$cas_losses" -ge 2 ]; then
+    unlock; admit_final_phase; lock
     now=$(git rev-parse HEAD)
   fi
   if [ "$now" != "$head" ]; then locked_recheck; fi

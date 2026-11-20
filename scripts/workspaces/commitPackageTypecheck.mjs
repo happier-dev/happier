@@ -658,18 +658,18 @@ const GATE_DECLARATION_COMPARISON_CLASS = 'gate-declaration-comparison';
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
  * A cached-only comparison uses existing rows and returns unavailable for any missing side.
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers, cachedOnly = false }) {
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers, cachedOnly = false, requireInherited = false }) {
   const plan = packages ? { blocking: packages, detached: [] } : commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const worker = workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY, workers });
   const controller = packages && !workers && existsSync(join(repo, 'node_modules', 'typescript'))
-    ? controllerDeclarationRows({ repo, env, log }) : null;
+    ? controllerDeclarationRows({ repo, env, log, requireInherited }) : null;
   const compare = remote ?? (controller ? async (trees, dirs, sides) => {
     const rows = await controller(trees, dirs, sides);
-    if (rows.stall || rows.cancelled || trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
+    if (requireInherited || rows.stall || rows.cancelled || trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
     log('[commit-package-typecheck] controller comparison incomplete; trying exact-tree workers');
     return await worker(trees, dirs, sides);
-  } : worker);
+  } : requireInherited ? async () => new Map() : worker);
   let stall;
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly,
     remote: async (...args) => {
@@ -1156,7 +1156,7 @@ async function withControllerDeclarationScratch(env, run) {
 }
 
 /** The scoped gate can judge locally with the controller's published install. */
-function controllerDeclarationRows({ repo, env, log }) {
+function controllerDeclarationRows({ repo, env, log, requireInherited }) {
   return async (trees, packages, sides) => {
     const { getForegroundCommandResult, spawnForegroundCommand } = await import('../../apps/stack/scripts/utils/proc/proc.mjs');
     const { result: run, cancelled } = await withControllerDeclarationScratch(env, async (scratch, stop) => {
@@ -1164,6 +1164,7 @@ function controllerDeclarationRows({ repo, env, log }) {
       log(`[commit-package-typecheck] controller declaration comparison for ${sides.join('+')} (${trees.join(', ')}) scratch=${scratch}`);
       const [executable, ...args] = admittedCommand(repo, [process.execPath, COMMIT_GATE_TYPECHECK_ENTRY, '--compiler-admitted'],
         false, packages.join('\n'), GATE_DECLARATION_COMPARISON_CLASS, { trees, files: packages }, join(repo, 'apps/stack/bin/hstack-exec'));
+      if (requireInherited && process.platform !== 'win32') args.splice(args.indexOf('--'), 0, '--require-inherited');
       // Wait for the owned process group to stop before removing its scratch.
       return await new Promise(resolve => {
         const child = spawnForegroundCommand(executable, args, { cwd: repo, stdio: ['ignore', 'pipe', 'inherit'],

@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests, PLUGIN_MANIFEST_INPUT } from './commitPluginManifests.mjs';
 import { commitLockfile } from './commitLockfile.mjs';
-import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
+import { commitChangedPaths, commitProducerClosure, COMMIT_SOURCE_PATH, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { commitTreeGateMode, commitTreeEntryLoads, EntryLoadAdmissionUnavailable, selectWorkspaceClosureInputs,
@@ -30,6 +30,10 @@ export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, incomplete
 
 const P03_DECLARATION_PACKAGES = ['packages/protocol', 'packages/plugin-sdk'];
 const SHARED_DECLARATION_INPUT = /^(?:package\.json$|pnpm-(?:lock|workspace)\.yaml$|\.npmrc$|tsconfig[^/]*\.json$|patches\/|scripts\/workspaces\/|\.github\/feature-policy\/)/u;
+
+function declarationPacketScopes(paths) {
+  return P03_DECLARATION_PACKAGES.filter(dir => paths.some(({ path }) => path.startsWith(`${dir}/src/`) && COMMIT_SOURCE_PATH.test(path)));
+}
 
 async function changedDeclarationScopes(repo, base, tree, prior, priorBase, scopes) {
   if (!prior || !scopes.length) return scopes;
@@ -84,7 +88,7 @@ export async function runCommitGate(options) {
   }
 }
 
-async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, compareAdmittedEntryLoads, env = process.env, cacheDir, label = 'commit-gate' }) {
+async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, finalDeclarationRecheck = false, compareAdmittedEntryLoads, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
   const treeMode = commitTreeGateMode(env);
@@ -97,9 +101,9 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     reason: { code: 'declaration-comparison-incomplete', packages, ...(stall ? { stall } : {}) },
   });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
-  const checkTypes = (packages, cachedOnly = false) => judge('package typecheck', async () => {
+  const checkTypes = (packages, cachedOnly = false, requireInherited = false) => judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
-    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages, cachedOnly });
+    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages, cachedOnly, requireInherited });
     return { ...result, refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
   });
   const typecheck = typecheckMode === 'block' && !prior && !cheapOnly ? checkTypes() : null;
@@ -110,7 +114,8 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   if (syntax.findings.length) return refused('syntax', syntax.findings);
 
   const readView = createRevisionViewReader(repo);
-  const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView }));
+  const paths = commitChangedPaths({ repo, base, tree });
+  const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView, paths }));
   if (closure.findings.length) return refused('producer closure', closure.findings);
   const boundary = await judge('plugin import boundary', () => commitExtensionBoundaries({ repo, base, tree }));
   if (boundary.findings.length) return refused('plugin import boundary', boundary.findings);
@@ -133,11 +138,11 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
 
   // R2 judges only authored Protocol and Plugin SDK packet scopes in the P03 wrapper.
   const scopes = label === 'commit-partial'
-    ? P03_DECLARATION_PACKAGES.filter(dir => closure.changedSources.some(({ path }) => path.startsWith(`${dir}/src/`)))
+    ? declarationPacketScopes(paths)
     : [];
   const declarations = await changedDeclarationScopes(repo, base, tree, prior, priorBase, scopes);
   if (declarations.length) {
-    const result = await (typecheck ?? checkTypes(declarations, cheapOnly));
+    const result = await (typecheck ?? checkTypes(declarations, cheapOnly && !finalDeclarationRecheck, finalDeclarationRecheck));
     notes.push(...result.lines);
     if (result.stall) return declarationsIncomplete(declarations, result.stall);
     if (result.fresh.length) return refused('new type errors in a package the packet touches', result.lines);
@@ -145,7 +150,7 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
       || result.incomplete.includes(dir) || result.unavailable.includes(dir));
     if (unjudged.length) {
       const check = 'package declarations';
-      if (cheapOnly) return { verdict: 'needs-full', check, findings: [], notes };
+      if (cheapOnly && !finalDeclarationRecheck) return { verdict: 'needs-full', check, findings: [], notes };
       return declarationsIncomplete(unjudged);
     }
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
@@ -158,8 +163,11 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
   }
 
+  // The controller keeps distinct broker grants for declaration and entry work.
+  const entryEnv = env.P03_GATE_ENTRY_ADMISSION_SLOT
+    ? { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: env.P03_GATE_ENTRY_ADMISSION_SLOT } : env;
   if (treeMode === 'block') {
-    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
+    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env: entryEnv, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
     if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
     if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
   } else if (treeMode === 'report' && !prior && !cheapOnly) {
@@ -320,18 +328,23 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
     if (!option('base') || !option('tree')) throw Object.assign(new Error('usage: commitGate.mjs --base=<rev> --tree=<tree-ish> [--prior=<tree-ish>] [--cheap-only]'), { unavailable: true });
-    const result = await runCommitGate({ repo, base: option('base'), tree: option('tree'), prior: option('prior') || undefined,
-      cheapOnly: args.includes('--cheap-only'), finalEntryRecheck: process.env.P03_GATE_FINAL_ENTRY_RECHECK === '1', label: option('label') ?? 'commit-gate' });
-    for (const note of result.notes) console.log(`commit gate: ${note}`);
-    if (result.verdict === 'refused') {
-      console.log(formatCommitGateRefusal(result));
-      process.exitCode = COMMIT_GATE_EXIT.refused;
-    } else if (result.verdict === 'incomplete') {
-      console.log(formatCommitGateIncomplete(result));
-      process.exitCode = COMMIT_GATE_EXIT.incomplete;
-    } else if (result.verdict === 'needs-full') {
-      console.log(`commit gate: ${result.check} needs a full recheck`);
-      process.exitCode = COMMIT_GATE_EXIT.needsFull;
+    if (args.includes('--select-declarations')) {
+      console.log(declarationPacketScopes(commitChangedPaths({ repo, base: option('base'), tree: option('tree') })).join('\n'));
+    } else {
+      const result = await runCommitGate({ repo, base: option('base'), tree: option('tree'), prior: option('prior') || undefined,
+        cheapOnly: args.includes('--cheap-only'), finalEntryRecheck: process.env.P03_GATE_FINAL_ENTRY_RECHECK === '1',
+        finalDeclarationRecheck: process.env.P03_GATE_FINAL_DECLARATION_RECHECK === '1', label: option('label') ?? 'commit-gate' });
+      for (const note of result.notes) console.log(`commit gate: ${note}`);
+      if (result.verdict === 'refused') {
+        console.log(formatCommitGateRefusal(result));
+        process.exitCode = COMMIT_GATE_EXIT.refused;
+      } else if (result.verdict === 'incomplete') {
+        console.log(formatCommitGateIncomplete(result));
+        process.exitCode = COMMIT_GATE_EXIT.incomplete;
+      } else if (result.verdict === 'needs-full') {
+        console.log(`commit gate: ${result.check} needs a full recheck`);
+        process.exitCode = COMMIT_GATE_EXIT.needsFull;
+      }
     }
   } catch (error) {
     console.log(error.unavailable ? error.message : `commit gate unavailable: ${String(error?.stack ?? error).slice(0, 600)}`);

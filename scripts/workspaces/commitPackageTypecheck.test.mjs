@@ -866,7 +866,7 @@ shift 2
 exec "${process.execPath}" "${entry}" "$@"
 `, 0o755);
   await write('scripts/workspaces/runTypeScriptCli.mjs', `
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { shouldRouteTypeScriptCliThroughHstack } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};
 if (shouldRouteTypeScriptCliThroughHstack({ args: process.argv.slice(2), env: process.env })) process.exit(98);
@@ -883,7 +883,7 @@ if (source.includes('from-new-workspace')) {
   const selected = readFileSync('node_modules/@happier-dev/new-package/src/index.ts', 'utf8');
   if (!selected.includes('= 41')) process.exit(94);
 }
-if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
+if ((source.includes('= 41') || (source.includes('= 42') && existsSync('src/landed.ts'))) && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
   console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
   process.exitCode = 2;
 }
@@ -915,6 +915,52 @@ test('the controller declaration gate admits and judges both Git trees with its 
   assert.ok(result.findings.some(finding => finding.includes('TS9007')));
   const trees = [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)];
   assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${trees.join(',')}`));
+  assert.deepEqual(await readdir(scratch), []);
+});
+
+test('the admitted final declaration recheck compares only the closure changed since the prior pass', { skip: process.platform === 'win32' }, async t => {
+  const { repo, candidate, scratch, env, git, write } = await controllerDeclarationFixture(t);
+  const gitIndex = (index, ...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8',
+    env: { ...process.env, GIT_INDEX_FILE: join(repo, '.git', index) } }).trim();
+  const sdk = 'packages/plugin-sdk';
+  await write(`${sdk}/package.json`, JSON.stringify({ name: '@fixture/plugin-sdk', scripts: { typecheck: 'tsc' } }));
+  await write(`${sdk}/tsconfig.json`, JSON.stringify({ compilerOptions: { declaration: true } }));
+  await write(`${sdk}/src/index.ts`, 'export const sdk = 1;\n');
+  const baseIndex = 'initial-index';
+  gitIndex(baseIndex, 'read-tree', candidate + '^');
+  gitIndex(baseIndex, 'add', sdk);
+  const base = git('commit-tree', gitIndex(baseIndex, 'write-tree'), '-p', candidate + '^', '-m', 'both packages exist');
+  const priorIndex = 'accepted-index';
+  gitIndex(priorIndex, 'read-tree', base);
+  await write(`${sdk}/src/index.ts`, 'export const sdk = 2;\n');
+  await write('packages/protocol/src/index.ts', 'export const value = 42;\n');
+  gitIndex(priorIndex, 'add', 'packages/protocol/src/index.ts', `${sdk}/src/index.ts`);
+  const prior = git('commit-tree', gitIndex(priorIndex, 'write-tree'), '-p', base, '-m', 'packet changes both packages');
+
+  const movedFile = 'packages/protocol/src/landed.ts';
+  await write(movedFile, 'export const landed = true;\n');
+  gitIndex(baseIndex, 'add', movedFile);
+  gitIndex(priorIndex, 'add', movedFile);
+  const newBase = git('commit-tree', gitIndex(baseIndex, 'write-tree'), '-p', base, '-m', 'landed elsewhere');
+  const replay = gitIndex(priorIndex, 'write-tree');
+  const options = { repo, base: newBase, tree: replay, prior, priorBase: base, cheapOnly: true, env, label: 'commit-partial' };
+
+  const cached = await runCommitGate(options);
+  assert.equal(cached.verdict, 'needs-full', JSON.stringify(cached));
+  assert.equal(cached.check, 'package declarations');
+
+  const rejected = await runCommitGate({ ...options, finalDeclarationRecheck: true,
+    env: { ...env, TEST_DECLARATION_COMPILER: 'fail' } });
+  assert.equal(rejected.verdict, 'incomplete', JSON.stringify(rejected));
+  assert.deepEqual(rejected.reason, { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'] });
+
+  const final = await runCommitGate({ ...options, finalDeclarationRecheck: true });
+  assert.equal(final.verdict, 'refused', JSON.stringify(final));
+  assert.ok(final.findings.some(finding => finding.includes('TS9007')));
+  const requests = readFileSync(join(repo, 'admissions'), 'utf8');
+  assert.match(requests, /--require-inherited\n/u);
+  assert.match(requests, /--projects=packages\/protocol\n/u);
+  assert.doesNotMatch(requests, /plugin-sdk/u);
   assert.deepEqual(await readdir(scratch), []);
 });
 

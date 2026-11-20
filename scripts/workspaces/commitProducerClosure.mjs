@@ -12,7 +12,7 @@ import { isPublicRuntimeImportDiagnostic } from '../../apps/stack/scripts/utils/
 const require = createRequire(import.meta.url);
 let ts;
 
-const SOURCE = /\.(?:[cm]?[jt]sx?)$/u;
+export const COMMIT_SOURCE_PATH = /\.(?:[cm]?[jt]sx?)$/u;
 const EXPORT_PARSED = /\.(?:[cm]?ts|tsx|mjs)$/u;
 const SOURCE_GLOBS = ['*.ts', '*.tsx', '*.mts', '*.cts', '*.js', '*.jsx', '*.mjs', '*.cjs'];
 const LOCKFILE_INPUT = /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u;
@@ -347,13 +347,19 @@ function lockfileImporters(lock) {
   return dirs;
 }
 
-export function commitProducerClosure({ repo, base, tree, readView = createRevisionViewReader(repo) }) {
+export function commitChangedPaths({ repo, base, tree }) {
+  const git = gitIn(repo);
+  const records = nul(git(['diff-tree', '-r', '-z', '--no-renames', '--name-status', base, tree]));
+  const paths = [];
+  for (let index = 0; index < records.length; index += 2) paths.push({ status: records[index], path: records[index + 1] });
+  return paths;
+}
+
+export function commitProducerClosure({ repo, base, tree, readView = createRevisionViewReader(repo), paths }) {
   const started = Date.now();
   const git = gitIn(repo);
-  const slice = [];
-  const records = nul(git(['diff-tree', '-r', '-z', '--no-renames', '--name-status', base, tree]));
-  for (let index = 0; index < records.length; index += 2) slice.push({ status: records[index], path: records[index + 1] });
-  const sources = slice.filter(({ path }) => SOURCE.test(path));
+  const slice = paths ?? commitChangedPaths({ repo, base, tree });
+  const sources = slice.filter(({ path }) => COMMIT_SOURCE_PATH.test(path));
   const result = { findings: [], roots: 0, ms: 0, changedSources: sources };
   const lockfileInputs = slice.some(({ path }) => LOCKFILE_INPUT.test(path));
   if (!sources.length && !lockfileInputs) return { ...result, ms: Date.now() - started };
