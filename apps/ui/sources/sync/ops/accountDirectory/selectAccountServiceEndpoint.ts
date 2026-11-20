@@ -28,8 +28,7 @@ export type CheckAccountServiceEndpointResult =
 
 export type SelectAccountServiceEndpointResult =
     | Readonly<{ kind: 'selected' }>
-    | Extract<CheckAccountServiceEndpointResult, { kind: 'home_endpoint' | 'organization_policy_locked' | 'organization_policy_invalid' }>
-    | Readonly<{ kind: 'invalid' | 'unsupported' | 'unavailable' }>;
+    | Exclude<CheckAccountServiceEndpointResult, { kind: 'verified' | 'home_endpoint' }>;
 
 /**
  * Checks what an entered sign-in service offers, without saving anything. Only a service that can
@@ -100,6 +99,7 @@ export async function selectAccountServiceEndpoint(
     options: AccountDirectoryAuthTransport & Readonly<{ signal: AbortSignal }>,
 ): Promise<SelectAccountServiceEndpointResult> {
     const checked = await checkAccountServiceEndpoint(entered, options);
+    if (checked.kind === 'home_endpoint') return { kind: 'unsupported' };
     if (checked.kind !== 'verified') return checked;
     if (options.signal.aborted) return { kind: 'unavailable' };
     try {

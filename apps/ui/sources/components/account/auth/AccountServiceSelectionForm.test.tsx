@@ -143,9 +143,15 @@ describe('AccountServiceSelectionForm', () => {
         retryServerCheck: () => {},
     } satisfies AuthEntryOptions;
 
-    it('retains an unsupported URL and reports the semantic result inline', async () => {
+    it('retains the address of a verified Home with sign-in service disabled and explains why it cannot be selected', async () => {
+        const features = createRootLayoutFeaturesResponse({
+            capabilities: {
+                serverIdentity: { serverIdentityId: 'srv_home_only' },
+                server: { canonicalServerUrl: 'https://home.example.test' },
+            },
+        });
         network.request.mockImplementation(async (_endpoint: string, path: string) => path === '/v1/auth/entry'
-            ? new Response('', { status: 404 }) : Response.json(createRootLayoutFeaturesResponse()));
+            ? new Response('', { status: 404 }) : Response.json(features));
         const onSelect = vi.fn(selectAccountServiceEndpoint);
         const { AccountServiceSelectionForm } = await import('./AccountServiceSelectionForm');
         const screen = await renderScreen(
