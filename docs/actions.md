@@ -4576,7 +4576,11 @@ explicit insufficient basis, never an invented currency loss. The mounted UI
 reader traverses the existing quota-history cursor for its selected range;
 transport batch size is not a history cutoff. For a requested bounded history
 range, a finite CLI or MCP Usage snapshot retains the first canonical page for
-each eligible account. It preserves any non-null `nextCursor`, marking both
+each eligible account. In a batch, each query receives the quota status and
+history for its own admitted range. Equivalent reads can share their result.
+A current-only query receives current allowance without another query's
+history or continuation. Each history result preserves any non-null
+`nextCursor`, marking both
 the account and aggregate quota source partial while continuation remains.
 Consumers that need further recorded history use `connectedServices.quota.get`
 with the same source, requested range and page size plus that cursor. This does

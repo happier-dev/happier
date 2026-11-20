@@ -7408,9 +7408,11 @@ paid amounts from versioned, dated list prices; absence is not a zero cost or an
 inferred payment.
 
 In development UI source, a requested refresh does not start a follow-up quota
-poll. Material writes publish the existing `provider-account-usage` Account key
-and an additional `provider-account-usage-record:<recordId>` key in the same
-transaction. The global row's advisory hint names its paired record. The Changes
+poll. Material writes and newly retained observations publish the existing
+`provider-account-usage` Account key and an additional
+`provider-account-usage-record:<recordId>` key in the same transaction. A new
+observation time advances history and its daily coverage even if the allowance
+is flat. The global row's advisory hint names its paired record. The Changes
 Protocol leaf owns these identities and reads the consumed page's record scope;
 coalesced record rows retain changes to several sources. A complete pair lets the
 UI reread only sources admitted to those records, retaining the other sources.

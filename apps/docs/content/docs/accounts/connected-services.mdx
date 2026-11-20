@@ -770,8 +770,14 @@ Use the view switcher to choose a built-in view or create your own. The view's
 menu supports renaming, reordering and deleting your copies; Reset restores a
 preset, with Undo when the saved layout still permits it. An intentionally empty
 view stays empty. Selecting a tab changes the selection before its data finishes
-loading. If the read fails, still-authorized cards can remain with a failure
-notice; use Retry to read the selected view.
+loading. Returning to a view can reuse its latest settled read while its
+inputs and access still match. If the read fails, still-authorized cards can
+remain with a failure notice. Use Retry to read the selected view. When
+accounting is present, **As of** reflects its latest successful read. **Details**
+can show an older retained read or source observation separately.
+
+Opening Usage from a Session starts with that Session's whole recorded period.
+You can choose a different period for the same Session.
 
 Page filters supply the scope and cost basis to following widgets. In a widget
 or group's Inputs, keep a field following the page or choose its own value to
@@ -897,9 +903,11 @@ interchangeable pool balance.
 
 An optional **Personal pace target** expresses how much of a window you aim to
 use. It is advice: it does not limit spending or switch accounts. Plan-fit
-history shows how recorded, comparable ended windows finished; partial history
-does not establish your complete past usage or how a different plan would have
-behaved.
+history shows how recorded, comparable ended windows finished. If there is
+too little evidence to assess a plan, its row or the shared note explains why.
+Partial history does not establish your complete past usage or how a different
+plan would have behaved. When every eligible pool member is blocked by exhausted
+quota and the selector knows when it can retry, Plans shows the next known retry.
 
 ### Routing hints in the model picker
 

@@ -1370,10 +1370,11 @@ not make the quota or capacity numbers SQL-queryable for E2EE Accounts.
 Within the retained detail window, the authorized client can drain exact encrypted history. Current capacity is published before history, entered-price and Pending work settle;
 each accepted page then updates the same Resource. The ordinary progressive
 history adapter keeps the first and last actual observations of an unchanged
-material run. Plans' page projection instead retains every accepted observation,
-including interior timestamp-only witnesses, so curves, sample counts, ended
-windows and reset evidence use the same exact history. Ordinary paged reads and
-exact immutable reset-witness reads still return their requested accepted records.
+material run. Plans' page projection retains every accepted observation,
+including interior samples whose only change is the observation time. This
+keeps curves, sample counts, ended windows and reset evidence tied to the same
+history. Ordinary paged reads and exact immutable reset-witness reads return
+their requested accepted records.
 
 The development B page-projection format interns snapshot bases, meter definitions,
 meter readings and subscription material separately. Consecutive equal material
@@ -1403,12 +1404,15 @@ legacy projection decoder is retained. The page projection does not rewrite
 exact history; the separate retention owner can remove summarized detail as
 described below.
 
-Unchanged polls update current-record freshness without appending history.
-Material equality ignores HTTP observation clocks and headers, while retaining
-failure status, code and retry facts. Reset-boundary phases remain material even
-when counters do not change. Plain server acceptance and the sealed producer's
-fingerprint use that same history-material owner; the server does not inspect
-encrypted quota facts.
+An accepted observation at a new time appends an exact history point even
+when the allowance is unchanged. At the same observation time, the accepted
+write deduplicates unchanged material. Material equality ignores HTTP
+observation clocks and headers, while retaining failure status, code, retry
+facts and reset-boundary phases. Sealed writes compare the opaque base and
+separate facets, so a changed subscription or recovery-credit facet is
+observable even when the base quota fingerprint matches. The server keeps the
+envelope sealed. A newly retained point wakes the affected history and day
+summary readers.
 
 The key-holding B reader derives page-consumed `pageFacts` before publishing to
 the Usage Resource. It retains every earlier-curve point/exclusion, ended-window
