@@ -150,17 +150,19 @@ test('firstOpen.02.F5 opens a usable welcome in the Still form with system reduc
 });
 
 test('firstOpen.02.F4 skips a playing opening with Escape and lands focus in welcome', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
     await openApp(page);
     const welcome = page.getByTestId('welcome-decision-panel');
     await expect(welcome).toBeAttached({ timeout: 60_000 });
-    test.fail(true, 'FO-L2-OPENING: this browser reaches Still before the Escape and focus path can be exercised');
 
     const scene = page.getByTestId('first-open.scene');
     await expect(scene.locator('[data-glyph-first-draw-ms]')).toBeAttached();
+    await expect.poll(() => readOpeningMarker(page)).toBeGreaterThan(0);
     await page.keyboard.press('Escape');
     await expect(scene).not.toBeAttached();
     await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
-    await expect(welcome.locator(':focus')).toBeVisible();
+    await expect(welcome.getByRole('heading').first()).toBeFocused();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByName('first_open:destination-handoff').length)).toBe(1);
 });
 
 test('firstOpen.F1.newHere | firstOpen.03.F1 provisions one Account and reaches Home in one tap', async ({ page }) => {
