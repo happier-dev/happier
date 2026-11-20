@@ -18,6 +18,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
@@ -284,6 +285,10 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
     const usesOwnerRoot = isHostRequesterUnrestrictedOwner(executionIdentity)
       || input.source.kind === 'folder' && input.materialization.kind === 'attach'
         && executionIdentity.requester.accountId === admission.custodianAccountId;
+    const ownerCloneAccount = usesOwnerRoot && input.materialization.kind === 'clone' ? input.materialization.gitAccount : undefined;
+    // Native Machine management does not grant access to the daemon Account's GitHub connection.
+    if (ownerCloneAccount && executionIdentity.requester.accountId !== runtime.accountId)
+      return refused(SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED);
     // Verified ingress admits this finite operation once. Its captured identity
     // remains local; cancellation and the native lifetime retire ongoing work.
     if (!usesOwnerRoot && !runtime.privateCheckout) return refused('workspace_private_checkout_required');
@@ -534,6 +539,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         sourceDirectory: input.materialization.kind === 'sync' ? sync?.request.sourceRootPath : sourceDirectory,
         sourceRootPath,
         selector, ref, subdir, registry: runtime.registry, signal: context.signal, sync,
+        ...(ownerCloneAccount ? { cloneAccountSelection: { account: ownerCloneAccount,
+          operationId: acceptance?.operationId ?? context.localActionContext?.actionRequestId
+            ?? context.transportRequestId ?? context.callerInputAuthorization?.binding.requestId } } : {}),
         onEffectsIssued: () => { effectsIssued = true; },
       });
       const cloneSource = input.cloneSource ? privateCheckout ? checkout.cloneSource : await readProjectCloneSource({

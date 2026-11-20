@@ -579,6 +579,79 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it('clones with the account selected for this owner Project Open and refuses the same account after removal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-project-open-account-'));
+    const git = promisify(execFile);
+    const scope = createEnvKeyScope(['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0']);
+    const seed = join(root, 'seed');
+    const remote = join(root, 'remote.git');
+    const service = { pluginId: GITHUB_PLUGIN_MANIFEST.id, localId: 'github-account' };
+    const account = { service, accountId: 'selected-for-open' };
+    const provider = { id: `${GITHUB_PLUGIN_MANIFEST.id}/github`, kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' };
+    const cloneUrl = 'https://github.com/octocat/selected.git';
+    let connected = true;
+    const materializedAccounts: string[] = [];
+    const bindings = { v: 1 as const, bindings: [] };
+    const bindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => bindings, update: async () => { throw new Error('Open must not change defaults'); }, subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => { throw new Error('Open must use the explicit selection'); },
+      resolveTarget: async target => connected && target.kind === 'account' && target.account.accountId === account.accountId
+        ? { displayName: account.accountId, account } : null,
+      projectTargetAccounts: async () => ({ status: 'complete', accounts: connected ? [{ account, displayName: account.accountId,
+        state: 'connected', connectedAccountOrigins: ['https://github.com'], connectedAccountBases: ['https://github.com'] }] : [] }),
+      materializeAccount: async ({ account: selected }) => {
+        materializedAccounts.push(selected.accountId);
+        return { kind: 'httpHeaders', headers: { Authorization: 'Bearer test-open-selection' } };
+      },
+      assertTargetAccountMaterializable: async () => undefined,
+    });
+    const fetch = globalThis.fetch;
+    const githubHeaders: Array<string | null> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const request = new Request(url, init);
+      if (new URL(request.url).origin !== 'https://api.github.com') return fetch(url, init);
+      githubHeaders.push(request.headers.get('authorization'));
+      return Response.json({ full_name: 'octocat/selected', html_url: 'https://github.com/octocat/selected',
+        clone_url: cloneUrl, visibility: 'private', default_branch: 'main' });
+    });
+    onTestFinished(async () => { scope.restore(); await rm(root, { recursive: true, force: true }); });
+    await mkdir(seed);
+    await git('git', ['init', '-b', 'main'], { cwd: seed });
+    await writeFile(join(seed, 'README.md'), 'private checkout\n');
+    await git('git', ['add', 'README.md'], { cwd: seed });
+    await git('git', ['-c', 'user.name=Open test', '-c', 'user.email=open@example.invalid', 'commit', '-m', 'initial'], { cwd: seed });
+    await git('git', ['clone', '--bare', seed, remote]);
+    scope.patch({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`, GIT_CONFIG_VALUE_0: cloneUrl });
+    const pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root, controller: pluginReloadController,
+      runtimeOptions: { pluginIds: [GIT_PLUGIN.manifest.id, GITHUB_PLUGIN_MANIFEST.id], connectedAccounts: bindingOwner } });
+    onTestFinished(pluginRuntime.dispose);
+
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const runtime: ProjectOpenRuntime = { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine',
+      accountId: 'account', readCredentials: async () => ({ token, encryption: null }) };
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user', transportRequestId: 'private-owner-open',
+      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    const rows: ProjectAccountRowV1[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary(rows));
+    const open = register(RPC_METHODS.PROJECTS_OPEN, runtime);
+    const request = { serverId: runtime.serverId, machineId: runtime.machineId,
+      source: { kind: 'repository', selector: { provider, repository: { nameWithOwner: 'octocat/selected' }, protocol: 'https' } },
+      materialization: { kind: 'clone', destinationParentPath: root, destinationDirectoryName: 'selected',
+        authentication: 'connected_account', gitAccount: account } };
+    const opened = await open(request, context);
+    expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened' });
+    expect(await readFile(join(root, 'selected', 'README.md'), 'utf8')).toBe('private checkout\n');
+    expect(githubHeaders).toContain('Bearer test-open-selection');
+    expect([...new Set(materializedAccounts)]).toEqual([account.accountId]);
+
+    connected = false;
+    expect(await open({ ...request, materialization: { ...request.materialization, destinationDirectoryName: 'removed' } },
+      { ...context, transportRequestId: 'private-owner-removed' })).toMatchObject({ kind: 'refused', code: 'REMOTE_AUTH_REQUIRED', effectAttempted: false });
+    await expect(access(join(root, 'removed'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('settles a public Source clone for host browsing despite an unenrolled Devcontainer, preserving refusals and uncertainty', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-qf4-open-'));
     const git = promisify(execFile);

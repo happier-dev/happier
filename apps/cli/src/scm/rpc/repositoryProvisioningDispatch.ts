@@ -8,7 +8,7 @@ import type { ResolvedSessionProjectFilesV1 as SessionProjectFilesV1 } from '@ha
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
 
-import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
+import { resolveDefaultScmBackendRegistry, runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { resolveScmBackendById, type ScmBackendRegistry } from '@/scm/registry';
 import { runScmRoute } from '@/scm/rpc/dispatch';
 import { resolveTildePath } from '@/scm/runtime';
@@ -21,6 +21,9 @@ import type { ManagedSessionTarget } from '@/machines/managed/acquire';
 import { runWithHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from '@/scm/workspace/workspaceExportPackaging/artifacts/fromTransferEntries';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { resolveProviderPurposeAuthorization } from '@/scm/hostingProviders/runtimeServices';
 
 /** Finite pre-Session clone through the existing SCM owner on the admitted target. */
 export async function materializeManagedProjectClone(input: Readonly<{
@@ -237,15 +240,19 @@ export async function runScmRepositoryInitRoute(input: {
     });
 }
 
+/** Exact Account selected for this checkout's existing operation lifetime. */
+export type ScmRepositoryCloneAccountSelection = Readonly<{ account: QualifiedConnectedAccountRef; operationId?: string }>;
+
 export async function runScmRepositoryCloneRoute(input: {
     request: ScmRepositoryCloneInput;
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
     signal?: AbortSignal;
+    accountSelection?: ScmRepositoryCloneAccountSelection;
 }): Promise<ScmRepositoryCloneOutput> {
     if (input.signal?.aborted) throw new Error('SCM operation was aborted');
-    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+    const cloneWithRegistry = async (registry: ScmBackendRegistry): Promise<ScmRepositoryCloneOutput> => {
         if (input.signal?.aborted) throw new Error('SCM operation was aborted');
         const normalizedWorkingDirectory = resolveTildePath(input.workingDirectory);
         if (
@@ -292,7 +299,34 @@ export async function runScmRepositoryCloneRoute(input: {
         });
         return clone.success && input.request.initialCheckout
             ? observeCloneInitialCheckout(input.request.initialCheckout, clone) : clone;
+    };
+    const accountSelection = input.accountSelection;
+    if (!accountSelection) return runWithScmBackendRegistryLease(input.registry, cloneWithRegistry);
+
+    const unavailable = (): ScmRepositoryCloneOutput => ({
+        success: false,
+        errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
+        error: 'The selected connected account is unavailable for this repository.',
+        outcome: normalizeScmOperationOutcome({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED }),
     });
+    const signal = input.signal;
+    const operationId = accountSelection.operationId;
+    if (!operationId || !signal) return unavailable();
+    const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ signal });
+    try {
+        const authorization = resolveProviderPurposeAuthorization(lease.registry, input.request.provider.id);
+        const owner = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+        if (!authorization || !owner?.prepareOperationSelection) return unavailable();
+        const selection = await owner.prepareOperationSelection({ ...authorization, account: accountSelection.account, operationId, signal })
+            .catch(() => { signal.throwIfAborted(); return null; });
+        if (!selection) return unavailable();
+        try {
+            const registry = await resolveDefaultScmBackendRegistry({ pluginRuntimeRegistry: {
+                ...lease.registry, resolveConnectedAccountPurposeBindingOwner: () => selection.owner,
+            } });
+            return await cloneWithRegistry(registry);
+        } finally { selection.dispose(); }
+    } finally { await lease.release(); }
 }
 
 export function runScmRepositoryRemoveIndexLockRoute(input: {

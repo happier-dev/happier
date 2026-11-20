@@ -147,8 +147,8 @@ function assertHostingOperationCurrent(signal?: AbortSignal): void {
     if (signal?.aborted) throw new Error('SCM hosting operation was aborted');
 }
 
-function resolveProviderPurposeAuthorization(
-    input: ScmHostingProviderRuntimeRegistryInput,
+export function resolveProviderPurposeAuthorization(
+    input: Pick<ScmHostingProviderRuntimeRegistryInput, 'contributes'>,
     providerId: string,
 ): ReturnType<typeof deriveScmHostingProviderConnectedAccountPurposeAuthorization> {
     const provider = (input.contributes.scmHostingProviders ?? []).find((candidate) => (

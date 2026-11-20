@@ -11,6 +11,7 @@ import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 }
 import type { OpenProjectResultV1, WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import type { ScmRepositoryCloneAccountSelection } from '@/scm/rpc/repositoryProvisioningDispatch';
 import type { WorkspaceSyncHandoffAdapter, PrepareWorkspaceSyncHandoffInput } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { resolveDirectoryInCheckout } from './resolveDirectoryInCheckout';
@@ -37,6 +38,7 @@ export type MaterializeProjectCheckoutInput = Readonly<{
   ref?: string;
   subdir?: string;
   registry?: ScmBackendRegistry;
+  cloneAccountSelection?: ScmRepositoryCloneAccountSelection;
   signal?: AbortSignal;
   /** Called at the owning materializer's effect boundary, never at draft admission. */
   onEffectsIssued?: () => void;
@@ -114,7 +116,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
         ...(initialCheckout ? { initialCheckout } : {}),
         ...(choice.authentication ? { authentication: choice.authentication } : {}),
         confirmed: true, authorizationToken: 'clone-repository' }),
-      workingDirectory: parent, registry: input.registry, signal: input.signal,
+      workingDirectory: parent, registry: input.registry, signal: input.signal, accountSelection: input.cloneAccountSelection,
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
     if (!clone.success) {
       if (clone.destinationPath || !clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
