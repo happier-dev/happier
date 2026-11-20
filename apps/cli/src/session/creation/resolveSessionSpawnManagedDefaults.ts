@@ -62,8 +62,11 @@ export function resolveSessionSpawnIsolation(
   const caller = readInitiatingActionCallerV1(context?.actionCaller);
   const run = admittedWorkflowPlacement !== undefined || caller?.kind === 'workflowRun'
     || caller?.kind === 'automationRun' || Boolean(binding?.workflowActionOrigin);
+  // Plugin background ingress (a channel message with no person present) is Bots & channels
+  // work, whether or not one verified sender attested it; the host stamps that origin surface.
+  const pluginCaller = context?.actionCaller?.kind === 'plugin' ? context.actionCaller : undefined;
   const bot = binding?.actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-    || (context?.actionCaller?.kind === 'plugin' && input.attestedContext !== undefined);
+    || (pluginCaller !== undefined && (input.attestedContext !== undefined || pluginCaller.originSurface === 'background'));
   if (!run && !bot && (input.identity?.bot || input.identity?.createdAsBot)) {
     return isolationUnavailable('machine_isolation_bot_origin_unavailable');
   }

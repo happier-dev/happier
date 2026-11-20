@@ -149,6 +149,9 @@ describe('Session spawn defaults at admission', () => {
     { caller: { kind: 'host' } as const, workKind: 'sessions', id: 'session' },
     { caller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } as const, workKind: 'automationsWorkflows', id: 'workflow' },
     { caller: { kind: 'plugin', pluginId: 'example.channels' } as const, workKind: 'botsChannels', id: 'bot', attestedContext: { externalPrincipalId: 'sender', sourceMessageId: 'message' } },
+    // An audience /new carries no single-sender attestation; its unattended ingress origin still decides.
+    { caller: { kind: 'plugin', pluginId: 'example.channels', originSurface: 'background' } as const, workKind: 'botsChannels', id: 'bot' },
+    { caller: { kind: 'plugin', pluginId: 'example.triage', originSurface: 'ui' } as const, workKind: 'sessions', id: 'session' },
   ])('enforces the $workKind placement from admitted origin before caller-selected placement', async ({ caller, workKind, id, attestedContext }) => {
     const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
       agentTarget: target, ...(attestedContext ? { attestedContext } : {}) }, {

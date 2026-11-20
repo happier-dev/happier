@@ -469,7 +469,7 @@ export type ActionPluginCaller = Readonly<{
   contributionLocalId?: string;
   /** Original SDK descriptor, descriptive only; never authorization or durable origin data. */
   contributionQualifiedId?: string;
-  /** Diagnostic originating surface; the immediate Action surface still owns policy. */
+  /** Host-stamped originating surface; the immediate Action surface owns authorization, and Session placement reads `background` as Bots & channels work. */
   originSurface?: Exclude<keyof ActionSurfaces, 'plugin' | 'rpc'> | 'background';
   /** Exact host-stamped process-local plugin occurrence. */
   occurrenceId?: string;
