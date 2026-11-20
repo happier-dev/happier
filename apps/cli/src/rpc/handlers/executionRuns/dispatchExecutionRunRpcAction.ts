@@ -1149,10 +1149,12 @@ export function createExecutionRunRpcActionExecutor(
   const actionsSettingsProvider = inputParams.actionsSettingsProvider ?? createActionSettingsProvider();
   const params = { ...inputParams, actionsSettingsProvider };
   const deps = createExecutionRunRpcActionDeps(params);
-  const executor = createActionExecutor(deps);
   return {
     execute: async (actionId, input, callerContext) => {
       let context = withHostActionsSettings(actionsSettingsProvider, callerContext ?? {});
+      const executor = createActionExecutor({ ...deps,
+        ...(context.actionAutomationPort ? { actionAutomations: context.actionAutomationPort } : {}),
+      });
       // Account governance precedes Project custody/preparation. A disabled
       // Action must still report its own policy result without a launch context.
       try {

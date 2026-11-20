@@ -37,7 +37,7 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay' | 'presentUserConfirmation'
     | 'presentUserApproval' | 'actionRequestAttributionV1' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
-    | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
+    | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1' | 'actionAutomationPort'
 >> & {
     /** Captured authenticated private-root identity; never serialized in an RPC request. */
     authenticatedLocalRootCustody?: AuthenticatedLocalRootCustody;

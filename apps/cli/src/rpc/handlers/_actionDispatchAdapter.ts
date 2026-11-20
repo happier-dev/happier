@@ -192,6 +192,7 @@ export function buildActionExecutorContextForRpc(
         ...(localActionContext?.authenticatedLocalRootCustody
             ? { authenticatedLocalRootCustody: localActionContext.authenticatedLocalRootCustody } : {}),
         ...(localActionContext?.agentStartContext ? { agentStartContext: localActionContext.agentStartContext } : {}),
+        ...(localActionContext?.actionAutomationPort ? { actionAutomationPort: localActionContext.actionAutomationPort } : {}),
         ...(localActionContext?.agentStartWorkDepth !== undefined ? { agentStartWorkDepth: localActionContext.agentStartWorkDepth } : {}),
         ...(localActionContext?.agentStartWorkspaceWrites !== undefined ? { agentStartWorkspaceWrites: localActionContext.agentStartWorkspaceWrites } : {}),
         ...(localActionContext?.sessionAgentSpawnPolicyV1 !== undefined ? { sessionAgentSpawnPolicyV1: localActionContext.sessionAgentSpawnPolicyV1 } : {}),

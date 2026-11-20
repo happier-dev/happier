@@ -856,6 +856,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const awarenessDeps = createCliAwarenessActionDeps(params, { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId });
   const { actionDeps: executionRunActionDeps, callDetachedExecutionRunRpc, readExecutionRunTransportMachineId } = createCliExecutionRunActionDeps(params, {
     resolveTransportForSession, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resumeInactiveSessionTransport, callMachineAction, isMachineActionServerScopeCurrent, normalizeStringValue, isExecutionRunActionAbort, executionRunActionFailure,
+    readActionAutomationPort: () => actionDeps.actionAutomations,
   });
 
   const assertDeploymentReadCurrent = async (context: ActionExecutorContext) => {
