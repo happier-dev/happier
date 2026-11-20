@@ -11,6 +11,7 @@ import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArtifactV1.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import { RpcError } from '../../../rpc/errors.js';
+import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
@@ -96,14 +97,19 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     const prepared = prepareWorkflowRunStartV1({ definition: opened.authoredDefinition, acceptedContext: opened.acceptedContext,
       replay: { runId: input.runId, intent: 'another_round',
         ...(input.costConsent === undefined ? {} : { costConsent: input.costConsent }) } });
-    return await inv.executeHostChild('workflow.run.start', {
+    const workflowInput = {
       runId: globalThis.crypto.randomUUID(), source: prepared.source, inputs: prepared.inputs,
       ...(prepared.executionTarget ? { executionTarget: prepared.executionTarget } : {}),
       ...(prepared.roleOverrides ? { roleOverrides: prepared.roleOverrides } : {}),
       ...(prepared.metadata ? { metadata: prepared.metadata } : {}),
       ...(prepared.origin ? { origin: prepared.origin } : {}),
       ...(prepared.onComplete ? { onComplete: prepared.onComplete } : {}),
-    }, inv.ctx);
+    };
+    return await invokeHostReviewedChildV1({
+      parent: { actionId: inv.actionId, input }, context: inv.ctx,
+      child: { action: 'workflow.run.start', role: 'workflow.run.start', input: workflowInput },
+      execute: (childInput, context, childId) => inv.executeHostChild(childId, childInput, context),
+    });
   }
   return null;
 }

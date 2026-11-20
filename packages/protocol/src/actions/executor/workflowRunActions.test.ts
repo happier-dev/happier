@@ -50,6 +50,9 @@ import { createInMemoryReviewRecordPortV1 } from '../../reviews/reviewArtifactV1
 import type { ReviewRoundBindingV1 } from '../../reviews/reviewArtifactV1.js';
 import { readReviewStartActionResultV1 } from '../specs/executionRunCompletion.js';
 
+import { createActionAutomationPortV1 } from './actionAutomationAdmission.js';
+import { resolveApprovalRequesterConfirmationV1 } from '../../approvals/approvalRequestV1.js';
+
 const runId = '11111111-1111-4111-8111-111111111111';
 it('admits a private Project files default only with the exact host-issued Workflow continuation', async () => {
   let acceptedEnvelope = '';
@@ -1128,6 +1131,113 @@ describe('shared Account workflow run owner', () => {
     ]) await expect(prepare(caller)).rejects.toMatchObject({ code: 'approval_required' });
     await expect(prepare(context, false)).rejects.toMatchObject({ code: 'approval_required' });
   });
+  it.each(['person', 'absent', 'forged-projection', 'expired', 'agent'] as const)(
+    'retains only the authenticated person through a composed Review for contained approvals (%s)', async caller => {
+    let acceptedEnvelope = '';
+    let childRunId = '';
+    const snapshots = new Map<string, ReturnType<typeof runSnapshot>>();
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') {
+        const snapshot = snapshots.get(operation.runId);
+        if (snapshot) return snapshot;
+        throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      }
+      if (operation.operation === 'invocations.list') return { invocations: [] };
+      if (operation.operation !== 'admit') throw new Error('unexpected_storage_operation');
+      acceptedEnvelope = String(operation.acceptedEnvelope);
+      childRunId = operation.runId;
+      const snapshot = runSnapshot();
+      snapshot.run.id = childRunId;
+      snapshot.run.state = 'succeeded';
+      snapshot.keyCensus.runId = childRunId;
+      snapshot.acceptedEnvelope = acceptedEnvelope;
+      snapshots.set(childRunId, snapshot);
+      return { kind: 'created', run: snapshot.run };
+    } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+        machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: 'machine-a' }),
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))),
+      } }),
+    });
+    const records = createInMemoryReviewRecordPortV1();
+    // Home's signed admission, Account projection and storage are boundaries;
+    // the public Review, its child Workflow and immutable origin stay real.
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'admitted-review', binding: {
+      serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+      authentication: { kind: 'account', tokenEpoch: 0 }, machineId: 'machine-a', installationId: 'installed-machine',
+      actionId: 'review.start', requestId: 'person-review', requestEnvelopeDigest: 'd'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } },
+    }, requesterAccountProjection: {
+      accountId: caller === 'forged-projection' ? 'foreign-account' : 'account-1', serverId: 'home', accountEncryptionMode: 'plain',
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes }),
+      isCurrent: async () => caller !== 'expired', readArtifact: async () => null,
+    } };
+    const automation = createActionAutomationPortV1({ accountId: 'account-1',
+      seed: async () => ({ v: 1, rows: [] }), settle: async () => [] });
+    const executor = createActionExecutor({ reviewRecords: () => records, actionAutomations: automation,
+      sessionStatusGet: async ({ sessionId }) => ({ session: { id: sessionId, createdAt: 1, updatedAt: 1,
+        active: true, activeAt: 1, encryption: null, path: '/repo', machineId: 'machine-a' } }),
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+    });
+    const result = await executor.execute('review.start', { sessionId: 'origin-1', cwd: '/repo', scope: 'repository',
+      instructions: 'Review without modifying files.', reviewers: [
+        { kind: 'engine', engineId: 'codex', modelId: 'first-model' },
+        { kind: 'session', session: { sessionId: 'origin-1', serverId: 'home' } },
+      ],
+    }, { surface: caller === 'agent' ? 'agent' : 'cli',
+      authority: caller === 'agent' ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' }, callerPermissionMode: 'default',
+      serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account-1', defaultSessionMachineId: 'machine-a',
+      defaultSessionId: 'origin-1',
+      ...(caller === 'agent' ? { sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({}),
+        agentStartContext: { caller: { kind: 'session' as const, sessionId: 'origin-1', starterDepth: 0, turnDepth: 0 },
+          baseline: { machineId: 'machine-a', directory: '/repo', configuration: { permissionMode: 'read-only' as const } },
+          roles: {}, callerPermissionCeiling: 'read-only' as const, ledSubtreeSessionIds: [], workDepthLimit: 4 },
+      } : {}),
+      ...(caller === 'absent' ? {} : { externalActionExecutionAuthorization: authorization }), externalActionTarget: authorization.binding.target,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'review.start': ['cli', 'agent'], 'workflow.run.start': ['cli', 'agent'] } }),
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      envelope: parseWorkflowStoredContentEnvelopeV1(acceptedEnvelope),
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: childRunId } });
+    if (opened.kind !== 'available') throw new Error('accepted_snapshot_unavailable');
+    const origin = opened.content.origin;
+    const confirmation = resolveApprovalRequesterConfirmationV1({ actionId: 'reviews.comments.setDisposition', input: {}, required: false,
+      context: { surface: 'agent', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account-1',
+        defaultSessionId: 'origin-1', actionCaller: { kind: 'workflowRun', runId: childRunId,
+          authorization: opened.content.authorization,
+          ...(origin?.authenticatedStarterV1 ? { authenticatedStarterV1: origin.authenticatedStarterV1 } : {}),
+        } } });
+    if (caller === 'person') {
+      expect({ origin, confirmation }).toMatchObject({ origin: { authenticatedStarterV1: {
+        requestRef: 'person-review', requester: { serverId: 'home', accountId: 'account-1' },
+      } }, confirmation: { ok: true, requesterConfirmation: null } });
+      const priorRunId = childRunId;
+      const replay = await executor.execute('review.new_round', { runId: priorRunId }, {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, callerPermissionMode: 'default',
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account-1', defaultSessionId: 'origin-1',
+        externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: {
+          ...authorization, binding: { ...authorization.binding, actionId: 'review.new_round', requestId: 'person-new-round' },
+        }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+          'review.new_round': ['cli'], 'workflow.run.start': ['cli'],
+        } }),
+      });
+      expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+      expect(childRunId).not.toBe(priorRunId);
+      const next = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+        envelope: parseWorkflowStoredContentEnvelopeV1(acceptedEnvelope),
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: childRunId } });
+      expect(next).toMatchObject({ kind: 'available', content: { origin: { authenticatedStarterV1: {
+        requestRef: 'person-new-round', requester: { serverId: 'home', accountId: 'account-1' },
+      } } } });
+    } else {
+      expect(origin).not.toHaveProperty('authenticatedStarterV1');
+      expect(confirmation).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+    }
+  });
+
   it.each(['person', 'replay-person', 'replay-autonomous', 'replay-attributed', 'autonomous', 'wire-only', 'revoked'] as const)('records only the authenticated direct person starter (%s)', async caller => {
     let acceptedEnvelope = '';
     const replay = caller === 'replay-person' || caller === 'replay-autonomous' || caller === 'replay-attributed';

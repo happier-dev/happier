@@ -31,6 +31,8 @@ import { ScmComparisonCaptureOutputSchema } from '../../../scm/diffSummary.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
 import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
+import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
+import type { JsonObject } from '../../../json/strictJsonValue.js';
 
 export function reviewScopeForInput(input: unknown): ReviewEngineScope {
   const record = readRecord(input);
@@ -398,8 +400,14 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               machineId: comparisonTarget.machineId, directory: comparisonCwd,
             } } : {}),
           };
-          const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
-            source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, workflowContext);
+          const started = await invokeHostReviewedChildV1({
+            // Core admission already parsed these JSON operands.
+            parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
+            child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
+              runId: globalThis.crypto.randomUUID(), source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
+            } },
+            execute: (input, context, childId) => executeHostChild(childId, input, context),
+          });
           if (!started.ok) {
             if (!isActionOutcomeUnknownErrorCodeV1(started.errorCode)) {
               await records.settle({ ...reviewRound, outcome: ctx.signal?.aborted ? 'cancelled' : 'failed',

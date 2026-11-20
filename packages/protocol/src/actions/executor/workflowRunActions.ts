@@ -33,7 +33,7 @@ import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocu
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetPreparation, WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
@@ -1477,7 +1477,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const authenticatedStarter = !args.context.actionRequestAttributionV1
       && directPersonSurface
       && args.context.actionCaller?.kind === 'host'
-      && callerBinding?.actionId === (combined?.parent.actionId ?? 'workflow.run.start')
+      && callerBinding?.actionId === (combined?.parent.actionId
+        ?? readHostReviewedChildRootV1(args.context, args.actionId, input)?.actionId ?? 'workflow.run.start')
       && 'authentication' in callerBinding
       && requesterAccountId
       && !callerBinding.sessionActionOrigin && !callerBinding.workflowActionOrigin
