@@ -101,24 +101,25 @@ describe('Team setup author references', () => {
     const readSuggestedTask = () => resolveProjectSourceOnboardingTaskV1({
       sources: [{ serverId: fixture!.serverId, source: readableSource.source }],
       readPrompt: async ref => {
-        const result = await invoke(other, 'prompt_doc.read', { artifactId: ref.artifactId });
+        const result = await invoke(other, 'prompt_doc.get', { artifactId: ref.artifactId });
         return result.ok ? PromptDocReadResultV1Schema.parse(result.result) : result;
       },
     });
-    const ownRead = await invoke(owner, 'prompt_doc.read', { artifactId: ref.artifactId });
+    const ownRead = await invoke(owner, 'prompt_doc.get', { artifactId: ref.artifactId });
     expect(ownRead.ok).toBe(true);
     if (!ownRead.ok) throw new Error(`Task unavailable: ${ownRead.errorCode}`);
     const task = PromptDocReadResultV1Schema.parse(ownRead.result);
-    const denied = await invoke(other, 'prompt_doc.read', { artifactId: ref.artifactId });
-    expect(denied.ok).toBe(false);
+    const denied = await invoke(other, 'prompt_doc.get', { artifactId: ref.artifactId });
+    const hiddenPrompt = { ok: false, errorCode: 'prompt_doc_not_found' };
+    expect(denied).toMatchObject(hiddenPrompt);
     expect(JSON.stringify(denied)).not.toContain(task.markdown);
-    expect(await readSuggestedTask()).toMatchObject({ task: null, unavailable: [{ sourceId: row.source.id, result: denied }] });
+    expect(await readSuggestedTask()).toMatchObject({ task: null, unavailable: [{ sourceId: row.source.id, result: hiddenPrompt }] });
     const grant = await invoke(owner, 'artifact.access.grants.set', { artifactId: ref.artifactId,
       principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' });
     if (!grant.ok) throw new Error(`Prompt sharing refused: ${grant.errorCode}`);
     // The existing Artifact read owns E2EE recipient-key preparation after sharing.
-    expect((await invoke(owner, 'prompt_doc.read', { artifactId: ref.artifactId })).ok).toBe(true);
-    const available = await invoke(other, 'prompt_doc.read', { artifactId: ref.artifactId });
+    expect((await invoke(owner, 'prompt_doc.get', { artifactId: ref.artifactId })).ok).toBe(true);
+    const available = await invoke(other, 'prompt_doc.get', { artifactId: ref.artifactId });
     if (!available.ok) throw new Error(`Shared task unavailable: ${available.errorCode}`);
     const memberTask = PromptDocReadResultV1Schema.parse(available.result);
     const suggested = await readSuggestedTask();
