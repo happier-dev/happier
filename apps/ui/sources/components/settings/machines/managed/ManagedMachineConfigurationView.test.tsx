@@ -557,7 +557,7 @@ describe('mounted managed configurator', () => {
       await act(async () => screen.changeTextByTestId('managed-config.field:configuration.image', 'ubuntu:24.04'));
       if (screen.findByTestId('managed-config.advanced')) await screen.pressByTestIdAsync('managed-config.advanced');
       await act(async () => screen.changeTextByTestId('managed-config.field:configuration.setupScript', 'apt-get update'));
-      await act(async () => screen.changeTextByTestId('managed-config.field:workspaceFolder', '/home/owner/projects/website'));
+      expect(screen.findByTestId('managed-config.field:workspaceFolder')).toBeNull();
       await act(async () => screen.changeTextByTestId('managed-config.setup.setup.input', 'echo ready'));
       if (ownerKind === 'team') {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
@@ -573,7 +573,7 @@ describe('mounted managed configurator', () => {
         await waitForHomeGovernance(() => expect(menu('managed-config.controller-pool')?.props.items).toContainEqual(expect.objectContaining({ id: poolId })));
         await act(async () => menu('managed-config.controller-pool')?.props.onSelect(poolId));
       }
-      const choices = { runtime: 'docker', workspaceFolder: '/home/owner/projects/website',
+      const choices = { runtime: 'docker',
         configuration: { kind: 'image', image: 'ubuntu:24.04', setupScript: 'apt-get update' } };
       const setup = MachineSetupV1Schema.parse({ scripts: [{ body: 'echo ready' }] });
       const savePath = retained ? '/v1/machines/presets/update' : '/v1/machines/presets/create';
@@ -661,6 +661,7 @@ describe('mounted managed configurator', () => {
       await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
       expect(form.props.input.mounts).toEqual([]);
+      expect(screen.findByTestId('managed-config.field:mounts')).toBeNull();
       harness.answer(serverId, '/v1/machines/presets/recipient-census', { select: value => {
         ManagedMachinePresetRecipientCensusInputV1Schema.parse(value);
         return { body: ManagedMachinePresetRecipientCensusResultV1Schema.parse({
@@ -674,7 +675,6 @@ describe('mounted managed configurator', () => {
         return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: persisted }) };
       } });
       await screen.pressByTestIdAsync('managed-config.create');
-      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/recipient-census')).toHaveLength(1));
       await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
       const request = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
       expect(request).toMatchObject({ controller: defaultController, contentEncryptionMode: 'plain', recipients: [],
@@ -1888,6 +1888,57 @@ describe('mounted managed configurator', () => {
     expect(ManagedMachinePresetContentV1Schema.parse(renamedContent.v).launch?.credentials).toEqual(credentials);
     expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
     await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
+    await screen.unmount();
+  });
+
+  it('persists an explicit preparation opt-out only for a provider that declares preparation', async () => {
+    const serverId = await addPresetHome({ name: 'Prepared compute', serverUrl: 'https://prepared-preset.example.test',
+      serverIdentityId: 'srv_prepared_preset', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })]);
+    const preparationInput = defineProtocolObject({ cpu: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' });
+    const preparationArtifact = defineProtocolObject({ id: defineProtocolString(), launch: preparationInput }, { policy: 'closed' });
+    const preparationOperation = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
+    const descriptor = MachineProvisionerContributionV1Schema.parse({ ...provisioner.descriptor, preparation: {
+      inputSchema: preparationInput.jsonSchema,
+      artifactSchema: preparationArtifact.jsonSchema,
+      nativeOperationSchema: preparationOperation.jsonSchema,
+      artifactLaunchPath: 'launch',
+      actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' },
+    } });
+    const capable = { ...provisioner, descriptor };
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [capable] }],
+      ['machines.provisioners.check', { available: true }],
+      ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small server', cpu: 2 }])],
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({
+      pluginId: capable.contribution.pluginId, descriptor,
+    }));
+    const preset = createPlainManagedMachinePresetFixture({ id: 'prepared-preset', homeId: 'srv_prepared_preset', revision: 2,
+      name: 'Prepared preset', owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
+      launch: { provider: capable.contribution, schemaVersion: 1, name: 'Prepared preset', choices: { cpu: 2 } },
+      preparation: { enabled: true } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({
+      id: preset.id, homeId: preset.homeId, revision: 3, name: preset.opened.name, owner: preset.owner,
+      controller: preset.controller, launch: preset.opened.launch!, preparation: { enabled: false },
+    }) } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(capable.contribution)} presetId={preset.id} presetOnly
+      initialController={defaultController} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.prepare.switch')?.props.value).toBe(true));
+    await act(async () => screen.findByTestId('managed-config.prepare.switch')?.props.onValueChange(false));
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+    expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
+      id: preset.id, expectedRevision: 2,
+      patch: { content: { t: 'plain', v: { preparation: { enabled: false } } } },
+    });
     await screen.unmount();
   });
 

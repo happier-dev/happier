@@ -187,6 +187,9 @@ export const LIMA_PLUGIN = definePlugin({
         { path: 'cpus', role: 'cpu', title: 'CPU cores', widget: 'integer', required: true },
         { path: 'memoryGiB', role: 'memory', title: 'Memory (GiB)', widget: 'integer', required: true },
         { path: 'diskGiB', role: 'disk', title: 'Disk (GiB)', widget: 'integer', required: true },
+        // New launches use the guest filesystem. A retained mount can be cleared when editing an older preset.
+        { path: 'mounts', title: 'Mounts', widget: 'json', defaultValue: [],
+          visibleWhen: { op: 'truthy', path: 'mounts.0' } },
       ] },
       async run(input, context) { return (await provider(context)).options(input); },
     },

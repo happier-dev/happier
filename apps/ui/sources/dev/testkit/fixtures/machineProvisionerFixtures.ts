@@ -10,7 +10,7 @@ import { PluginPortableReleaseManifestV1Schema, PluginAccountAvailabilityIntentR
     readDeclaredPackageAssetsV1, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { PluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
+import { defineMachineProvisionerPreparationSchemas, defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
@@ -34,12 +34,37 @@ export function createMachineProvisionerEditorManifestFixture(input: Readonly<{
         MachineProvisionerOptionsResultProtocolV1Schema.jsonSchema]);
     if (descriptor.actions.power) contracts.push([descriptor.actions.power, roles.powerInput.jsonSchema,
         MachineProvisionerPowerResultV1Schema.jsonSchema]);
+    const preparation = descriptor.preparation;
+    const preparationSchemas = preparation ? {
+        input: rehydrateCanonicalProtocolComposableSchema(preparation.inputSchema),
+        artifact: rehydrateCanonicalProtocolComposableSchema(preparation.artifactSchema),
+        nativeOperation: rehydrateCanonicalProtocolComposableSchema(preparation.nativeOperationSchema),
+    } : null;
+    if (preparationSchemas && (!preparationSchemas.input || !preparationSchemas.artifact || !preparationSchemas.nativeOperation)) {
+        throw new Error('The editor fixture requires canonical preparation declarations');
+    }
+    const preparationRoles = preparationSchemas && preparationSchemas.input && preparationSchemas.artifact && preparationSchemas.nativeOperation
+        ? defineMachineProvisionerPreparationSchemas({ launch, input: preparationSchemas.input, artifact: preparationSchemas.artifact,
+            nativeOperation: preparationSchemas.nativeOperation }) : null;
     return PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: input.pluginId,
         version: '1.0.0', displayName: descriptor.title, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js' },
         hostAccess: { required: [], optional: [] }, contributes: { machineProvisioners: [descriptor],
             actions: contracts.map(([id, inputSchema, resultSchema]) => ({ id, title: id,
                 scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema, resultSchema,
-                ...(id === descriptor.actions.options && input.optionsInputHints ? { inputHints: input.optionsInputHints } : {}) })) } });
+                ...(id === descriptor.actions.options && input.optionsInputHints ? { inputHints: input.optionsInputHints } : {}) })).concat(
+                    !preparation || !preparationRoles ? [] : [
+                        { id: preparation.actions.build, title: preparation.actions.build,
+                            scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'writesRemote',
+                            confirmation: { title: 'Build prepared fixture?', body: 'Provider charges apply.' },
+                            inputSchema: preparationRoles.buildInput.jsonSchema, resultSchema: preparationRoles.buildResult.jsonSchema },
+                        { id: preparation.actions.inspect, title: preparation.actions.inspect,
+                            scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'safe',
+                            inputSchema: preparationRoles.inspectInput.jsonSchema, resultSchema: preparationRoles.inspectResult.jsonSchema },
+                        { id: preparation.actions.destroy, title: preparation.actions.destroy,
+                            scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'destructive',
+                            confirmation: { title: 'Delete prepared fixture?', body: 'This permanently deletes the fixture.' },
+                            inputSchema: preparationRoles.destroyInput.jsonSchema, resultSchema: preparationRoles.destroyResult.jsonSchema },
+                    ]) } });
 }
 
 /** The admitted portable release supplies editor declarations without contacting a controller. */
