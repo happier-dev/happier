@@ -295,7 +295,8 @@ export class ScmStatusSync {
             }
             const previousSnapshot = this.projectLastSnapshot.get(activeKey) ?? state.getWorkspaceScmSnapshot(scope);
             const publication = source === 'filesystem' ? { contentChanged: true } : undefined;
-            const snapshotChanged = publication !== undefined || !isUnchangedCountsOfHeldList(previousSnapshot, snapshot)
+            const unchangedHeldList = isUnchangedCountsOfHeldList(previousSnapshot, snapshot);
+            const snapshotChanged = publication !== undefined || !unchangedHeldList
                 && !areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previousSnapshot, snapshot);
             const refs = new Map(this.getProjectSessions(activeKey).map(ref => [this.getSessionSyncKey(ref.sessionId, ref.serverId), ref]));
             if (snapshot.repo.isRepo && snapshot.repo.rootPath) {
@@ -327,8 +328,12 @@ export class ScmStatusSync {
                 state.updateWorkspaceScmSnapshotError(target, settledError);
             }
             for (const ref of refs.values()) state.updateSessionProjectScmSnapshotError(ref.sessionId, settledError, ref.serverId);
-            const signature = buildSnapshotSignature(snapshot);
-            const signatureChanged = signature !== this.projectSnapshotSignature.get(activeKey);
+            const previousSignature = this.projectSnapshotSignature.get(activeKey)
+                ?? (previousSnapshot ? buildSnapshotSignature(previousSnapshot) : undefined);
+            const signature = unchangedHeldList && previousSignature !== undefined
+                ? previousSignature : buildSnapshotSignature(snapshot);
+            // The first observed checkout is a baseline; only a changed checkout invalidates its file listing.
+            const signatureChanged = previousSignature !== undefined && signature !== previousSignature;
             if (snapshotChanged) this.projectLastSnapshot.set(activeKey, snapshot);
             this.projectSnapshotSignature.set(activeKey, signature);
             if (requestedList) {

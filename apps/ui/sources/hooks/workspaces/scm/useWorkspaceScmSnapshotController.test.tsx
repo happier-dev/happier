@@ -119,17 +119,33 @@ describe('useWorkspaceScmSnapshotController', () => {
             expect(hook.getCurrent().snapshot).toBe(shown);
             // A hidden Review demands nothing: another reader's refresh of this slot reads counts only.
             expect(hasScmEntriesDemand({ kind: 'workspace', scope })).toBe(false);
+            const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+            const { getWorkspaceRepositoryDirectoryRevision } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectoryRevision');
+            const { setCachedWorkspaceRepositoryDirectoryEntries, getCachedWorkspaceRepositoryDirectoryEntries } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
+            const workspaceCacheKey = tryBuildWorkspaceCacheKey(scope)!;
+            const listing = { workspaceCacheKey, directoryPath: '' };
+            setCachedWorkspaceRepositoryDirectoryEntries({ ...listing, entries: [{ name: 'a.ts', type: 'file' }] });
+            const directoryRevision = getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
             rpc.mockResolvedValue({ success: true, snapshot: summaryOf(1) });
             const counts = await renderHook(() => useWorkspaceScmSnapshotController(scope, { detail: 'summary', refreshOnMount: false }));
             await counts.getCurrent().refresh();
             expect(readIsSummary()?.detail).toBe('summary');
             expect(storage.getState().getWorkspaceScmSnapshot(scope)?.entries).toHaveLength(1);
+            expect(getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey)).toBe(directoryRevision);
+            expect(getCachedWorkspaceRepositoryDirectoryEntries(listing)).toEqual([{ name: 'a.ts', type: 'file' }]);
 
             rpc.mockClear();
             await setPresented(true);
             await new Promise(resolve => setTimeout(resolve, 0));
             expect(hook.getCurrent().snapshot).toBe(shown);
             expect(rpc).toHaveBeenCalledTimes(1);
+            expect(getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey)).toBe(directoryRevision);
+
+            rpc.mockResolvedValue({ success: true, snapshot: { ...snapshot, branch: { ...snapshot.branch, head: 'release' } } });
+            await counts.getCurrent().refresh();
+            await vi.waitFor(() => expect(hook.getCurrent().snapshot?.branch.head).toBe('release'));
+            expect(getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey)).toBe(directoryRevision + 1);
+            expect(getCachedWorkspaceRepositoryDirectoryEntries(listing)).toBeNull();
             await counts.unmount();
             await hook.unmount();
         });

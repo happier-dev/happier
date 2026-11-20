@@ -26,9 +26,9 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it.each([500, 501])('keeps all admitted entries and the completeness fact for a %i-file directory', async (count) => {
         const rootPath = `/code-listing-${count}`;
         const files = Array.from({ length: count }, (_, index) => ({ name: `f${String(index + 1).padStart(4, '0')}.txt`,
-            path: `${rootPath}/f${String(index + 1).padStart(4, '0')}.txt`, type: 'file', size: 1 }));
+            type: 'file', size: 1 }));
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath,
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true,
                 truncated: count > 500, entries: files.slice(0, 500) };
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40), entries: [] };
@@ -48,8 +48,8 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('presents the existing directory incompleteness notice through the real Code tree', async () => {
         const rootPath = '/code-truncated-folder';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath,
-                truncated: true, entries: [{ name: 'first.txt', path: `${rootPath}/first.txt`, type: 'file' }] };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true,
+                truncated: true, entries: [{ name: 'first.txt', type: 'file' }] };
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40), entries: [] };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
@@ -100,11 +100,15 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('mounts and demands only the large folder viewport, then reveals an off-screen row through the shared keyboard owner', async () => {
         const rootPath = '/code-large-folder';
         const entries = [...Array.from({ length: 1000 }, (_, index) => ({ name: `file-${String(index).padStart(4, '0')}.ts`,
-            path: `${rootPath}/file-${String(index).padStart(4, '0')}.ts`, type: 'file' })),
-            { name: 'README.md', path: `${rootPath}/README.md`, type: 'file' }];
+            type: 'file' })),
+            { name: 'README.md', type: 'file' }];
+        let branch = 'main';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false, entries };
-            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false, entries };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                const snapshot = fileViewSnapshot({ rootPath });
+                return { success: true, snapshot: { ...snapshot, branch: { ...snapshot.branch, head: branch } } };
+            }
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40),
                 entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'none' })) };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
@@ -125,6 +129,10 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
             && (request.payload as { paths: string[] }).paths.length === 9)).toBe(true));
         expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)
             .every(request => (request.payload as { paths: string[] }).paths.every(path => path === '' || visiblePaths.includes(path)))).toBe(true);
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY)).toEqual([
+            expect.objectContaining({ targetId: fixture.scope.machineId,
+                payload: expect.objectContaining({ rootPath, path: rootPath, includeGitIgnore: true }) }),
+        ]);
 
         recycler.refHandle.scrollToIndex.mockClear();
         await screen.update(fixture.wrap(page({ path: entries[900].name })));
@@ -135,6 +143,16 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         await vi.waitFor(() => expect(onVisibleEntriesChange).toHaveBeenLastCalledWith([entries[900].name]));
         await vi.waitFor(() => expect(fixture!.requests.some(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES
             && (request.payload as { paths: string[] }).paths.includes(entries[900].name))).toBe(true));
+        // Scrolling changes history demand, not the already admitted directory listing.
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY)).toHaveLength(1);
+
+        // A real checkout change still invalidates the listing once and reaches the mounted tree.
+        entries.push({ name: 'release-only.ts', type: 'file' });
+        branch = 'release';
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        await act(async () => { await scmStatusSync.invalidateFromUserAndAwait(fixture!.scope); });
+        await vi.waitFor(() => expect(recycler.props.data.some((node: { path: string }) => node.path === 'release-only.ts')).toBe(true));
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY)).toHaveLength(2);
     });
 
     // Owner 11-15 (MOBILE-FIX-1115 H4): an offline Machine's Code card kept an empty body under its header (58 px web,
@@ -157,8 +175,8 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('retires history and filesystem effects on pushed presence withdrawal without replacing the Machine row', async () => {
         const rootPath = '/code-presence-expiry';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
-                entries: [{ name: 'LICENSE', path: `${rootPath}/LICENSE`, type: 'file' }] };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'LICENSE', type: 'file' }] };
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40),
                 entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'none' })) };
@@ -169,7 +187,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
             rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
         expect(screen.findByTestId('workspace-code-offline')).toBeNull();
-        const readsBeforeExpiry = fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
+        const readsBeforeExpiry = fixture.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY
             || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES).length;
         await act(async () => { vi.advanceTimersByTime(60_001); });
         // The server owns presence expiry; elapsed client time cannot withdraw it.
@@ -185,7 +203,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         expect(screen.findHostByTestId('workspace-code-history-stale')).toBeNull();
         expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy();
         await act(async () => { vi.advanceTimersByTime(10_000); });
-        expect(fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY
             || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)).toHaveLength(readsBeforeExpiry);
     });
 
@@ -216,16 +234,16 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('discloses inline without navigating, navigates by real entry kind, and demands the actual folder', async () => {
         const rootPath = '/code-consumer-browser';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) {
                 const path = (request.payload as { path: string }).path;
                 const folderPath = `${rootPath}/nested`;
-                return { ok: true, path, truncated: false, entries: path === folderPath ? [
-                    { name: 'folder.ts', path: `${path}/folder.ts`, type: 'directory' },
-                    { name: 'LICENSE', path: `${path}/LICENSE`, type: 'file' },
-                    { name: 'name ', path: `${path}/name `, type: 'file' },
-                    { name: ' leading', path: `${path}/ leading`, type: 'file' },
-                    { name: 'line\nbreak ', path: `${path}/line\nbreak `, type: 'directory' },
-                ] : path === `${folderPath}/folder.ts` ? [{ name: 'child', path: `${path}/child`, type: 'file' }] : [] };
+                return { success: true, truncated: false, entries: path === folderPath ? [
+                    { name: 'folder.ts', type: 'directory' },
+                    { name: 'LICENSE', type: 'file' },
+                    { name: 'name ', type: 'file' },
+                    { name: ' leading', type: 'file' },
+                    { name: 'line\nbreak ', type: 'directory' },
+                ] : path === `${folderPath}/folder.ts` ? [{ name: 'child', type: 'file' }] : [] };
             }
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
@@ -265,7 +283,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('keeps an inaccessible directory unavailable even when history reports no commits', async () => {
         const rootPath = '/unavailable-code-consumer';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: false, error: 'EACCES' };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: false, error: 'EACCES' };
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: null, entries: [{ path: '', kind: 'none' }] };
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
@@ -273,7 +291,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-test" scope={fixture.scope} rootLabel="Code"
             location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} presentation="widget" />);
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-root-error')).toBeTruthy());
-        expect(fixture.requests.some(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)).toBe(true);
+        expect(fixture.requests.some(request => request.method === RPC_METHODS.LIST_DIRECTORY)).toBe(true);
         expect(screen.findByTestId('workspace-code-empty-repository')).toBeNull();
     });
     it('waits for the repository read instead of calling history unavailable, and holds the rows of a listing in flight', async () => {
@@ -281,7 +299,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         let answerSnapshot: (value: unknown) => void = () => {};
         let answerListing: (value: unknown) => void = () => {};
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return new Promise(resolve => { answerListing = resolve; });
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return new Promise(resolve => { answerListing = resolve; });
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return new Promise(resolve => { answerSnapshot = resolve; });
             if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40),
                 entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'none' })) };
@@ -293,7 +311,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         expect(screen.findHostByTestId('workspace-code-strip-pending')).toBeTruthy();
         expect(screen.findHostByTestId('workspace-code-strip-unavailable')).toBeNull();
         await act(async () => {
-            answerListing({ ok: true, path: rootPath, truncated: false, entries: [{ name: 'LICENSE', path: `${rootPath}/LICENSE`, type: 'file' }] });
+            answerListing({ success: true, truncated: false, entries: [{ name: 'LICENSE', type: 'file' }] });
             answerSnapshot({ success: true, snapshot: fileViewSnapshot({ rootPath }) });
         });
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
@@ -306,9 +324,9 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('previews a large folder in the Overview widget: the first rows, every entry counted, the way into Code', async () => {
         const rootPath = '/code-widget-preview';
         const entries = Array.from({ length: 64 }, (_, index) => ({ name: `entry-${String(index).padStart(2, '0')}`,
-            path: `${rootPath}/entry-${String(index).padStart(2, '0')}`, type: 'file' }));
+            type: 'file' }));
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false, entries };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false, entries };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
         const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-widget-test" scope={fixture.scope}
@@ -323,8 +341,8 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('stacks rows on a narrow table so names keep their width, and keeps columns on a wide one', async () => {
         const rootPath = '/code-narrow-rows';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
-                entries: [{ name: 'apps', path: `${rootPath}/apps`, type: 'directory' }] };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'apps', type: 'directory' }] };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
         const commit = { kind: 'commit' as const, commit: { oid: 'a'.repeat(40), subject: 'Add apps', authorName: 'Ada', committedAt: 0 } };
@@ -348,8 +366,8 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         const rootPath = '/code-readme-refresh';
         let readme: { success: true; content: string } | { success: false; error: string } = { success: false, error: 'EIO' };
         fixture = await createSessionFilesViewFixture({ rootPath, serverIdentityId: 'srv_code_readme_refresh', rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
-                entries: [{ name: 'README.md', path: `${rootPath}/README.md`, type: 'file' }] };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'README.md', type: 'file' }] };
             if (request.method === 'daemon.filesystem.readFile') return readme;
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
