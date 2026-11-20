@@ -542,11 +542,7 @@ function ExposureRow(props: Readonly<{
             const copied = await props.runAction({
                 id: `exposure:${exposure.exposureId}`,
                 failureTitle: t('localServices.actions.failureTitle.copyExposure'),
-                // `copyUrl` resolves `false` on refusal rather than an envelope, so it is mapped to
-                // the shape the shared classifier reads. One outcome path, not a second one here.
-                action: async () => (await props.actions.copyUrl(exposure)
-                    ? { status: 'succeeded' }
-                    : { ok: false, errorCode: null }),
+                action: () => props.actions.copyUrl(exposure),
             });
             if (copied) {
                 copyFeedback.markCopied();

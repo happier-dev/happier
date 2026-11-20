@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -22,6 +23,12 @@ import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/bro
 import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createLocalServicePublicPreviewActions } from './publicPreviewActions';
+import { t } from '@/text';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { copyLocalServicePublicPreviewUrlViaMachineRpc } from '@/sync/domains/local/services/publicPreview/machineRpc';
+import * as machineRpc from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 const executeOnMachine = vi.fn<RuntimeActionExecute>();
 // The Account Action transport and modal host are genuine boundaries; Action admission,
@@ -224,6 +231,47 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
         modalSpies.show.mockReset();
         modalSpies.show.mockImplementation(() => 'modal-id');
         executeOnMachine.mockReset();
+    });
+
+    it('keeps the Copy Link refusal through the Action adapter and shared failure presenter', async () => {
+        const failureCause = { phase: 'rpc.handler', errorClass: 'RpcError' as const,
+            errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
+        const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockResolvedValue({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            error: 'private transport details', failureCause });
+        const serverId = 'copy-refusal-home';
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+            features: { localServices: { enabled: true, publicPreview: { enabled: true } } },
+        }) } });
+        const runtimeActionExecute = createFrontDoorRuntimeActionExecutor(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ copyPublicPreviewUrl: copyLocalServicePublicPreviewUrlViaMachineRpc }),
+        }), 'account_1'));
+        const copyToClipboard = vi.fn(async () => true);
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId,
+            expectedAccountId: 'account_1', copyToClipboard });
+        const now = Date.now();
+        const state = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            ...snapshot, generatedAt: now, exposures: [{ ...activeCurrentPreviewExposure, issuedAt: now, expiresAt: now + 600_000 }],
+        });
+        const result = await renderWithAppProviders(<LocalServicePublicPreviewControls launchTargets={[target]} state={state} actions={actions} />);
+        try {
+            const copy = result.tree.root.findAll(node => node.props?.testID === 'local-service-public-preview-controls-exposure:public_preview_1-copy'
+                && typeof node.props.onPress === 'function')[0];
+            expect(copy).toBeTruthy();
+            const { act } = await import('react-test-renderer');
+            await act(async () => {
+                copy.props.onPress();
+                await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalled());
+            });
+            expect(rpc).toHaveBeenCalledOnce();
+            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).toBe(t('localServices.actions.failure.refused', { servicesActionOffered: false }));
+            expect(copyToClipboard).not.toHaveBeenCalled();
+            const details = modalSpies.alert.mock.calls.at(-1)?.[2]?.find(button => button.text === t('common.details'));
+            expect(details).toBeTruthy();
+            details?.onPress?.();
+            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).toContain(RPC_ERROR_CODES.FORBIDDEN);
+            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).toContain('rpc.handler');
+            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).not.toContain('private transport details');
+        } finally { await result.unmount(); rpc.mockRestore(); }
     });
 
     it('does not offer Share for a Ready managed Service without registration intent', () => {

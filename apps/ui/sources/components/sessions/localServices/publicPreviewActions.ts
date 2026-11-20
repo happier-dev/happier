@@ -42,7 +42,7 @@ export type LocalServicePublicPreviewActions = Readonly<{
         target: LocalServicePublicPreviewActionTarget,
         options?: LocalServicePublicPreviewCreateOptions,
     ) => Promise<unknown>;
-    copyUrl: (exposure: LocalServicePublicExposureV1) => Promise<boolean>;
+    copyUrl: (exposure: LocalServicePublicExposureV1) => Promise<unknown>;
     revoke: (exposure: LocalServicePublicExposureV1, options?: LocalServiceActionInvocationOptions) => Promise<unknown>;
 }>;
 
@@ -201,7 +201,10 @@ export function createLocalServicePublicPreviewActions(
                 context: context(input),
             });
             const parsed = DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema.safeParse(result);
-            if (!parsed.success || !isPublicPreviewCopyUrlResponseForRequest(parsed.data, request)) {
+            if (!parsed.success) {
+                return result;
+            }
+            if (!isPublicPreviewCopyUrlResponseForRequest(parsed.data, request)) {
                 return false;
             }
             return await copyToClipboard(parsed.data.publicUrl);
