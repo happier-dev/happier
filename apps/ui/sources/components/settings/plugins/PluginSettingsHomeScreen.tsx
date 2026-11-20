@@ -386,9 +386,8 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             onCloseDetails={closePane}
             details={openItem && paneOpen ? {
                 header: {
-                    title: openItem.kind === 'installed'
-                        ? t('settingsPlugins.surfaces.detailInstalledLabel')
-                        : t('settingsPlugins.surfaces.detailListingLabel'),
+                    // One name for the detail, beside the page and pushed on a phone (STORE-ACCEPT-1119 fix 6).
+                    title: t('settingsPlugins.detailTitle'),
                     actions: (
                         <CorePluginUiPresentationScope><DetailsPaneOpenAsPageButton
                             testID="settings.plugins.detailPane.openAsPage"
@@ -514,6 +513,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         canRunActions={state.canRunDiscoverActions}
                         installDisabledReason={state.discoverInstallDisabledReason}
                         isPluginActionInFlight={state.isPluginActionInFlight}
+                        settlement={state.routineOperationSettlement}
                         prepareQuickInstall={state.prepareQuickInstall}
                         onLoadMore={state.loadMoreDiscover}
                         onNavigateToPlugin={openPlugin}

@@ -2604,7 +2604,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         // it holds, open or not, but not the owners shown only to place a match.
         // A collapsed group counts the rows it puts away. A catalog list's group is a plain heading (lab m:mcp), uncounted.
         // A group sharing a page section's sheet is that sheet's band, counted like the table's (owner D1).
-        ...(catalogList ? {} : { count: tree === null ? (model.sections[index]?.items.length ?? section.items.length)
+        ...(catalogList ? {} : { count: group?.count !== undefined ? group.count : tree === null ? (model.sections[index]?.items.length ?? section.items.length)
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
         // Groups that are parts of one page section share its heading and sheet (page sections only).

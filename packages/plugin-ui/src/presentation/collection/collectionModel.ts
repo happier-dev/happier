@@ -100,6 +100,11 @@ export type HappierCollectionGroup = Readonly<{
   key: string;
   /** The group's visible and semantic name. An empty title groups the rows without a label. */
   title: string;
+  /**
+   * How many items the group holds when the caller shows only some of them (a compact Browse section with "See all"):
+   * its header count says the total, never the number of cards on screen. Omitted, the header counts its rows.
+   */
+  count?: number;
   description?: string;
   /** Derived by default; assignable Board columns reuse a declared DnD target and its existing Action. */
   membership?: Readonly<{ kind: 'derived' }> | Readonly<{

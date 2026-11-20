@@ -15105,6 +15105,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count}個代理`,
       omittedMcp: ({ count }: { count: number }) => `${count}個 MCP 伺服器`,
       latestNote: '安裝最新發佈版本；若沒有，則安裝預設分支，並記錄提交。',
+      preview: '預覽',
+      latestRelease: ({ tag }: { tag: string }) => `最新發佈 ${tag}`,
+      defaultBranch: '預設分支',
+      commit: ({ commit }: { commit: string }) => `提交 ${commit}`,
     },
     multiInstall: {
         chooseDescription: "選擇要安裝的機器。每台機器會檢查此版本，然後你只需確認一次。",

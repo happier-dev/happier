@@ -100,8 +100,13 @@ export type PluginRoutineOperationSettlement = Readonly<{
     scope: 'installed' | 'discover' | 'pending' | 'development';
     message: string;
     detail?: string;
-    /** The change did not happen (its approval was declined or withdrawn); success is the default. */
-    outcome?: 'withdrawn';
+    /**
+     * The change did not happen (its approval was declined or withdrawn), failed, or its result could not be confirmed;
+     * success is the default. An install's failure or unknown outcome shows inline where Install was pressed.
+     */
+    outcome?: 'withdrawn' | 'failed' | 'unknown';
+    /** The plugin this settlement is about, so its card can say it too. */
+    pluginId?: string;
 }>;
 
 export type DevelopmentCreateSettlement =
@@ -178,6 +183,8 @@ export type PluginSettingsScreenState = Readonly<{
     developmentSourceInstallAvailable: boolean;
     developmentPlugins: readonly DevelopmentPluginEntry[];
     discoverEntries: readonly PluginMarketplaceCatalogEntry[];
+    /** The browsing Account owns local drafts from catalog suggestions. */
+    catalogAccountLifetime: ReturnType<typeof usePluginCatalog>['execution']['binding'];
     discoverNextCursor: string | null;
     /** Selectable source chips beside All: enabled configured sources plus community npm. */
     discoverSources: readonly Readonly<{ id: string; title: string; kind: PluginMarketplaceCatalogSourceKind }>[];
@@ -526,7 +533,25 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         void (async () => {
             markPluginActionStarted(selectedMachineScopeKey, params.pluginId);
             try {
+                // An install's outcome reads inline under the Install that was pressed (and on its card), in one
+                // sentence with the next action, never as an alert carrying a raw code.
+                const installMachine = resolveMachineAdministrationTargetLabel({
+                    target: initialTarget.target, candidates: administrationCandidatesRef.current,
+                })?.machine ?? initialTarget.machine.id;
+                const settleInstall = (outcome: 'failed' | 'unknown', detail?: string | null) => setRoutineOperationSettlement({
+                    scope: 'discover',
+                    message: outcome === 'unknown'
+                        ? t('settingsPlugins.surfaces.installOutcomeUnknown', { machine: installMachine })
+                        : t('settingsPlugins.surfaces.installFailedOn', { machine: installMachine }),
+                    ...(detail ? { detail } : {}),
+                    outcome,
+                    pluginId: params.pluginId,
+                });
                 const showMutationFailure = (outcome: string, reason: string | null) => {
+                    if (params.method === 'install') {
+                        settleInstall('failed', reason);
+                        return;
+                    }
                     const action = resolvePluginChangeActionLabel(params.method);
                     Modal.alert(
                         t('common.error'),
@@ -539,8 +564,14 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                                 : t('settingsPlugins.marketplaceChangeDecisionFailed', { action, outcome }),
                     );
                 };
-                const isMutationOutcomeUnknown = (code: string | undefined) => code === 'outcomeUnknown' || isActionOutcomeUnknownErrorCodeV1(code);
+                const isMutationOutcomeUnknown = (code: string | undefined) => code === 'outcomeUnknown'
+                    || code === 'plugin_change_outcomeUnknown' || isActionOutcomeUnknownErrorCodeV1(code);
                 const reportAmbiguousMutation = () => {
+                    if (params.method === 'install') {
+                        refreshPluginTruth();
+                        settleInstall('unknown');
+                        return;
+                    }
                     reportUnknownMutation({
                         target: initialTarget,
                         actionLabel: resolvePluginChangeActionLabel(params.method),
@@ -573,7 +604,10 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             return { supported: false as const, reason: 'cancelled' as const };
                         }
                         if (!presentActionTurnedOffNoticeIfOff(execution, actionId)
-                            && !isMutationOutcomeUnknown(execution.errorCode)) Modal.alert(t('common.error'), execution.error);
+                            && !isMutationOutcomeUnknown(execution.errorCode)) {
+                            if (params.method === 'install') settleInstall('failed');
+                            else Modal.alert(t('common.error'), execution.error);
+                        }
                         return { supported: true as const, response: { ok: false as const,
                             error: { code: execution.errorCode, message: execution.error } } };
                     };
@@ -1004,6 +1038,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         executionMachineHomeDir,
         isDaemonSettingsTargetCurrent,
         ...catalog,
+        catalogAccountLifetime: catalog.execution.binding,
         canRunDiscoverActions,
         discoverInstallDisabledReason,
         canRefreshInstalledPlugins,

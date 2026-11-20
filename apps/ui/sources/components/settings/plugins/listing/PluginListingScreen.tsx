@@ -22,12 +22,11 @@ import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
 import { catalogReviewStatusLabel, formatCatalogEntryVersion } from '../model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState, type PluginSettingsScreenState } from '../model/usePluginSettingsScreenState';
-import { buildPluginDetailRoute, buildPluginsHomeRoute, pluginsHomeTitleKey } from '../model/pluginsSurfaceRoutes';
+import { buildPluginDetailRoute, buildPluginsHomeRoute } from '../model/pluginsSurfaceRoutes';
 import { usePluginsSurfaceHost } from '../model/usePluginsSurfaceHost';
 import type { PluginListingRouteParams } from '../model/pluginsSurfaceRoutes';
 import { PluginMark } from '../PluginMark';
@@ -83,7 +82,6 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     const maxWidthStyle = useLayoutMaxWidthStyle();
     const { state } = props;
     const pane = props.presentation === 'pane';
-    const phone = useDeviceType() === 'phone';
     const noTarget = state.administrationTargetSelection.state.kind === 'unselected';
     // A machine that is chosen but cannot answer (offline, projection failed) is explained, with
     // its recovery, instead of an endless loading row. "Refreshing" is transient and stays loading.
@@ -119,19 +117,20 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
         <ListingInstall
             entry={entry}
             disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
+            pending={state.isPluginActionInFlight(entry.id)}
             targetMachine={state.administrationTargetLabel?.machine ?? null}
             onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
             onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
-            // Beside the collection and on a phone there is no header chip in reach: the target is a row here,
-            // the same Machine selection the page chip owns (lab ideas-1118-platform scene 2).
-            target={pane || phone ? (
+            // The target is a row in the install block (lab scene 2, pane and page alike): the same Machine
+            // selection the page chip owns.
+            target={(
                 <MachineAdministrationTargetSelector
-                    presentation="chip"
+                    presentation="value"
                     selection={state.administrationTargetSelection}
                     testIDPrefix="settings.plugins.listing.installOn"
                     groupTitle={t('settingsPlugins.surfaces.installOnTitle')}
                 />
-            ) : null}
+            )}
         />
     ) : null;
     // Once installed the listing reads as the installed plugin: what it still needs, then who can use it and the
@@ -168,9 +167,10 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"
                 separator={<Icon name="caret-right" size={12} color={styles.crumbSeparator.color} />}
                 colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
+                // Plugins › <name> (lab detail-page): back to Browse, then where you are.
                 items={[
-                    { key: 'plugins', label: t(pluginsHomeTitleKey(host)), onPress: () => router.dismissTo(buildPluginsHomeRoute(host)), testID: 'settings.plugins.listing.crumb.plugins' },
-                    { key: 'browse', label: t('settingsPlugins.catalog.browse'), onPress: () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse' })), testID: 'settings.plugins.listing.crumb.browse' },
+                    { key: 'browse', label: t('capabilities.store.kinds.plugin.title'), onPress: () => router.dismissTo(buildPluginsHomeRoute(host, { view: 'browse' })), testID: 'settings.plugins.listing.crumb.browse' },
+                    { key: 'listing', label: title, testID: 'settings.plugins.listing.crumb.current' },
                 ]}
                 renderLabel={(item) => <Text style={styles.crumb}>{item.label}</Text>}
             />}
@@ -178,9 +178,9 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 testID="settings.plugins.listing.header"
                 alwaysShowTitle
                 title={title}
-                // Beside the collection and on a phone the column is narrow: the name sits beside the mark and the
-                // purpose and facts start at the mark's edge.
-                {...(pane || phone ? { markSpan: 'title' as const } : {})}
+                // The name sits beside the mark on its title line; the purpose and facts start at the mark's edge
+                // (lab detail-pane and detail-page alike).
+                markSpan="title"
                 leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={state.pluginProjectionById[props.pluginId]?.iconAgentId ?? null} size="page"
                     installedPackage={state.pluginProjectionById[props.pluginId]?.installedPackage} machineId={state.executionMachineId} serverId={state.executionServerId} />}
                 {...(entry?.description ? { description: entry.description } : {})}
@@ -193,12 +193,13 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 actions={pane ? installedStatus ?? undefined : (
                     <>
                         {installedStatus}
-                        <MachineAdministrationTargetSelector
+                        {/* Before install the target is the Install on row; once installed the header names it. */}
+                        {installed ? <MachineAdministrationTargetSelector
                             presentation="chip"
                             selection={state.administrationTargetSelection}
                             testIDPrefix="settings.plugins.listing.target"
                             groupTitle={t('settingsPlugins.administrationMachineTitle')}
-                        />
+                        /> : null}
                     </>
                 )}
             />
@@ -278,6 +279,8 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
 function ListingInstall(props: Readonly<{
     entry: PluginMarketplaceCatalogEntry;
     disabled: boolean;
+    /** The press is in flight: the button says what is happening, not only that it is unavailable. */
+    pending: boolean;
     targetMachine: string | null;
     onInstall: () => void;
     /** Present when the plugin can go to several of the person's Machines at once. */
@@ -314,7 +317,9 @@ function ListingInstall(props: Readonly<{
                 ) : <View />}
                 <RoundButton size="normal" titleNumberOfLines="complete"
                     testID="settings.plugins.listing.install"
-                    title={t('settingsPlugins.installAndTrust')}
+                    title={props.pending && props.targetMachine
+                        ? t('settingsPlugins.surfaces.installingOn', { machine: props.targetMachine })
+                        : t('settingsPlugins.installAndTrust')}
                     disabled={props.disabled}
                     onPress={props.onInstall} />
             </View>

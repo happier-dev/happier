@@ -20096,6 +20096,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count}个代理`,
       omittedMcp: ({ count }: { count: number }) => `${count}个 MCP 服务器`,
       latestNote: '安装最新发布版本；若没有，则安装默认分支，并记录提交。',
+      preview: '预览',
+      latestRelease: ({ tag }: { tag: string }) => `最新发布 ${tag}`,
+      defaultBranch: '默认分支',
+      commit: ({ commit }: { commit: string }) => `提交 ${commit}`,
     },
     multiInstall: {
         chooseDescription: "选择要安装的机器。每台机器会检查此版本，然后你只需确认一次。",

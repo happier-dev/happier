@@ -20301,6 +20301,10 @@ settingsSession: {
             omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agent' : 'agenty'}`,
             omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'serwer MCP' : 'serwery MCP'}`,
             latestNote: 'Instaluje najnowsze wydanie, a jeśli go nie ma, domyślną gałąź, i zapisuje commit.',
+            preview: 'Podgląd',
+            latestRelease: ({ tag }: { tag: string }) => `najnowsze wydanie ${tag}`,
+            defaultBranch: 'domyślna gałąź',
+            commit: ({ commit }: { commit: string }) => `commit ${commit}`,
           },
           multiInstall: {
               chooseDescription: "Wybierz maszyny, na których ją zainstalować. Każda sprawdzi to wydanie, a potem potwierdzisz raz.",

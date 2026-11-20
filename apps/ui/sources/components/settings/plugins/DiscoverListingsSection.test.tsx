@@ -63,6 +63,8 @@ describe('DiscoverListingsSection', () => {
             prepareQuickInstall={() => null} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>);
         const cards = () => entries.filter((e) => screen.findByTestId(`settings.plugins.marketplace.entry.curated.${e.id}`) !== null).map((e) => e.id);
         expect(cards()).toEqual(['a.one', 'a.two', 'a.three', 'a.four']);
+        // The compact Code section counts all four it holds, not the three cards on screen.
+        expect(screen.findAll(node => node.props.title === 'Code' && node.props.count !== undefined)[0]?.props.count).toBe(4);
 
         await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:category:code:action');
         expect(cards()).toEqual(['a.one', 'a.three', 'a.four', 'a.five']);
@@ -152,5 +154,12 @@ describe('DiscoverListingsSection', () => {
         // The section is compact again with its "All"; the old focus is gone.
         expect(screen.findByTestId('settings.plugins.marketplace.discover:group:category:agents:action')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.entry.curated.a.four')).toBeNull();
+    });
+    it('says on the card when its install failed or could not be confirmed', async () => {
+        const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
+            canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
+            settlement={{ scope: 'discover', message: 'unknown', outcome: 'unknown', pluginId: entry.id }}
+            prepareQuickInstall={() => null} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} />);
+        expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.community.acme.plugin')).not.toBeNull();
     });
 });

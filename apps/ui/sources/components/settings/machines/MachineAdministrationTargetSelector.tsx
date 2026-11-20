@@ -13,6 +13,10 @@ import type {
 } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { Item } from '@/components/ui/lists/Item';
 import { CONTENT_SIZED_POPOVER_WIDTH } from '@/components/ui/popover/Popover';
+import { Popover } from '@/components/ui/popover';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SelectionListFilterChip, type SelectionListFilter } from '@/components/ui/selectionList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -55,7 +59,7 @@ export type MachineAdministrationTargetSelectorProps = Readonly<{
      * provides a heading. `chip`: a compact trigger for a page header's actions slot; the same picker
      * opens in a popover.
      */
-    presentation?: 'section' | 'context' | 'chip';
+    presentation?: 'section' | 'context' | 'chip' | 'value';
     /** Stable test-id prefix for the selected state, clear action, and shared picker. */
     testIDPrefix?: string;
     /** Contextual label for the machine scope this selector presents. */
@@ -303,6 +307,9 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
     if (props.presentation === 'chip') {
         return <MachineTargetChip {...props} />;
     }
+    if (props.presentation === 'value') {
+        return <MachineTargetValue {...props} />;
+    }
     const testIDPrefix = props.testIDPrefix ?? 'machine-administration-target';
     const groupTitle = props.groupTitle ?? t('settingsProviders.detail.targetMachine');
     const compact = props.presentation === 'context';
@@ -468,6 +475,63 @@ export function useMachineAdministrationTargetFilter(
         disabled: props.disabled,
         testID: `${testIDPrefix}.chip`,
     };
+}
+
+/**
+ * The row form of the selector (an "Install on" row): the Machine's name as the row's compact value with the
+ * dropdown chevron the other row values use, opening the same chooser as the chip. The name keeps the row's width
+ * instead of a bordered chip's, so it does not truncate at pane width or on a phone.
+ */
+function MachineTargetValue(props: MachineAdministrationTargetSelectorProps) {
+    const { theme } = useUnistyles();
+    const filter = useMachineAdministrationTargetFilter(props);
+    const [open, setOpen] = React.useState(false);
+    const anchorRef = React.useRef<View>(null);
+    const close = React.useCallback(() => setOpen(false), []);
+    const renderContent = filter.renderPopoverContent;
+    return (
+        <>
+            <View ref={anchorRef} collapsable={false}>
+                <HappierPressable
+                    testID={filter.testID}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${filter.label}: ${filter.valueLabel}`}
+                    expanded={open}
+                    disabled={!renderContent}
+                    onPress={() => setOpen((current) => !current)}
+                >
+                    {renderDropdownItemTriggerRightElement({
+                        detail: filter.valueLabel ?? null,
+                        open,
+                        detailColor: filter.muted ? theme.colors.text.tertiary : theme.colors.text.secondary,
+                        chevronColor: theme.colors.text.secondary,
+                    })}
+                </HappierPressable>
+            </View>
+            {open && renderContent ? (
+                <Popover
+                    open
+                    anchorRef={anchorRef}
+                    boundaryRef={null}
+                    placement="auto-vertical"
+                    phonePresentation="sheet"
+                    sheetHeader="none"
+                    accessibilityLabel={filter.label}
+                    edgePadding={{ horizontal: 12, vertical: 12 }}
+                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+                    maxWidthCap={CONTENT_SIZED_POPOVER_WIDTH.maxPx}
+                    onRequestClose={close}
+                >
+                    {({ maxHeight, maxWidth }) => (
+                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme"
+                            containerStyle={{ width: Math.min(maxWidth, CONTENT_SIZED_POPOVER_WIDTH.maxPx) }}>
+                            {renderContent({ close, maxHeight })}
+                        </FloatingOverlay>
+                    )}
+                </Popover>
+            ) : null}
+        </>
+    );
 }
 
 /**

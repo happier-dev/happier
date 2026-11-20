@@ -20390,6 +20390,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count} エージェント`,
       omittedMcp: ({ count }: { count: number }) => `${count} MCP サーバー`,
       latestNote: '最新のリリース（なければデフォルトブランチ）をインストールし、コミットを記録します。',
+      preview: 'プレビュー',
+      latestRelease: ({ tag }: { tag: string }) => `最新リリース ${tag}`,
+      defaultBranch: 'デフォルトブランチ',
+      commit: ({ commit }: { commit: string }) => `コミット ${commit}`,
     },
     multiInstall: {
         chooseDescription: "インストール先のマシンを選んでください。各マシンがこのリリースを確認したあと、1回だけ確認します。",

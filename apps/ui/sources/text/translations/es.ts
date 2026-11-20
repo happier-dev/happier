@@ -20476,6 +20476,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agente' : 'agentes'}`,
       omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'servidor MCP' : 'servidores MCP'}`,
       latestNote: 'Instala la última versión publicada, o la rama por defecto si no hay ninguna, y anota el commit.',
+      preview: 'Vista previa',
+      latestRelease: ({ tag }: { tag: string }) => `última versión ${tag}`,
+      defaultBranch: 'rama por defecto',
+      commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },
     multiInstall: {
         chooseDescription: "Elige las máquinas donde instalarlo. Cada una comprueba esta versión y luego confirmas una sola vez.",

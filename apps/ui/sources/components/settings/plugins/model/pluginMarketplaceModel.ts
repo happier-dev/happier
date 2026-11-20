@@ -690,7 +690,8 @@ export type BrowseSection = Readonly<{
     hiddenCount: number;
 }>;
 
-function browseCategoryTitle(category: string): string {
+/** A catalog category as people read it: the catalog's word, capitalised. Browse sections and listing facts share it. */
+export function browseCategoryTitle(category: string): string {
     return category.charAt(0).toLocaleUpperCase() + category.slice(1);
 }
 

@@ -133,4 +133,11 @@ describe('PluginListingScreen', () => {
         expect(routerDismissTo).toHaveBeenCalledWith('/settings/plugins?view=browse');
         expect(routerPush).not.toHaveBeenCalled();
     });
+    it('says the install is under way while the press is in flight', async () => {
+        state.value = screenState({ isPluginActionInFlight: () => true });
+        const screen = await renderListing();
+        const install = screen.findAll(node => node.props.testID === 'settings.plugins.listing.install' && typeof node.props.title === 'string')[0];
+        expect(install?.props.title).toContain('Build Mac');
+        expect(install?.props.title).not.toBe('Install & Trust');
+    });
 });

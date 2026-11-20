@@ -10,6 +10,7 @@ import { t } from '@/text';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { pluginListingAdds } from '../model/pluginContributionKindLabel';
+import { browseCategoryTitle } from '../model/pluginMarketplaceModel';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 import { BrowserExtensionListingFacts, type BrowserExtensionListingFactsProps } from './BrowserExtensionListingFacts';
 
@@ -151,7 +152,7 @@ function PluginCatalogListingFacts(props: PluginCatalogListingFactsProps) {
         {entry.categories.length > 0 ? (
           <Item
             title={t('settingsPlugins.surfaces.listingCategories')}
-            detail={entry.categories.join(', ')}
+            detail={entry.categories.map(browseCategoryTitle).join(', ')}
             mode="info"
             showChevron={false}
           />

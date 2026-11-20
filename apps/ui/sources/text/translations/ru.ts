@@ -20430,6 +20430,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'агент' : 'агентов'}`,
       omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'MCP-сервер' : 'MCP-серверов'}`,
       latestNote: 'Устанавливает последний релиз, а если его нет — ветку по умолчанию, и записывает коммит.',
+      preview: 'Предпросмотр',
+      latestRelease: ({ tag }: { tag: string }) => `последний релиз ${tag}`,
+      defaultBranch: 'ветка по умолчанию',
+      commit: ({ commit }: { commit: string }) => `коммит ${commit}`,
     },
     multiInstall: {
         chooseDescription: "Выберите машины для установки. Каждая проверит этот выпуск, затем вы подтвердите один раз.",

@@ -669,7 +669,10 @@ export function PluginRoutineOperationSettlementRow(props: Readonly<{
                     icon={props.settlement.outcome === 'withdrawn'
                         // Nothing changed: a quiet mark, never the success check.
                         ? <Icon name="info" size={29} color={theme.colors.text.secondary} />
-                        : <Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
+                        : props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown'
+                            // It needs the person: the one place a state colour speaks.
+                            ? <Icon name="warning" size={29} color={theme.colors.state.warning.foreground} />
+                            : <Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -1031,7 +1034,6 @@ export function DiscoverStatusSummary(props: Readonly<{
                 sourceTitle: props.selectedSourceTitle ?? (props.sources?.map(source => source.title).join(', ') || null) } } : {}) }),
         [props.diagnostics, props.sourceStatuses, props.error, props.loading, props.failureStatus, props.selectedSourceTitle, props.sources],
     );
-    const sourceIssueCount = issues.filter((issue) => issue.sourceId !== null).length;
     const unreachableIssues = issues.filter((issue) => issue.sourceId !== null && !issue.reachable);
     const attentionIssues = issues.filter((issue) => issue.sourceId === null || issue.reachable);
     // Unanswered sources cannot establish an empty catalog or a no-match search.
@@ -1054,17 +1056,12 @@ export function DiscoverStatusSummary(props: Readonly<{
                     ? searched
                         ? t('settingsPlugins.surfaces.noMatch', { query: (props.searchText ?? '').trim() })
                         : t('settingsPlugins.surfaces.browseEmpty')
-                    : t('settingsPlugins.discover.status.results', {
-                        count: props.entryCount,
-                        sources: props.sourceStatuses.length,
-                    });
+                    // Results that came back are their own statement: a healthy count says nothing new.
+                    : null;
     // Qualifiers, in the order a reader needs them: what they are looking at is
     // out of date, then what was missing, then what could not be acted on.
     const qualifiers = [
         ...(props.stale && !props.loading ? [t('settingsPlugins.discover.status.stale')] : []),
-        ...(sourceIssueCount > 0
-            ? [t('settingsPlugins.discover.status.partial', { count: sourceIssueCount })]
-            : []),
         ...(props.nonInstallable.length > 0 && props.entryCount > 0
             ? [t('settingsPlugins.discover.status.nonInstallable', { count: props.nonInstallable.length })]
             : []),
@@ -1085,21 +1082,24 @@ export function DiscoverStatusSummary(props: Readonly<{
               * qualifier. It is the pane's only live region; the rows below it
               * stay outside so each one can be traversed on its own.
               */}
-            {noMatch || waitingForQuery || sourceFailureWithoutResults || (pageNoticeActive && props.entryCount === 0 && !props.loading) ? null : (<View
+            {noMatch || waitingForQuery || sourceFailureWithoutResults || (message === null && qualifiers.length === 0)
+                || (pageNoticeActive && props.entryCount === 0 && !props.loading) ? null : (<View
                 style={[styles.statusLine, maxWidthStyle]}
                 accessible
                 accessibilityRole={props.error === null ? 'text' : 'alert'}
                 accessibilityLiveRegion="polite"
-                accessibilityLabel={[message, ...qualifiers].join(' ')}
+                accessibilityLabel={[message, ...qualifiers].filter(Boolean).join(' ')}
             >
                 {props.loading ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : null}
                 <View style={styles.statusText}>
-                    <Text
-                        testID="settings.plugins.marketplace.discover.status.summary"
-                        style={[styles.statusMessage, props.error === null ? null : styles.statusMessageError]}
-                    >
-                        {message}
-                    </Text>
+                    {message !== null ? (
+                        <Text
+                            testID="settings.plugins.marketplace.discover.status.summary"
+                            style={[styles.statusMessage, props.error === null ? null : styles.statusMessageError]}
+                        >
+                            {message}
+                        </Text>
+                    ) : null}
                     {qualifiers.length > 0 ? (
                         <Text style={styles.statusQualifier}>{qualifiers.join('\n')}</Text>
                     ) : null}
@@ -1186,6 +1186,8 @@ export function DiscoverListingsSection(props: Readonly<{
     canRunActions: boolean;
     installDisabledReason?: string | null;
     isPluginActionInFlight: (pluginId: string) => boolean;
+    /** The last install's outcome; a card whose install failed or could not be confirmed says so in place. */
+    settlement?: PluginRoutineOperationSettlement | null;
     prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
     onLoadMore: () => void;
     onNavigateToPlugin: (pluginId: string) => void;
@@ -1212,7 +1214,8 @@ export function DiscoverListingsSection(props: Readonly<{
         [sections],
     );
     const groups = React.useMemo(() => ({
-        axis: sections.map((section) => ({ key: section.id, title: section.title })),
+        // A compact section's header counts everything it holds, not the cards on screen (STORE-ACCEPT-1119 fix 2).
+        axis: sections.map((section) => ({ key: section.id, title: section.title, count: section.entries.length + section.hiddenCount })),
         groupOf: (item: DiscoverListingItem) => item.sectionId,
     }), [sections]);
     const { onOpenListing, onCloseListing } = props;
@@ -1291,6 +1294,7 @@ function useDiscoverListingRowActions(item: DiscoverListingItem): CollectionRowA
 type DiscoverListingActionInputs = Readonly<{
     machineId?: string | null;
     machineName?: string | null;
+    settlement?: PluginRoutineOperationSettlement | null;
     serverId?: string | null;
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     canRunActions: boolean;
@@ -1308,6 +1312,7 @@ function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: Dis
         entry={entry}
         machineName={props.machineName}
         disabled={!props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading}
+        pending={props.isPluginActionInFlight(entry.id)}
         disabledReason={props.installDisabledReason ?? undefined}
         prepareQuickInstall={props.prepareQuickInstall}
     />;
@@ -1319,10 +1324,12 @@ function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: Dis
  * goes, then Cancel or Install & Trust. The person has not seen the listing here, so this press is the consent; the
  * listing's own Install & Trust needs no second step.
  */
-function DiscoverQuickInstall({ entry, machineName, disabled, disabledReason, prepareQuickInstall }: Readonly<{
+function DiscoverQuickInstall({ entry, machineName, disabled, pending, disabledReason, prepareQuickInstall }: Readonly<{
     entry: PluginMarketplaceCatalogEntry;
     machineName?: string | null;
     disabled: boolean;
+    /** This plugin's install is in flight: the "+" shows it is working. */
+    pending: boolean;
     disabledReason?: string;
     prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
 }>) {
@@ -1331,6 +1338,7 @@ function DiscoverQuickInstall({ entry, machineName, disabled, disabledReason, pr
     const anchorRef = React.useRef<View>(null);
     const testID = `settings.plugins.marketplace.action.install.${entry.sourceId}.${entry.id}`;
     const installLabel = t('settingsPlugins.installAndTrust');
+    const plusLabel = machineName ? t('settingsPlugins.surfaces.quickInstallLabel', { machine: machineName }) : installLabel;
     const close = React.useCallback(() => setReview(null), []);
     const contents = pluginListingAdds(entry.contributions).map((add) => add.title);
     const uses = [
@@ -1344,9 +1352,11 @@ function DiscoverQuickInstall({ entry, machineName, disabled, disabledReason, pr
                     testID={testID}
                     iconName="plus"
                     variant="plain"
-                    tooltip={installLabel}
+                    // Named for what it does and where: "Install on <machine>" (UI refinements 11-20).
+                    tooltip={plusLabel}
                     disabledReason={disabledReason}
-                    accessibilityLabel={buildActionRowAccessibilityLabel([installLabel, entry.title, entry.sourceTitle]) ?? installLabel}
+                    busy={pending}
+                    accessibilityLabel={buildActionRowAccessibilityLabel([plusLabel, entry.title, entry.sourceTitle]) ?? plusLabel}
                     accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
                     disabled={disabled}
                     expanded={open}
@@ -1428,7 +1438,15 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
             : [entry.sourceTitle, ...pluginListingAdds(entry.contributions).map((add) => add.title)].filter(Boolean).join(' · ')),
         description: ({ entry }) => entry.description || null,
         // Healthy is quiet: only a withdrawal or "Installed" speaks; a withdrawal outranks "Installed".
-        reason: ({ entry }) => entry.warning === 'withdrawn' ? (
+        reason: ({ entry }) => props.settlement?.pluginId === entry.id
+            && (props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown') && !installedPluginById.has(entry.id) ? (
+            <Status
+                testID={`settings.plugins.marketplace.installOutcome.${entry.sourceId}.${entry.id}`}
+                label={props.settlement.outcome === 'unknown'
+                    ? t('settingsPlugins.surfaces.cardInstallUnknown') : t('settingsPlugins.surfaces.cardInstallFailed')}
+                tone="warning" presentation="inline" indicator
+            />
+        ) : entry.warning === 'withdrawn' ? (
             <Status
                 testID={`settings.plugins.marketplace.reviewStatus.${entry.sourceId}.${entry.id}`}
                 label={catalogReviewStatusLabel(entry)}

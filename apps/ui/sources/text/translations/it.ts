@@ -20478,6 +20478,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agente' : 'agenti'}`,
       omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'server MCP' : 'server MCP'}`,
       latestNote: 'Installa l’ultima release pubblicata, o il branch predefinito se non ce n’è una, e annota il commit.',
+      preview: 'Anteprima',
+      latestRelease: ({ tag }: { tag: string }) => `ultima release ${tag}`,
+      defaultBranch: 'branch predefinito',
+      commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },
     multiInstall: {
         chooseDescription: "Scegli le macchine su cui installarlo. Ognuna controlla questa versione, poi confermi una sola volta.",

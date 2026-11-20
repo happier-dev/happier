@@ -966,7 +966,7 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                 {/* The same group label a list draws (its name, its count, what its cards share), not a heading of
                     its own: Cards and Table read one grouping (Workflows acceptance fix 7). */}
                 <View style={shrinkStyle}>
-                  <HappierListSection title={group.title} count={section.items.length} titleRole="micro"
+                  <HappierListSection title={group.title} count={group.count ?? section.items.length} titleRole="micro"
                     {...(group.description === undefined ? {} : { description: group.description })} />
                 </View>
                 <CollectionGroupActionButton

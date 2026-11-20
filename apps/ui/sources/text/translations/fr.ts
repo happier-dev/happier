@@ -20350,6 +20350,10 @@ settingsSession: {
       omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agent' : 'agents'}`,
       omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'serveur MCP' : 'serveurs MCP'}`,
       latestNote: 'Installe la dernière version publiée, ou la branche par défaut s’il n’y en a pas, et note le commit.',
+      preview: 'Aperçu',
+      latestRelease: ({ tag }: { tag: string }) => `dernière version ${tag}`,
+      defaultBranch: 'branche par défaut',
+      commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },
     multiInstall: {
         chooseDescription: "Choisissez les machines où l’installer. Chacune vérifie cette version, puis vous confirmez une seule fois.",

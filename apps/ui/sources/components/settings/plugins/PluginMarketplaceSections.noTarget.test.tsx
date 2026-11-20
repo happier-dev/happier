@@ -116,7 +116,7 @@ describe('Plugins page without a chosen machine', () => {
         expect(onClearSearch).toHaveBeenCalledTimes(1);
     });
 
-    it('defers an empty Browse summary to the page cause but keeps retained result counts', async () => {
+    it('defers an empty Browse summary to the page cause and keeps returned results quiet', async () => {
         const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const props = { loading: false, error: null, stale: false, entryCount: 0, sourceStatuses: [], diagnostics: [], nonInstallable: [], selectedSourceTitle: null, searchText: '' };
@@ -127,8 +127,9 @@ describe('Plugins page without a chosen machine', () => {
         );
         const screen = await renderScreen(view(0, true));
         expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
+        // Returned results are their own statement (STORE-ACCEPT-1119 fix 3): no healthy count line.
         await screen.update(view(3, true));
-        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
         await screen.update(view(0, false));
         expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
     });
