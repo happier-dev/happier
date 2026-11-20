@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
@@ -99,6 +100,27 @@ describe('PluginListingScreen', () => {
         await act(async () => { screen.pressByTestId('settings.plugins.listing.manage'); });
         expect(routerPush).toHaveBeenCalledWith(expect.objectContaining({ params: { pluginId: 'acme.tools' } }));
         expect(state.value.runCatalogAction).not.toHaveBeenCalled();
+    });
+
+    it('offers a declared setup recipe on the installed listing before any Machine has run it', async () => {
+        state.value = screenState({
+            installedPluginById: new Map([[listing.id, {}]]),
+            pluginProjectionV2: PluginProjectionV2Schema.parse({
+                v: 2, generation: 1, agentsById: {}, familiesById: {
+                    machineRecipes: { family: 'machineRecipes', entriesById: {
+                        'acme.tools/setup-tools': {
+                            id: 'acme.tools/setup-tools', pluginId: listing.id, pluginVersion: listing.version,
+                            definition: { id: 'setup-tools', revision: 'rev-3', title: 'Set up build tools',
+                                inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [] },
+                        },
+                    } },
+                },
+            }),
+        });
+        const screen = await renderListing();
+        expect(screen.findByTestId('settings.plugins.listing.manage')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.listing.setup.progress')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Set up build tools');
     });
 
     it('says the listing is gone, with a retry, once the source answered without it', async () => {

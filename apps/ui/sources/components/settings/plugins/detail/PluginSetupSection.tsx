@@ -182,7 +182,7 @@ export function PluginSetupSection(
                     title={presentation.action}
                     accessibilityLabel={`${presentation.action}: ${presentation.title}`}
                     onPress={() => {
-                      void open(row);
+                      void open(row, presentation.title);
                     }}
                   />
                 </View>

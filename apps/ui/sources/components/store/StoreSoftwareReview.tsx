@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { StoreBrowserExtensionReview, type StoreBrowserExtensionReviewProps } from './StoreBrowserExtensionReview';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import type { MachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -27,7 +29,8 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { prepareMachineSetupPresetApplyInput, type MachineSetupPresetInput } from '@/components/settings/machines/managed/machineSetupApply';
+import { prepareMachineSetupPresetApplyInput, prepareMachineSetupSourcesAdditionApplyInput, type MachineSetupPresetInput } from '@/components/settings/machines/managed/machineSetupApply';
+import { reviewMachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 
 const execute = createFrontDoorActionExecute();
 
@@ -54,7 +57,14 @@ type PresetReviewProps = Readonly<{
   preset: MachineSetupPresetInput;
   scope: ServerAccountScope;
 }>;
-type ReviewProps = InstallReviewProps | RemoveReviewProps | PresetReviewProps;
+type RecipeReviewProps = Readonly<{
+  intent: 'recipe';
+  name: string;
+  item: MachineSetupRecipeItemV1;
+  scope: ServerAccountScope;
+  machineId?: string;
+}>;
+type ReviewProps = InstallReviewProps | RemoveReviewProps | PresetReviewProps | RecipeReviewProps;
 
 /** The one review for every chosen Machine (lab `w:review`); its Install is the one apply, which asks first. */
 export function showStoreSoftwareReview(props: ReviewProps) {
@@ -71,6 +81,11 @@ export function showStoreSoftwarePresetReview(props: Omit<PresetReviewProps, 'in
   Modal.show({ component: StoreSoftwareReview, props: { ...props, intent: 'preset' } });
 }
 
+/** Run the exact recipe through the existing Machine choice, Setup review and Action. */
+export function showStoreMachineRecipeReview(props: Omit<RecipeReviewProps, 'intent'>) {
+  Modal.show({ component: StoreSoftwareReview, props: { ...props, intent: 'recipe' } });
+}
+
 function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
   const router = useRouter();
   const { onClose } = props;
@@ -83,9 +98,14 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
   const machines = 'machines' in props ? props.machines : allMachines;
   const row = props.intent === 'remove' ? props.row : null;
   const preset = props.intent === 'preset' ? props.preset : null;
+  const recipe = props.intent === 'recipe' ? props.item : null;
+  const recipeMachineId = props.intent === 'recipe' ? props.machineId : undefined;
+  const pickingSetupMachine = preset !== null || recipe !== null;
   const installedMachines = React.useMemo(() => ({ targets: machines.targets.filter(entry =>
     row?.installations.some(installation => installation.machineId === entry.machine.machineId)) }), [machines.targets, row]);
-  const [selectedId, setSelectedId] = React.useState<string | null>(row?.installations.length === 1 ? row.installations[0]!.machineId : null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(
+    recipeMachineId ?? (row?.installations.length === 1 ? row.installations[0]!.machineId : null),
+  );
   const { binding } = useServerCredentialAccountScopeBinding(props.scope.serverId);
   const preparation = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => { preparation.current?.abort(); }, [props.scope.serverId, props.scope.accountId]);
@@ -115,7 +135,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
   const opened = React.useCallback(
     (result: unknown) => {
       const output =
-        ManagedMachineActionOutputSchemasV1[props.intent === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply'].safeParse(
+        ManagedMachineActionOutputSchemasV1[props.intent === 'remove' ? MACHINE_SETUP_REMOVE_ACTION_ID_V1 : MACHINE_SETUP_APPLY_ACTION_ID_V1].safeParse(
           result,
         );
       if (!output.success) {
@@ -136,14 +156,14 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     setPending(true);
     setError(null);
     const input = prepared.input;
-    const actionId = props.intent === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply';
+    const actionId = props.intent === 'remove' ? MACHINE_SETUP_REMOVE_ACTION_ID_V1 : MACHINE_SETUP_APPLY_ACTION_ID_V1;
     let result;
     try {
       if (props.intent === 'remove' && !('targets' in prepared.input)) {
         result = await removeMachineSetupSoftware({ executeAction: execute, prepared: { ...prepared, input: prepared.input },
           context: { surface: 'ui', serverId: props.scope.serverId, expectedAccountId: props.scope.accountId } });
-      } else if (props.intent === 'preset' && 'targets' in prepared.input) {
-        result = await execute.confirmed('machines.setup.apply', prepared.input, {
+      } else if (pickingSetupMachine && 'targets' in prepared.input) {
+        result = await execute.confirmed(MACHINE_SETUP_APPLY_ACTION_ID_V1, prepared.input, {
           surface: 'ui', serverId: props.scope.serverId, expectedAccountId: props.scope.accountId,
         });
       } else if (apply && 'targets' in prepared.input) result = await apply(prepared.input);
@@ -176,7 +196,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
       return;
     }
     opened(outcome.result);
-  }, [accountId, apply, opened, pending, prepared, props.intent, requestApproval, serverId]);
+  }, [accountId, apply, opened, pending, pickingSetupMachine, prepared, props.intent, requestApproval, serverId]);
   const changeHost = React.useCallback(async (machineId: string) => {
     if (!prepareOn || replanning) return;
     setReplanning(true);
@@ -187,7 +207,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     else setError(describeMachineSetupPlanFailure(next, nameOf));
   }, [prepareOn, replanning, nameOf]);
   const reviewSelection = async (machineId: string, removeItemKeys?: string[]) => {
-    if ((!row && !preset) || !binding?.isCurrent() || binding.accountId !== props.scope.accountId) return;
+    if ((!row && !pickingSetupMachine) || !binding?.isCurrent() || binding.accountId !== props.scope.accountId) return;
     const homeId = getServerProfileById(props.scope.serverId)?.serverIdentityId;
     if (!homeId) return;
     preparation.current?.abort();
@@ -200,10 +220,18 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
         context: { surface: 'ui' as const, serverId: props.scope.serverId, expectedAccountId: props.scope.accountId, signal: controller.signal },
         homeId, machineId, ...(removeItemKeys === undefined ? {} : { removeItemKeys }),
         isCurrent: () => binding.isCurrent() && !controller.signal.aborted };
+      const setup = recipe ? await reviewMachineSetupRecipeInputs({ ...request, setup: { items: [recipe] } }) : null;
       const next = preset ? await prepareMachineSetupPresetApplyInput({ ...request, preset })
+        : recipe ? setup && await prepareMachineSetupSourcesAdditionApplyInput({
+          ...request, selectedMachineId: machineId, sources: [{ kind: 'direct', setup }],
+        })
         : await prepareMachineSetupSoftwareRemoveInput({ ...request, setup: { items: [{ kind: 'softwareRecipe', selection: row!.native }] } });
       if (controller.signal.aborted || !binding.isCurrent()) return;
-      if (next === null) { setSelectedId(null); return; }
+      if (next === null) {
+        if (recipeMachineId) onClose();
+        else setSelectedId(null);
+        return;
+      }
       if (next.ok) setPrepared(next);
       else setError(describeMachineSetupPlanFailure(next, nameOf));
     } catch {
@@ -213,11 +241,11 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     }
   };
   React.useEffect(() => {
-    if ((row || preset) && selectedId) void reviewSelection(selectedId);
-  }, [row, preset, selectedId, binding]);
+    if ((row || pickingSetupMachine) && selectedId) void reviewSelection(selectedId);
+  }, [row, preset, recipe, pickingSetupMachine, selectedId, binding]);
   const waiting =
     approval.approvalId !== null && approval.approvalId !== undefined;
-  const label = props.intent === 'remove' ? t('common.remove') : props.intent === 'preset' ? t('common.use') :
+  const label = props.intent === 'remove' ? t('common.remove') : pickingSetupMachine ? t('common.use') :
     targets.length === 1
       ? t('capabilities.store.softwarePage.installOnOne', {
           machine: nameOf(targets[0]!.machineId),
@@ -241,15 +269,15 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
   const chrome = React.useMemo(
     () => ({
       kind: 'card' as const,
-      title: props.intent === 'preset' ? props.name : t(props.intent === 'remove' ? 'capabilities.store.softwarePage.removeTitle' : 'capabilities.store.softwarePage.reviewTitle', {
+      title: pickingSetupMachine ? props.name : t(props.intent === 'remove' ? 'capabilities.store.softwarePage.removeTitle' : 'capabilities.store.softwarePage.reviewTitle', {
         name: props.name,
       }),
-      subtitle: t(props.intent === 'preset' ? 'machinePresets.setup.tab.reviewHelp' : props.intent === 'remove' ? 'capabilities.store.softwarePage.removeDescription' : 'capabilities.store.softwarePage.reviewDescription'),
+      subtitle: t(pickingSetupMachine ? 'machinePresets.setup.tab.reviewHelp' : props.intent === 'remove' ? 'capabilities.store.softwarePage.removeDescription' : 'capabilities.store.softwarePage.reviewDescription'),
       footer,
       phonePresentation: 'sheet' as const,
       dimensions: { size: 'md' as const, maxHeightRatio: 0.84 },
     }),
-    [footer, props.name, props.intent],
+    [footer, pickingSetupMachine, props.name, props.intent],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (
@@ -271,9 +299,9 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
           }}
         />
       ) : null}
-      {!prepared && (preset || (row && row.installations.length > 1)) ? (
+      {!prepared && ((pickingSetupMachine && !recipeMachineId) || (row && row.installations.length > 1)) ? (
         <SectionContentRow>
-          <SoftwareMachineSelect testID="store.software.review.machine" machines={preset ? machines : installedMachines} selectedId={selectedId}
+          <SoftwareMachineSelect testID="store.software.review.machine" machines={pickingSetupMachine ? machines : installedMachines} selectedId={selectedId}
             placeholder={t('capabilities.store.softwarePage.chooseMachine')}
             onSelect={entry => { preparation.current?.abort(); setPrepared(null); setSelectedId(entry.machine.machineId); }} />
         </SectionContentRow>
@@ -285,7 +313,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
         nameOf={nameOf}
         disabled={pending || waiting || replanning}
         {...('prepareOn' in props && props.prepareOn ? { onChangeHost: (machineId: string) => { void changeHost(machineId); } } : {})}
-        {...(row || preset ? { onChangeRemoval: (machineId: string, keys: string[]) => { void reviewSelection(machineId, keys); } } : {})}
+        {...(row || pickingSetupMachine ? { onChangeRemoval: (machineId: string, keys: string[]) => { void reviewSelection(machineId, keys); } } : {})}
       /> : null}
       {error ? (
         <SurfaceStateCard

@@ -32,6 +32,16 @@ describe('installed plugin setup', () => {
                 },
             },
             familiesById: {
+                machineRecipes: {
+                    family: 'machineRecipes',
+                    entriesById: {
+                        [`${pluginId}/${ref.recipeId}`]: {
+                            id: `${pluginId}/${ref.recipeId}`, pluginId, pluginVersion: '1.0.0',
+                            definition: { id: ref.recipeId, revision: ref.revision, title: 'Set up tools',
+                                inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [] },
+                        },
+                    },
+                },
                 mcp: {
                     family: 'mcp',
                     entriesById: {
@@ -71,7 +81,7 @@ describe('installed plugin setup', () => {
             { kind: 'mcpSignIn', serverId: mcpPluginItemIdV1(server), title: 'Remote tools' },
             { kind: 'setting', fieldId: 'workspace', title: 'Workspace' },
             { kind: 'secret', fieldId: 'token', title: 'Token' },
-            { kind: 'machineRecipe', ref, title: null },
+            { kind: 'machineRecipe', item: { kind: 'setupRecipe', selection: { ref, inputs: {} } }, title: 'Set up tools' },
         ]);
         const scopeKey = serverAccountScopedResourceKey({ serverId: 'home-a', accountId: 'account-a' }, pluginId);
         const otherAccountKey = serverAccountScopedResourceKey({ serverId: 'home-a', accountId: 'account-b' }, pluginId);
@@ -104,9 +114,17 @@ describe('installed plugin setup', () => {
         } finally {
             installedPluginSetupDismissals.remove(scopeKey);
         }
-        expect(projectInstalledPluginSetup({
+        const unresolved = projectInstalledPluginSetup({
             ...input, connections: null, machineSetup: null,
             settings: settings.map(entry => ({ ...entry, status: 'unknown' })),
-        })).toEqual({ rows: [], steps: [], progress: { done: 0, total: 0 } });
+        });
+        expect(unresolved.progress).toEqual({ done: 0, total: 1 });
+        expect(unresolved.rows.map(row => row.kind)).toEqual(['machineRecipe']);
+
+        const observeRecipe = (revision: string) => projectInstalledPluginSetup({
+            ...input, machineSetup: { ...machineSetup, recipes: [{ ref: { ...ref, revision }, status: 'satisfied', steps: [] }] },
+        }).steps.find(step => step.kind === 'machineRecipe')?.status;
+        expect(observeRecipe('older-revision')).toBe('pending');
+        expect(observeRecipe(ref.revision)).toBe('done');
     });
 });

@@ -1,7 +1,8 @@
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
-import type { MachineRecipeReferenceV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineRecipeV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readMcpPluginItemMetadataFromProjectionV1 } from '@happier-dev/protocol/mcp/servers/pluginItemsV1';
 import { mcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
@@ -24,7 +25,7 @@ type SetupStepDetails =
     | Readonly<{ kind: 'connectedAccount'; service: PluginContributionIdentityV1; title: unknown }>
     | Readonly<{ kind: 'mcpSignIn'; serverId: string; title: string }>
     | Readonly<{ kind: 'setting' | 'secret'; fieldId: string; title: SettingsSetupField['title'] }>
-    | Readonly<{ kind: 'machineRecipe'; ref: MachineRecipeReferenceV1; title: unknown }>;
+    | Readonly<{ kind: 'machineRecipe'; item: MachineSetupRecipeItemV1; title: MachineRecipeV1['title'] }>;
 
 export type InstalledPluginSetupRow = SetupStepDetails & Readonly<{ id: string }>;
 
@@ -98,11 +99,20 @@ export function projectInstalledPluginSetup(input: Readonly<{
             status === 'configured');
     }
 
-    for (const recipe of input.machineSetup?.recipes ?? []) {
-        if (recipe.ref.pluginId !== pluginId || (recipe.status !== 'drifted' && recipe.status !== 'satisfied')) continue;
-        const declared = projection?.familiesById.machineRecipes?.entriesById[`${recipe.ref.pluginId}/${recipe.ref.recipeId}`];
-        addStep({ kind: 'machineRecipe', ref: recipe.ref, title: declared?.definition.title ?? null },
-            ['machineRecipe', input.machineId, recipe.ref.recipeId, recipe.ref.revision], recipe.status === 'satisfied');
+    const satisfiedRecipes = new Map(
+        (input.machineSetup?.recipes ?? []).flatMap(({ ref, status }) =>
+            ref.pluginId === pluginId && status === 'satisfied' ? [[ref.recipeId, ref.revision] as const] : []),
+    );
+    for (const declared of Object.values(projection?.familiesById.machineRecipes?.entriesById ?? {})) {
+        if (declared.pluginId !== pluginId) continue;
+        const { definition } = declared;
+        const ref = { pluginId, recipeId: definition.id, revision: definition.revision };
+        const item: MachineSetupRecipeItemV1 = {
+            kind: definition.software ? 'softwareRecipe' : 'setupRecipe',
+            selection: { ref, inputs: {} },
+        };
+        addStep({ kind: 'machineRecipe', item, title: definition.title },
+            ['machineRecipe', input.machineId, ref.recipeId, ref.revision], satisfiedRecipes.get(ref.recipeId) === ref.revision);
     }
 
     return { rows, steps, progress: { done: steps.length - rows.length, total: steps.length } };

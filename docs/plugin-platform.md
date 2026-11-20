@@ -1074,6 +1074,11 @@ neither introduces a runtime registration or privileged plugin callback.
 Recipes bind exact plugin/local-id/revision references and strict inputs to
 typed setup effects. Bundled Presets carry the same `MachineSetupV1` setup part
 as the existing Account/Team Preset record, without another record or CRUD owner.
+Installed plugin setup lists the declared recipe before a Machine has reported
+running it. A satisfied Machine observation completes the step for that recipe
+revision. Run it now uses the existing Machine Setup Plan and Apply Actions.
+Add to a preset carries the same recipe item into the preset editor, which
+writes Setup on Save.
 
 The bundled Docker recipe declaration and deployment-host setup selection share
 Protocol's `DOCKER_ENGINE_RECIPE_REF_V1`, also exposed from the SDK root. Its

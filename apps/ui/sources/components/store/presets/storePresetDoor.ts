@@ -4,8 +4,8 @@ import type { DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/
 import type { RegistryItemV1 } from '@happier-dev/protocol/registries';
 import { containsMachineSetupItem } from '@/components/settings/machines/managed/machineSetupItems';
 
-/** What a Store listing can hand to a preset: one App or Software item, never a Setup recipe. */
-export type StorePresetDoorItem = Exclude<MachinePresetItemV1, { kind: 'setupRecipe' }>;
+/** One item carried from a Store listing into the preset editor’s Setup. */
+export type StorePresetDoorItem = MachinePresetItemV1;
 
 /** Only an admitted ready App supplies a template and its exact pin. */
 export function readStoreAppTemplate(item: RegistryItemV1) {

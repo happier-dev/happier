@@ -370,6 +370,11 @@ manifest declaration ids. A Preset references a recipe by its exact plugin id,
 recipe id and declaration revision; an unavailable revision is refused rather
 than replaced with a newer one.
 
+An installed plugin's **Finish setting up** section lists its declared recipes.
+A person can review and run the recipe on a Machine they manage or add it to a
+preset's **Setup**. The preset stays a draft until they save it. Define the
+recipe's input schema and hints for the Setup form.
+
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
 

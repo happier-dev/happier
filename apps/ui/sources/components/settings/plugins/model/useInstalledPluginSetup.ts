@@ -2,7 +2,6 @@ import * as React from 'react';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { mcpServerRoute } from '@/components/settings/mcpServers/collection/mcpServerCollectionModel';
 import { areServerAccountScopesEqual, serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
@@ -62,7 +61,7 @@ export function useInstalledPluginSetup(input: Readonly<{
         if (dismissalKey === null || lifetime?.isCurrent() !== true) return;
         skipInstalledPluginSetupStep(dismissalKey, row.id);
     }, [dismissalKey, lifetime]);
-    const open = React.useCallback(async (row: InstalledPluginSetupRow) => {
+    const open = React.useCallback(async (row: InstalledPluginSetupRow, title: string, recipeMachineId?: string) => {
         if (lifetime?.isCurrent() !== true) return;
         switch (row.kind) {
             case 'connectedAccount':
@@ -76,10 +75,14 @@ export function useInstalledPluginSetup(input: Readonly<{
                 router.push(buildPluginDetailRoute(host, pluginId));
                 return;
             case 'machineRecipe':
-                if (machineId && serverId) router.push(machinePageHref({
-                    door: 'rail', target: { machineId, serverId }, tab: { id: 'setup' },
-                }) as never);
+                if (canUseAccountFacts) {
+                    const { showStoreMachineRecipeReview } = await import('@/components/store/StoreSoftwareReview');
+                    if (lifetime.isCurrent()) showStoreMachineRecipeReview({
+                        name: title, item: row.item, scope: lifetime.scope, machineId: recipeMachineId,
+                    });
+                }
         }
-    }, [canUseAccountFacts, lifetime, router, host, pluginId, machineId, serverId]);
-    return { ...setup, open, skip: dismissalKey === null ? null : skip } as const;
+    }, [canUseAccountFacts, lifetime, router, host, pluginId]);
+    return { ...setup, open, skip: dismissalKey === null ? null : skip,
+        recipeScope: canUseAccountFacts ? lifetime.scope : null } as const;
 }
