@@ -4396,6 +4396,8 @@ export async function startDaemon(
         setDaemonServerWorkOnline: runtimeBootstrap.setDaemonServerWorkOnline,
         orphanedDeadDaemonSessions,
         onMachineConnectionOnline: async () => {
+          void pluginRuntimeOwner.recoverAccountCensusAfterConnect()
+            .catch(error => logger.warn('[DAEMON RUN] Account plugin census recovery failed', serializeAxiosErrorForLog(error)));
           await reconcileSessionMachineAccessBindings();
           await refreshServerFeaturesAndBrowserRouteOwners();
           pluginRuntimeOwner.reportCurrentAvailability();

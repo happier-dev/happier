@@ -110,6 +110,8 @@ export function createDaemonPluginTransferRpcResolver(
 export type DaemonPluginRuntimeOwner = Readonly<{
   changeService: DaemonPluginChangeOwner;
   initialize: () => Promise<void>;
+  /** Retry failed Account admission when the existing Machine transport authenticates. */
+  recoverAccountCensusAfterConnect: () => Promise<void>;
   /** Replays the exact current install-registry snapshot after transport recovery. */
   reportCurrentAvailability: () => Promise<void>;
   /** Republishes only the plugins whose Machine-role admission changed (no restart). */
@@ -856,6 +858,18 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       .catch((error: unknown) => reportAvailabilityFailure(error, -1));
   };
 
+  let admissionRefresh = Promise.resolve();
+  function refreshAdmission(readPluginIds: () => readonly string[]): Promise<void> {
+    // If an availability push was reading when the Machine reconnected, finish
+    // it first so its pre-reconnect result cannot replace the recovery.
+    admissionRefresh = admissionRefresh.catch(() => undefined).then(async () => {
+      if (params.signal?.aborted) return;
+      const pluginIds = readPluginIds();
+      if (pluginIds.length > 0) await stateStore.refreshRuntime(pluginIds);
+    });
+    return admissionRefresh;
+  }
+
   return Object.freeze({
     changeService,
     initialize() {
@@ -867,7 +881,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       await stateStore.initialize();
       params.signal?.throwIfAborted();
       const initialLease = await params.reloadController.acquireRuntimeRegistry({
-        refreshAccountCensus: pluginIds => stateStore.refreshRuntime(pluginIds),
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
             ...(params.automationEventWatcherTransport ? { automationEventWatcherTransport: params.automationEventWatcherTransport } : {}),
@@ -1114,16 +1127,24 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         const relevantPluginIds = changedPluginIds.filter(pluginId => contributes?.pluginEnablementById?.[pluginId]
           || contributes?.pluginDeclarations?.some(declaration => declaration.pluginId === pluginId));
         if (relevantPluginIds.length === 0) return;
-        void stateStore.refreshRuntime(relevantPluginIds).catch(error => {
+        void refreshAdmission(() => relevantPluginIds).catch(error => {
           logger.warn('[PLUGIN RUNTIME] Account availability refresh failed', error);
         });
       });
       await reportCurrentAvailability();
       await developmentRoots.initialize();
       })();
+      // The first authenticated connection can arrive before cold admission settles.
+      admissionRefresh = initialization;
       params.reloadController.setRuntimeInitialization(initialization);
       return initialization;
     },
+    recoverAccountCensusAfterConnect: () => refreshAdmission(() => {
+      const contributes = params.reloadController.getState().activeRegistry?.contributes;
+      return Object.entries(contributes?.pluginEnablementById ?? {})
+        .filter(([, fact]) => fact.unavailableCode === 'plugin_account_census_failed')
+        .map(([pluginId]) => pluginId);
+    }),
     reportCurrentAvailability,
     /**
      * The Machine role set changed: republish only the plugins whose role admission changed,
@@ -1135,7 +1156,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       if (!current) return;
       const next = applyMachineRoleAdmission({ pluginEnablementById: current, machineRoles: contributes.machineRoles ?? [] });
       const changedPluginIds = Object.keys(next).filter(pluginId => !arePluginEnablementsEqual(current[pluginId], next[pluginId]));
-      if (changedPluginIds.length > 0) await stateStore.refreshRuntime(changedPluginIds);
+      if (changedPluginIds.length > 0) await refreshAdmission(() => changedPluginIds);
     },
     readCatalog: async () => await readCurrentDaemonPluginCatalog({
       happyHomeDir: params.happyHomeDir,

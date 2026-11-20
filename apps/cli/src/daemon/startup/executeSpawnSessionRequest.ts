@@ -60,6 +60,7 @@ import {
     projectSessionRunnerLaunchAdmissionFailure,
 } from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
+import { projectAccountPluginCensusLaunchError } from '@/plugins/projection/registry/builtIn/enablement';
 import { resolveProjectFilesForManagedLaunch } from './projectFilesLaunchSelection';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -1943,7 +1944,8 @@ export async function executeSpawnSessionRequest(
                     ?? options.spawnActionContext?.machineAdmission)?.role,
                 target: requesterAttribution }) : undefined;
             const materialFailure = !incompleteRetirement ? projectAgentIsolationLaunchMaterialFailure(error) : undefined;
-            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? materialFailure ?? { kind: 'launch_error',
+            const censusFailure = !incompleteRetirement ? projectAccountPluginCensusLaunchError(error) : null;
+            const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? materialFailure ?? censusFailure ?? { kind: 'launch_error',
                 code: incompleteRetirement ? 'STARTUP_RETIREMENT_INCOMPLETE' : rawCauseCode,
                 message: incompleteRetirement ?? errorMessage });
             return {

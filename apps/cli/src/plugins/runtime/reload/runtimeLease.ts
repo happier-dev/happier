@@ -51,20 +51,10 @@ export function readAuthoritativePluginSlotOccurrence(
     return resolveAuthoritativeController(params)?.readPluginSlot?.(pluginId)?.current ?? null;
 }
 
-/** Acquire serving runtime state and allow its owner to recover a failed census. */
-export function acquireActiveAuthoritativePluginRuntimeRegistryLease(
-    params?: AuthoritativeControllerParams,
-): Promise<PluginRuntimeRegistryLease> | null {
-    const controller = resolveAuthoritativeController(params);
-    return controller?.getState().activeRegistry ? controller.acquireRuntimeRegistry() : null;
-}
-
 export async function acquireAuthoritativePluginRuntimeRegistryLease(
-    params?: AuthoritativeControllerParams & Readonly<{ recoverAccountCensus?: true }>,
+    params?: AuthoritativeControllerParams,
 ): Promise<PluginRuntimeRegistryLease> {
-    const lease = params?.recoverAccountCensus
-        ? await acquireActiveAuthoritativePluginRuntimeRegistryLease(params)
-        : tryAcquireAuthoritativePluginRuntimeRegistryLease(params);
+    const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease(params);
     if (lease) return lease;
 
     throw createRuntimeUnavailableError();

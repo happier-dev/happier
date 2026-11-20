@@ -89,6 +89,19 @@ describe('session resume failure presentation', () => {
             expect(message).not.toContain('Private validation details');
         },
     );
+    it('offers the same retry guidance when Session open or resume cannot read the Account plugin census', () => {
+        const code = 'plugin_account_census_failed';
+        const errorDetail = { kind: 'launch_error' as const, code, message: 'Private launch diagnostic' };
+        const opened = resolveSessionSpawnNewResultFailureMessage({
+            type: 'error', code: 'spawn_failed', retryable: true, launchError: errorDetail,
+        });
+        expect(resolveResumeFailurePresentation({
+            errorCode: 'resume_failed', details: { errorDetail },
+        }, 'Resume failed')).toMatchObject({ kind: 'alert', errorCode: code, message: opened });
+        expect(opened).toContain(t('errors.tryAgain'));
+        expect(opened).not.toContain('Private launch diagnostic');
+    });
+
     it('offers the exact disabled plugin instead of repeating Resume, including configured Agents', () => {
         expect(resolveResumeFailurePresentation({ errorCode: 'plugin_disabled', errorMessage: 'Private diagnostic' }, 'Resume failed', {
             kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },

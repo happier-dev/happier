@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
@@ -15,6 +14,8 @@ import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { logger } from '@/ui/logger';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
+import { projectAccountPluginCensusLaunchError } from '@/plugins/projection/registry/builtIn/enablement';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
@@ -56,9 +57,10 @@ describe('daemon release-less declaration publication', () => {
         const claims: unknown[] = [];
         const claimsByPlugin = new Map<string, number>();
         let accountPluginEnabled = startupMode === 'normal';
-        let accountReadable = true;
-        let accountReadErrorCode = 'ECONNRESET';
+        let accountReadable = journey !== 'declaration-publication';
+        let accountReadErrorCode = 'ECONNREFUSED';
         const accountReadStates: boolean[] = [];
+        let holdFailedCensus: (() => Promise<void>) | undefined;
         const diagnostics = vi.spyOn(logger, 'debug');
         const controller = createPluginReloadController({ happyHomeDir });
         let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | undefined;
@@ -85,10 +87,19 @@ describe('daemon release-less declaration publication', () => {
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
                 if (String(url).endsWith('/intents/list')) {
                     accountReadStates.push(accountReadable);
-                    if (!accountReadable) throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect'), {
-                        response: { status: 503, data: { errorCode: accountReadErrorCode } },
-                        requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616',
-                    });
+                    const heldFailure = holdFailedCensus;
+                    holdFailedCensus = undefined;
+                    if (heldFailure) {
+                        await heldFailure();
+                        throw new axios.AxiosError('Previous connection was refused', 'ECONNREFUSED');
+                    }
+                    if (!accountReadable) {
+                        if (accountReadErrorCode === 'ECONNREFUSED') throw new axios.AxiosError('Home is reloading', accountReadErrorCode);
+                        throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect'), {
+                            response: { status: 503, data: { errorCode: accountReadErrorCode } },
+                            requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616',
+                        });
+                    }
                     const pluginIds = readRequestedIntentPluginIds(body);
                     return { data: { availabilityCursor: 17, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId,
                         response: { availabilityCursor: 17, hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
@@ -135,7 +146,23 @@ describe('daemon release-less declaration publication', () => {
                 connectedAccounts, availabilityReporter: reporter, accountStorageDependencies,
                 onDurableRegistryApplied: projectionPublication.invalidateProjection,
                 onRuntimeProjectionInvalidated: projectionPublication.invalidateProjection });
-            await owner.initialize();
+            if (!accountReadable) {
+                const coldCensusStarted = Promise.withResolvers<void>();
+                const releaseColdCensus = Promise.withResolvers<void>();
+                holdFailedCensus = async () => {
+                    coldCensusStarted.resolve();
+                    await releaseColdCensus.promise;
+                };
+                const initialized = owner.initialize();
+                await coldCensusStarted.promise;
+                accountReadable = true;
+                const reconnected = owner.recoverAccountCensusAfterConnect();
+                releaseColdCensus.resolve();
+                await Promise.all([initialized, reconnected]);
+                expect(accountReadStates).toEqual([false, true]);
+            } else {
+                await owner.initialize();
+            }
             const runtime = controller.getState().activeRegistry;
             expect(runtime).not.toBeNull();
             if (!runtime) throw new Error('Expected a published daemon registry');
@@ -251,8 +278,17 @@ describe('daemon release-less declaration publication', () => {
                 .toMatchObject({ enabled: false, unavailableCode: 'plugin_account_census_failed',
                     unavailableCause: { errorClass: 'AxiosError', errorCode: 'database_connection_unavailable', phase: 'plugins.account_census', httpStatus: 503 },
                     unavailableRequestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616' });
-            expect(() => resolveSessionCreationAgentTarget(target, unavailable.contributes))
-                .toThrow(expect.objectContaining({ code: 'plugin_account_census_failed' }));
+            let launchError;
+            try {
+                resolveSessionCreationAgentTarget(target, unavailable.contributes);
+            } catch (error) {
+                launchError = projectAccountPluginCensusLaunchError(error);
+            }
+            expect(projectSessionSpawnFailure({ errorCode: 'spawn_failed', errorMessage: launchError?.message, errorDetail: launchError }))
+                .toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
+                    launchError: { code: 'plugin_account_census_failed', failureCause: { retryable: true,
+                        actionCause: { phase: 'plugins.account_census', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+                        requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616' } } });
             const readCensusDiagnostic = async () => (await owner!.readCatalog()).find(row => row.pluginId === target.identity.pluginId)
                 ?.contributionIntrospection.diagnostics.find(row => row.data.code === 'plugin_runtime_capability_missing')?.data.details;
             expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'database_connection_unavailable', httpStatus: 503 } });
@@ -262,22 +298,37 @@ describe('daemon release-less declaration publication', () => {
             await refreshStore.refreshRuntime([manifest.id]);
             expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNREFUSED' } });
             accountReadable = true;
-            // The next consumer recovers even when no availability push or
-            // registry mutation primes admission.
             const readsBeforeRecovery = accountReadStates.length;
-            if (startupMode === 'normal') {
-                const recovered = await acquireAuthoritativePluginRuntimeRegistryLease({ controller, recoverAccountCensus: true });
-                try {
-                    expect(resolveSessionCreationAgentTarget(target, recovered.registry.contributes))
-                        .toMatchObject({ agentId: 'codex' });
-                } finally { await recovered.release(); }
-                expect(accountReadStates.length - readsBeforeRecovery).toBe(1);
-            }
+            expect((await owner.readCatalog()).find(row => row.pluginId === target.identity.pluginId))
+                .toMatchObject({ enabled: false });
+            expect(accountReadStates.length).toBe(readsBeforeRecovery);
+
+            await owner.recoverAccountCensusAfterConnect();
+            expect(accountReadStates.length - readsBeforeRecovery).toBe(1);
             expect((await owner.readCatalog()).find(row => row.pluginId === target.identity.pluginId))
                 .toMatchObject({ enabled: true });
+            await owner.recoverAccountCensusAfterConnect();
             expect(accountReadStates.length - readsBeforeRecovery).toBe(1);
             expect(resolveSessionCreationAgentTarget(target, controller.getState().activeRegistry!.contributes))
                 .toMatchObject({ agentId: 'codex' });
+            // A push can still be settling when the Machine reconnects. That
+            // older failure must not survive the newer connection's recovery.
+            const staleCensusStarted = Promise.withResolvers<void>();
+            const releaseStaleCensus = Promise.withResolvers<void>();
+            holdFailedCensus = async () => {
+                staleCensusStarted.resolve();
+                await releaseStaleCensus.promise;
+            };
+            const readsBeforeOverlappingReconnect = accountReadStates.length;
+            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [{ ...change, cursor: 18 }]);
+            await staleCensusStarted.promise;
+            const overlappingReconnect = owner.recoverAccountCensusAfterConnect();
+            releaseStaleCensus.resolve();
+            await overlappingReconnect;
+            expect(accountReadStates.length - readsBeforeOverlappingReconnect).toBe(2);
+            expect(resolveSessionCreationAgentTarget(target, controller.getState().activeRegistry!.contributes))
+                .toMatchObject({ agentId: 'codex' });
+
             const readsBeforeHealthyRead = accountReadStates.length;
             await owner.readCatalog();
             expect(accountReadStates.length).toBe(readsBeforeHealthyRead);
@@ -286,7 +337,7 @@ describe('daemon release-less declaration publication', () => {
             accountReadable = true;
             // A single-plugin live signal must also recover the other bundled
             // rows withdrawn by the failed whole-Account census.
-            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [change]);
+            publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [{ ...change, cursor: 19 }]);
             await vi.waitFor(() => expect(controller.getState().activeRegistry?.contributes.pluginEnablementById?.[target.identity.pluginId]?.enabled,
                 `Account reads: ${JSON.stringify(accountReadStates)}; refresh failures: ${JSON.stringify(diagnostics.mock.calls.filter(call => String(call[0]).includes('refresh failed')))}`)
                 .toBe(true), { timeout: 120_000 });

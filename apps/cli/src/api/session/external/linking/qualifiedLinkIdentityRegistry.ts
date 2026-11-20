@@ -7,7 +7,7 @@ import {
   indexAgentRoutingIdsByContributionIdentity,
   readAgentRoutingIdForContributionIdentity,
 } from '@/plugins/projection/registry/agentRoutingIdentity';
-import type { ResolvedAgentContribution, UnavailableAgentPlugin } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentContribution, ResolvedPluginEnablement, UnavailableAgentPlugin } from '@/plugins/projection/registry/types';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 import type { CurrentExternalSessionAgentIdentity } from './qualifiedLinkIdentity';
@@ -64,14 +64,14 @@ export async function resolveCurrentAgentRouting(
   identity: PluginContributionIdentityV1,
 ): Promise<Readonly<
   | { kind: 'available'; routingId: ExternalSessionsAgentId }
-  | { kind: 'unavailable'; code: UnavailableAgentPlugin['code'] }
+  | { kind: 'unavailable'; code: UnavailableAgentPlugin['code']; enablement: ResolvedPluginEnablement }
   | { kind: 'missing' }
 >> {
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
   try {
     const enablement = lease.registry.contributes.pluginEnablementById?.[identity.pluginId];
     if (enablement?.enabled === false) {
-      return { kind: 'unavailable', code: enablement.unavailableCode ?? 'plugin_disabled' };
+      return { kind: 'unavailable', code: enablement.unavailableCode ?? 'plugin_disabled', enablement };
     }
     const routingId = readAgentRoutingIdForContributionIdentity(
       indexAgentRoutingIdsByContributionIdentity([

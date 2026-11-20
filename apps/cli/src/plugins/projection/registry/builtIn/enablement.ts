@@ -1,5 +1,6 @@
 import type { ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
-import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { isDeepStrictEqual } from 'node:util';
 
 /** Admission and catalog projections change when any owning scope fact changes. */
@@ -44,4 +45,21 @@ export function createPluginEnablementUnavailableError(
         ...(fact.unavailableCause ? { failureCause: fact.unavailableCause } : {}),
         ...(fact.unavailableRequestId ? { requestId: fact.unavailableRequestId } : {}),
     });
+}
+
+/** Carries the census refusal through the existing Session launch error contract. */
+export function projectAccountPluginCensusLaunchError(error: unknown): SessionSpawnLaunchErrorV1 | null {
+    if (!isActionExecuteFailure(error) || error.errorCode !== 'plugin_account_census_failed') return null;
+    return {
+        kind: 'launch_error',
+        code: error.errorCode,
+        message: 'Account plugin availability could not be checked. Try again in a moment.',
+        failureCause: {
+            phase: 'client_start',
+            failureReason: 'unknown',
+            retryable: true,
+            ...(error.failureCause ? { actionCause: error.failureCause } : {}),
+            ...(error.requestId ? { requestId: error.requestId } : {}),
+        },
+    };
 }

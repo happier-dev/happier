@@ -112,6 +112,9 @@ function resolveSessionStartupFailureCause(
     issue?: SessionRuntimeIssueV1,
     failureCause = issue?.failureCause,
 ): string | null {
+    if (code === 'plugin_account_census_failed') {
+        return `${t('settingsProviders.status.sourceUnavailable')}. ${t('errors.tryAgain')}.`;
+    }
     if (code === 'database_transaction_timeout') return t('session.startFailure.cause.database_transaction_timeout');
     if (code === 'agent_startup_model_reconciliation_failed'
         && failureCause?.failureReason === 'model_selection_required') return t('session.startFailure.modelSelectionRequired');

@@ -20,6 +20,10 @@ import {
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { resolveCurrentAgentRouting } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { projectResolvedAgentBackendTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
+import {
+  createPluginEnablementUnavailableError,
+  projectAccountPluginCensusLaunchError,
+} from '@/plugins/projection/registry/builtIn/enablement';
 
 export function mapExistingSessionAttachFailureToSpawnError(
   failure: ExistingSessionAttachContextFailure,
@@ -111,6 +115,11 @@ async function resolveSpawnAgentRouting(identity: AgentExecutionTargetV1['identi
   const resolution = await resolveCurrentAgentRouting(identity);
   if (resolution.kind === 'available') return { ok: true, routingId: resolution.routingId };
   if (resolution.kind === 'unavailable') {
+    const censusFailure = projectAccountPluginCensusLaunchError(createPluginEnablementUnavailableError(resolution.enablement));
+    if (censusFailure) {
+      return { ok: false, error: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: censusFailure.message, errorDetail: censusFailure } };
+    }
     const message = resolution.code === 'plugin_disabled'
       ? 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.'
       : 'Account plugin execution is unavailable.';

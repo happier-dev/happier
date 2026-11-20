@@ -36,7 +36,6 @@ export function createSpawnPluginRuntimeLease(
             released = false;
             lease = await acquireAuthoritativePluginRuntimeRegistryLease({
                 happyHomeDir: configuration.happyHomeDir,
-                recoverAccountCensus: true,
             });
             launchResourceScope.register(release);
             const registry = lease.registry;

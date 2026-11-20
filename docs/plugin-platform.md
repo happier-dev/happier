@@ -404,18 +404,15 @@ A failed Account enablement census withdraws new admission with
 HTTP status and available Request ID in the catalog diagnostic and file log.
 An unclassified read failure is not an authoritative Account execution refusal.
 The daemon does not reuse last-good Account enablement for new admission;
-already admitted work still finishes at its natural boundary. The next runtime
-lease or catalog read retries a failed census through the existing admission
-refresh; a successful read re-admits all withdrawn plugins without waiting for
-an Account change. A relevant Account availability signal or successful
-Account-feed reconnect uses that same refresh. Healthy reads and ordinary
-unchanged live pages do not trigger census requests. Admission compares the full
-bundled enablement result and republishes only changed plugins. Session creation
-preserves the catalog's typed refusal while Account execution is unavailable.
-New Session, CLI creation and runner bootstrap refusals carry the original
-Account census cause through Action settlement, including a typed usage-limit
-cause when supplied by the census producer. Pool usage alone does not classify
-a failed Account census.
+already admitted work still finishes at its natural boundary. When the Machine
+transport authenticates, the daemon retries failed census admission through the
+same refresh used by Account availability changes. Session and catalog reads
+use the serving result. Admission compares the full bundled enablement result
+and republishes only changed plugins. Until the census succeeds, Session open
+and resume return a retryable launch refusal. The existing launch and Action
+results carry the original Account census cause and Request ID when available,
+including a typed usage-limit cause supplied by the census producer. Pool usage
+alone does not classify a failed Account census.
 
 In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Before the daemon has an active registry, the synchronous built-in snapshot reads the persisted Machine intent once through the admitted registry reader; it excludes disabled declarations and their UI artifact indexes. Runtime admission still combines Account and Machine intent. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
 

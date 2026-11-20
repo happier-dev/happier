@@ -825,7 +825,6 @@ function toReactNativeHostRuntimeReadinessIdentity(
 
 async function acquireProjectionRuntimeRegistryLease(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
-    recoverAccountCensus?: true,
 ): Promise<Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
     resolveCurrentPluginMaterializationRef?: NonNullable<
@@ -844,7 +843,6 @@ async function acquireProjectionRuntimeRegistryLease(
 
     return await acquireAuthoritativePluginRuntimeRegistryLease({
         happyHomeDir: configuration.happyHomeDir,
-        ...(recoverAccountCensus ? { recoverAccountCensus } : {}),
     });
 }
 
@@ -1232,7 +1230,7 @@ async function acquireProjectionContributionRegistryLease(
     release: () => Promise<void>;
 }>> {
     const leaseRuntimeRegistry = async () => {
-        const lease = await acquireProjectionRuntimeRegistryLease(opts, true);
+        const lease = await acquireProjectionRuntimeRegistryLease(opts);
         return {
             registry: lease.registry.contributes,
             pluginDiagnosticsByPluginId: lease.registry.pluginDiagnosticsByPluginId,

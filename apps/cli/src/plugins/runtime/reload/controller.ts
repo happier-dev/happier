@@ -150,8 +150,6 @@ export type PluginReloadController = Readonly<{
     acquireRuntimeRegistry: (params?: Readonly<{
         resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
         beforePublish?: PluginRuntimeRegistryBeforePublish;
-        /** Daemon-owned admission refresh, also used by Account change signals. */
-        refreshAccountCensus?: (pluginIds: readonly string[]) => Promise<void>;
     }>) => Promise<PluginRuntimeRegistryLease>;
     tryAcquireRuntimeRegistry: () => PluginRuntimeRegistryLease | null;
     /** The daemon owns startup; executable demand joins its existing restoration. */
@@ -302,9 +300,6 @@ export function createPluginReloadController(params?: Readonly<{
     let unsubscribeServingRegistryFences: (() => void) | null = null;
     let lastResult: PluginReloadResult | null = null;
     let coldInitializationPromise: Promise<PluginReloadResult> | null = null;
-    let refreshAccountCensus: ((pluginIds: readonly string[]) => Promise<void>) | undefined;
-    let refreshingAccountCensus = false;
-    let failedAccountCensusPluginIds: readonly string[] = [];
     let shutdownPromise: Promise<void> | null = null;
     let shutdownProjectRetirement: Promise<void> | undefined;
     let shutdownStarted = false;
@@ -354,11 +349,6 @@ export function createPluginReloadController(params?: Readonly<{
     }
 
     function publishSlots(registry: ResolvedExecutablePluginRuntimeRegistry): void {
-        // Enablement is immutable for this admission. Keep healthy lease reads
-        // constant-cost instead of scanning every plugin on every request.
-        failedAccountCensusPluginIds = Object.entries(registry.contributes.pluginEnablementById ?? {})
-            .filter(([, fact]) => fact.unavailableCode === 'plugin_account_census_failed')
-            .map(([pluginId]) => pluginId);
         unsubscribeServingRegistryFences?.();
         unsubscribeServingRegistryFences = registry.subscribePluginOccurrenceFence?.(
             (pluginId, occurrenceId) => {
@@ -929,24 +919,7 @@ export function createPluginReloadController(params?: Readonly<{
         },
         async acquireRuntimeRegistry(leaseParams) {
             if (shutdownStarted) throw createShutdownError();
-            if (leaseParams?.refreshAccountCensus) refreshAccountCensus = leaseParams.refreshAccountCensus;
-
-            if (activeRegistry) {
-                if (failedAccountCensusPluginIds.length > 0 && refreshAccountCensus && !refreshingAccountCensus) {
-                    // Refresh publication can itself read the catalog. It must
-                    // observe that publication rather than start another census.
-                    // Concurrent reads may retain the visible refusal; the next
-                    // real read can recover without a timer or background retry.
-                    refreshingAccountCensus = true;
-                    try {
-                        await refreshAccountCensus(failedAccountCensusPluginIds);
-                    } finally {
-                        refreshingAccountCensus = false;
-                    }
-                    if (shutdownStarted) throw createShutdownError();
-                }
-                return createRuntimeRegistryLease(activeRegistry);
-            }
+            if (activeRegistry) return createRuntimeRegistryLease(activeRegistry);
 
             const result = await getOrStartColdInitialization(
                 leaseParams?.resolveRuntimeRegistry,

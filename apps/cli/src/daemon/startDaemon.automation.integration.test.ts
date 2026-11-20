@@ -678,6 +678,7 @@ describe('startDaemon automation wiring (integration)', () => {
           await awaitInitialRuntimeActivation?.();
           onDurableRegistryApplied?.();
         }),
+        recoverAccountCensusAfterConnect: vi.fn(async () => {}),
         reportCurrentAvailability: vi.fn(),
         readCatalog: vi.fn(async () => []),
       })),
@@ -993,6 +994,7 @@ describe('startDaemon automation wiring (integration)', () => {
             await awaitInitialRuntimeActivation?.();
             onDurableRegistryApplied?.();
           }),
+          recoverAccountCensusAfterConnect: vi.fn(async () => {}),
           reportCurrentAvailability: vi.fn(),
           readCatalog: vi.fn(async () => []),
         };
@@ -1176,6 +1178,7 @@ describe('startDaemon automation wiring (integration)', () => {
             onInitialRegistryPublished?.();
             await awaitInitialRuntimeActivation?.();
           }),
+          recoverAccountCensusAfterConnect: vi.fn(async () => {}),
           reportCurrentAvailability: vi.fn(),
           readCatalog: vi.fn(async () => []),
         };
@@ -1460,6 +1463,7 @@ describe('startDaemon automation wiring (integration)', () => {
             await awaitInitialRuntimeActivation?.();
             pluginRuntimeInitializationSettled = true;
           }),
+          recoverAccountCensusAfterConnect: vi.fn(async () => {}),
           reportCurrentAvailability: vi.fn(),
           readCatalog: vi.fn(async () => []),
         };
@@ -1820,6 +1824,7 @@ describe('startDaemon automation wiring (integration)', () => {
       return {
         changeService: pluginChangeService,
         initialize: pluginRuntimeInitialize,
+        recoverAccountCensusAfterConnect: vi.fn(async () => {}),
         reportCurrentAvailability: vi.fn(),
         readCatalog: vi.fn(async () => []),
       };

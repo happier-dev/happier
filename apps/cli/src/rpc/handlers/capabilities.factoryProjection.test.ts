@@ -7,7 +7,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntime
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createCliCapabilitiesService, registerCapabilitiesHandlers } from './capabilities';
+import { registerCapabilitiesHandlers } from './capabilities';
 import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 const environment = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -133,32 +133,19 @@ it('releases projected factory custody before requester work can delay registry 
     } finally { disposed.mockRestore(); }
 });
 
-it('detects capabilities from the serving registry while unrelated Account census recovery is failing', async () => {
+it('detects capabilities from the serving registry while an unrelated Account plugin is unavailable', async () => {
     const response = { protocolVersion: 1, results: { [`cli.${agentId}`]: {
         ok: true, checkedAt: 100, data: { available: true },
     } } };
-    const { detect } = await setup(async () => response, async happyHomeDir => {
+    const { detect, fixture } = await setup(async () => response, async happyHomeDir => {
         const contributes = await resolveMergedContributionRegistry({ happyHomeDir, pluginIds: ['acme.project-launch'] });
         return { ...contributes, pluginEnablementById: { ...contributes.pluginEnablementById,
             'happier.telemetry': { accountEnabled: false, machineEnabled: true, enabled: false,
                 unavailableCode: 'plugin_account_census_failed' },
         } };
     });
-    // The retry hook crosses into Account recovery. Ordinary detection must
-    // serve the incumbent facts even when that recovery cannot complete.
-    const recovery = vi.fn(async () => {
-        throw Object.assign(new Error('Database preparation refused growth'), { code: 'daemon_database_quota_exceeded' });
-    });
-    await expect(pluginReloadController.acquireRuntimeRegistry({ refreshAccountCensus: recovery }))
-        .rejects.toMatchObject({ code: 'daemon_database_quota_exceeded' });
-    recovery.mockClear();
     expect(await detect({ requests: [{ id: `cli.${agentId}` }] }, requester)).toMatchObject(response);
-    expect(recovery).not.toHaveBeenCalled();
-    // The marketplace capability also reads plugin declarations through the
-    // catalog owner. Its local control transport is unavailable in this fixture.
-    const service = await createCliCapabilitiesService();
-    await service.detect({ requests: [{ id: 'tool.plugins' }] });
-    expect(recovery).not.toHaveBeenCalled();
+    expect(pluginReloadController.getState().activeRegistry).toBe(fixture.registry);
 });
 
 it('sends empty factory facts after one unavailable-runtime acquisition instead of retrying for each Agent', async () => {

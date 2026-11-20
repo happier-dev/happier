@@ -739,7 +739,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
 
       const { resolveSessionCreationAgentTarget } = await import("@/session/creation/resolveSessionCreationAgentTarget");
       const { readAdmittedAgentCatalogSnapshotForRequest } = await import('@/agent/catalog/snapshot');
-      const resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget, await readAdmittedAgentCatalogSnapshotForRequest());
+      let resolvedAgentTarget: ReturnType<typeof resolveSessionCreationAgentTarget>;
+      try {
+        resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget, await readAdmittedAgentCatalogSnapshotForRequest());
+      } catch (error) {
+        const { projectAccountPluginCensusLaunchError } = await import('@/plugins/projection/registry/builtIn/enablement');
+        const launchError = projectAccountPluginCensusLaunchError(error);
+        if (!launchError) throw error;
+        const { projectSessionSpawnFailure } = await import('./projectSessionSpawnFailure');
+        return projectSessionSpawnFailure({ errorCode: 'spawn_failed', errorMessage: launchError.message, errorDetail: launchError });
+      }
       if (!resolvedAgentTarget) {
         return { type: 'error', code: 'target_unavailable', retryable: false,
           failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target') };
