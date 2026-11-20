@@ -88,18 +88,21 @@ function freezeRegion(root: HTMLElement, rect: StepFreeze['rect']) {
         top: `${rect.y}px`,
         width: `${rect.width}px`,
         height: `${rect.height}px`,
-        zIndex: '1000',
     });
     return clone;
 }
 
-function mountPaintCopy(clone: HTMLElement) {
-    clone.inert = true;
-    clone.setAttribute('aria-hidden', 'true');
-    for (const element of [clone, ...clone.querySelectorAll('[id], [data-testid], [autofocus], a[href], [name]')]) {
+function mountPaintCopy(regions: readonly HTMLElement[]) {
+    const capture = document.createElement('div');
+    Object.assign(capture.style, { position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: '1000' });
+    capture.inert = true;
+    capture.setAttribute('aria-hidden', 'true');
+    capture.append(...regions);
+    for (const element of capture.querySelectorAll('[id], [data-testid], [autofocus], a[href], [name]')) {
         for (const key of ['id', 'data-testid', 'autofocus', 'href', 'name']) element.removeAttribute(key);
     }
-    document.body.append(clone);
+    document.body.append(capture);
+    return () => capture.remove();
 }
 
 export function freezeStepLayer(
@@ -131,7 +134,6 @@ export function freezeStepLayer(
     const cloneElements = clone.querySelectorAll<HTMLElement>('*');
     const webFocal = focal instanceof HTMLElement ? cloneElements[elements.indexOf(focal)] : undefined;
     const webLeaves = leaves.map(({ rect: leafRect, index }) => ({ element: cloneElements[index], rect: leafRect }));
-    const copies = [clone, ...webChrome];
-    for (const copy of copies) mountPaintCopy(copy);
-    return { clone, rect, ink, control, webLeaves, webFocal, webChrome, release: () => copies.forEach(copy => copy.remove()) };
+    const release = mountPaintCopy([clone, ...webChrome]);
+    return { clone, rect, ink, control, webLeaves, webFocal, webChrome, release };
 }

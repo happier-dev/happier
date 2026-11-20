@@ -269,11 +269,14 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
         const forward = travellerAt(0.368);
         expect(forward).toBeDefined();
         expect(find('welcome-links')).toBeNull();
-        const departing = [...document.querySelectorAll<HTMLElement>('footer[aria-hidden="true"]')].find(node => node.textContent === 'Help');
-        expect(departing?.inert).toBe(true);
+        const frozenSteps = [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].filter(node => node.inert);
+        expect(frozenSteps).toHaveLength(1);
+        expect(frozenSteps[0].inert).toBe(true);
+        const departing = frozenSteps[0].querySelector('footer');
+        expect(departing?.textContent).toBe('Help');
         expect(departing?.querySelector('a')?.hasAttribute('href')).toBe(false);
         expect(departing && animated.get(departing)?.frames.some(frame => Number(frame.opacity) > 0 && Number(frame.opacity) < 1)).toBe(true);
-        const corner = document.querySelector<HTMLElement>('header[aria-hidden="true"]');
+        const corner = frozenSteps[0].querySelector('header');
         expect(corner?.textContent).toBe('Run your own Home');
         expect(corner && animated.get(corner)?.frames.at(-1)?.opacity).toBe(0);
         clock.mockReturnValue(1070);
@@ -405,7 +408,7 @@ it('captures the approved step for one Home landing and holds the tour until the
         configurable: true,
         value(this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
             const effect = collectEffect(frames, Number(options.duration));
-            if (this.style.position === 'fixed' && this.getAttribute('aria-hidden') === 'true') frozenEffects.push(effect);
+            if (this.style.position === 'fixed' && this.parentElement?.inert) frozenEffects.push(effect);
             return effect.animation;
         },
     });
