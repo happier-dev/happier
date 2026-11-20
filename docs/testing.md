@@ -727,8 +727,12 @@ focused runs are served in arrival order and later focused runs cannot starve it
 `packages/plugins/*` workspaces a packet touches, while the committing lane waits) ranks
 with the shared producers (P03-GATE-TC, 2026-11-18). The broker derives the rank from the admitted command identity that the
 canonical client builds from the payload argv; a request field claiming priority is
-ignored. Exact-tree compiler requests send the judged Git
-objects to the worker and materialize them in its own warm worktree. The worker
+ignored. For the blocking Protocol and Plugin SDK scope, the gate first admits
+the declaration comparison on the controller with parent and candidate in
+separate scratch trees. The controller installation must match the selected
+dependency closure, root inputs and lockfile. When the controller cannot
+judge the scope, the same comparison can use the exact-tree workers.
+Worker requests send the judged Git objects to the worker and materialize them in its own warm worktree. The worker
 launches the committed controller tools in temporary storage and prepares
 dependencies using the judged tree’s manifests, workspace configuration and
 lockfile. The package declaration check resolves the TypeScript API from that

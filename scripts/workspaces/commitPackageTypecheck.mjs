@@ -42,7 +42,7 @@ import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostic
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { ARCHIVED_BOARD_PATH, BOARD_PATH } from '../board/postBoardEntry.mjs';
 import packageExportMatch from '../../packages/cli-common/packageExportMatch.cjs';
-import { packageNameOfSpecifier, resolveWorkspaceSource } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { packageNameOfSpecifier, resolveWorkspaceSource, workspaceSourcePackageClosure } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readCommitTreeWorkspacePackages } from './commitTreeEntryLoads.mjs';
 import { collectPackageBuildOutputTargets } from '../../packages/cli-common/packageBuildOutputTargets.mjs';
 
@@ -423,8 +423,8 @@ function missingPublishedDeclaration(repo, treeId, rows) {
 /** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
  * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
  * The caller holds the worktree lock and, when anything compiles here, compiler admission. */
-export function treeTypechecker({ repo, state, env, log, compile = compileScope, bootstrap, remote = null, worktreeRev = 'HEAD' }) {
-  const worktree = join(state, 'worktree');
+export function treeTypechecker({ repo, state, env, log, compile = compileScope, bootstrap, remote = null, worktreeRev = 'HEAD', capturedWorktree }) {
+  const worktree = capturedWorktree ?? join(state, 'worktree');
   const compileEnv = compileEnvOf(env);
   const prepareDependencies = treeDependencyPreparer({ repo, state, env, log, bootstrap, worktreeRev });
   const timings = [];
@@ -476,11 +476,13 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       return rows;
     })();
     // Dependencies first (a no-op when the worker's preparation step already installed this generation).
-    const bootstrapStarted = Date.now();
-    if (prepareDependencies(treeId)) timings.push({ side, step: 'dependencies', ms: Date.now() - bootstrapStarted });
-    const moveStarted = Date.now();
-    moveWorktree({ repo, state, log, worktreeRev }, treeId);
-    timings.push({ side, step: 'move', ms: Date.now() - moveStarted });
+    if (!capturedWorktree) {
+      const bootstrapStarted = Date.now();
+      if (prepareDependencies(treeId)) timings.push({ side, step: 'dependencies', ms: Date.now() - bootstrapStarted });
+      const moveStarted = Date.now();
+      moveWorktree({ repo, state, log, worktreeRev }, treeId);
+      timings.push({ side, step: 'move', ms: Date.now() - moveStarted });
+    }
     // Exact-tree worktrees bypass command-replica preparation. Refresh this
     // ignored source input from the selected tree before declaration analysis
     // imports Protocol, including policy-only moves with unchanged dependencies.
@@ -535,8 +537,9 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
           if (workerRows) {
             const path = resultCachePath(state, entry.treeId, dir);
             mkdirSync(resolve(path, '..'), { recursive: true });
-            writeFileSync(`${path}.tmp`, JSON.stringify({ tree: entry.treeId, package: dir, rows: workerRows, ms }));
-            renameSync(`${path}.tmp`, path);
+            const temporary = `${path}.${process.pid}.tmp`;
+            writeFileSync(temporary, JSON.stringify({ tree: entry.treeId, package: dir, rows: workerRows, ms }));
+            renameSync(temporary, path);
           }
         }
       }
@@ -656,9 +659,16 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
 export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers, cachedOnly = false }) {
   const plan = packages ? { blocking: packages, detached: [] } : commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
+  const worker = workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY, workers });
+  const controller = packages && !workers && existsSync(join(repo, 'node_modules', 'typescript'))
+    ? controllerDeclarationRows({ repo, env, log }) : null;
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly,
-    remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY,
-      workers }) });
+    remote: remote ?? (controller ? async (trees, dirs, sides) => {
+      const rows = await controller(trees, dirs, sides);
+      if (trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
+      log('[commit-package-typecheck] controller comparison incomplete; trying exact-tree workers');
+      return await worker(trees, dirs, sides);
+    } : worker) });
   if (!result.skipped && record && !cachedOnly) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
@@ -1102,6 +1112,81 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
   };
 }
 
+/** The scoped gate can judge locally with the controller's published install. */
+function controllerDeclarationRows({ repo, env, log }) {
+  return async (trees, packages, sides) => {
+    const request = { repo, trees, packages, sides };
+    log(`[commit-package-typecheck] controller declaration comparison for ${sides.join('+')} (${trees.join(', ')})`);
+    const [executable, ...args] = admittedCommand(repo, [process.execPath, COMMIT_GATE_TYPECHECK_ENTRY, '--compiler-admitted'],
+      false, packages.join(','), 'compilation', { trees, files: packages }, join(repo, 'apps/stack/bin/hstack-exec'));
+    const output = await new Promise(resolve => {
+      const child = spawn(executable, args, { cwd: repo, stdio: ['ignore', 'pipe', 'inherit'],
+        env: { ...compileEnvOf(env), HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST: JSON.stringify(request) } });
+      let stdout = '';
+      let failure;
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.on('error', error => { failure = error; });
+      child.on('close', (code, signal) => {
+        if (code !== 0 || failure) log(`[commit-package-typecheck] controller comparison incomplete (${failure?.code ?? signal ?? code})`);
+        resolve(code === 0 && !failure ? stdout : '');
+      });
+    });
+    const line = output.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
+    if (!line) return new Map();
+    let rows;
+    try { rows = JSON.parse(line.slice(WORKER_ROWS.length)); }
+    catch (error) { log(`[commit-package-typecheck] controller returned invalid rows: ${error.message}`); return new Map(); }
+    return new Map(trees.map(tree => [tree, new Map(Object.entries(rows[tree] ?? {}))]));
+  };
+}
+
+async function compileControllerDeclarations({ repo, trees, packages, sides }) {
+  const { extractRevision } = await import('../../apps/stack/scripts/build/source_revision_install.mjs');
+  const { mountCapturedWorkspaceDependencies } = await import('./buildInputConvergence.mjs');
+  const { dependencyInputsIdentity, inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
+  const log = message => console.error(message);
+  const byTree = {};
+  for (const [index, tree] of trees.entries()) {
+    const state = mkdtempSync(join(tmpdir(), 'happier-controller-declarations-'));
+    try {
+      const worktree = join(state, 'worktree');
+      mkdirSync(worktree);
+      await extractRevision({ repoDir: repo, revision: tree, outputDir: worktree });
+      const selected = await inspectDependencyRefresh({ installDir: worktree });
+      byTree[tree] = await withDependencyConsumption({ installDir: repo, wait: false }, async admittedEnv => {
+        const installed = await readDependencyPublicationState({ installDir: repo });
+        const workspaces = readCommitTreeWorkspacePackages(repo, tree);
+        if (selected.installIdentity !== installed.identity) {
+          const current = await inspectDependencyRefresh({ installDir: repo });
+          const roots = [...workspaces].filter(([, workspace]) => packages.includes(workspace.root)).map(([name]) => name);
+          const closure = workspaceSourcePackageClosure(workspaces, roots);
+          // Keep the root, lockfile and patch inputs. Workspace manifests for
+          // other packages can differ, including packages absent from this tree.
+          const manifests = new Set([...closure].map(name => `install:${workspaces.get(name).root}/package.json`));
+          const scopedInstallIdentity = ({ dependencyIdentity, inputSnapshot }) => dependencyInputsIdentity(
+            dependencyIdentity, inputSnapshot.filter(({ path }) => !path.endsWith('/package.json') || path.startsWith('install:patches/') || manifests.has(path)),
+          );
+          if (current.installIdentity !== installed.identity || scopedInstallIdentity(selected) !== scopedInstallIdentity(current)) {
+            log(`[commit-package-typecheck] ${sides[index]} controller installation does not match the judged declaration closure`);
+            return {};
+          }
+        }
+        const dirs = [...new Set([...packages, ...[...workspaces.values()].map(workspace => workspace.root)])];
+        await mountCapturedWorkspaceDependencies({ sourceDir: repo, captureDir: worktree, workspaceDirs: dirs, capturedOnly: true });
+        const { rowsAt } = treeTypechecker({ repo, state, env: admittedEnv, log, capturedWorktree: worktree });
+        return Object.fromEntries(rowsAt(tree, packages, sides[index]));
+      });
+    } catch (error) {
+      log(`[commit-package-typecheck] ${sides[index]} controller comparison incomplete: ${error.message}`);
+    } finally {
+      rmSync(state, { recursive: true, force: true });
+    }
+  }
+  console.log(`${WORKER_ROWS}${JSON.stringify(byTree)}`);
+  return 0;
+}
+
 /** Worker side of workerTreeRows: compile the shipped tree in this host's warm worktree under its own broker. A lane
  * (`--lane=gate`) has its own worktree, lock and incremental state under the slug, beside the shared bare repository. */
 async function workerRows(argv, entry) {
@@ -1205,12 +1290,12 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
 }
 
 let rollingOwner = false;
-function admittedCommand(repo, payload, cached, projects, className = 'compilation', judgment) {
+function admittedCommand(repo, payload, cached, projects, className = 'compilation', judgment, launcher = fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url))) {
   // Native Windows has no shell admission; it runs the payload directly (as the checker does).
   // The admitted argv is the admission identity: only stable arguments, so the broker sizes it from
   // this identity's recorded kernel peak; the request travels in env.
   // The rolling owner compiles nothing here: its rows come from a worker that admits there (workerTreeRows).
-  return cached || rollingOwner || process.platform === 'win32' ? payload : [fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url)),
+  return cached || rollingOwner || process.platform === 'win32' ? payload : [launcher,
     '--heavyweight-admission', `--class=${className}`, `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
     ...(projects ? [`--projects=${projects}`] : []),
     ...(judgment ? [`--judged-trees=${judgment.trees.join(',')}`, ...judgment.files.map(file => `--judged-file=${file}`)] : []),
@@ -1295,6 +1380,9 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     treeDependencyPreparer({ repo: request.repo, state: process.env.HAPPIER_COMMIT_TYPECHECK_DIR, env: process.env,
       log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' })(request.trees[0]);
     return 0;
+  }
+  if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST) {
+    return await compileControllerDeclarations(JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST));
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
     // Admitted on the worker: rows for the shipped trees, compiled in turn in the worker's warm worktree.

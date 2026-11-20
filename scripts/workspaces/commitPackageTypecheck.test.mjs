@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { inspectDependencyRefresh, publishDependencyRefreshMarker } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { runCommitGate } from './commitGate.mjs';
 import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
@@ -819,6 +819,54 @@ if (project !== 'tsconfig.json') {
     assert.match(stalled.stderr, /exact-tree worker worktree busy/u);
     assert.match(stalled.stdout, /"code":"declaration-comparison-incomplete"/u);
   }, { lockPath });
+});
+
+test('the controller declaration gate admits and judges both Git trees with its installed toolchain', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const state = join(repo, '.git/controller-typecheck');
+  const tsDir = dirname(createRequire(import.meta.url).resolve('typescript/package.json'));
+  const write = async (name, contents, mode) => {
+    const path = join(repo, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, contents, { mode });
+  };
+  await write('package.json', JSON.stringify({ name: 'fixture', workspaces: ['packages/*'] }));
+  await write('packages/protocol/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
+  const entry = fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url));
+  await write('apps/stack/bin/hstack-exec', `#!/bin/sh
+[ "$1" = --heavyweight-admission ] || exit 95
+printf '%s\n' "$@" > "${repo}/admissions"
+while [ "$1" != -- ]; do shift; done
+shift
+[ "$2" = scripts/workspaces/commitGateTypecheck.mjs ] || exit 96
+shift 2
+exec "${process.execPath}" "${entry}" "$@"
+`, 0o755);
+  await write('scripts/workspaces/runTypeScriptCli.mjs', `
+import { readFileSync } from 'node:fs';
+const source = readFileSync('src/index.ts', 'utf8');
+if (source.includes('= 99')) process.exit(97);
+if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
+  console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
+  process.exitCode = 2;
+}
+`);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '-A');
+  git('commit', '-qm', 'fixture toolchain');
+  const candidate = await commit('packages/protocol/src/index.ts', 'export const value = 41;\n');
+  await write('packages/protocol/src/index.ts', 'export const value = 99;\n');
+  await mkdir(join(repo, 'node_modules'));
+  await symlink(tsDir, join(repo, 'node_modules/typescript'), 'dir');
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repo });
+  await publishDependencyRefreshMarker({ installDir: repo, identity: installIdentity });
+  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+    HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  const result = await runCommitGate({ repo, base: `${candidate}^`, tree: candidate, env, label: 'commit-partial' });
+  assert.equal(result.verdict, 'refused', JSON.stringify(result));
+  assert.ok(result.findings.some(finding => finding.includes('TS9007')));
+  const trees = [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)];
+  assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${trees.join(',')}`));
 });
 
 test('an excluded fallback worker is never contacted for Git preparation', { skip: process.platform === 'win32' }, async t => {
