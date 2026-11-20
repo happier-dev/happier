@@ -9,6 +9,7 @@ import type { DropdownMenuItem, DropdownMenuSelection } from '@/components/ui/fo
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_EDIT_TAGS_ID,
@@ -39,7 +40,7 @@ import {
 } from '@/components/sessions/actions/sessionActionIds';
 import { createSessionActionDropdownItem } from '@/components/sessions/actions/sessionActionPresentation';
 import { forgetRailPinOrigin, measureWindowRect, noteRailPinOrigin } from '@/components/sessions/bots/railPinFlight';
-import type { SessionActionExecutionOperations, SessionActionId, SessionActionTarget } from '@/components/sessions/actions/sessionActionTypes';
+import type { SessionActionExecutionOperations, SessionActionTarget } from '@/components/sessions/actions/sessionActionTypes';
 import type { SessionReminderPresentation } from '@/sync/domains/session/organization/attentionStanding';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
@@ -83,35 +84,6 @@ function showActionError(error: unknown): void {
         return;
     }
     Modal.alert(t('common.error'), t('errors.unknownError'));
-}
-
-function resolveActionIdFromMenuItemId(itemId: string): SessionActionId | null {
-    switch (itemId) {
-        case SESSION_ACTION_RENAME_ID:
-        case SESSION_ACTION_STOP_ID:
-        case SESSION_ACTION_ARCHIVE_ID:
-        case SESSION_ACTION_UNARCHIVE_ID:
-        case SESSION_ACTION_DELETE_ID:
-        case SESSION_ACTION_PIN_ID:
-        case SESSION_ACTION_UNPIN_ID:
-        case SESSION_ACTION_EDIT_TAGS_ID:
-        case SESSION_ACTION_PUT_UNDER_ID:
-        case SESSION_ACTION_RAIL_PIN_ID:
-        case SESSION_ACTION_RAIL_UNPIN_ID:
-        case SESSION_ACTION_WORK_OPEN_ID:
-        case SESSION_ACTION_TALK_ID:
-        case SESSION_ACTION_MAKE_BOT_ID:
-        case SESSION_ACTION_MAKE_REGULAR_ID:
-        case SESSION_ACTION_TOOL_CALLS_TOGGLE_ID:
-        case SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID:
-        case SESSION_ACTION_COORDINATOR_MAKE_ID:
-        case SESSION_ACTION_COORDINATOR_EDIT_ID:
-        case SESSION_ACTION_COORDINATOR_ANSWERS_ID:
-        case SESSION_ACTION_COORDINATOR_STOP_ID:
-            return itemId;
-        default:
-            return null;
-    }
 }
 
 async function executeLocalSessionAction(params: Readonly<{
@@ -479,18 +451,17 @@ export function useSessionRowActionMenu(params: Readonly<{
             return;
         }
 
-        const actionId = resolveActionIdFromMenuItemId(itemId);
-        if (actionId === SESSION_ACTION_RAIL_PIN_ID) {
+        if (itemId === SESSION_ACTION_RAIL_PIN_ID) {
             // Where the picture is now; the rail slot reads it only if the pin is accepted.
             const pinned = { serverId: target.serverId, sessionId: target.sessionId };
             noteRailPinOrigin(pinned, await measureWindowRect(params.flightOriginRef?.current));
-            await executeSessionAction({ actionId, target }).catch((error: unknown) => {
+            await executeSessionAction({ actionId: itemId, target }).catch((error: unknown) => {
                 forgetRailPinOrigin(pinned);
                 showActionError(error);
             });
             return;
         }
-        switch (actionId) {
+        switch (itemId) {
             case SESSION_ACTION_RENAME_ID:
                 await handleRenameSession();
                 return;
@@ -508,6 +479,7 @@ export function useSessionRowActionMenu(params: Readonly<{
                 return;
             case SESSION_ACTION_WORK_OPEN_ID:
             case SESSION_ACTION_TALK_ID:
+            case SESSION_ACTION_CLEAR_STATUS_ID:
             case SESSION_ACTION_PUT_UNDER_ID:
             case SESSION_ACTION_RAIL_UNPIN_ID:
             case SESSION_ACTION_MAKE_BOT_ID:
@@ -518,7 +490,7 @@ export function useSessionRowActionMenu(params: Readonly<{
             case SESSION_ACTION_COORDINATOR_EDIT_ID:
             case SESSION_ACTION_COORDINATOR_ANSWERS_ID:
             case SESSION_ACTION_COORDINATOR_STOP_ID:
-                await executeSessionAction({ actionId, target }).catch(showActionError);
+                await executeSessionAction({ actionId: itemId, target }).catch(showActionError);
                 return;
             default:
                 return;

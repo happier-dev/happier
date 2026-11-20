@@ -13,6 +13,8 @@ import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/session
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
@@ -20,6 +22,7 @@ import {
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
@@ -88,6 +91,7 @@ let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined
 let rowMachine: ReturnType<typeof createMachineFixture>;
 const deleteReplies: Response[] = [];
 const mutationRequests: Array<{ url: string; method: string; token: string | null; body: unknown }> = [];
+const metadataPatchRequests: Array<{ url: string; token: string | null }> = [];
 const mutationOrder: string[] = [];
 afterAll(() => network.dispose());
 
@@ -147,7 +151,11 @@ async function renderScreen(
                 }
                 return Response.json({ success: true, state: 'unread', lastViewedSessionSeq: 0, didChange: true });
             }
-            return sessionHttp.handle(input, init) ?? Response.json({}, { status: 404 });
+            const sessionResponse = sessionHttp.handle(input, init);
+            if (method === 'PATCH' && url.pathname === `/v2/sessions/${session.id}` && sessionResponse?.ok) {
+                metadataPatchRequests.push({ url: url.href, token: new Headers(init?.headers).get('authorization') });
+            }
+            return sessionResponse ?? Response.json({}, { status: 404 });
         }) });
         storage.getState().applyMachines([rowMachine], true, { sourceServerId: home.id });
         await publishMachineInventoryForTest({ serverId: home.id, accountId: 'row-account' }, [rowMachine]);
@@ -206,6 +214,38 @@ async function importSessionItem() {
 }
 
 describe('SessionItem server-scoped mutations', () => {
+    it('clears the authored note and progress through the row menu on their owning Home', async () => {
+        const SessionItem = await importSessionItem();
+        const sessionId = 'sess_clear_status';
+        const screen = await renderScreen(<SessionItem
+            session={createSessionFixture({ id: sessionId, metadata: {
+                path: '/repo', host: 'tester.local',
+                work: { statusReason: 'Check Session rows', statusReasonSetAt: 12,
+                    statusProgress: { label: 'QA', done: 1, total: 24 } },
+            } })}
+            serverId="server_a" selected={false} compact={false}
+        />, { machineBound: false });
+        const readStatus = () => readSessionAuthoredDisplayV1(
+            readSessionOwnerMetadataView(storage.getState().sessions[sessionId])?.work,
+        );
+        expect(readStatus()).toMatchObject({
+            statusReason: 'Check Session rows', statusProgress: { label: 'QA', done: 1, total: 24 },
+        });
+
+        await openRowMenu(screen, sessionId);
+        await pressRowMenuAction(screen, SESSION_ACTION_CLEAR_STATUS_ID);
+
+        await vi.waitFor(() => {
+            expect(readStatus()?.statusReason ?? null).toBeNull();
+            expect(readStatus()?.statusProgress ?? null).toBeNull();
+        });
+        expect(metadataPatchRequests).toEqual([{
+            url: `${account!.home.serverUrl}/v2/sessions/${sessionId}`,
+            token: `Bearer ${account!.credentials.token}`,
+        }]);
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
     it('deletes an archived row through its native menu, confirmation and exact-Home Action transport', async () => {
         const SessionItem = await importSessionItem();
         const screen = await renderScreen(<SessionItem
@@ -339,6 +379,7 @@ describe('SessionItem server-scoped mutations', () => {
             return { status: 'stopped' };
         });
         mutationRequests.length = 0;
+        metadataPatchRequests.length = 0;
         mutationOrder.length = 0;
         deleteReplies.length = 0;
         rejectFirstArchive = false;
