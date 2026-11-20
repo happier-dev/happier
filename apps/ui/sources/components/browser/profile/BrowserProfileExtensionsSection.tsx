@@ -21,6 +21,7 @@ import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -85,9 +86,10 @@ export function BrowserProfileExtensionsSection(
         });
         if (result.ok) refresh();
         else if ('code' in result && result.code) {
+          const fallback = t('capabilities.store.browserExtensionProfile.failed');
           Modal.alert(
             t('common.error'),
-            t('capabilities.store.browserExtensionProfile.failed'),
+            resolveActionExecutionFailureMessage({ ...result, errorCode: result.code }, fallback) ?? fallback,
           );
         }
       } finally {

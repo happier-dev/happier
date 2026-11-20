@@ -24,7 +24,7 @@ export async function submitBrowserExtensionMutation(params: Readonly<{
     for (;;) {
         const response = await params.execute(params.actionId, input,
             { signal: params.signal, externalActionTarget: { kind: 'machine', machineId: params.machineId } });
-        if (!response.ok) return { ok: false, code: response.errorCode };
+        if (!response.ok) return { ...response, code: response.errorCode };
         const result = BrowserExtensionMutationResultV1Schema.parse(response.result);
         if (result.status === 'updated' || result.status === 'removed') return { ok: true };
         if (result.status === 'unavailable') return { ok: false, code: result.code };

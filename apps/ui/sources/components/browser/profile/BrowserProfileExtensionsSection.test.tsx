@@ -18,6 +18,7 @@ import {
 } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { BrowserExtensionActionResultV1 } from '@happier-dev/protocol/actions';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { IModal } from '@/modal';
 
 const dialogs = vi.hoisted(() => ({
@@ -71,7 +72,7 @@ const record = (enabled: boolean) => ({
 
 type Handler = (
   input: Record<string, unknown>,
-) => BrowserExtensionActionResultV1 | Promise<BrowserExtensionActionResultV1>;
+) => BrowserExtensionActionResultV1 | ActionExecuteFailure | Promise<BrowserExtensionActionResultV1 | ActionExecuteFailure>;
 
 async function setup(handlers: Record<string, Handler>) {
   const serverId = await homes.addHome({
@@ -104,12 +105,13 @@ async function setup(handlers: Record<string, Handler>) {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
         const input = envelope.input as Record<string, unknown>;
         inputs.push({ actionId, input });
+        const result = await handler(input);
         return {
           body: {
             v: 1,
             actionId,
             requestId: envelope.requestId,
-            execution: { ok: true, result: await handler(input) },
+            execution: 'ok' in result ? result : { ok: true, result },
           },
         };
       },
@@ -129,6 +131,31 @@ async function setup(handlers: Record<string, Handler>) {
 const switchValue = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
   screen.findHostByTestId('profile.extensions.row.' + extensionId + '.enabled')
     ?.props.value;
+
+it('retains a mutation refusal cause through the shared Action explanation', async () => {
+  const failure = ActionExecuteFailureSchema.parse({
+    ok: false, errorCode: 'action_failed', error: 'action_failed', effectAttempted: false,
+    failureCause: { phase: 'browser.extensions.disable', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: null },
+  });
+  const { screen, dispose } = await setup({
+    'browser.extensions.list': () => ({ status: 'ready', entries: [
+      { profileId, restartRequired: false, extension: record(true) },
+    ] }),
+    'browser.extensions.disable': () => failure,
+  });
+  try {
+    await waitForHomeGovernance(() => expect(switchValue(screen)).toBe(true));
+    await act(async () => {
+      screen.findHostByTestId('profile.extensions.row.' + extensionId + '.enabled')!.props.onValueChange(false);
+    });
+    await waitForHomeGovernance(() => expect(dialogs.alert).toHaveBeenCalledWith(
+      t('common.error'), t('errors.daemonUnavailableBody'),
+    ));
+  } finally {
+    await screen.unmount();
+    dispose();
+  }
+});
 
 it('lists the profile, turns an extension off through the restart confirmation, and keeps the row while it refreshes', async () => {
   let enabled = true;

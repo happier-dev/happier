@@ -1,6 +1,7 @@
 import { normalizeInputByFieldHints as normalizeActionInputByFieldHints, resolveEffectiveInputFields as resolveEffectiveActionInputFields, seedInputByFieldHints, type EffectiveInputField as EffectiveActionInputField } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import type { InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 import type { PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
@@ -24,7 +25,8 @@ export type ActionInputFormSubmissionResult = Readonly<{
     phase?: string;
 }
     & Partial<Pick<PluginUiHostApiErrorPayloadV1,
-        'code' | 'layer' | 'retryable' | 'message' | 'remediation' | 'details' | 'requestId' | 'effectAttempted' | 'failureCause'>>>;
+        'code' | 'layer' | 'retryable' | 'message' | 'remediation'>>
+    & Pick<ActionExecuteFailure, 'details' | 'requestId' | 'effectAttempted' | 'failureCause'>>;
 
 /**
  * The transient form signal is distinct from the Action invocation signal.
