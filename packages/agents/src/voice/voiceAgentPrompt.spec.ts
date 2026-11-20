@@ -450,7 +450,7 @@ describe('voiceAgentPrompt', () => {
     expect(clientToolPrompt).toContain('for the already selected Session, say "the session" without repeating its full title');
   });
 
-  it('tells voice agents to forward coding work via sendSessionMessage and stay terse while waiting', () => {
+  it('tells voice agents to acknowledge accepted coding work once and report terminal failures', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
       sessionId: 's1',
     });
@@ -460,12 +460,14 @@ describe('voiceAgentPrompt', () => {
     });
 
     expect(localPrompt).toContain('Use sendSessionMessage when the user asks the coding assistant');
-    expect(localPrompt).toContain('Do not repeatedly narrate that you are waiting');
+    expect(localPrompt).toContain('give one short acknowledgement and end your reply');
+    expect(localPrompt).toContain('If the coding Session reports a terminal failure, use that failure as the outcome');
     expect(localPrompt).toContain('Do not add greeting filler like "Hi there"');
     expect(localPrompt).toContain('Establish pending requests from canonical request tools or current session updates');
     expect(localPrompt).toContain('answerUserActionRequest');
     expect(clientToolPrompt).not.toContain('sendSessionMessage');
-    expect(clientToolPrompt).toContain('Do not repeatedly narrate that you are waiting');
+    expect(clientToolPrompt).toContain('give one short acknowledgement and end your reply');
+    expect(clientToolPrompt).toContain('If the coding Session reports a terminal failure, use that failure as the outcome');
     expect(clientToolPrompt).toContain('Do not add greeting filler like "Hi there"');
     expect(clientToolPrompt).toContain('Establish pending requests from canonical request tools or current session updates');
     expect(clientToolPrompt).not.toContain('answerUserActionRequest');

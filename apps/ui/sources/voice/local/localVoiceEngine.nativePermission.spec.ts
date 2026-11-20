@@ -16,7 +16,6 @@ import {
 
 const restoreLoader = await warmLocalVoiceEngineHarnessGraph();
 afterAll(() => restoreLoader());
-const quotaRetryAtMs = Date.UTC(2026, 10, 14, 15);
 const codexChoices = {
   requirementId: 'codex-exec-requirement', source: 'codex', choices: [
     { id: 'execpolicy', label: 'Allow this command rule', decision: 'approved_execpolicy_amendment', scope: 'localPersistent',
@@ -287,6 +286,7 @@ describe('native Voice permission input', () => {
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
   ])('reads a native permission aloud and respects $label', async ({ label, enabled, preferenceAfterAdmission, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, run120, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
+    const quotaRetryAtMs = Date.now() + 60 * 60 * 1000;
     const offeredChoices = run120 ? run120Choices : run111 ? run111Choices : nativeStop ? run107Choices : codexChoices;
     const storage = await getStorage();
     const state = storage.getState();
@@ -465,8 +465,10 @@ describe('native Voice permission input', () => {
           expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
           expect(expoSpeechSpeak).not.toHaveBeenCalled();
         } else {
-          const { t } = await import('@/text');
-          const time = new Date(quotaRetryAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+          const { getPreferredLanguage, t } = await import('@/text');
+          const { formatMoment } = await import('@/utils/datetime/formatMoment');
+          const time = formatMoment(quotaRetryAtMs, Date.now());
+          expect(time).toContain(new Intl.DateTimeFormat(getPreferredLanguage(), { timeStyle: 'short' }).format(quotaRetryAtMs));
           expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([
             `${t('session.usageLimitRecovery.banner.title')} ${t('session.usageLimitRecovery.banner.retryAt', { time })}`,
           ]);
