@@ -1,4 +1,4 @@
-import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
+import { readPaddedBase64DecodedLength } from '@happier-dev/plugin-sdk/protocol';
 import type {
   PluginProcessResult,
 } from '@happier-dev/plugin-sdk/exec';

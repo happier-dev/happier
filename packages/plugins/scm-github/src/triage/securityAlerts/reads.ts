@@ -1,4 +1,4 @@
-import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
+import { readPaddedBase64DecodedLength } from '@happier-dev/plugin-sdk/protocol';
 import type { GithubTriageInvocationContext } from '../invocation.js';
 import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
 import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';

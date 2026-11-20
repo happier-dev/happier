@@ -230,5 +230,6 @@ export { readDeploymentReceiptArtifactV1 } from './deployment.js';
 export { readDeploymentTargetLinkArtifactV1 } from './deployment.js';
 export { readDiscussionMessagePartsV1 } from './discussionContent.js';
 export { readOwnedNoticeArtifactV1 } from './accountNotice.js';
+export { readPaddedBase64DecodedLength } from './encoding.js';
 export { resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export { resolveLaunchProfilePlacementDirectoryIntentV1 } from './launchProfilePreferences.js';

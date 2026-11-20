@@ -2781,6 +2781,7 @@
 | `./protocol` | `readDeploymentTargetLinkArtifactV1` | value | any |
 | `./protocol` | `readDiscussionMessagePartsV1` | value | any |
 | `./protocol` | `readOwnedNoticeArtifactV1` | value | any |
+| `./protocol` | `readPaddedBase64DecodedLength` | value | any |
 | `./protocol` | `resolveAccountDisplayLabelV1` | value | any |
 | `./protocol` | `resolveLaunchProfilePlacementDirectoryIntentV1` | value | any |
 | `./providers` | `AgentProviderRequirementsV1` | type | any |
