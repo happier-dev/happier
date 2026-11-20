@@ -1,21 +1,10 @@
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { isDevStartupSourceDrift } from '../dev/devReloadCoordinator.mjs';
 import { runWorkspaceBuildAdmission } from './workspace_build_admission.mjs';
+import { sourceBuildNodeArgs } from './sourceBuildNodeArgs.mjs';
 
-/** Select the existing authored-tool authority before Node links any static
- * imports. Installed Stack layouts without a checkout keep their built graph. */
-export function sourceBuildNodeArgs({ repoDir, scriptPath, args = [] }) {
-  const bootstrap = join(repoDir, 'apps/stack/bin/localSourceRuntimeBootstrap.mjs');
-  const sourceRuntime = join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs');
-  // Explicit finite tools can live outside their input checkout (for example
-  // the Stack compiler consuming a captured UI). Inherited bootstrap scope
-  // protects product children; it cannot establish this explicit tool intent.
-  return [...(existsSync(bootstrap) ? ['--conditions=happier-source', `--import=${pathToFileURL(bootstrap).href}`] : []),
-    ...(existsSync(sourceRuntime) ? [`--import=${pathToFileURL(sourceRuntime).href}`] : []), scriptPath, ...args];
-}
+export { sourceBuildNodeArgs };
 
 /** Run finite source preparation in the existing host memory-admission tree.
  * Admission classes and measured envelopes, queueing, reservations and pressure

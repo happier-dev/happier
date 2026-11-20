@@ -3260,6 +3260,10 @@ test('workspace publication validates the export surface from its captured manif
       mkdirSync(join(root, 'apps', app), { recursive: true });
       writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
     }
+    const sourceRuntime = 'packages/cli-common/registerSourceRuntime.mjs';
+    mkdirSync(join(root, 'packages/cli-common'), { recursive: true });
+    writeFileSync(join(root, 'packages/cli-common/package.json'), JSON.stringify({ name: '@happier-dev/cli-common' }));
+    writeFileSync(join(root, sourceRuntime), 'export const captured = true;');
     const dir = join(root, 'packages/moving');
     mkdirSync(join(dir, 'src'), { recursive: true });
     const manifest = { name: '@happier-dev/moving', type: 'module', main: './dist/index.js',
@@ -3298,6 +3302,9 @@ test('workspace publication validates the export surface from its captured manif
         async runPackageBuild(buildDir, { env }) {
           attempts++;
           capturedDir = buildDir;
+          const capturedRuntime = join(realpathSync(env.HAPPIER_STACK_REPO_DIR), sourceRuntime);
+          assert.equal(realpathSync(capturedRuntime), capturedRuntime,
+            'the source-runtime entry must resolve inside the captured repository');
           const capturedManifest = JSON.parse(readFileSync(join(buildDir, 'package.json'), 'utf8'));
           assert.equal(capturedManifest.scripts.build, 'fixture-compiler-captured');
           for (const target of new Set([capturedManifest.main, capturedManifest.types, ...Object.values(capturedManifest.exports)])) {

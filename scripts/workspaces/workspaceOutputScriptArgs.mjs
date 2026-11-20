@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { sourceBuildNodeArgs } from '../../apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs';
 import { runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import {
   collectPackageBuildOutputTargets,
@@ -21,13 +22,10 @@ export async function withWorkspaceOutputScriptArgs({ packageDir, scriptName, en
   if (packageJson.scripts?.[scriptName]?.trim() !== 'happier-plugin-build-ui' || !manifestExport) {
     return await operation(args, env);
   }
-  // Both children can reach authored workspace exports through happier-source.
-  // Reuse the repository's source runtime so relative emitted .js specifiers
-  // resolve to their TypeScript owners, including generated Protocol leaves.
-  const childEnv = {
-    ...env,
-    NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import=${new URL('../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).href}`.trim(),
-  };
+  // Output-only refreshes may call this owner from the live checkout, but
+  // the compiler and its source loader belong to the same private capture.
+  const repoDir = (env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR && env.HAPPIER_STACK_REPO_DIR)
+    || fileURLToPath(new URL('../../', import.meta.url));
   const targets = collectPackageBuildOutputTargets({ exports: { './manifest': manifestExport } })
     .filter(target => isPackageBuildDistOutputTarget(target) && /\.(?:mjs|cjs|js)$/.test(target));
   if (targets.length !== 1) throw new Error('Staged plugin UI build requires one emitted manifest module export');
@@ -37,7 +35,7 @@ export async function withWorkspaceOutputScriptArgs({ packageDir, scriptName, en
   try {
     // A fresh process also refreshes the module's relative dependency graph;
     // ESM cache-busting only the manifest would retain stale imported facts.
-    const result = await runCommand(process.execPath, ['--input-type=module', '--eval', `
+    const manifestCode = `
       import { writeFile } from 'node:fs/promises';
       import { pathToFileURL } from 'node:url';
       const { PLUGIN_MANIFEST } = await import(pathToFileURL(process.argv[1]).href);
@@ -45,14 +43,22 @@ export async function withWorkspaceOutputScriptArgs({ packageDir, scriptName, en
         throw new Error('Emitted plugin manifest must export PLUGIN_MANIFEST');
       }
       await writeFile(process.argv[2], JSON.stringify(PLUGIN_MANIFEST));
-    `, modulePath, manifestPath], { cwd: packageDir, env: childEnv, stdio: 'inherit', ownedProcessGroup: true });
+    `;
+    const manifestArgs = sourceBuildNodeArgs({
+      repoDir, scriptPath: '--input-type=module', args: ['--eval', manifestCode, modulePath, manifestPath],
+    });
+    const result = await runCommand(process.execPath, manifestArgs, { cwd: packageDir, env, stdio: 'inherit', ownedProcessGroup: true });
     if (result.error) throw result.error;
     if (result.signal || result.status !== 0) throw new Error(`Staged plugin manifest import failed with code ${result.status ?? 'unknown'}`);
     // The SDK's public CLI consumes installed package exports. Repository
     // preparation instead uses the same current-source compiler as the UI
     // inventory, including when installed workspace manifests are stale.
-    return await operation(['exec', process.execPath, fileURLToPath(import.meta.url),
-      '--manifest-path', manifestPath], childEnv);
+    const compilerArgs = sourceBuildNodeArgs({
+      repoDir,
+      scriptPath: join(repoDir, 'scripts/workspaces/workspaceOutputScriptArgs.mjs'),
+      args: ['--manifest-path', manifestPath],
+    });
+    return await operation(['exec', process.execPath, ...compilerArgs], env);
   } finally {
     await rm(temporaryDir, { recursive: true, force: true });
   }

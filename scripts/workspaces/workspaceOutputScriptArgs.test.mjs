@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
+import { sourceBuildNodeArgs } from '../../apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs';
 import { withWorkspaceOutputScriptArgs } from './workspaceOutputScriptArgs.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -25,6 +26,10 @@ test('staged UI builds resolve manifest and artifact dependencies from current w
       './happier-plugin-ui/panel': './panel.ts',
     },
   }));
+  await writeFile(join(packageDir, 'definition.ts'), `
+    type DefinitionLifetime = { name: string };
+    export const definition: DefinitionLifetime = { name: 'staged-source' };
+  `);
   const dependencyDir = join(packageDir, 'node_modules/@happier-dev/channels-protocol');
   await mkdir(dependencyDir, { recursive: true });
   await writeFile(join(dependencyDir, 'package.json'), JSON.stringify({
@@ -41,25 +46,27 @@ test('staged UI builds resolve manifest and artifact dependencies from current w
     globalThis.reasons = CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1;`);
   const toolSource = new URL('../../packages/protocol/src/tools/happierToolAutoApprovalV1.ts', import.meta.url).href;
   await writeFile(join(outputDir, 'manifest.js'), `
+    import { definition } from '../definition.js';
     import { listHappierToolAutoApprovedNamesV1 } from ${JSON.stringify(toolSource)};
     export const PLUGIN_MANIFEST = {
-      name: listHappierToolAutoApprovedNamesV1()[0],
+      name: definition.name + ':' + listHappierToolAutoApprovedNamesV1()[0],
       contributes: { ui: { renderers: [{ kind: 'reactNative', artifact: 'panel' },
         { kind: 'hostedWeb', source: { kind: 'artifact', artifact: 'hosted' } }] } }
     };
   `);
-  const env = { ...process.env, NODE_OPTIONS: '--conditions=happier-source', HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir };
+  const env = { ...process.env, NODE_OPTIONS: '--trace-warnings', HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir };
   await withWorkspaceOutputScriptArgs({ packageDir, scriptName: 'build:ui', env }, async (args, childEnv = env) => {
     const manifestPath = args[args.indexOf('--manifest-path') + 1];
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-    assert.equal(typeof manifest.name, 'string');
-    assert.ok(manifest.name.length > 0);
+    assert.match(manifest.name, /^staged-source:.+/u);
     // Sensitivity control: Node's source loader cannot repair the bundler's
     // stale installed exports when the source build options are absent.
-    await assert.rejects(execFileAsync(process.execPath, [
-      fileURLToPath(new URL('../../packages/plugin-sdk/src/ui/build/bin.ts', import.meta.url)),
-      '--project-root', packageDir, '--manifest-path', manifestPath,
-    ], { cwd: packageDir, env: childEnv }), error => error.code === 1
+    const legacyArgs = sourceBuildNodeArgs({
+      repoDir: fileURLToPath(new URL('../../', import.meta.url)),
+      scriptPath: fileURLToPath(new URL('../../packages/plugin-sdk/src/ui/build/bin.ts', import.meta.url)),
+      args: ['--project-root', packageDir, '--manifest-path', manifestPath],
+    });
+    await assert.rejects(execFileAsync(process.execPath, legacyArgs, { cwd: packageDir, env: childEnv }), error => error.code === 1
       && /No matching export.*CONVERSATION_DELIVERY_NOT_SENT_REASONS_V1/u.test(error.stderr));
     // Real SDK executable, compiler and Protocol graph; no test-runner resolver
     // or preload may hide the package-manager child's source-resolution gap.
@@ -75,5 +82,5 @@ test('staged UI builds resolve manifest and artifact dependencies from current w
   });
   const artifacts = JSON.parse(await readFile(join(outputDir, 'happier-plugin-ui/ui-artifacts.json'), 'utf8'));
   assert.deepEqual(artifacts.entries.map(entry => entry.artifactId).sort(), ['hosted', 'panel']);
-  assert.equal(env.NODE_OPTIONS, '--conditions=happier-source');
+  assert.equal(env.NODE_OPTIONS, '--trace-warnings');
 });

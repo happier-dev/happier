@@ -2,6 +2,7 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { sourceBuildNodeArgs } from '../../../../../apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs';
 import { repoRootDir } from '../paths';
 import { runLoggedCommand } from './spawnProcess';
 
@@ -31,8 +32,9 @@ export async function ensureUiWebWorkspacePrebuild(params: {
   ).catch(() => {});
 
   try {
+    const repoDir = repoRootDir();
     const uiWorkspaceBuildModuleUrl = pathToFileURL(
-      resolvePath(repoRootDir(), 'apps', 'ui', 'scripts', 'ensureWorkspacePackagesBuilt.mjs'),
+      resolvePath(repoDir, 'apps', 'ui', 'scripts', 'ensureWorkspacePackagesBuilt.mjs'),
     ).href;
     const launchEnv: NodeJS.ProcessEnv = {
       ...params.env,
@@ -46,20 +48,23 @@ export async function ensureUiWebWorkspacePrebuild(params: {
     // phase deadline would kill healthy builds while they wait for admission.
     await runLoggedCommand({
       command: process.execPath,
-      args: [
-        '--input-type=module',
-        '--eval',
-        [
-          `const uiWorkspaceBuildModuleUrl = ${JSON.stringify(uiWorkspaceBuildModuleUrl)};`,
-          'const { ensureUiWorkspacePackagesBuilt } = await import(uiWorkspaceBuildModuleUrl);',
-          'const uiPackageDir = process.argv[1];',
-          "if (!uiPackageDir) throw new Error('missing uiPackageDir');",
-          'const res = await ensureUiWorkspacePackagesBuilt({ uiPackageDir, env: process.env });',
-          'process.stdout.write(`${JSON.stringify(res)}\\n`);',
-        ].join('\n'),
-        params.workspaceRootDir,
-      ],
-      cwd: repoRootDir(),
+      args: sourceBuildNodeArgs({
+        repoDir,
+        scriptPath: '--input-type=module',
+        args: [
+          '--eval',
+          [
+            `const uiWorkspaceBuildModuleUrl = ${JSON.stringify(uiWorkspaceBuildModuleUrl)};`,
+            'const { ensureUiWorkspacePackagesBuilt } = await import(uiWorkspaceBuildModuleUrl);',
+            'const uiPackageDir = process.argv[1];',
+            "if (!uiPackageDir) throw new Error('missing uiPackageDir');",
+            'const res = await ensureUiWorkspacePackagesBuilt({ uiPackageDir, env: process.env });',
+            'process.stdout.write(`${JSON.stringify(res)}\\n`);',
+          ].join('\n'),
+          params.workspaceRootDir,
+        ],
+      }),
+      cwd: repoDir,
       env: launchEnv,
       stdoutPath: prebuildStdoutPath,
       stderrPath: prebuildStderrPath,

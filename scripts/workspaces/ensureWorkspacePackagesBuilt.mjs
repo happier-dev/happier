@@ -1281,6 +1281,9 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
       // symlink would make its physical repo root escape the captured manifest
       // and turn an already-admitted finite build into unknown compilation.
       await visit(join(monorepoRoot, 'apps/stack/bin/hstack-exec'));
+      // The staged build:ui launcher must register this capture's workspace
+      // graph even if cli-common is outside the package's dependency closure.
+      await visit(join(monorepoRoot, 'packages/cli-common/registerSourceRuntime.mjs'));
       return [...paths];
     };
     const capture = await captureBuildInputFiles({ sourceDir: monorepoRoot, captureDir: repoDir, readPaths });
