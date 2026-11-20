@@ -69,6 +69,7 @@ export async function startVoiceInferenceWorker(params?: Readonly<{
     perModelConcurrency: params?.perModelConcurrency,
     maxLoadedArtifactBytes: params?.maxLoadedArtifactBytes,
     publicModelPacks: params?.publicModelPacks,
+    retireUnusedRuntime: forkedHandle?.retire,
     onStop: async () => {
       await abortAllRequests();
     },

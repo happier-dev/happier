@@ -774,7 +774,20 @@ export function createForkedVoiceInferenceRuntimeClient(
         } catch {
           // best-effort
         }
-        await channel.waitForTermination().catch(() => undefined);
+        // A blocked native call can keep the child from handling graceful termination.
+        // Keep the slot retired until the OS reports exit, escalating under its existing policy.
+        const forceTimer = setTimeout(() => {
+          try {
+            channel.forceTerminate();
+          } catch {
+            // The child may already have exited.
+          }
+        }, policy.terminateGraceMs);
+        try {
+          await channel.waitForTermination().catch(() => undefined);
+        } finally {
+          clearTimeout(forceTimer);
+        }
       }
       supervisor.dispose();
     },

@@ -113,6 +113,7 @@ type VoiceInferenceWorkerLifecycleParams = Readonly<{
   maxLoadedArtifactBytes?: number;
   publicModelPacks?: DaemonPublicVoiceModelPackRuntime;
   onStop?: () => Promise<void> | void;
+  retireUnusedRuntime?: (kind: ModelPackManifest['kind']) => Promise<void>;
   installerOps?: Readonly<{
     fetchManifest?: typeof fetchVoiceModelPackManifest;
     installModelPack?: typeof installVoiceModelPack;
@@ -255,18 +256,29 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       loadedArtifactBytesByPackId.delete(packId);
       return;
     }
-    const releasesCurrentRuntime = currentWarmRuntime === warmRuntime;
-    if (releasesCurrentRuntime) {
+    if (currentWarmRuntime === warmRuntime) {
       loadedArtifactBytesByPackId.delete(packId);
-      warmRuntimeByPackId.delete(packId);
     }
-    await warmRuntime.runtime.releaseModel?.({
-      packId,
-      packDir: warmRuntime.packDir,
-      manifest: warmRuntime.manifest,
-      runtimeDescriptor: warmRuntime.runtimeDescriptor,
-      supportArtifacts: warmRuntime.supportArtifacts,
-    });
+    try {
+      await warmRuntime.runtime.releaseModel?.({
+        packId,
+        packDir: warmRuntime.packDir,
+        manifest: warmRuntime.manifest,
+        runtimeDescriptor: warmRuntime.runtimeDescriptor,
+        supportArtifacts: warmRuntime.supportArtifacts,
+      });
+    } finally {
+      if (warmRuntimeByPackId.get(packId) === warmRuntime) {
+        warmRuntimeByPackId.delete(packId);
+        const kind = warmRuntime.manifest.kind;
+        // A child is shared by all packs of its kind. Keep it until the last
+        // model release finishes, including any peer warm already admitted.
+        if (params?.retireUnusedRuntime &&
+          ![...warmRuntimeByPackId.values()].some(peer => peer.manifest.kind === kind)) {
+          await params.retireUnusedRuntime(kind);
+        }
+      }
+    }
   }
 
   async function clearWarmRuntimeForPack(packId: string): Promise<void> {
@@ -540,6 +552,9 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       const warmRuntime = await warmupCoordinator.warm(packId, async () => {
         runtimeStateByPackId.set(packId, 'warming');
         const loadedRuntime = await loadRuntime();
+        const handle = { runtime: loadedRuntime, packDir, manifest, runtimeDescriptor, supportArtifacts };
+        // Claim the runtime before native warm can yield to a peer pack's eviction.
+        warmRuntimeByPackId.set(packId, handle);
         try {
           throwIfWarmAborted(warmSignal);
           await loadedRuntime.warmModel?.({ packId, packDir, manifest, runtimeDescriptor, supportArtifacts, signal: warmSignal });
@@ -562,13 +577,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
           }
         } catch (error) {
           try {
-            await loadedRuntime.releaseModel?.({
-              packId,
-              packDir,
-              manifest,
-              runtimeDescriptor,
-              supportArtifacts,
-            });
+            await releaseRuntimeForPack(packId, handle);
           } catch {
             // Preserve the originating warm/prime failure; release is best-effort cleanup.
           }
@@ -576,9 +585,8 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         }
         loadedArtifactBytesByPackId.set(packId, sumManifestLoadedArtifactBytes(manifest));
         runtimeStateByPackId.set(packId, 'ready');
-        return { runtime: loadedRuntime, packDir, manifest, runtimeDescriptor, supportArtifacts };
+        return handle;
       });
-      warmRuntimeByPackId.set(packId, warmRuntime);
       diagnostics = { ...diagnostics, runtimeState: 'ready' };
       return warmRuntime;
     } catch (error) {

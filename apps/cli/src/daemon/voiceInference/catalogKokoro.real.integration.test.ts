@@ -499,4 +499,70 @@ describe.runIf(enabled)('canonical public Kokoro consumed lifecycle', () => {
       tempRootEntries: 0,
     });
   }, 35 * 60_000);
+
+  it('retires the idle inference child and serves synthesis on a new child', async () => {
+    const spawnedAtByPid = new Map<number, number>();
+    const worker = await startVoiceInferenceWorker({
+      isolationMode: 'forked',
+      residencyMs: 1_000,
+      onForkedWorkerProcess: (child) => {
+        ownedWorkerProcesses.observe(child);
+        if (child.pid !== null) spawnedAtByPid.set(child.pid, performance.now());
+      },
+    });
+    workers.push(worker);
+    await worker.installModel({ packId: KOKORO_PACK_ID });
+    const warmStartedAt = performance.now();
+    await worker.warmModelPack(KOKORO_PACK_ID);
+    const firstPid = await ownedWorkerProcesses.waitForNewPid();
+
+    const measure = async (state: string, pid: number, startedAt?: number) => {
+      let status = '';
+      if (process.platform === 'linux') {
+        status = await readFile(`/proc/${pid}/status`, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return '';
+        });
+      }
+      console.info('voice-idle-measurement', {
+        state,
+        pid,
+        elapsedMs: startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
+        timeToSpawnMs: startedAt === undefined ? undefined : Math.round(spawnedAtByPid.get(pid)! - startedAt),
+        rssKiB: status.match(/^VmRSS:\s+(\d+)/m)?.[1] ?? null,
+      });
+    };
+    await measure('after_load', firstPid, warmStartedAt);
+    const expectEvicted = async () => {
+      await expect.poll(async () => (await worker.getModelsStatus([KOKORO_PACK_ID]))[0]?.runtimeState, {
+        timeout: 15_000,
+      }).toBe('evicted');
+    };
+    await expectEvicted();
+    try {
+      await ownedWorkerProcesses.waitForTermination(firstPid);
+    } finally {
+      await measure('after_eviction', firstPid);
+    }
+    const callStartedAt = performance.now();
+    const audio = await worker.synthesizeTts({
+      requestId: 'kokoro-after-idle',
+      text: 'A fresh worker restores speech.',
+      packId: KOKORO_PACK_ID,
+      voiceId: null,
+      speed: 1,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    });
+    const nextPid = await ownedWorkerProcesses.waitForNewPid([firstPid]);
+    await measure('after_cold_call', nextPid, callStartedAt);
+    inspectPcm16Wav(await readFile(audio.filePath));
+    await rm(audio.filePath, { force: true });
+    await expectEvicted();
+    await ownedWorkerProcesses.waitForTermination(nextPid);
+    await worker.warmModelPack(KOKORO_PACK_ID);
+    const attachedPid = await ownedWorkerProcesses.waitForNewPid([firstPid, nextPid]);
+    expect((await worker.getModelsStatus([KOKORO_PACK_ID]))[0]?.runtimeState).toBe('ready');
+    await worker.stop();
+    await ownedWorkerProcesses.waitForTermination(attachedPid);
+  }, 300_000);
 });

@@ -125,6 +125,97 @@ describe('forked voice inference runtime loader', () => {
     expect(handle.readProcessRoots()).toEqual([]);
   });
 
+  it('serves a request arriving while the previous child is still exiting', async () => {
+    let endExit!: () => void;
+    const allowExit = new Promise<void>(resolve => { endExit = resolve; });
+    let nextPid = 100;
+    const handle = createForkedVoiceInferenceRuntimeHandle({
+      prepareRuntime: async () => {},
+      channelFactory: async () => {
+        const pid = nextPid++;
+        const channel = createInMemoryWorkerChannel({
+          synthesizeTts: async () => ({
+            bytes: Buffer.from('speech'),
+            output: { codec: 'wav', mimeType: 'audio/wav' },
+            name: `speech-${pid}.wav`,
+          }),
+          transcribeAudio: async () => ({ text: '', language: null }),
+        });
+        return {
+          ...channel,
+          pid,
+          terminate: () => {
+            if (pid === 100) void allowExit.then(channel.terminate);
+            else channel.terminate();
+          },
+        };
+      },
+    });
+    handles.push(handle);
+    const runtime = await handle.runtimeLoader();
+    if (!runtime) throw new Error('expected forked runtime');
+    const request = {
+      requestId: 'speech-before-exit', text: 'hello', packId: manifest.packId,
+      packDir: '/tmp/tts', manifest, voiceId: null, speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    } as const;
+    await expect(runtime.synthesizeTts(request)).resolves.toMatchObject({ name: 'speech-100.wav' });
+
+    const retiring = handle.retire(manifest.kind);
+    const successor = runtime.synthesizeTts({ ...request, requestId: 'speech-during-exit' });
+    try {
+      expect(await Promise.race([successor, new Promise(resolve => setImmediate(() => resolve('waiting')))])).toBe('waiting');
+    } finally {
+      endExit();
+    }
+    await retiring;
+    await expect(successor).resolves.toMatchObject({ name: 'speech-101.wav' });
+  });
+
+  it('serves a replacement request and completes shutdown when children ignore graceful termination', async () => {
+    const channels: VoiceInferenceWorkerChannel[] = [];
+    const handle = createForkedVoiceInferenceRuntimeHandle({
+      prepareRuntime: async () => {},
+      channelFactory: async () => {
+        const name = `speech-${channels.length}.wav`;
+        const channel = createInMemoryWorkerChannel({
+          synthesizeTts: async ({ output }) => ({ bytes: Buffer.from('speech'), output, name }),
+          transcribeAudio: async () => ({ text: '', language: null }),
+        });
+        channels.push(channel);
+        return { ...channel, terminate: () => {} };
+      },
+    });
+    handles.push(handle);
+    const runtime = await handle.runtimeLoader();
+    if (!runtime) throw new Error('expected forked runtime');
+    const request = {
+      requestId: 'speech-before-retirement', text: 'hello', packId: manifest.packId,
+      packDir: '/tmp/tts', manifest, voiceId: null, speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    } as const;
+    await expect(runtime.synthesizeTts(request)).resolves.toMatchObject({ name: 'speech-0.wav' });
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const retiring = handle.retire(manifest.kind);
+      const successor = runtime.synthesizeTts({ ...request, requestId: 'speech-after-retirement' });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(await Promise.race([successor, 'still retiring'])).toBe('still retiring');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await Promise.race([successor, 'still retiring'])).toMatchObject({ name: 'speech-1.wav' });
+      await retiring;
+
+      const shutdown = handle.dispose().then(() => 'stopped');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await Promise.race([shutdown, 'still shutting down'])).toBe('stopped');
+    } finally {
+      // Release the simulated OS processes even when the old implementation fails the test.
+      for (const channel of channels) channel.forceTerminate();
+      vi.useRealTimers();
+    }
+  });
+
   it('prepares the source native runtime once before exposing or spawning the forked engine', async () => {
     const observations: string[] = [];
     const sourceRuntimeEntrypoint = createRequire(import.meta.url).resolve('sherpa-onnx-node/sherpa-onnx.js');
