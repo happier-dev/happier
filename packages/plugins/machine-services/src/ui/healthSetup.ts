@@ -236,7 +236,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [existing, setExisting] = useState(props.existing);
     const [selectedCheckId, setSelectedCheckId] = useState<string | null>(props.selectedCheckId ?? null);
     const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
-    const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? existing[0];
+    const domain = props.sourceOptions.domain;
+    const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? (domain
+        ? existing.find(({ binding }) => binding.kind === 'domain'
+            && binding.domainId === domain.domainId && binding.targetLinkId === domain.targetLinkId)
+        : existing[0]);
     const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
     const selectedKind = catalog?.find(kind =>
         kind.pluginId === selectedCheck?.kind.pluginId && kind.id === selectedCheck.kind.localId);
