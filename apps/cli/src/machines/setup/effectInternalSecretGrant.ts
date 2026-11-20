@@ -72,7 +72,7 @@ export function createMachineConnectorSecretGrantSession(input: Readonly<{
                 const authorization = admitted.context.externalActionExecutionAuthorization;
                 const headers = authorization
                     ? await authorization.requesterHttpProjection!.createRequestHeaders({ method: 'POST', path, body,
-                        effectActionId: authorization.binding.actionId, signal: admitted.signal })
+                        effectActionId: admitted.deploymentChild?.actionId ?? authorization.binding.actionId, signal: admitted.signal })
                     : { Authorization: `Bearer ${admitted.credentials.token}` };
                 if (!headers) return refuse();
                 admitted.signal.throwIfAborted();

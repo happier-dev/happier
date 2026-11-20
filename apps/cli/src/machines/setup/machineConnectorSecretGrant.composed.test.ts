@@ -8,17 +8,24 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { encodeBase64, verifyMachineInstallationProof, type ActionExecutorContext, type MachineAdminAccessObservationV1 } from '@happier-dev/protocol';
-import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, encodeDeploymentChildExecutionV1,
+    verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
+import { DeploymentDomainChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { checkElevatedMachineSetupPlan, runElevatedEffect, type MachineElevationDependencies,
     type MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
 import { writeMachineConnectorSecretGrantForHost, type MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import * as installationStore from '@/daemon/identity/store';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { runMachineSetupEffectInternal } from './effectInternal';
 
@@ -61,7 +68,7 @@ function protectedConnectorFilesystem(root: string) {
 }
 
 describe.runIf(process.platform !== 'win32')('Machine connector grant through the installed elevated entry', () => {
-    it.each(['owner', 'external'] as const)('opens only in the elevated invocation, installs privately and admits %s authority at the next acquisition', async authority => {
+    it.each(['owner', 'external', 'teardown'] as const)('opens only in the elevated invocation, installs privately and admits %s authority at the next acquisition', async authority => {
         const root = await mkdtemp(join(await realpath(tmpdir()), 'happier-connector-grant-')); roots.push(root);
         const protectedFs = protectedConnectorFilesystem(root);
         const parent = join(root, 'protected');
@@ -77,6 +84,7 @@ describe.runIf(process.platform !== 'win32')('Machine connector grant through th
             provider: { pluginId: 'example.network', localId: 'connector' }, connectorId: 'connector' };
         let current = true, inChild = false, installedReads = 0, retireOnRead = false;
         let parentAdmissions = 0, connectorAdmissions = 0;
+        let retirementPacket: ReturnType<typeof WorkspaceSyncSourceExecutionV1Schema.parse> | undefined;
         if (authority === 'external') {
             const channel = await createRequesterCurrentnessSocketHarness();
             onTestFinished(() => channel.close());
@@ -129,6 +137,13 @@ describe.runIf(process.platform !== 'win32')('Machine connector grant through th
                     target: { kind: 'machine', machineId: 'machine' }, installationId: 'installation', requestId: 'request', method: 'POST',
                     path: '/v1/deployments/machines/machine/connector-secret-grant', body: config.data,
                     publicKey: keys.publicKey, signature: String(config.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+            }
+            if (retirementPacket) {
+                expect(body.operation).toBe('read');
+                expect(config.headers).not.toHaveProperty('Authorization');
+                expect(config.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe('teardown-proof');
+                expect(config.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1);
+                expect(config.headers?.[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]).toBe(encodeDeploymentChildExecutionV1(retirementPacket));
             }
             if (body.operation === 'set') stored = body.grant;
             else {
@@ -243,25 +258,65 @@ describe.runIf(process.platform !== 'win32')('Machine connector grant through th
                     .toEqual({ uid: 0, writable: 0, directory: true, symlink: false });
             }
         }
-        const removalSteps = steps.map(step => ({ ...step, state: 'absent' as const }));
+        const removalSteps = steps.map(step => ({ ...step, id: 'cloudflare-connector-token', state: 'absent' as const }));
         await writeFile(path, 'foreign-private-file');
         const foreignRemoval = await checkElevatedMachineSetupPlan({ ...input, basis, steps: removalSteps }, deps);
         expect(foreignRemoval?.nativeFacts[0]).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
         expect(await readFile(path, 'utf8')).toBe('foreign-private-file');
         await writeFile(path, secrets[1]);
-        const removal = await checkElevatedMachineSetupPlan({ ...input, basis, steps: removalSteps }, deps);
+        let removalDeps = deps;
+        if (authority === 'teardown') {
+            const target = { kind: 'machine' as const, machineId: input.machineId };
+            const envelope = { v: 1 as const, requestId: 'teardown-request', target,
+                input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 10 } };
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'teardown-proof', binding: {
+                accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: input.machineId, installationId: deps.installationId,
+                target, actionId: DEPLOYMENT_TEARDOWN_ACTION_ID_V1, deploymentChildRoot: true,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } });
+            const job = DeploymentDomainChildRpcV1Schema.parse({ v: 1, kind: 'domain', machineId: input.machineId,
+                installationId: deps.installationId, actionId: DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1, actionOperationId: input.operationId,
+                input: { serverId: 'home', environmentId: 'environment', domainId: 'final-domain' }, expectedDomainRevision: 2,
+                capture: { desired: false, retireSharedTunnel: true, listener: 'privateOrigin',
+                    placement: { serverId: 'home', accountId: 'owner', environmentId: 'environment', targetLinkId: 'link',
+                        domainId: 'final-domain', machineId: input.machineId, installationId: deps.installationId,
+                        nativeServer: 'tunnel-origin', actionOperationId: input.operationId, requestId: envelope.requestId },
+                    content: { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 } },
+                cloudflareConnector: { tunnelId: subject.connectorId, connector: { imageRef: 'cloudflared', version: 'test' },
+                    networkName: 'app-network', grantRef: grant.grantRef },
+            });
+            const method = `${job.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+            const requestId = 'teardown-domain-child';
+            const externalActionExecution = createExternalActionMachineRpcExecution({
+                context: { externalActionExecutionAuthorization: authorization, externalActionTarget: target },
+                effectActionId: job.actionId, installationId: job.installationId, method, requestId, params: job,
+                deploymentChildRouting: projectDeploymentChildRoutingV1(job), privateKey: keys.secretKey,
+            });
+            retirementPacket = WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId, params: job,
+                originalActionEnvelope: envelope, externalActionExecution });
+            const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                serverId: request.serverId, serverIdentityId: 'home', serverHttpBaseUrl: request.serverHttpBaseUrl,
+                target, installationId: job.installationId, privateKey: keys.secretKey, rootAdmitted: true,
+                forwardedDeploymentChild: job, deploymentChildExecution: retirementPacket });
+            if (!carrier) throw new Error('Expected admitted final Domain retirement');
+            removalDeps = { ...deps, connectorSecretGrant: { ...request, deploymentChild: job,
+                context: { ...context, externalActionExecutionAuthorization: carrier } } };
+        }
+        const removal = await checkElevatedMachineSetupPlan({ ...input, basis, steps: removalSteps }, removalDeps);
         expect(removal?.nativeFacts[0]).toMatchObject({ status: 'drifted', facts: { present: true } });
         if (!removal) throw new Error('Expected the private retirement check');
         outward.push(foreignRemoval, removal);
         const beforeRetirementReads = installedReads;
-        const retired = await runElevatedEffect({ ...input, effect: { kind: 'setupOperation', plans: [{ plan: removal }] } }, deps);
+        const retired = await runElevatedEffect({ ...input, effect: { kind: 'setupOperation', plans: [{ plan: removal }] } }, removalDeps);
         expect(retired.outcome).toBe('applied');
         expect(installedReads - beforeRetirementReads).toBe(1);
         outward.push(retired);
         await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
-        const missing = await checkElevatedMachineSetupPlan({ ...input, basis, steps: removalSteps }, deps);
+        const missing = await checkElevatedMachineSetupPlan({ ...input, basis, steps: removalSteps }, removalDeps);
         expect(missing?.nativeFacts[0]).toMatchObject({ status: 'satisfied', facts: { present: false } });
         outward.push(missing);
+        retirementPacket = undefined;
         const restore = await checkElevatedMachineSetupPlan({ ...input, basis, steps }, deps);
         if (!restore) throw new Error('Expected ordinary installation after retirement');
         expect((await runElevatedEffect({ ...input, effect: { kind: 'setupOperation', plans: [{ plan: restore }] } }, deps)).outcome).toBe('applied');

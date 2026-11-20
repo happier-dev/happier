@@ -385,6 +385,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                     credentials: host.installedCredentials ?? host.credentials, serverId: job.input.serverId,
                     serverHttpBaseUrl: host.serverHttpBaseUrl, hostMachineId: host.machineId,
                     hostInstallationId: identity.installationId, signal, assertCurrent,
+                    deploymentChild: job,
                     context: { ...context, operationAcceptance: { operationId } },
                     subject: { v: 1, kind: 'connectorToken', machineId: job.machineId,
                         installationId: job.installationId, provider: { kind: 'builtin', id: 'cloudflareNamed' },
