@@ -16,8 +16,15 @@ export async function applyPluginDeclarationChangeTx(
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const name = (identifier: string) => prisma.raw(provider === 'mysql' ? `\`${identifier}\`` : `"${identifier}"`);
     const table = name('AccountPluginDeclarationBody');
+    const accountColumn = name('accountId');
+    const pluginColumn = name('pluginId');
     const digestColumn = name('declarationDigest');
-    const owner = prisma.sql`${name('accountId')} = ${accountId} AND ${name('pluginId')} = ${pluginId}`;
+    const owner = prisma.sql`${accountColumn} = ${accountId} AND ${pluginColumn} = ${pluginId}`;
+    // A retained body can already hold this immutable digest during an inline-to-split write.
+    // MySQL's only unique key on this table is the same three-column primary key.
+    const onConflict = provider === 'mysql'
+        ? prisma.sql`ON DUPLICATE KEY UPDATE ${digestColumn} = ${digestColumn}`
+        : prisma.sql`ON CONFLICT (${accountColumn}, ${pluginColumn}, ${digestColumn}) DO NOTHING`;
 
     for (const bodies of portableQueryChunks({ values: change?.inserted ?? [], bindingsPerValue: 4, fixedBindings: 0 })) {
         const values = bodies.map(({ digest, manifestText }) => {
@@ -27,7 +34,7 @@ export async function applyPluginDeclarationChangeTx(
             return prisma.sql`(${accountId}, ${pluginId}, ${digest}, ${body})`;
         });
         await tx.$executeRaw(prisma.sql`INSERT INTO ${table}
-            (${name('accountId')}, ${name('pluginId')}, ${digestColumn}, ${name('manifest')}) VALUES ${prisma.join(values)}`);
+            (${accountColumn}, ${pluginColumn}, ${digestColumn}, ${name('manifest')}) VALUES ${prisma.join(values)} ${onConflict}`);
     }
     if (clear) {
         await tx.$executeRaw(prisma.sql`DELETE FROM ${table} WHERE ${owner}`);

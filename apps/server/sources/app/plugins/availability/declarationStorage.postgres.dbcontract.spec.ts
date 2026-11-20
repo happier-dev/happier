@@ -1,6 +1,14 @@
+import { symbols, type DestinationStream } from 'pino';
+import { logger } from '@/utils/logging/log';
+import { readPrismaDriverErrorCause } from '@/storage/prismaErrors';
+import { randomUUID } from 'node:crypto';
+import tweetnacl from 'tweetnacl';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import type { Fastify } from '@/app/api/types';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerPluginAvailabilityRoutes } from './routes';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
@@ -141,6 +149,57 @@ describe('Account declaration body deduplication PostgreSQL contract', () => {
         expect(await db.accountPluginDeclarationBody.count({ where: condition })).toBe(0);
     });
 
+    it.each([false, true])('converges concurrent signed claims when the digest body already exists: %s', async (existingBody) => {
+        const { id: accountId } = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const manifest = PluginManifestV2Schema.parse({
+            schemaVersion: 2, id: 'com.example.writer-claim', version: '1.0.0',
+            displayName: 'Writer “claim” 🐈', engines: { happier: '^1.0.0' }, contributes: {},
+            metadata: { nested: { labels: ['quoted "text"', 'ümlaut'] } },
+        });
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        const where = { accountId, pluginId: manifest.id };
+        if (existingBody) {
+            await db.accountPluginIntent.create({ data: {
+                ...where, enabled: true, writableCollections: [], releaseLessDeclaration: declaration,
+            } });
+            await db.accountPluginDeclarationBody.create({ data: {
+                ...where, declarationDigest: declaration.manifestDigestSha256, manifest,
+            } });
+        }
+        const publishers = await Promise.all(Array.from({ length: 3 }, async () => {
+            const publisher = { machineId: randomUUID(), installationId: randomUUID(), keyPair: tweetnacl.sign.keyPair() };
+            await createTrustedMachineInstallation({ ...publisher, accountId });
+            return publisher;
+        }));
+        const path = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'];
+        const body = { manifest };
+        const failures: Array<{ prismaCode: string; databaseCode: string | undefined }> = [];
+        await withAuthenticatedTestApp((app: Fastify) => {
+            app.addHook('onError', async (_request, _reply, error) => {
+                failures.push({ prismaCode: error.code, databaseCode: readPrismaDriverErrorCause(error)?.code });
+            });
+            registerPluginAvailabilityRoutes(app);
+        }, async app => {
+            const responses = await Promise.all(publishers.map(publisher => app.inject({
+                method: 'POST', url: path, payload: body,
+                headers: {
+                    'x-test-user-id': accountId,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({ ...publisher, path, body }),
+                },
+            })));
+            expect(responses.map(response => response.statusCode), JSON.stringify(failures)).toEqual([200, 200, 200]);
+        });
+        await expect(db.accountPluginDeclarationBody.findMany({
+            where, select: { declarationDigest: true, manifest: true },
+        })).resolves.toEqual([{ declarationDigest: declaration.manifestDigestSha256, manifest }]);
+        const operations = createPluginAvailabilityOperations({ resolveHostingCapability: () => ({ enabled: false }) });
+        const read = await operations.readIntent({ accountId, input: { pluginId: manifest.id,
+            declarationDigests: [declaration.manifestDigestSha256] } });
+        expect(read.machineDeclarations?.map(entry => entry.machineId).sort()).toEqual(publishers.map(entry => entry.machineId).sort());
+        expect(read.declarationBodies).toEqual([{ declarationDigestSha256: declaration.manifestDigestSha256, manifest }]);
+    });
+
     it.each([
         { mode: 'ordinary server', sharedSource: undefined },
         { mode: 'shared QA server', sharedSource: 'p03-disposable-schema-fixture' },
@@ -155,6 +214,9 @@ describe('Account declaration body deduplication PostgreSQL contract', () => {
             releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
         vi.stubEnv('HAPPIER_STACK_SHARED_DB_SOURCE_STACK', sharedSource);
         await db.$executeRaw`ALTER TABLE "AccountPluginDeclarationBody" RENAME TO "ParkedDeclarationBody"`;
+        const records: Record<string, unknown>[] = [];
+        const stream = Reflect.get(logger, symbols.streamSym) as DestinationStream;
+        const sink = vi.spyOn(stream, 'write').mockImplementation(chunk => { records.push(JSON.parse(String(chunk))); });
         try {
             await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
                 const response = await app.inject({
@@ -170,8 +232,17 @@ describe('Account declaration body deduplication PostgreSQL contract', () => {
                     error: 'database_migration_required', statusCode: 500, message: expect.stringMatching(/apply .*migration/i),
                 });
                 expect(response.body).not.toContain('AccountPluginDeclarationBody');
+                expect(records).toContainEqual(expect.objectContaining({
+                    method: 'POST',
+                    route: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
+                    prismaCode: 'P2010',
+                    databaseErrorCode: '42P01',
+                    databaseErrorMessage: 'undefined table',
+                }));
+                expect(JSON.stringify(records)).not.toContain('Changed declaration');
             });
         } finally {
+            sink.mockRestore();
             await db.$executeRaw`ALTER TABLE "ParkedDeclarationBody" RENAME TO "AccountPluginDeclarationBody"`;
             vi.unstubAllEnvs();
         }
