@@ -582,7 +582,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       freshness: hasValue ? 'stale' : 'unknown',
       pending: replace ? 'initial' : authorityLost ? 'idle' : pending,
       error,
-      subscription: authorityLost ? 'ended' : subscription,
+      subscription: authorityLost && !replace ? 'ended' : subscription,
     });
     if (authorityLost && !replace) {
       settleRefreshWaiters(entry);
@@ -844,10 +844,10 @@ export function createPluginUiResourceStore(input: Readonly<{
       stop: () => stopWatch(entry, false),
       publish: snapshot => publish(entry, snapshot),
       fail: error => publishResourceFailure(entry, error, 'ended'),
-      replace: error => publishResourceFailure(entry, error, 'ended', 'initial', () => {
+      recover: (error, reopenWatch) => publishResourceFailure(entry, error, reopenWatch ? 'ended' : 'reconnecting', 'initial', () => {
         for (const resolve of entry.queuedRefreshWaiters) entry.refreshWaiters.add(resolve);
         entry.queuedRefreshWaiters.clear();
-        startWatch(entry, { replacing: true });
+        if (reopenWatch) startWatch(entry, { replacing: true });
         requestRead(entry, 'initial');
       }),
     });

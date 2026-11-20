@@ -11,7 +11,7 @@ export function settleResourceWatchTermination(input: Readonly<{
   stop(): void;
   publish(snapshot: PluginUiResourceSnapshot): void;
   fail(error: PluginUiResourceError): void;
-  replace(error: PluginUiResourceError): void;
+  recover(error: PluginUiResourceError, reopenWatch: boolean): void;
 }>): void {
   const { event, snapshot } = input;
   input.stop();
@@ -30,12 +30,15 @@ export function settleResourceWatchTermination(input: Readonly<{
     ...(event.diagnostics.length > 0 ? { diagnostics: Object.freeze([...event.diagnostics]) } : {}),
     message: event.diagnostics.join(', ') || 'Plugin UI resource watch ended.',
   });
-  if (event.code === 'expired_resource' && input.canReplace
-    && (input.established || event.diagnostics.includes('plugin_read_authority_retired'))) {
-    // A producer can withdraw read authority before the host acknowledges the
-    // watch. Readmission uses the same path as withdrawal of a live watch.
-    input.replace(error);
-    return;
+  if (event.code === 'expired_resource') {
+    const readAuthorityRetired = event.diagnostics.includes('plugin_read_authority_retired');
+    const reopenWatch = input.canReplace && (input.established || readAuthorityRetired);
+    if (reopenWatch || readAuthorityRetired) {
+      // Losing observation authority again during readmission still leaves
+      // the open or Refresh entitled to a new, independent snapshot admission.
+      input.recover(error, reopenWatch);
+      return;
+    }
   }
   input.fail(error);
 }

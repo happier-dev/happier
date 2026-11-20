@@ -340,26 +340,37 @@ describe('plugin UI Resource watch availability', () => {
     }
   });
 
-  it('settles a replacement that retires during first open and reacquires on Refresh', async () => {
+  it('reads fresh bytes when watch read authority retires during first open and Refresh', async () => {
     vi.useFakeTimers();
     const listeners: ((event: ResourceSubscriptionEvent) => void)[] = [];
+    const activeWatches = new Set<AbortSignal>();
     const releases: (() => void)[] = [];
-    const watchResource = vi.fn(async (_resource: unknown, listener: (event: ResourceSubscriptionEvent) => void) => {
+    let watchCanSettle = false;
+    let current = refreshedValue;
+    const watchResource = vi.fn(async (_resource: unknown, listener: (event: ResourceSubscriptionEvent) => void,
+      options?: { signal?: AbortSignal }) => {
       listeners.push(listener);
-      if (listeners.length < 3) await new Promise<void>(resolve => releases.push(resolve));
-      return { admittedDigest: refreshedValue.digest, dispose() {} };
+      const signal = options!.signal!;
+      activeWatches.add(signal);
+      signal.addEventListener('abort', () => activeWatches.delete(signal), { once: true });
+      if (!watchCanSettle) await new Promise<void>(resolve => releases.push(resolve));
+      return { admittedDigest: current.digest, dispose() {} };
     });
     const readResource = vi.fn(async (_resource: unknown, options?: { signal?: AbortSignal }) => {
-      // A first-open snapshot is still on the wire when either admission retires.
-      if (listeners.length < 3) {
+      if (!watchCanSettle && activeWatches.size > 0) {
+        // An old binding can settle after withdrawal. Its bytes must stay private.
         await new Promise<void>(resolve => options?.signal?.addEventListener('abort', () => resolve(), { once: true }));
         return onlineValue;
       }
-      return refreshedValue;
+      return current;
     });
     const store = createPluginUiResourceStore({ client: { readResource, watchResource } });
     const entry = store.getEntry('review-summary');
-    const release = entry.subscribe(() => {}, true);
+    const settledValues: ResourceContent[] = [];
+    const release = entry.subscribe(() => {
+      const snapshot = entry.getSnapshot();
+      if (snapshot.value !== undefined && snapshot.pending === 'idle') settledValues.push(snapshot.value);
+    }, true);
     const retired = (subscriptionId: string): ResourceSubscriptionEvent => ({ version: 1, subscriptionId,
       kind: 'error', code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] });
     try {
@@ -369,15 +380,26 @@ describe('plugin UI Resource watch availability', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(entry.getSnapshot()).toMatchObject({
-        pending: 'idle', subscription: 'ended', error: { code: 'expired_resource' },
+        value: refreshedValue, freshness: 'fresh', pending: 'idle', subscription: 'reconnecting',
       });
-      expect(entry.getSnapshot().value).toBeUndefined();
+      expect(entry.getSnapshot().error).toBeUndefined();
       expect(watchResource).toHaveBeenCalledTimes(2);
 
-      const refreshed = await entry.refresh({ supersede: true });
-      expect(refreshed).toMatchObject({ value: refreshedValue, pending: 'idle', subscription: 'live' });
-      expect(refreshed.error).toBeUndefined();
-      expect(watchResource).toHaveBeenCalledTimes(3);
+      current = { ...refreshedValue, digest: `sha256:${'c'.repeat(64)}`, bytes: new TextEncoder().encode('{"status":"current"}') };
+      const refreshed = entry.refresh({ supersede: true });
+      listeners[2]!(retired('refresh'));
+      listeners[3]!(retired('refresh-replacement'));
+      expect(entry.getSnapshot().value).toBeUndefined();
+      expect(await refreshed).toMatchObject({ value: current, pending: 'idle', subscription: 'reconnecting' });
+      expect(entry.getSnapshot().error).toBeUndefined();
+      expect(settledValues).not.toContain(onlineValue);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(watchResource).toHaveBeenCalledTimes(4);
+      expect(readResource).toHaveBeenCalledTimes(6);
+
+      watchCanSettle = true;
+      expect(await entry.refresh()).toMatchObject({ value: current, pending: 'idle', subscription: 'live' });
+      expect(watchResource).toHaveBeenCalledTimes(5);
     } finally {
       release();
       store.dispose();
