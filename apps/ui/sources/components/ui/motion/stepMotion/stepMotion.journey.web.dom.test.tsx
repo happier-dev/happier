@@ -8,7 +8,7 @@ import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfa
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 import { StepMotionLayer } from './StepMotionLayer';
-import { runStepMove, StepMotionStage } from './StepMotionStage';
+import { runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
 import { useStepFocal } from './useStepFocal';
 
 vi.mock('react-native', async () => await vi.importActual('react-native-web'));
@@ -146,7 +146,7 @@ it.each([false, true])('hands focus to the arriving QR only if it stayed on the 
     }
 });
 
-it('clears the outgoing Home copy on its own dissolve effect', async () => {
+it('captures the approved step once when routing and auth both commit Home, then releases it at the dissolve', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     setReducedMotionPreferenceOverride(false);
     const previousAnimate = HTMLElement.prototype.animate;
@@ -166,14 +166,26 @@ it('clears the outgoing Home copy on its own dissolve effect', async () => {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
+    const copies: HTMLElement[] = [];
+    const observer = new MutationObserver(records => {
+        for (const record of records) {
+            for (const node of record.addedNodes) {
+                if (node instanceof HTMLElement && node.inert && node.getAttribute('aria-hidden') === 'true') copies.push(node);
+            }
+        }
+    });
+    observer.observe(document.body, { childList: true });
+    const settled = vi.fn();
+    const routeSettled = vi.fn();
     function Journey() {
         const [home, setHome] = React.useState(false);
         return <StepMotionStage>{home ? (
             <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer>
         ) : (
-            <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => runStepMove({
-                layer: 'workflow', kind: 'home', commit: () => setHome(true),
-            })}>Create account</button></StepMotionLayer>
+            <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => {
+                runStepMove({ layer: 'workflow', kind: 'home', commit: () => undefined, onSettled: routeSettled });
+                runStepMove({ layer: 'workflow', kind: 'home', commit: () => setHome(true), onSettled: settled });
+            }}>Approved</button></StepMotionLayer>
         )}</StepMotionStage>;
     }
     try {
@@ -182,6 +194,9 @@ it('clears the outgoing Home copy on its own dissolve effect', async () => {
         await act(async () => container.querySelector('button')!.click());
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
+        expect(copies).toEqual([copy]);
+        expect(settled).not.toHaveBeenCalled();
+        expect(routeSettled).not.toHaveBeenCalled();
         expect(container.querySelector('button')).toBeNull();
         expect(frozenEffects).toHaveLength(1);
         const [dissolve] = frozenEffects;
@@ -190,7 +205,11 @@ it('clears the outgoing Home copy on its own dissolve effect', async () => {
         expect(dissolve.duration).toBeLessThan(1_050);
         dissolve.animation.onfinish?.();
         expect(copy?.isConnected).toBe(false);
+        await act(async () => skipStepMotion());
+        expect(routeSettled).toHaveBeenCalledExactlyOnceWith('skipped');
+        expect(settled).toHaveBeenCalledExactlyOnceWith('skipped');
     } finally {
+        observer.disconnect();
         await act(async () => root.unmount());
         container.remove();
         rect.mockRestore();
