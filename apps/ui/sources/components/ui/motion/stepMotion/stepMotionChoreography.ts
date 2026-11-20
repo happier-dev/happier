@@ -21,6 +21,16 @@ const segment = (p: number, start: number, end: number) => Math.min(1, Math.max(
 export const easeInOutCubic = (p: number) => p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2;
 const smooth = (p: number) => p * p * (3 - 2 * p);
 
+const entranceEase = (p: number) => p >= 1 ? 1 : 1 - 2 ** (-10 * Math.max(0, p));
+
+// The lab's headline is 18px over 0.9s, with 140ms between groups. Scale its rise and beat to 200ms.
+export const stepEntranceFrames = Array.from({ length: 13 }, (_, frame) => {
+    const progress = frame / 12;
+    const opacity = entranceEase(progress);
+    const bodyOpacity = entranceEase(segment(progress, 0.14 / 0.9, 1));
+    return { progress, opacity, translateY: 4 * (1 - opacity), bodyOpacity: opacity > 0 ? bodyOpacity / opacity : 0 };
+});
+
 export function leavingEdge(region: GlyphRect, eased: number): number {
     const start = region.y + region.height + 220;
     return start + (-90 - start) * eased;

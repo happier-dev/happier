@@ -5,6 +5,7 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { StepEntranceBody } from '@/components/ui/motion/stepMotion/StepEntranceBody';
 import { StepMotionLayer, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { StepTransitionFrame, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
@@ -146,38 +147,42 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
             {scannerLive && props.entryIntent === 'enter_home'
                 ? <UnauthenticatedStepHeading title={t('connect.pointAtComputerTitle')} subtitle={t('connect.pointAtComputerSubtitle')} />
                 : <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />}
-            <RestoreScanComputerQrView
-                entryIntent={props.entryIntent}
-                embedded
-                initialPairingLink={ways.pastedLink ?? props.initialPairingLink}
-                initialResult={props.initialResult}
-                onBack={onBack}
-                showBack={false}
-                onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-                renderAdditionalSignInWays={props.renderAdditionalSignInWays}
-                onCameraLiveChange={setScannerLive}
-                onOpenPairingLinkEntry={openPasteEntry}
-                onShowQrInstead={openQr}
-                onNavigationLockChange={props.onNavigationLockChange}
-                onInviteDirectionChange={props.onInviteDirectionChange}
-            />
+            <StepEntranceBody>
+                <RestoreScanComputerQrView
+                    entryIntent={props.entryIntent}
+                    embedded
+                    initialPairingLink={ways.pastedLink ?? props.initialPairingLink}
+                    initialResult={props.initialResult}
+                    onBack={onBack}
+                    showBack={false}
+                    onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                    renderAdditionalSignInWays={props.renderAdditionalSignInWays}
+                    onCameraLiveChange={setScannerLive}
+                    onOpenPairingLinkEntry={openPasteEntry}
+                    onShowQrInstead={openQr}
+                    onNavigationLockChange={props.onNavigationLockChange}
+                    onInviteDirectionChange={props.onInviteDirectionChange}
+                />
+            </StepEntranceBody>
             </View>
         ) : (
             <View style={VIEW_STYLE}>
             <UnauthenticatedStepHeading title={t('connect.approveFromDeviceTitle')} subtitle={t('connect.approveFromDeviceSubtitle')} />
-            <RestoreQrView
-                entryIntent={props.entryIntent}
-                targetProfileId={reverseTargetProfileId}
-                embedded
-                onBack={onBack}
-                onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-                renderAdditionalSignInWays={props.renderAdditionalSignInWays}
-                onOpenScanQr={openScanner}
-                onOpenPairingLinkEntry={openPasteEntry}
-                onNavigationLockChange={props.onNavigationLockChange}
-                onOpenLostAccess={props.onOpenLostAccess}
-                onOpenTerminalLink={() => openWay('terminal_link')}
-            />
+            <StepEntranceBody>
+                <RestoreQrView
+                    entryIntent={props.entryIntent}
+                    targetProfileId={reverseTargetProfileId}
+                    embedded
+                    onBack={onBack}
+                    onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                    renderAdditionalSignInWays={props.renderAdditionalSignInWays}
+                    onOpenScanQr={openScanner}
+                    onOpenPairingLinkEntry={openPasteEntry}
+                    onNavigationLockChange={props.onNavigationLockChange}
+                    onOpenLostAccess={props.onOpenLostAccess}
+                    onOpenTerminalLink={() => openWay('terminal_link')}
+                />
+            </StepEntranceBody>
             </View>
         )}
     </>;

@@ -13,7 +13,10 @@ const geometry = {
 };
 
 function scene(animation: Omit<StepAnimation, 'epoch'>) {
-    return createStepMotionScene({ ...geometry, animation: { ...animation, epoch: 0 } });
+    const { cols, rows } = geometry.grid;
+    const rgba = new Uint8Array(cols * rows * 4);
+    for (const row of [16, 22, 27, 34]) for (let col = 10; col < 39; col++) rgba[(row * cols + col) * 4 + 3] = 255;
+    return createStepMotionScene({ ...geometry, outgoingInk: { rgba, cols, rows }, animation: { ...animation, epoch: 0 } });
 }
 
 describe('first-open glyph choreography', () => {

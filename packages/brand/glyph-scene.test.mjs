@@ -59,6 +59,23 @@ test('travellers land at the specified endpoint and fronts sample deterministica
     assert.deepEqual(render([front], 0.12), render([front], 0.12));
 });
 
+test('the two step fronts draw digits only in sampled ink cells', () => {
+    const rgba = new Uint8Array(5 * 5 * 4);
+    rgba[(1 * 5 + 2) * 4 + 3] = 255;
+    const inkMap = { cols: 5, rows: 5, rgba };
+    for (const mode of ['eat', 'decode']) {
+        const front = frontGlyphLayer({ mode, shape: 'horizontal', rect: { x: 0, y: 0, width: 40, height: 80 },
+            front: 28, band: 32, ragged: 0, alpha: 1, ink: [200, 100, 50, 255], inkMap });
+        const frame = glyphFrame({ view, dpr: 1, theme: 'dark', layers: [front] });
+        assert.deepEqual(Array.from(frame.sprites.at), [20, 24], mode);
+    }
+    rgba[(4 * 5 + 2) * 4 + 3] = 255;
+    const climb = frontGlyphLayer({ mode: 'eat', shape: 'horizontal', rect: { x: 0, y: 0, width: 40, height: 80 },
+        front: 70, band: 16, ragged: 0, alpha: 1, ink: [200, 100, 50, 255], inkMap, climbProgress: 0 });
+    const frame = glyphFrame({ view, dpr: 1, theme: 'dark', layers: [climb] });
+    assert.deepEqual(Array.from(frame.sprites.at), [20, 72]);
+});
+
 test('opening mark cells lock and depart on the same times their travellers are authored against', () => {
     const layer = markGlyphLayer({ centre: { x: 120, y: 120 }, size: 108, ink: 'sunrise',
         cellTimeline: new Float32Array([120, 126, 0.5, 1.25, 144, 148, 0.75, 1.5]) });

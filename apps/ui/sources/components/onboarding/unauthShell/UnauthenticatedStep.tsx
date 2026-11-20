@@ -7,6 +7,7 @@ import { HAPPIER_BALANCED_TEXT_WRAP } from '@happier-dev/plugin-ui/presentation'
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
+import { StepEntranceBody } from '@/components/ui/motion/stepMotion/StepEntranceBody';
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
@@ -75,7 +76,8 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
   useUnistyles();
   const styles = stylesheet;
   const hasHeader = props.title != null && props.title !== '';
-  const body = props.children == null ? null : <View style={styles.body}>{props.children}</View>;
+  const body = props.children == null ? null
+    : <StepEntranceBody style={styles.body} followHeading={hasHeader}>{props.children}</StepEntranceBody>;
   const leave = props.problem?.leave;
   const compact = useUnauthShellLayout() === 'compact';
 

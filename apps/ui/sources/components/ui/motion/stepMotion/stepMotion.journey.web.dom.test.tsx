@@ -11,6 +11,7 @@ import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePos
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
 
+import { StepEntranceBody } from './StepEntranceBody';
 import { StepMotionLayer } from './StepMotionLayer';
 import { playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
 import { stepMotionTiming } from './stepMotionTiming';
@@ -131,7 +132,9 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     window.matchMedia = vi.fn(() => Object.assign(new EventTarget(), { matches: true, media: '(prefers-reduced-motion: reduce)' }));
     const previousAnimate = HTMLElement.prototype.animate;
     const cancel = vi.fn();
-    const animate = vi.fn(() => ({ onfinish: null, cancel }));
+    const animate = vi.fn(function (this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
+        return { element: this, frames, timing, onfinish: null, cancel };
+    });
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
     const container = document.createElement('div');
     document.body.append(container);
@@ -153,7 +156,9 @@ it('commits the new step immediately, ignores the previous pointer release, and 
                     : <>
                         <h1 data-testid="ready-heading">Ready</h1>
                         <div data-testid="step-decoration" />
-                        <button data-testid="next" onClick={destinationClick}>Continue</button>
+                        <StepEntranceBody>
+                            <button data-testid="next" onClick={destinationClick}>Continue</button>
+                        </StepEntranceBody>
                     </>}
             </StepMotionLayer>
         </StepMotionStage>;
@@ -170,7 +175,16 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         expect(dispose).toHaveBeenCalledOnce();
         expect(find('approve')).toBeNull();
         expect(document.activeElement).toBe(find('ready-heading'));
-        expect(animate).toHaveBeenCalledWith([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
+        const entrance = animate.mock.results[0]?.value;
+        expect(entrance?.element.contains(find('ready-heading'))).toBe(true);
+        expect(entrance?.timing.duration).toBe(200);
+        expect(entrance?.frames.at(0)).toMatchObject({ opacity: 0, transform: 'translateY(4px)' });
+        expect(Number(entrance?.frames[3]?.opacity)).toBeGreaterThan(0.65);
+        expect(entrance?.frames.at(-1)).toMatchObject({ opacity: 1, transform: 'translateY(0px)' });
+        const body = animate.mock.results[1]?.value;
+        expect(body?.element.contains(find('next'))).toBe(true);
+        expect(body?.frames[1]?.opacity).toBe(0);
+        expect(body?.frames.at(-1)?.opacity).toBe(1);
         expect(document.querySelector('[inert]')).toBeNull();
         click(find('next'), 2);
         expect(destinationClick).not.toHaveBeenCalled();
@@ -186,7 +200,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
 
         pointerDown(find('next'), 3);
         click(find('next'), 3);
-        expect(cancel).toHaveBeenCalledOnce();
+        expect(cancel).toHaveBeenCalledTimes(2);
         expect(destinationClick).toHaveBeenCalledOnce();
         expect(motionEnd).toHaveBeenCalledExactlyOnceWith('skipped');
         await act(async () => container.querySelector('button')!.click());

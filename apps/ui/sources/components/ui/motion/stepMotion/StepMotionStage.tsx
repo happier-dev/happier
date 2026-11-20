@@ -145,7 +145,7 @@ function createStepMotionStage(
         destination?.focus();
     }
 
-    function showIncoming(layer: StepMotionLayerHandle, complete?: (outcome: StepBuildResult) => void) {
+    function showIncoming(layer: StepMotionLayerHandle, rise: boolean, complete?: (outcome: StepBuildResult) => void) {
         let cancel: (() => void) | undefined;
         let settled = false;
         const finish = (outcome: StepBuildResult) => {
@@ -159,7 +159,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, stop: skip };
         syncPresentation();
-        cancel = layer.fadeIn(() => finish('settled'));
+        cancel = layer.fadeIn(() => finish('settled'), rise);
     }
 
     function showAnimated(input: {
@@ -199,7 +199,7 @@ function createStepMotionStage(
         };
         const web = layer.webElement();
         if (web && focalTarget instanceof HTMLElement) sampleFocalInk(focalTarget);
-        const leaves = web ? readStepLeaves(web, grid) : null;
+        const leaves = web ? readStepLeaves(web, grid, animation.grammar !== 'home' && animation.grammar !== 'opening') : null;
         const { primary, tertiary, page } = colors();
         const cover = web ? undefined : reversing ? undefined : inkFor(page);
         const scene = createStepMotionScene({
@@ -362,7 +362,7 @@ function createStepMotionStage(
         move.cancelled = true;
         if (move.grammar === 'fade' || !move.freeze) {
             move.freeze?.release();
-            showIncoming(layer, move.complete);
+            showIncoming(layer, move.kind !== 'notice', move.complete);
             return;
         }
         const back = move.kind === 'back';
@@ -614,7 +614,7 @@ function createStepMotionStage(
             if (!reduced) warm();
             return new Promise(resolve => {
                 if (reduced || (build.choreography === 'opening' ? !presentation : !glyphReady)) {
-                    showIncoming(layer, resolve);
+                    showIncoming(layer, true, resolve);
                     return;
                 }
                 const grammar: AnimatedGrammar = build.choreography;

@@ -6,7 +6,9 @@ import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/foc
 import { motionTokens } from '../motionTokens';
 import { findNativeStepAnchor } from './capturePressedElement.native';
 import { findWebStepAnchor } from './capturePressedElement.web';
+import { StepEntranceBodyContext } from './StepEntranceBody';
 import { runStepMove, useStepMotionStage } from './StepMotionStage';
+import { stepEntranceFrames } from './stepMotionChoreography';
 import type { StepMotionLayerHandle } from './stepMotionTypes';
 import { StepFocalContext } from './useStepFocal';
 
@@ -67,8 +69,23 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
     const ownFocals = React.useMemo(() => ({ heading: ownHeading, focal: ownFocal, awaitingFocalFrom, registerFocal }), [registerFocal]);
     const parentFocals = React.useContext(StepFocalContext);
     const focals = props.shareFocalWithParent && parentFocals ? parentFocals : ownFocals;
+    const parentEntranceBody = React.useContext(StepEntranceBodyContext);
     const [fadeOpacity] = React.useState(() => new Animated.Value(1));
     const [surfaceOpacity, setSurfaceOpacity] = React.useState<Animated.Value | Animated.AnimatedInterpolation<number>>(fadeOpacity);
+    const entrance = React.useMemo(() => {
+        const clock = new Animated.Value(1);
+        const interpolate = (outputRange: number[]) => clock.interpolate({ inputRange: stepEntranceFrames.map(frame => frame.progress), outputRange });
+        return {
+            clock,
+            opacity: interpolate(stepEntranceFrames.map(frame => frame.opacity)),
+            translateY: interpolate(stepEntranceFrames.map(frame => frame.translateY)),
+            body: { targets: new Set<HTMLElement>(), opacity: interpolate(stepEntranceFrames.map(frame => frame.bodyOpacity)) },
+        };
+    }, []);
+    const entranceBody = React.useMemo(() => props.shareFocalWithParent && parentEntranceBody ? {
+        targets: [entrance.body.targets, ...parentEntranceBody.targets],
+        opacity: Animated.multiply(entrance.body.opacity, parentEntranceBody.opacity),
+    } : { targets: [entrance.body.targets], opacity: entrance.body.opacity }, [entrance.body, parentEntranceBody, props.shareFocalWithParent]);
     const webElement = React.useCallback(() => {
         if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && root.current instanceof HTMLElement) return root.current;
         return null;
@@ -116,20 +133,33 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
                 setSurfaceOpacity(fadeOpacity);
             };
         },
-        fadeIn(onSettled) {
+        fadeIn(onSettled, rise) {
             const duration = motionTokens.stepMotion.noticeCrossFadeMs;
             const web = webElement();
             if (web?.animate) {
-                const animation = web.animate([{ opacity: 0 }, { opacity: 1 }], { duration });
+                const frames = rise
+                    ? stepEntranceFrames.map(({ opacity, translateY }) => ({ opacity, transform: `translateY(${translateY}px)` }))
+                    : [{ opacity: 0 }, { opacity: 1 }];
+                const animation = web.animate(frames, { duration });
+                const bodyAnimations = rise ? [...entrance.body.targets].map(body =>
+                    body.animate(stepEntranceFrames.map(({ bodyOpacity }) => ({ opacity: bodyOpacity })), { duration })) : [];
                 animation.onfinish = onSettled;
-                return () => { animation.onfinish = null; animation.cancel(); };
+                return () => {
+                    animation.onfinish = null;
+                    animation.cancel();
+                    for (const body of bodyAnimations) body.cancel();
+                };
             }
-            fadeOpacity.setValue(0);
-            const animation = Animated.timing(fadeOpacity, { toValue: 1, duration, useNativeDriver: Platform.OS !== 'web' });
+            const clock = rise ? entrance.clock : fadeOpacity;
+            clock.setValue(0);
+            const animation = Animated.timing(clock, { toValue: 1, duration, easing: rise ? Easing.linear : undefined, useNativeDriver: Platform.OS !== 'web' });
             animation.start(({ finished }) => { if (finished) onSettled(); });
-            return () => { animation.stop(); fadeOpacity.setValue(1); };
+            return () => {
+                animation.stop();
+                clock.setValue(1);
+            };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, focals, warmOnMount, webChrome, webElement]);
+    }), [layerKey, backTestID, compact, entrance, fadeOpacity, focals, warmOnMount, webChrome, webElement]);
     React.useLayoutEffect(() => active ? stage?.attach(layer) : undefined, [active, stage, layer]);
     React.useLayoutEffect(() => {
         if (active) stage?.commit(layer, !wasActive.current);
@@ -150,9 +180,12 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         >
             <MotionLayerContext.Provider value={scope}>
                 <StepFocalContext.Provider value={focals}>
-                    {Platform.OS === 'web'
-                        ? <React.Fragment key={contentKey}>{props.children}</React.Fragment>
-                        : <View key={contentKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
+                    <StepEntranceBodyContext.Provider value={entranceBody}>
+                        {Platform.OS === 'web'
+                            ? <React.Fragment key={contentKey}>{props.children}</React.Fragment>
+                            : <Animated.View key={contentKey} style={{ flexGrow: 1, opacity: entrance.opacity, transform: [{ translateY: entrance.translateY }] }}
+                                onLayout={() => stage?.laidOut?.(layer)}>{props.children}</Animated.View>}
+                    </StepEntranceBodyContext.Provider>
                 </StepFocalContext.Provider>
             </MotionLayerContext.Provider>
         </Animated.View>

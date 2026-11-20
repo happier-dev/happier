@@ -77,6 +77,7 @@ export function createStepMotionScene(input: Readonly<{
     const t = stepMotionTiming;
     const viewport = { x: 0, y: 0, width: grid.width, height: grid.height };
     const building = animation.grammar === 'home' || animation.grammar === 'opening';
+    const noInk = { rgba: new Uint8Array(0), cols: 0, rows: 0 };
     const folding = animation.grammar === 'fold' && source !== undefined;
     const climbing = animation.grammar === 'morph';
     const arrivingFromControl = !building && source !== undefined;
@@ -103,7 +104,7 @@ export function createStepMotionScene(input: Readonly<{
                 : building || folding ? revealRadius(outgoing, leaveOrigin) * (1 - visual.leaveFront)
                     : front(outgoing, leaveOrigin, visual.leaveFront),
             band: t.band, ragged: (climbing ? 0.5 : t.ragged) * t.band,
-            alpha: climbing ? t.alpha * Math.min(1, p / 0.12) : t.alpha, ink, mode: 'eat', inkMap: outgoingInk,
+            alpha: climbing ? t.alpha * Math.min(1, p / 0.12) : t.alpha, ink, mode: 'eat', inkMap: outgoingInk ?? noInk,
             climbProgress: climbing ? p : undefined,
         }));
         if ((cover || visual.arriveFront > 0) && visual.arriveFront < 1) {
@@ -114,7 +115,7 @@ export function createStepMotionScene(input: Readonly<{
                 front: arrivingFromControl ? revealRadius(area, arriveOrigin) * visual.arriveFront : front(area, arriveOrigin, visual.arriveFront),
                 band: t.band * openingSoft, ragged: (building ? 0.14 : t.ragged) * t.band,
                 alpha: (animation.grammar === 'opening' ? 0.4 : t.alpha) * openingSoft,
-                ink, mode: 'decode', inkMap: incomingInk, cover,
+                ink, mode: 'decode', inkMap: building ? undefined : incomingInk ?? noInk, cover,
             }));
         }
         if (travellers && source && target && p > 0 && p < 0.97) {

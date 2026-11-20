@@ -412,10 +412,13 @@ function sampleFront(out, grid, layer, time, palette) {
         for (let i = 0; i < grid.cols; i++) {
             const x = (i + 0.5) * dw / out.dpr;
             if (x < area.x || x >= area.x + area.width) continue;
+            const mapped = inkMap && j < inkMap.rows && i < inkMap.cols ? inkMap.rgba[(j * inkMap.cols + i) * 4 + 3] / 255 : 0;
+            const inkWeight = inkMap ? mapped : 1;
+            if (inkWeight === 0 && !cover) continue;
             const edge = shape === 'horizontal' ? front - y + (cellHash(i, j) - 0.5) * ragged
                 : frontEdge(shape, Math.abs(x - ox), Math.abs(y - oy), front, ragged, i, j);
-            const mapped = inkMap && j < inkMap.rows && i < inkMap.cols ? inkMap.rgba[(j * inkMap.cols + i) * 4 + 3] / 255 : 0;
-            const inkWeight = inkMap && mode === 'eat' ? mapped : 1;
+            if (mode === 'decode' && cover && edge >= 0) writeSprite(out, x * out.dpr, y * out.dpr, 20, cover, (cover[3] ?? 255) / 255);
+            if (inkWeight === 0) continue;
             if (climbProgress !== undefined && inkWeight > 0 && cellHash(i, j) < 0.42) {
                 const seed = cellHash(i, j + 7);
                 const encounter = 0.55 * (1 - (y + 90) / (area.y + area.height + 310));
@@ -427,10 +430,7 @@ function sampleFront(out, grid, layer, time, palette) {
                         digitOf(i, j, step), color, 0.32 * Math.sin(Math.PI * travel) * (0.6 + 0.4 * seed) * inkWeight);
                 }
             }
-            if (mode === 'decode' && cover && edge >= 0) writeSprite(out, x * out.dpr, y * out.dpr, 20, cover, (cover[3] ?? 255) / 255);
-            const frontAmount = climbProgress === undefined
-                ? Math.max(0, 1 - Math.abs(edge) / band)
-                : Math.min(1, Math.max(0, edge / (0.8 * band)));
+            const frontAmount = Math.max(0, 1 - Math.abs(edge) / band);
             if (frontAmount <= 0) continue;
             const color = ink === 'sunrise' ? gradient(palette.body, y / (out.height / out.dpr), out.ink) : ink;
             const amount = alpha * (climbProgress === undefined ? frontAmount : frontAmount ** 2 * (3 - 2 * frontAmount)) * inkWeight;

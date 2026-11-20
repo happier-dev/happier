@@ -1,7 +1,6 @@
-import { inkMapFromBoxes } from '@happier-dev/brand/glyph-scene';
-
 import { captureElementFlightRect } from '../rectFlight';
 import { findWebStepAnchor } from './capturePressedElement.web';
+import { paintQrInk, paintStepInk } from './paintStepInk.web';
 import type { StepAnchor, StepFreeze, StepGrid, StepMotionLayerHandle, StepWebLeaf } from './stepMotionTypes';
 
 const paintedContent = 'h1, h2, h3, [role="heading"], [role="button"], [role="link"], a, button, input, textarea, img, svg';
@@ -16,26 +15,30 @@ function ownsPaint(element: Element) {
         || Number.parseFloat(style.borderTopWidth) > 0;
 }
 
-export function stepLeavesIn(root: HTMLElement, elements: readonly HTMLElement[], painted: Set<Element>) {
+export function stepLeavesIn(root: HTMLElement, elements: readonly HTMLElement[], painted: Set<Element>,
+    measure = captureElementFlightRect) {
     return elements.flatMap((element, index) => {
         for (let parent = element.parentElement; parent && parent !== root; parent = parent.parentElement) {
             if (painted.has(parent)) return [];
         }
         if (painted.has(element) || !ownsPaint(element)) return [];
-        const rect = captureElementFlightRect(element);
+        const rect = measure(element);
         if (rect.width <= 0 || rect.height <= 0) return [];
         painted.add(element);
         return [{ element, rect, index }];
     });
 }
 
-export function readStepLeaves(root: HTMLElement, grid: StepGrid) {
+export function readStepLeaves(root: HTMLElement, grid: StepGrid, sampleInk = true) {
     const elements = Array.from(root.querySelectorAll<HTMLElement>('*'));
-    const leaves = stepLeavesIn(root, elements, new Set());
-    const ink = inkMapFromBoxes(
-        leaves.map(({ rect }) => ({ ...rect, ink: [255, 255, 255, 255] as const })),
-        { cols: grid.cols, rows: grid.rows, cell: grid.cell, origin: [0, 0] },
-    );
+    const rects = new Map<HTMLElement, StepAnchor['rect']>();
+    const measure = (element: HTMLElement) => {
+        const measured = rects.get(element) ?? captureElementFlightRect(element);
+        rects.set(element, measured);
+        return measured;
+    };
+    const leaves = stepLeavesIn(root, elements, new Set(), measure);
+    const ink = sampleInk ? paintStepInk(elements, measure, grid) : undefined;
     return { elements, leaves, ink };
 }
 
@@ -52,15 +55,7 @@ export function readWebFocalInk(focal: HTMLElement, rect: StepAnchor['rect']) {
     const draw = canvas.getContext('2d', { willReadFrequently: true });
     if (!draw) return;
     try {
-        draw.scale(canvas.width / view.width, canvas.height / view.height);
-        // The first rect is paper. The remaining children are the renderer's dark module geometry.
-        for (const element of Array.from(svg.children).slice(1)) {
-            if (element.tagName === 'path') {
-                draw.fill(new Path2D(element.getAttribute('d') ?? ''), element.getAttribute('fill-rule') === 'evenodd' ? 'evenodd' : 'nonzero');
-            } else if (element instanceof SVGRectElement) {
-                draw.fillRect(element.x.baseVal.value, element.y.baseVal.value, element.width.baseVal.value, element.height.baseVal.value);
-            }
-        }
+        paintQrInk(draw, svg, { x: 0, y: 0, width: canvas.width, height: canvas.height });
         const { data } = draw.getImageData(0, 0, canvas.width, canvas.height);
         const ink: Array<readonly [number, number]> = [];
         for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
