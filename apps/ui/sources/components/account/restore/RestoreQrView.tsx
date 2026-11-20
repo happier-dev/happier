@@ -105,6 +105,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         paddingVertical: 0,
     },
+    embeddedRequesterCode: {
+        alignItems: 'flex-start',
+    },
     embeddedTargetName: {
         marginTop: 0,
         textAlign: 'left',
@@ -303,6 +306,9 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, []);
 
+    const pendingCode = embedded && props.entryIntent === 'enter_home' && pairing.phase === 'generating';
+    const code = pairing.phase === 'ready' ? pairing : approvedCode;
+    const visibleTargetLabel = presentation.contextualFacts !== 'none' ? targetLabel : null;
     const hasStatusContent = presentation.activity
         || (presentation.contextualFacts !== 'none' && targetLabel != null)
         || pairing.phase === 'ready'
@@ -346,7 +352,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 ) : null}
 
                 <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
-                    {t(presentation.primaryTranslationKey)}
+                    {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
                 </Text>
 
                 {/* On the step column an empty status block (no progress, Home or QR) draws nothing. */}
@@ -354,20 +360,23 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}
                     accessibilityLiveRegion={presentation.liveRegion}
                 >
-                    {presentation.activity && approvedCode === null ? (
+                    {presentation.activity && approvedCode === null && !pendingCode ? (
                         <ActivitySpinner size="small" />
                     ) : null}
-                    {presentation.contextualFacts !== 'none' && targetLabel ? (
-                        <Text style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>{targetLabel}</Text>
+                    {pendingCode || visibleTargetLabel ? (
+                        <Text aria-hidden={pendingCode || undefined} style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>
+                            {visibleTargetLabel ?? '\u00a0'}
+                        </Text>
                     ) : null}
-                    {pairing.phase === 'ready' || approvedCode !== null ? (
+                    {pendingCode || code ? (
                         <View style={[styles.qrBlock, embedded ? styles.embeddedQrBlockInner : null]}>
                             <RequesterCodeCard
-                                link={pairing.phase === 'ready' ? pairing.link : approvedCode!.link}
-                                qrAvailable={pairing.phase === 'ready' ? pairing.qrAvailable : approvedCode!.qrAvailable}
+                                link={code?.link ?? null}
+                                qrAvailable={code?.qrAvailable ?? false}
                                 expiresAtMs={pairing.phase === 'ready' ? pairing.invite.expiresAtMs : null}
                                 approved={approvedCode !== null}
                                 onApprovedSettled={onApprovedSettled}
+                                style={embedded ? styles.embeddedRequesterCode : undefined}
                             />
                         </View>
                     ) : null}

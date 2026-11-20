@@ -22,6 +22,20 @@ afterEach(standardCleanup);
 const LINK = 'happier://pair?v=2&code=approve-from-a-device';
 
 describe('RequesterCodeCard', () => {
+  it('mounts the focal frame while the requester is generating and keeps it when the code arrives', async () => {
+    const screen = await renderScreen(
+      <RequesterCodeCard link={null} qrAvailable={false} expiresAtMs={null} approved={false} />,
+    );
+    const frame = screen.findHostByTestId('restore-requester-qr-pending');
+    expect(frame).toBeTruthy();
+    expect(screen.findHostByTestId('restore-requester-qr')).toBeNull();
+
+    await act(async () => screen.update(
+      <RequesterCodeCard link={LINK} qrAvailable expiresAtMs={Date.now() + 290_000} approved={false} />,
+    ));
+    expect(screen.findHostByTestId('restore-requester-qr')).toBe(frame);
+  });
+
   // M4: approval keeps the code where it was under a check, and the one status line says so in place.
   it('keeps the shown code under a check and turns the wait into Approved in the same status line', async () => {
     const screen = await renderScreen(

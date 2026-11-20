@@ -3,6 +3,7 @@ import {
   Platform,
   View,
   type LayoutChangeEvent,
+  type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import Animated, {
@@ -18,6 +19,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
 import { PairingQrCode } from '@/components/auth/pairing/PairingQrCode';
 import { PAIRING_QR_PALETTE } from '@/components/auth/pairing/pairingQrPalette';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
@@ -53,12 +55,13 @@ const CHECK_DISC_PX = 64;
  */
 export const RequesterCodeCard = React.memo(function RequesterCodeCard(
   props: Readonly<{
-    link: string;
+    link: string | null;
     qrAvailable: boolean;
     /** When the shown code renews; absent once approved. */
     expiresAtMs: number | null;
     approved: boolean;
     onApprovedSettled?: () => void;
+    style?: StyleProp<ViewStyle>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -147,19 +150,27 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
   );
 
   return (
-    <View testID="restore-requester-code" style={styles.root}>
-      <View ref={focal} collapsable={false} testID="restore-requester-qr" style={styles.codeFrame}>
-        <Animated.View style={codeStyle}>
-          {props.qrAvailable ? (
-            <PairingQrCode link={props.link} size={REQUESTER_CODE_SIZE_PX} />
-          ) : (
-            <View style={styles.codeFallback}>
-              <Text style={styles.codeFallbackText}>
-                {t('connect.pairingQrTooLargeBody')}
-              </Text>
-            </View>
-          )}
-        </Animated.View>
+    <View testID="restore-requester-code" style={[styles.root, props.style]}>
+      <View
+        ref={focal}
+        collapsable={false}
+        testID={props.link === null ? 'restore-requester-qr-pending' : 'restore-requester-qr'}
+        accessibilityLabel={props.link === null ? t('common.loading') : undefined}
+        style={styles.codeFrame}
+      >
+        {props.link === null ? <ActivitySpinner size="small" /> : (
+          <Animated.View style={codeStyle}>
+            {props.qrAvailable ? (
+              <PairingQrCode link={props.link} size={REQUESTER_CODE_SIZE_PX} />
+            ) : (
+              <View style={styles.codeFallback}>
+                <Text style={styles.codeFallbackText}>
+                  {t('connect.pairingQrTooLargeBody')}
+                </Text>
+              </View>
+            )}
+          </Animated.View>
+        )}
         {props.approved ? (
           <Animated.View
             testID="restore-requester-approved-check"
@@ -179,7 +190,7 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
         ) : null}
       </View>
       {/* One status line in one box: approved, its words rise into the place the waiting words held. */}
-      <View
+      {props.link !== null ? <View
         testID="restore-requester-status"
         accessibilityLiveRegion="polite"
         role="status"
@@ -230,7 +241,7 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
             </Text>
           </Animated.View>
         ) : null}
-      </View>
+      </View> : null}
     </View>
   );
 });
