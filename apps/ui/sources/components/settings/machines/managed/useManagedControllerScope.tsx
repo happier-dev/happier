@@ -151,11 +151,12 @@ export function useManagedControllerScope(
       if (!materialization.enabled || materialization.trustState !== 'trusted'
         || !areServerProfileIdentifiersEquivalent(materialization.serverIdentityId, input.serverId)
         || !eligibleById.has(materialization.machineId) || declarations.get(materialization.machineId) === 'supported') continue;
-      const provisioners = installation.declaration?.contributes.machineProvisioners ?? [];
+      const declaration = installation.contributorDeclaration;
+      const provisioners = declaration?.contributes.machineProvisioners ?? [];
       const platform = eligibleById.get(materialization.machineId)?.metadata?.platform;
       if (platform && provisioners.some(provisioner => provisioner.platforms.some(supported => supported === platform))) {
         declarations.set(materialization.machineId, 'supported');
-      } else if (installation.declarationState !== 'known' || !platform && provisioners.length > 0) {
+      } else if (!declaration || !platform && provisioners.length > 0) {
         declarations.set(materialization.machineId, 'unknown');
       }
     }
