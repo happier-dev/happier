@@ -415,7 +415,8 @@ function buildInteractiveTerminalConnectLinks(params: InteractiveTerminalAuthCon
         })
         : buildTerminalConnectLinks({
             ...common,
-            serverUrl: configuration.serverUrl,
+            serverUrl: configuration.publicServerUrl,
+            verifiedApplicationUrl: params.target.applicationUrl,
             serverIdentityId: params.serverIdentityId,
         });
 }

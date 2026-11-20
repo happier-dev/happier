@@ -17,6 +17,21 @@ describe('buildConfigureServerLinks', () => {
 });
 
 describe('buildTerminalConnectLinks authenticated pairing identity', () => {
+  it('carries the verified reachable Home when the compatibility URL is loopback', () => {
+    const target = {
+      webappUrl: 'https://app.happier.dev',
+      serverUrl: 'http://fixture.localhost:3101',
+      verifiedApplicationUrl: 'https://fixture.example.test:9444',
+      publicKeyB64Url: 'terminal-key',
+      serverIdentityId: 'srv_home_expected',
+      pairing: { secretB64Url: 'pairing-secret', createdAtMs: 1_000, expiresAtMs: 61_000 },
+    };
+    const links = buildTerminalConnectLinks(target);
+
+    expect(new URLSearchParams(new URL(links.webUrl).hash.slice(1)).get('server')).toBe(target.verifiedApplicationUrl);
+    expect(new URL(links.mobileUrl).searchParams.get('server')).toBe(target.verifiedApplicationUrl);
+  });
+
   it('preserves a query value ending in a slash', () => {
     const links = buildTerminalConnectLinks({
       webappUrl: 'https://app.happier.dev/?returnTo=/docs/',

@@ -29,6 +29,8 @@ export type TerminalConnectDescriptorTarget = Readonly<{
 export type TerminalConnectUrlOnlyCompatibilityTarget = Readonly<{
   webappUrl: string;
   serverUrl: string;
+  /** Application address of the Home runtime already verified for enrollment. */
+  verifiedApplicationUrl?: string;
   publicKeyB64Url: string;
   serverIdentityId?: string;
   pairing?: TerminalConnectPairingContext | null;
@@ -104,8 +106,9 @@ export function buildTerminalConnectUrlOnlyCompatibilityLinks(
   params: TerminalConnectUrlOnlyCompatibilityTarget,
 ): TerminalConnectLinks {
   const webappUrl = String(params.webappUrl ?? '').trim();
-  const webServerUrl = sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
-  const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl);
+  const mobileServerUrl = sanitizeServerUrlForMobileLink(params.serverUrl)
+    ?? (params.verifiedApplicationUrl ? sanitizeServerUrlForMobileLink(params.verifiedApplicationUrl) : null);
+  const webServerUrl = mobileServerUrl ?? sanitizeServerUrlForWebLink(params.serverUrl, webappUrl);
   const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
   const serverIdentityId = String(params.serverIdentityId ?? '').trim();
   if (params.pairing && !serverIdentityId) {

@@ -151,6 +151,7 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal, in
       : buildTerminalConnectLinks({
           ...terminalLinkCommon,
           serverUrl: configuration.publicServerUrl,
+          verifiedApplicationUrl: target.applicationUrl,
           serverIdentityId: verified.homeServerIdentityId,
         });
 

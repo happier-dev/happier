@@ -6905,6 +6905,7 @@ bounded stderr diagnostics without including stdout.
 Configuration lives in `src/configuration.ts`:
 - `HAPPIER_SERVER_URL` and `HAPPIER_WEBAPP_URL` override defaults.
 - `serverUrl` is the canonical public Home URL used for first-contact key-challenge audience checks. `apiServerUrl` is the request transport: `HAPPIER_PUBLIC_SERVER_URL` selects the canonical URL, while `HAPPIER_LOCAL_SERVER_URL` selects a local/forwarded transport without changing that audience.
+- For legacy URL-only terminal pairing, a verified reachable enrollment address is included in the web and mobile links when the configured canonical URL is loopback. Descriptor-based pairing carries its saved Home descriptor.
 - In 0.3 development, `HAPPIER_LOCAL_SERVER_URL` and `HAPPIER_WEBAPP_URL` also override the selected saved profile when no canonical URL override is supplied. Daemon startup, reconnect and status consume those invocation endpoints without rewriting the saved Home identity or endpoints.
 - In the 0.3 development stack, stack-scoped CLI invocations pass both URLs and reconcile the stack-stable active profile through `server set`, including on a fresh CLI home. The wrapper verifies the persisted profile before forwarding the requested command and fails closed if reconciliation did not apply.
 - Recovery-key login failures retain the originating error code and operation phase (plus HTTP status when present). The CLI writes a local-only, redacted error diagnostic; attached HTTP bodies and credentials are never serialized into that diagnostic.

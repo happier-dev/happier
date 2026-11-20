@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { inspect } from 'node:util';
 
+import { handleAuthRequest } from '@/cli/commands/auth/request';
 import { reloadConfiguration } from '@/configuration';
 import { readStoredCredentials, updateSettings } from '@/persistence';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -29,6 +30,56 @@ vi.mock('node:fs', async (importOriginal) => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it.each(['interactive', 'json'] as const)('includes the verified public Home in the %s terminal pairing link', async method => {
+  const home = await createTempDir('happier-auth-public-link-');
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_WEBAPP_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_AUTH_METHOD',
+    'HAPPIER_TAILSCALE_AUTO_PUBLIC_URL', 'HAPPIER_NO_BROWSER_OPEN']);
+  const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+  const output = captureConsoleLogAndMuteStdout();
+  const canonicalUrl = 'http://happier-agent-qa-providers.localhost:3101';
+  const publicUrl = 'https://qa-providers.example.test:9444';
+  const identity = 'srv_qa_providers';
+  const features = vi.fn<typeof fetch>(async () => Response.json({
+    features: {}, capabilities: { serverIdentity: { serverIdentityId: identity } },
+  }));
+  vi.stubGlobal('fetch', features);
+  const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: {} });
+  vi.spyOn(axios, 'get').mockResolvedValue({ data: { status: 'not_found' } });
+  try {
+    env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: publicUrl,
+      HAPPIER_WEBAPP_URL: 'https://qa-ui.example.test', HAPPIER_PUBLIC_SERVER_URL: canonicalUrl, HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_AUTH_METHOD: 'web', HAPPIER_TAILSCALE_AUTO_PUBLIC_URL: '0', HAPPIER_NO_BROWSER_OPEN: '1' });
+    reloadConfiguration();
+    let link: string | undefined;
+    if (method === 'interactive') {
+      await expect(doAuth()).resolves.toBeNull();
+      link = output.logs.find(line => line.startsWith('https://qa-ui.example.test/terminal/connect#'));
+    } else {
+      const writes: string[] = [];
+      vi.spyOn(process.stdout, 'write').mockImplementation((
+        chunk: Uint8Array | string,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+        callback?: (error?: Error | null) => void,
+      ) => {
+        writes.push(String(chunk));
+        const done = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback;
+        done?.();
+        return true;
+      });
+      await handleAuthRequest(['--json']);
+      ({ links: { webUrl: link } } = JSON.parse(writes.join('')));
+    }
+    expect(post.mock.calls[0]?.[0]).toBe(`${publicUrl}/v1/auth/request`);
+    expect(link).toBeDefined();
+    const pairing = new URLSearchParams(new URL(link!).hash.slice(1));
+    expect(pairing.get('server')).toBe(publicUrl);
+    expect(pairing.get('serverIdentityId')).toBe(identity);
+  } finally {
+    output.restore(); restoreTty(); env.restore(); reloadConfiguration(); await removeTempDir(home);
+  }
 });
 
 it.each([true, false])('uses the selected descriptor before pairing when public discovery omits it (matching identity=%s)', async (identityMatches) => {
