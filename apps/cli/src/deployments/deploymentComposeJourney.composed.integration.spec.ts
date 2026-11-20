@@ -84,6 +84,7 @@ import { removeTeamMemberForActorInTx } from '../../../server/sources/app/teams/
 import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx } from '../../../server/sources/app/artifacts/artifactAccessService';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { readSettings, updateSettings } from '@/persistence';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -146,8 +147,9 @@ async function settlePublicApproval(invoke: (name: string, input: unknown) => Pr
     const detail = getActionSpec('approval.request.get').outputSchema.parse(opened.result);
     if (!detail || typeof detail !== 'object' || !('request' in detail)) throw new Error('Approval settlement is unavailable');
     const { execution } = ApprovalRequestPublicSettlementSchema.parse(detail.request);
-    return execution.ok ? { ok: true, result: execution.result }
-        : ActionExecuteFailureSchema.parse(execution);
+    const { executedAtMs: _settledAt, ...outcome } = execution;
+    return outcome.ok ? { ok: true, result: outcome.result }
+        : ActionExecuteFailureSchema.parse(outcome);
 }
 
 function sourceRequesterForHome(home: DeploymentSocketHomeFixture): import('./readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver {
@@ -889,6 +891,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
                 () => installationBoundary.getStore() ?? readS0Installation(home));
             const credentials = readS0ControllerCredentials(home);
+            await runWithServerHttpBaseUrl(home.baseUrl, () => ensureCliActionPolicySettings(credentials, home.baseUrl));
             await adoptServerProfileHomeConnectionDescriptor({
                 descriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
                     revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
@@ -927,6 +930,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 return executor.execute(actionId, input, { surface: 'cli', serverId: home.serverId,
                     actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId } });
             };
+            const invokeAndSettle = async (name: string, input: unknown) => settlePublicApproval(invoke, await invoke(name, input));
             const prepareContent = async (content: unknown, kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1
                 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) => {
                 const artifact = await nativeDeploymentArtifacts(home).create({ header: { kind, title: 'Duplicate fixture' }, body: JSON.stringify(content) });
@@ -954,7 +958,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     composeDigest: `sha256:${createHash('sha256').update('services:\n  web:\n    image: nginx:alpine\n').digest('hex')}`,
                     profiles: [], services: ['web'], primaryService: 'web' }, bindings: [],
                 ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } });
-            const created = await invoke('deployments.environments.create', { serverId: home.serverId,
+            const created = await invokeAndSettle('deployments.environments.create', { serverId: home.serverId,
                 projectSourceId: project.source.id, requestKey: randomUUID(), protection: 'nonProduction', purpose: 'standard',
                 deployerMode: 'managers', controllerMachineId: home.machineId, buildMachineId: home.machineId,
                 ...await prepareContent(sourceContent, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
@@ -984,10 +988,9 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } },
                 { ...valueIdentity, source: { kind: 'value' as const, value: '3000' } },
                 { ...omittedIdentity, source: { kind: 'value' as const, value: 'original-only' } }];
-            const bound = await invoke('deployments.bindings.set', { serverId: home.serverId,
+            const bound = await invokeAndSettle('deployments.bindings.set', { serverId: home.serverId,
                 environmentId: original.environmentId, expectedRevision: original.revision,
-                ...await prepareContent({ ...sourceContent, bindings }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1),
-                referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] });
+                set: bindings, remove: [] });
             if (!bound.ok) throw new Error(`Duplicate source binding refused: ${bound.errorCode}`);
             const source = await readEnvironment(original.environmentId);
             const readGrants = async (current: typeof source) => {
@@ -1047,7 +1050,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             expect(grants.every(grant => !originalGrants.some(originalGrant => originalGrant.sealedContent === grant.sealedContent))).toBe(true);
             expect(JSON.stringify(copied.result).includes(secretValue)).toBe(false);
             const retry = await invokeCopy(copyInput);
-            expect(retry).toEqual(copied);
+            expect(retry).toEqual({ ...copied, result: { ...destination, replayed: true } });
             expect(await readEnvironment(destination.environmentId)).toEqual(copy);
             const changed = await invokeCopy({ ...copyInput, copyFrom: { ...copyInput.copyFrom,
                 choices: { ...copyInput.copyFrom.choices, secrets: [{ binding: secretIdentity, kind: 'omit' }] } } });
@@ -1072,12 +1075,13 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             expect(incomplete.content.bindings).toEqual([]);
             expect(continuation.continuation.input).toMatchObject({ serverId: home.serverId,
                 environmentId: incomplete.environment.id, expectedRevision: incomplete.environment.revision,
-                set: expect.arrayContaining([{ ...valueIdentity, source: { kind: 'value', value: '3000' } }]), remove: [] });
+                set: expect.arrayContaining([expect.objectContaining({ ...valueIdentity,
+                    source: { kind: 'value', value: '3000' }, grantRef: expect.any(String) })]), remove: [] });
             expect(JSON.stringify(partial.details).includes(secretValue)).toBe(false);
 
             // A subsequent deliberate destination edit cannot be overwritten
             // by replaying the failed copy's captured configuration.
-            const edited = await invoke('deployments.environments.update', { serverId: home.serverId,
+            const edited = await invokeAndSettle('deployments.environments.update', { serverId: home.serverId,
                 environmentId: incomplete.environment.id, expectedRevision: incomplete.environment.revision,
                 ...await prepareContent({ ...incomplete.content, name: 'Edited after partial copy' }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1) });
             if (!edited.ok) throw new Error(`Partial duplicate edit refused: ${edited.errorCode}`);
