@@ -1,11 +1,10 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { GithubApiClientV1 } from '../../observations/githubApiClient.js';
 import { admitGithubEntryInvocation } from '../admission.js';
 import { GITHUB_ROUTE_BODY_MISMATCH_FAILURE } from '../errors.js';
 import { parseGithubRoutingToken } from '../locator.js';
-import { sendGithubGraphqlRequest } from './graphql.js';
+import { sendGithubGraphqlRequest, settleGithubGraphqlMutation } from './graphql.js';
 import { decodeGithubNodeEntry, githubNodeEntryMatches } from './nodeEntry.js';
 import {
   GithubRelatedEntryInputV1Schema, GithubSubIssueAddInputV1Schema, GithubSubIssueReprioritizeInputV1Schema,
@@ -61,35 +60,17 @@ async function readEntry(target: RelatedEntry, dependencies: Dependencies) {
  * the authoritative observation. No own-write reread, retry, or publication claim:
  * relationship writes publish no Reviews proposal. A lost payload stays uncertain.
  */
-async function writeRelationship(
+function writeRelationship(
   mutation: Readonly<{ name: string; inputType: string; selection: string; operands: Readonly<Record<string, unknown>> }>,
   confirmPayload: (payload: Readonly<Record<string, unknown>>) => Applied | null,
   dependencies: Dependencies,
 ): Promise<GithubRelationshipMutationResultV1> {
-  let confirmation: Readonly<{ kind: 'applied'; observation: Applied }>
-    | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }> = { kind: 'uncertain' };
-  const settled = await settleAtMostOnceProviderWrite({
-    dispatch: async () => {
-      const response = await sendGithubGraphqlRequest({
-        query: `mutation GithubRelationshipWrite($input: ${mutation.inputType}!) {
-          result: ${mutation.name}(input: $input) { ${mutation.selection} }
-        }`,
-        variables: { input: mutation.operands },
-      }, dependencies);
-      if (response.ok) {
-        const payload = response.data.result;
-        const applied = record(payload) ? confirmPayload(payload) : null;
-        confirmation = applied === null ? { kind: 'uncertain' } : { kind: 'applied', observation: applied };
-      } else confirmation = { kind: 'uncertain', failure: response.failure };
-      return response;
-    },
-    mayHaveChanged: response => response.ok || response.mayHaveChanged,
-    confirm: async () => confirmation,
-  });
-  if (settled.kind === 'applied') return settled.observation;
-  if (settled.kind === 'uncertain') return settled;
-  if (settled.kind === 'settled' && !settled.result.ok) return failed(settled.result.failure);
-  return { kind: 'uncertain' };
+  return settleGithubGraphqlMutation({
+    query: `mutation GithubRelationshipWrite($input: ${mutation.inputType}!) {
+      result: ${mutation.name}(input: $input) { ${mutation.selection} }
+    }`,
+    variables: { input: mutation.operands },
+  }, data => record(data.result) ? confirmPayload(data.result) : null, dependencies);
 }
 
 type RelatedWrite = 'closingAdd' | 'closingRemove' | 'subAdd' | 'subRemove' | 'subReprioritize'
