@@ -228,6 +228,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
     boundaryActivity: Readonly<{ environmentReads: number; receiptReads: number; acquisitions: number; transitions: number }>;
     nativeRequests: Parameters<ProjectNativeToolchainIo['run']>[0][]; root: string; sourceTargetPath: string;
     deploymentRoot: string; environmentInstanceId: string;
+    restartReferenceObservation?: (nativeContainerId?: string) => Promise<void>;
     custody: Readonly<{ bindings: readonly EnvironmentSecretBindingV1[]; grants: readonly MachineSecretGrantV1[];
         installations: readonly Readonly<{ machineId: string; installationId: string; seed: Uint8Array }>[] }>;
 }>) => Promise<void>, options: Readonly<{ mode?: 'source' | 'mixed' | 'prebuilt' | 'stored' | 'closure'; secretRevision?: number;
@@ -312,6 +313,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
             id: 'source-link', environmentId: 'source-database', activeDeploymentId: 'source-release', machines: ['builder-c'],
             members: [{ machineId: 'builder-c', installationId: 'installation-c', state: 'active' }] };
         let referencePort = options.referencePublishedPort ?? 25432;
+        let restartReferenceObservation: ((nativeContainerId?: string) => Promise<void>) | undefined;
         if (options.buildReference) {
             // Native service observation and Home metadata are the boundaries;
             // retained service selection and address resolution remain real.
@@ -344,13 +346,14 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                     definition, async assertCurrent() {} };
             } }).materialize({ environmentId: 'source-database', deploymentId: 'source-release' });
             await release.commit();
-            await mounted.lease.registry.projectManagedServices.superviseProject({ kind: 'environment',
+            const referenceContainerId = JSON.stringify({ bindAddress: options.referenceBindAddress ?? '100.64.0.7',
+                publishedPort: referencePort, exports: referenceEnvironment.content.ownServer.serviceExports });
+            const observeReference = (nativeContainerId: string) => mounted.lease.registry.projectManagedServices.superviseProject({ kind: 'environment',
                 serverId: homeServerIdentityId, machineId: 'builder-c', environmentId: 'source-database',
                 environmentInstanceId: sourceIdentity.environmentInstanceId, deploymentId: 'source-release', release,
                 composeService: 'db', serviceId: `${sourceIdentity.environmentInstanceId}/db`,
                 appliedServiceExports: referenceEnvironment.content.ownServer.serviceExports,
-                specIdentity: JSON.stringify({ service: 'db', bindAddress: options.referenceBindAddress ?? '100.64.0.7',
-                    publishedPort: referencePort, exports: referenceEnvironment.content.ownServer.serviceExports }), isCurrent: () => true,
+                specIdentity: JSON.stringify(['source-release', [nativeContainerId]]), isCurrent: () => true,
                 releaseObservation: async () => {}, nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
                     async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
                     runtimeFacts(): ProjectNativeRuntimeFacts { return { observedAt: 1, freshness: 'current', configuration: {
@@ -359,6 +362,11 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                             bindAddress: options.referenceBindAddress ?? '100.64.0.7', protocol: 'tcp' }, ...(options.referenceDualPublication ? [{ target: 5432, published: options.referencePublishedPort ?? 25433, bindAddress: '127.0.0.1', protocol: 'tcp' as const }] : [])] } }; },
                     async stop() { return { status: 'stopped' }; },
                 } } } });
+            let reference = await observeReference(referenceContainerId);
+            restartReferenceObservation = async (nativeContainerId = referenceContainerId) => {
+                await reference.dispose();
+                reference = await observeReference(nativeContainerId);
+            };
         }
         const registryBinding = { purpose: 'registry' as const, targetLinkId: link.id,
             registryOrigin: 'https://docker.io', access: options.registryAccess ?? 'pull',
@@ -557,6 +565,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         await run({ host, request, receipt, environment, referenceEnvironment, history, boundaryActivity, nativeRequests, root,
             deploymentRoot: sourceAdmission.deploymentRoot, environmentInstanceId: sourceAdmission.environmentInstanceId,
             sourceTargetPath: resolveDeploymentSourcePathForHost(sourceAdmission),
+            ...(restartReferenceObservation ? { restartReferenceObservation } : {}),
             custody: { bindings: environment.content.bindings, grants: prepared.grants, installations } });
     } finally {
         try { releaseReferenceBoundary(); await mounted.dispose(); }
@@ -574,12 +583,14 @@ export async function withOwnServerRemoteReferenceFixture(
         if (!lease) throw new Error('Source service owner required');
         try {
             const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(fixture.host.serverId, 'source-database');
-            const handle = lease.registry.projectManagedServices.resolveEnvironmentService(fixture.host.serverId, {
+            const resolveHandle = () => lease.registry.projectManagedServices.resolveEnvironmentService(fixture.host.serverId, {
                 kind: 'deployment', machineId: fixture.host.machineId, environmentId: 'source-database', environmentInstanceId,
                 composeService: 'db', serviceId: `${environmentInstanceId}/db` });
-            if (!handle) throw new Error('Source service required');
-            const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async () => ({ kind: 'snapshot',
-                services: [lease.registry.projectManagedServices.machineServiceRows.read(handle)] }));
+            if (!resolveHandle()) throw new Error('Source service required');
+            const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async () => {
+                const handle = resolveHandle();
+                return { kind: 'snapshot', services: handle ? [lease.registry.projectManagedServices.machineServiceRows.read(handle)] : [] };
+            });
             try { await run({ ...fixture, host: { ...fixture.host, machineId: 'consumer-d' } }); }
             finally { rpc.mockRestore(); }
         } finally { await lease.release(); }

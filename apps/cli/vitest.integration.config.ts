@@ -17,6 +17,7 @@ const mergedTestEnv: NodeJS.ProcessEnv = {
 const workspaceSyncRealIntegrationTest = 'src/daemon/startup/createDaemonWorkspaceSyncRuntime.real.integration.test.ts';
 const workspaceSyncBrokerGoRealIntegrationTest = 'src/workspaces/sync/transport/workspaceSyncBroker.go.real.integration.test.ts';
 const workspaceMachineCarrierRealIntegrationTest = 'src/daemon/peer/iroh/workspaceMachineCarrierLane08.real.integration.test.ts';
+const privateServiceReferenceRecoveryRealIntegrationTest = 'src/deployments/targets/ownServer/privateServiceReferenceRecovery.real.integration.test.ts';
 const workspaceMachineCarrierMutagenRealIntegrationTest = 'src/daemon/peer/iroh/workspaceMachineCarrierMutagen.real.integration.test.ts';
 // The external Session-Agent author-journey canary runs the real managed
 // author toolchain: it materializes dependencies from real registries and
@@ -76,7 +77,7 @@ export default defineConfig({
                 : [workspaceSyncRealIntegrationTest, workspaceSyncBrokerGoRealIntegrationTest]),
             ...(process.env.HAPPIER_RUN_HOME_IROH_REAL_INTEGRATION === '1'
                 ? []
-                : [workspaceMachineCarrierRealIntegrationTest]),
+                : [workspaceMachineCarrierRealIntegrationTest, privateServiceReferenceRecoveryRealIntegrationTest]),
             ...(process.env.HAPPIER_RUN_MUTAGEN_REAL_INTEGRATION === '1'
                 && process.env.HAPPIER_RUN_HOME_IROH_REAL_INTEGRATION === '1'
                 ? []
