@@ -2683,10 +2683,22 @@ type SessionTurnApplicationRow = Readonly<{
 }>;
 
 class SessionTurnTeamCredentialBindingCurrentnessError extends Error {
-    constructor(readonly reason: SessionTeamCredentialBindingRejectionV1) {
+    constructor(readonly reason: SessionTeamCredentialBindingRejectionV1, readonly facts:
+        | Readonly<{ stage: "accepted_bindings"; bindingCount: number }>
+        | Readonly<{ stage: "binding_validation"; deliveryMode: TeamCredentialRouteV1 }>
+        | Readonly<{ stage: "publisher_principal" }>) {
         super(reason);
         this.name = "SessionTurnTeamCredentialBindingCurrentnessError";
     }
+}
+
+function projectTurnBindingRefusal(error: SessionTurnTeamCredentialBindingCurrentnessError): ApplySessionTurnMutationResult {
+    const code = "session_team_credential_binding_rejected";
+    try {
+        warn({ module: "session-write", event: "session_turn_binding_refused", operation: "begin",
+            code, reason: error.reason, ...error.facts }, "Team credential binding refused at Turn publication");
+    } catch { /* The diagnostic sink cannot replace the refusal. */ }
+    return { ok: false, error: "invalid-params", code, reason: error.reason };
 }
 
 async function resolveSessionTurnTeamCredentialWitnessInTx(params: Readonly<{
@@ -2705,7 +2717,9 @@ async function resolveSessionTurnTeamCredentialWitnessInTx(params: Readonly<{
         deliveryModes: TEAM_CREDENTIAL_ROUTES_V1,
     });
     if (bindings.length > 1) {
-        throw new SessionTurnTeamCredentialBindingCurrentnessError("resource_corrupt");
+        throw new SessionTurnTeamCredentialBindingCurrentnessError("resource_corrupt", {
+            stage: "accepted_bindings", bindingCount: bindings.length,
+        });
     }
     const binding = bindings[0];
     if (!binding) {
@@ -2726,7 +2740,9 @@ async function resolveSessionTurnTeamCredentialWitnessInTx(params: Readonly<{
         authentication: params.authentication,
     });
     if (!admission.ok) {
-        throw new SessionTurnTeamCredentialBindingCurrentnessError(admission.reason);
+        throw new SessionTurnTeamCredentialBindingCurrentnessError(admission.reason, {
+            stage: "binding_validation", deliveryMode: binding.deliveryMode,
+        });
     }
     return {
         usageActorAccountId: params.actorAccountId,
@@ -3302,7 +3318,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
         let teamCredentialWitness: Awaited<ReturnType<typeof resolveSessionTurnTeamCredentialWitnessInTx>> | null = null;
         if (!currentTurn && params.turnMutation.action === "begin") {
             if (params.principal.kind !== "credential") {
-                throw new SessionTurnTeamCredentialBindingCurrentnessError("authentication_unavailable");
+                throw new SessionTurnTeamCredentialBindingCurrentnessError("authentication_unavailable", { stage: "publisher_principal" });
             }
             teamCredentialWitness = await resolveSessionTurnTeamCredentialWitnessInTx({
                 tx,
@@ -3629,12 +3645,7 @@ export async function applySessionTurnMutation(params: {
             return { ok: false, error: "invalid-params" };
         }
         if (error instanceof SessionTurnTeamCredentialBindingCurrentnessError) {
-            return {
-                ok: false,
-                error: "invalid-params",
-                code: "session_team_credential_binding_rejected",
-                reason: error.reason,
-            };
+            return projectTurnBindingRefusal(error);
         }
         if (isDuplicateSessionTurnMutationRace(error)) {
             try {
@@ -3646,12 +3657,7 @@ export async function applySessionTurnMutation(params: {
                 });
             } catch (retryError) {
                 if (retryError instanceof SessionTurnTeamCredentialBindingCurrentnessError) {
-                    return {
-                        ok: false,
-                        error: "invalid-params",
-                        code: "session_team_credential_binding_rejected",
-                        reason: retryError.reason,
-                    };
+                    return projectTurnBindingRefusal(retryError);
                 }
                 return { ok: false, error: "internal" };
             }

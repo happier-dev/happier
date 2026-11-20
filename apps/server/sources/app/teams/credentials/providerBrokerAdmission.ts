@@ -84,7 +84,15 @@ type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { er
     | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
     | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_presence_unavailable' | 'session_turn_not_in_progress'
     | 'session_turn_binding_mismatch' | 'execution_run_occurrence_mismatch' | 'execution_run_turn_not_active'
-    | 'broker_job_resource_moved';
+    | 'broker_job_resource_moved'
+    | 'binding_resource_revision_mismatch' | 'resource_revision_mismatch' | 'execution_run_entitlement_revision_mismatch'
+    | 'request_catalog_resource_revision_mismatch'
+    | 'prepared_resource_team_changed' | 'prepared_resource_custodian_changed' | 'prepared_resource_machine_changed'
+    | 'prepared_resource_pool_changed' | 'prepared_resource_revision_changed' | 'prepared_resource_source_binding_changed'
+    | 'prepared_resource_request_policy_changed' | 'prepared_resource_source_changed'
+    | 'prepared_resource_model_policy_changed' | 'prepared_resource_pool_eligibility_changed'
+    | 'runner_selection_resource_mismatch' | 'runner_selection_revision_mismatch'
+    | 'runner_selection_application_mismatch' | 'runner_selection_source_revision_mismatch';
 
 type Failure = Readonly<{
     ok: false;
@@ -93,9 +101,10 @@ type Failure = Readonly<{
     refusalReason?: BrokerRefusalReason
         | Exclude<SessionTeamCredentialBindingRejectionV1, 'broker_unavailable'>
         | 'binding_missing';
+    revisionComparison?: Readonly<{ expectedRevision: number; observedRevision: number }>;
 }>;
 
-type PublicFailure = Omit<Failure, 'refusalReason'>;
+type PublicFailure = Omit<Failure, 'refusalReason' | 'revisionComparison'>;
 
 export type TeamCredentialProviderBrokerOpenResult =
     | Readonly<{
@@ -191,6 +200,12 @@ function brokerUnavailable(refusalReason: BrokerRefusalReason): Failure {
 
 function closedFailure(reasonCode: Failure['reasonCode'], refusalReason: BrokerRefusalReason): Failure {
     return { ok: false, reasonCode, refusalReason };
+}
+
+function resourceChanged(refusalReason: BrokerRefusalReason,
+    revisionComparison?: Failure['revisionComparison']): Failure {
+    return { ok: false, reasonCode: 'resource_changed', refusalReason,
+        ...(revisionComparison ? { revisionComparison } : {}) };
 }
 
 function consumerAdmissionFailure(reasonCode: ProviderBrokerAdmissionFailureCodeV1): Failure {
@@ -372,18 +387,19 @@ function preparationChangeFailure(
         || left.executionRunOccurrenceId !== right.executionRunOccurrenceId) {
         return failure('operation_not_current');
     }
-    if (left.resource.teamId !== right.resource.teamId
-        || left.resource.custodianAccountId !== right.resource.custodianAccountId
-        || left.resource.brokerMachineId !== right.resource.brokerMachineId
-        || left.resource.brokerPoolId !== right.resource.brokerPoolId
-        || left.resource.revision !== right.resource.revision
-        || left.resource.sourceBindingJson !== right.resource.sourceBindingJson
-        || left.resource.requestPolicyJson !== right.resource.requestPolicyJson
-        || !pluginJsonValuesEqual(left.source, right.source)
-        || !pluginJsonValuesEqual(left.allowedModelIds, right.allowedModelIds)
-        || !poolSnapshotsEqual(left.poolSnapshot, right.poolSnapshot)) {
-        return failure('resource_changed');
+    if (left.resource.teamId !== right.resource.teamId) return resourceChanged('prepared_resource_team_changed');
+    if (left.resource.custodianAccountId !== right.resource.custodianAccountId) return resourceChanged('prepared_resource_custodian_changed');
+    if (left.resource.brokerMachineId !== right.resource.brokerMachineId) return resourceChanged('prepared_resource_machine_changed');
+    if (left.resource.brokerPoolId !== right.resource.brokerPoolId) return resourceChanged('prepared_resource_pool_changed');
+    if (left.resource.revision !== right.resource.revision) {
+        return resourceChanged('prepared_resource_revision_changed',
+            { expectedRevision: left.resource.revision, observedRevision: right.resource.revision });
     }
+    if (left.resource.sourceBindingJson !== right.resource.sourceBindingJson) return resourceChanged('prepared_resource_source_binding_changed');
+    if (left.resource.requestPolicyJson !== right.resource.requestPolicyJson) return resourceChanged('prepared_resource_request_policy_changed');
+    if (!pluginJsonValuesEqual(left.source, right.source)) return resourceChanged('prepared_resource_source_changed');
+    if (!pluginJsonValuesEqual(left.allowedModelIds, right.allowedModelIds)) return resourceChanged('prepared_resource_model_policy_changed');
+    if (!poolSnapshotsEqual(left.poolSnapshot, right.poolSnapshot)) return resourceChanged('prepared_resource_pool_eligibility_changed');
     const exactBrokerChanged = left.broker !== null && (
         right.broker === null
         || left.broker.machineId !== right.broker.machineId
@@ -501,6 +517,10 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         authentication: input.authentication,
     });
     if (!admitted.ok) {
+        if (admitted.reason === 'resource_changed') {
+            return resourceChanged('binding_resource_revision_mismatch',
+                'revisionComparison' in admitted ? admitted.revisionComparison : undefined);
+        }
         // A fresh open answers every resource-authority refusal with one code
         // so that a resource which exists but is not this caller's cannot be
         // told apart from one that does not exist — the enumeration contract
@@ -510,7 +530,7 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         return bindingFailure(
             admitted.reason === 'connected_service_credential_reconnect_required'
                 ? brokerFailureForBindingRejection(admitted.reason)
-                : admitted.reason === 'resource_changed' ? 'resource_changed' : 'resource_forbidden',
+                : 'resource_forbidden',
             admitted.reason,
         );
     }
@@ -521,7 +541,8 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         return closedFailure('resource_forbidden', 'binding_delivery_mismatch');
     }
     if (admitted.binding.resourceRevision !== request.expectedResourceRevision) {
-        return failure('resource_changed');
+        return resourceChanged('binding_resource_revision_mismatch',
+            { expectedRevision: request.expectedResourceRevision, observedRevision: admitted.binding.resourceRevision });
     }
     if (!admitted.entitlement.mayBroker) {
         return closedFailure('resource_forbidden', 'binding_broker_entitlement_missing');
@@ -543,7 +564,10 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
     if (resource.custodianAccountId !== resourceIdentity?.custodianAccountId) {
         throw new TransactionReplayRequiredError('transaction-account-audience-changed');
     }
-    if (resource.revision !== request.expectedResourceRevision) return failure('resource_changed');
+    if (resource.revision !== request.expectedResourceRevision) {
+        return resourceChanged('resource_revision_mismatch',
+            { expectedRevision: request.expectedResourceRevision, observedRevision: resource.revision });
+    }
     // Team brokerage serves a different Account. Refuse self-custody before
     // presence/projection work or strict route signing; co-hosted daemons with
     // distinct Account/Machine/endpoint identities still use the normal path.
@@ -558,12 +582,15 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
     const policy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(rawPolicy);
     if (!source.success || !policy.success) return failure('resource_unavailable');
     // A fresh Runner open remains bound to its reviewed selection and revision.
-    if (runnerSelection !== null && (
-        runnerSelection.resourceId !== request.resourceId
-        || runnerSelection.revision !== request.expectedResourceRevision
-        || !pluginJsonValuesEqual(runnerSelection.application, request.application)
-        || runnerSelection.sourceRevision !== request.sourceRevision
-    )) return failure('resource_changed');
+    if (runnerSelection !== null) {
+        if (runnerSelection.resourceId !== request.resourceId) return resourceChanged('runner_selection_resource_mismatch');
+        if (runnerSelection.revision !== request.expectedResourceRevision) {
+            return resourceChanged('runner_selection_revision_mismatch',
+                { expectedRevision: request.expectedResourceRevision, observedRevision: runnerSelection.revision });
+        }
+        if (!pluginJsonValuesEqual(runnerSelection.application, request.application)) return resourceChanged('runner_selection_application_mismatch');
+        if (runnerSelection.sourceRevision !== request.sourceRevision) return resourceChanged('runner_selection_source_revision_mismatch');
+    }
     const initiatorEndpoint = await readProviderBrokerInitiatorEndpointInTx(tx, {
         accountId: input.actorAccountId,
         machineId: request.initiatorMachineId,
@@ -780,7 +807,8 @@ async function preauthorizeTeamCredentialProviderBrokerOpen(
             return closedFailure('resource_forbidden', 'execution_run_broker_entitlement_missing');
         }
         if (entitlement.resourceRevision !== request.expectedResourceRevision) {
-            return failure('resource_changed');
+            return resourceChanged('execution_run_entitlement_revision_mismatch',
+                { expectedRevision: request.expectedResourceRevision, observedRevision: entitlement.resourceRevision });
         }
     }
     const executionRun = await resolveOpenExecutionRunCurrentness(input, request);
@@ -1130,7 +1158,10 @@ async function readActiveBrokerJobInTx(
         !== grant.brokerPlacementFingerprint) return closedFailure('operation_not_current', 'broker_job_resource_moved');
     // The broker evaluates this request's model against the revision it sends;
     // Home checks that the policy read still names this current resource.
-    if (resource.revision !== input.expectedResourceRevision) return failure('resource_changed');
+    if (resource.revision !== input.expectedResourceRevision) {
+        return resourceChanged('request_catalog_resource_revision_mismatch',
+            { expectedRevision: input.expectedResourceRevision, observedRevision: resource.revision });
+    }
     const sourceBinding = readTeamCredentialSourceBinding(resource.sourceBindingJson);
     if (!sourceBinding.success) return bindingFailure('resource_unavailable', 'resource_corrupt');
     const session = row?.sessionAccountId ? {

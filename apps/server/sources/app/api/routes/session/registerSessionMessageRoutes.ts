@@ -12,6 +12,7 @@ import { EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from '@happier-dev/pro
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionTurnV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/messages/sessionTranscriptPageLimits';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
@@ -194,6 +195,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         acceptedTurnId: z.optional(z.string()),
                         turnStartWitnessId: z.optional(z.string()),
                         turn: z.optional(SessionTurnV1Schema),
+                        inputDeliveryIssue: z.optional(SessionRuntimeIssueV1Schema),
                     }),
                 }),
                 404: z.looseObject({ error: z.string(), inputDisposition: z.optional(SessionInputRefusalDispositionV1Schema) }),
@@ -218,7 +220,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const targetMachineId = authentication.apiTokenGrant
             ? await app.resolveCurrentSessionMachine?.({ accountId: userId, sessionId }) : undefined;
 
-        const { row, accessDecision, accountActor, inputDisposition } = await captureReadSnapshot(tx =>
+        const { row, accessDecision, accountActor, inputDisposition, inputDeliveryIssue } = await captureReadSnapshot(tx =>
             readCommittedSessionMessageInTx(tx, { accountId: userId, sessionId, localId, authentication, targetMachineId }));
         if (accessDecision.status === "authentication_required") {
             return reply.code(403).send({ error: "team_authentication_required" });
@@ -247,6 +249,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 ...(row.acceptedTurnId ? { acceptedTurnId: row.acceptedTurnId } : {}),
                 ...(row.turnStartWitnessId ? { turnStartWitnessId: row.turnStartWitnessId } : {}),
                 ...(row.turn ? { turn: row.turn } : {}),
+                ...(inputDeliveryIssue ? { inputDeliveryIssue } : {}),
                 ...(() => {
                     const deliveryResolution = readStoredSessionMessageDeliveryResolutionV1(row.deliveryResolution);
                     return deliveryResolution ? { deliveryResolution } : {};

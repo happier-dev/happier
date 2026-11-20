@@ -7,6 +7,8 @@ import { parseStoredSessionTurn } from '@/app/session/turns/parseSessionTurnStat
 import { projectSessionMessageAccountActors } from './projectSessionMessageAccountActors';
 import { isUnclaimedUnavailableExecutionRunInput } from '@/app/session/pending/selectPendingProviderInvocation';
 import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { normalizePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /** Exact committed reads share transcript publication and current credential admission. */
 export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
@@ -19,7 +21,7 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
     const accessDecision = await resolveSessionAccessForOperation(tx, { accountId: input.accountId,
         sessionId: input.sessionId, authentication: input.authentication, capability: 'readTranscript',
         apiTokenAction: { actionId: 'session.transcript.get', targetMachineId: input.targetMachineId } });
-    if (accessDecision.status !== 'allowed') return { row: null, accessDecision, accountActor: null, inputDisposition: null };
+    if (accessDecision.status !== 'allowed') return { row: null, accessDecision, accountActor: null, inputDisposition: null, inputDeliveryIssue: null };
     const publication = await loadSessionTranscriptPublication(tx, input.sessionId);
     const row = await tx.sessionMessage.findFirst({
         where: buildSessionMessagePublicationWhere({
@@ -36,18 +38,25 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
             transcriptObservationProvenance: true, inputAdmissionReceipt: true, authorAccountId: true,
         },
     }).then(row => decodeStoredSessionMessage(row));
-    // A refused recovery has no accepted transcript anchor. Read its existing
-    // Pending disposition by the Session-wide input identity, never an inventory
-    // or the main queue (which cannot describe an exact Run target).
-    const pending = !row && 'localId' in input ? await tx.sessionPendingMessage.findUnique({
+    // Before the Home turn witness, the exact Pending original owns delivery.
+    // Recovery can also be refused before creating a transcript row.
+    const pending = 'localId' in input && (!row || row.messageRole === 'user' && !row.sidechainId && !row.turnStartWitnessId)
+      ? await tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: input.sessionId, localId: input.localId } },
         select: { localId: true, targetExecutionRunId: true, requestedAction: true, status: true,
-            deliveryState: true, deliveryBlockedReason: true, providerAction: true },
+            deliveryState: true, deliveryBlockedReason: true, providerAction: true, updatedAt: true },
     }) : null;
-    const inputDisposition = pending?.status === 'queued'
+    const inputDisposition = !row && pending?.status === 'queued'
         && normalizePendingRequestedActionV1(pending.requestedAction, 'stored').kind === 'recover_execution_run'
         && isUnclaimedUnavailableExecutionRunInput(pending.targetExecutionRunId, pending)
         ? { localId: pending.localId, result: { status: 'rejected' as const, code: 'session_input_target_unavailable' as const } }
+        : null;
+    const delivery = pending && normalizePendingDeliveryStatusV1(pending);
+    const inputDeliveryIssue: SessionRuntimeIssueV1 | null = row && pending?.targetExecutionRunId === null && delivery?.status === 'blocked'
+        && delivery.reason === 'team_access_removed'
+        ? { v: 1, scope: 'primary_session', status: 'failed', code: delivery.reason,
+            source: 'team_credential', occurredAt: pending.updatedAt.getTime(),
+            failureCause: { phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: delivery.reason } }
         : null;
     const turnRow = 'localId' in input && row?.turnStartWitnessId ? await tx.sessionTurn.findUnique({ where: {
         sessionId_turnId: { sessionId: input.sessionId, turnId: row.turnStartWitnessId },
@@ -58,6 +67,7 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
         row: row ? { ...row, turn } : null,
         accessDecision,
         inputDisposition,
+        inputDeliveryIssue,
         accountActor: row ? (await projectSessionMessageAccountActors(tx, [row]))[0] ?? null : null,
     };
 }

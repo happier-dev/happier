@@ -17,6 +17,7 @@ import { openSessionEventSource } from '@/session/transport/socket/sessionSocket
 import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema, type SessionInputAdmissionReceiptV1, type SessionInputRefusalDispositionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { SessionTurnV1Schema, type SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readStoredSessionMessageDeliveryResolutionV1, type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 
 const KEEP_ALIVE_HTTP_AGENT = new HttpAgent({ keepAlive: true, maxSockets: 16 });
@@ -36,6 +37,7 @@ export type TranscriptMessageLookupResult = {
     acceptedTurnId?: string;
     turnStartWitnessId?: string;
     turn?: SessionTurnV1;
+    inputDeliveryIssue?: SessionRuntimeIssueV1;
 };
 
 export type TranscriptLookupOutcome =
@@ -154,6 +156,8 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
     if (receipt && !receipt.success) return null;
     const turn = record.turn === undefined ? null : SessionTurnV1Schema.safeParse(record.turn);
     if (turn && !turn.success) return null;
+    const inputDeliveryIssue = record.inputDeliveryIssue === undefined ? null : SessionRuntimeIssueV1Schema.safeParse(record.inputDeliveryIssue);
+    if (inputDeliveryIssue && !inputDeliveryIssue.success) return null;
     const deliveryResolution = record.deliveryResolution === undefined ? null
         : readStoredSessionMessageDeliveryResolutionV1(record.deliveryResolution);
     if (record.deliveryResolution !== undefined && !deliveryResolution) return null;
@@ -184,6 +188,7 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
         ...(typeof record.acceptedTurnId === 'string' ? { acceptedTurnId: record.acceptedTurnId } : {}),
         ...(typeof record.turnStartWitnessId === 'string' ? { turnStartWitnessId: record.turnStartWitnessId } : {}),
         ...(turn?.success ? { turn: turn.data } : {}),
+        ...(inputDeliveryIssue?.success ? { inputDeliveryIssue: inputDeliveryIssue.data } : {}),
     };
 }
 

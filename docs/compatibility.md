@@ -1,5 +1,13 @@
 # Compatibility and version skew
 
+## Exact original input publication refusal (unreleased 0.3)
+
+The exact committed message read by local ID can include optional
+`message.inputDeliveryIssue`, using the existing Session runtime issue shape.
+The original input result consumes this issue through `runtimeIssueV1`.
+Older exact-message readers ignore the field, and updated clients accept
+earlier responses without it. The Pending record format is unchanged.
+
 ## Session readiness reasons (unreleased 0.3)
 
 `session.status.get` can return a closed `readiness.reason` when the shared

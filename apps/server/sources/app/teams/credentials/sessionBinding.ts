@@ -759,7 +759,11 @@ type SessionTeamCredentialResourceValidationResult =
         custodianAccountId: string;
         brokerPlacementFingerprint: string | null;
     }>
-    | Readonly<{ ok: false; reason: SessionTeamCredentialBindingRejection }>;
+    | Readonly<{
+        ok: false;
+        reason: SessionTeamCredentialBindingRejection;
+        revisionComparison?: Readonly<{ expectedRevision: number; observedRevision: number }>;
+    }>;
 
 export type SessionTeamCredentialAdmissionResult =
     | SessionTeamCredentialResourceValidationResult
@@ -804,7 +808,8 @@ async function validateSessionTeamCredentialResourceForContextInTx(
     });
     if (!resource) return { ok: false, reason: "resource_missing" };
     if (input.expectedResourceRevision !== undefined && resource.revision !== input.expectedResourceRevision) {
-        return { ok: false, reason: "resource_changed" };
+        return { ok: false, reason: "resource_changed",
+            revisionComparison: { expectedRevision: input.expectedResourceRevision, observedRevision: resource.revision } };
     }
     const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: resource.id, accountId: input.accountId });
     if (!entitlement.ok) return entitlement;

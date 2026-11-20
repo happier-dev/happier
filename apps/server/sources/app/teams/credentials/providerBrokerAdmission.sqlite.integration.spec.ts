@@ -3948,7 +3948,17 @@ describe('Team credential Provider broker admission', () => {
         await expect(setAudience(withdrawn.revision, true)).resolves.toMatchObject({ ok: true });
         const restored = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
         expect(restored.revision).toBe(resource.revision + 2);
-        await expect(refresh(resource)).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+        const sink = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        try {
+            await expect(refresh(resource)).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+            expect(sink).toHaveBeenCalledWith({
+                module: 'provider-broker-admission', operation: 'open', reasonCode: 'resource_changed',
+                refusalReason: 'binding_resource_revision_mismatch',
+                expectedRevision: resource.revision, observedRevision: restored.revision,
+            });
+        } finally {
+            sink.mockRestore();
+        }
         const readmitted = await refresh(restored);
         expect(readmitted).toMatchObject({ ok: true });
         if (!readmitted.ok) return;

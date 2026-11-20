@@ -152,6 +152,11 @@ If the mode exceeds it, the current publisher settles the original Pending input
 queue and remains the delivery outcome for the original in the CLI reply wait and
 app transcript.
 
+In 0.3 source, if Home refuses Turn publication after the Agent receives a
+primary Session input and Pending records `team_access_removed`, the exact
+original result reports a failed delivery with that cause. The result describes
+Home publication. The native Agent may already have acted on the input.
+
 The Session share also governs its ephemeral managed Browser: View watches its
 frames and Steer drives it, without a Machine grant. Browser routing consumes
 `resolveSessionAccessForOperation` (`readTranscript` for viewing,

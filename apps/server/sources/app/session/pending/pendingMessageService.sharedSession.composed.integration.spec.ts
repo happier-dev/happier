@@ -7724,6 +7724,35 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
+    it('returns the exact Team publication refusal for a committed input', async () => {
+        const owner = await createAccount('withdrawn-input-owner');
+        const session = await createSession(owner.id);
+        const localId = `withdrawn-input-${randomUUID()}`;
+        const input = { actorUserId: owner.id, sessionId: session.id, localId };
+        expect(await enqueuePendingMessage({ ...input, messageRole: 'user', ciphertext: 'retained-input' }))
+            .toMatchObject({ ok: true });
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id }))
+            .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+        // The native send already published its user row; Home has no Turn begin witness.
+        expect(await createSessionMessage({ ...input, inputAdmission: 'authenticatedAccount', authentication,
+            messageRole: 'user', ciphertext: 'retained-input' })).toMatchObject({ ok: true, didWrite: true });
+        await withAuthenticatedTestApp(registerSessionMessageRoutes, async app => {
+            const read = () => app.inject({
+                method: 'GET', url: `/v2/sessions/${session.id}/messages/by-local-id/${localId}`,
+                headers: { 'x-test-user-id': owner.id },
+            });
+            const initial = await read();
+            expect(initial.statusCode, initial.body).toBe(200);
+            expect(initial.json().message).not.toHaveProperty('inputDeliveryIssue');
+            expect(await blockPendingDelivery({ ...input, reason: 'team_access_removed' })).toMatchObject({ ok: true });
+            const refused = await read();
+            expect(refused.statusCode, refused.body).toBe(200);
+            expect(refused.json()).toMatchObject({ message: { inputDeliveryIssue: {
+                code: 'team_access_removed', failureCause: { phase: 'turn_start', providerErrorCode: 'team_access_removed' },
+            } } });
+        });
+    });
+
     it('settles an unaccepted Workflow reply and admits fresh ordinary input after Team access is restored', async () => {
         const owner = await createAccount('withdrawn-workflow-owner');
         const session = await createSession(owner.id);

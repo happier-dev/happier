@@ -627,7 +627,7 @@ const ASSISTANT_TURN_SCAN_PAGE_LIMIT = 100;
 type CurrentPromptDeliveryOutcome =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'materialized'; message: TranscriptMessageLookupResult }>
-  | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason }>
+  | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason; inputDeliveryIssue?: SessionRuntimeIssueV1 }>
   | Readonly<{ kind: 'rejected'; code: 'permission_mode_not_granted' }>
   | Readonly<{ kind: 'cancelled' }>;
 
@@ -660,7 +660,7 @@ function projectBlockedPromptDeliveryAdmissionResult(reason: PendingQueueDeliver
 }
 
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
-  if (reason === 'team_access_removed') return 'Current input delivery blocked: Team access was withdrawn.';
+  if (reason === 'team_access_removed') return 'Team access was withdrawn before Home published the Turn. The native Agent may have acted on the input.';
   return `Current input delivery blocked (${reason})`;
 }
 
@@ -710,6 +710,9 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       });
       params.signal?.throwIfAborted();
+      if (materialized?.inputDeliveryIssue) {
+        return { kind: 'blocked', reason: 'team_access_removed', inputDeliveryIssue: materialized.inputDeliveryIssue };
+      }
       let terminalReply: FulfilledReplyObservation | undefined;
       if (params.replyCredentials) {
         try {
@@ -1181,7 +1184,9 @@ export async function readSessionInputResult(params: Readonly<{
       ...(message.acceptedTurnId ? { acceptedTurnId: message.acceptedTurnId } : {}),
       ...(message.turnStartWitnessId ? { turnStartWitnessId: message.turnStartWitnessId } : {}),
       ...(message.turn ? { turnStatus: message.turn.status } : {}),
-      result: resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
+      result: message.inputDeliveryIssue && !message.turn ? {
+        kind: 'failed', message: formatBlockedPromptDeliveryFailure('team_access_removed'), runtimeIssueV1: message.inputDeliveryIssue,
+      } : resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
     };
   } catch (error) {
     if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
@@ -1463,9 +1468,13 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
         ok: true,
         sessionId: sessionTarget.sessionId,
         localId,
-        result: isPendingDeliveryProviderEffectPossibleV1({ status: 'blocked', reason: promptDelivery.reason }) ? { kind: 'pending' } : {
+        // A definitive Home publication refusal settles this observation even
+        // though it cannot establish what the native Agent did with the input.
+        result: !promptDelivery.inputDeliveryIssue
+          && isPendingDeliveryProviderEffectPossibleV1({ status: 'blocked', reason: promptDelivery.reason }) ? { kind: 'pending' } : {
           kind: 'failed',
           message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
+          ...(promptDelivery.inputDeliveryIssue ? { runtimeIssueV1: promptDelivery.inputDeliveryIssue } : {}),
         },
       };
     }

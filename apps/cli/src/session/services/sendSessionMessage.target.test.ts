@@ -869,7 +869,12 @@ describe('target Session input authoring through HTTP', () => {
               body: { t: 'pending-changed', sid: sessionId, pendingVersion: 12, pendingCount: 1, pendingBlockedCount: 1 } });
           });
         }
-        return { status: 200, data: { message: user } };
+        const inputDeliveryIssue = blocked && !target ? {
+          v: 1, scope: 'primary_session', status: 'failed', code: 'team_access_removed',
+          source: 'team_credential', occurredAt: user.updatedAt,
+          failureCause: { phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: 'team_access_removed' },
+        } : undefined;
+        return { status: 200, data: { message: { ...user, ...(inputDeliveryIssue ? { inputDeliveryIssue } : {}) } } };
       }
       if (url.includes('/messages?')) return { status: 200, data: { messages: [user], hasMore: false } };
       if (url.includes('/turns')) return { status: 200, data: { turns: [] } };
@@ -889,7 +894,8 @@ describe('target Session input authoring through HTTP', () => {
     if (!target) {
       expect(await waitForSessionInputResult({ credentials, idOrPrefix: sessionId, localId, timeoutMs: 100,
         ...(signed ? { resolveAuthorizationHeaders: () => ({ Authorization: 'Original-requester-proof' }) } : {}) }))
-        .toMatchObject({ ok: true, result: { kind: 'pending' } });
+        .toMatchObject({ ok: true, result: { kind: 'failed', runtimeIssueV1: { code: 'team_access_removed',
+          failureCause: { phase: 'turn_start', providerErrorCode: 'team_access_removed' } } } });
     }
   });
 
