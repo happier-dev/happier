@@ -512,8 +512,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
     // Every deploy, a platform's too, runs from an answering Machine; without one Where says so where Continue is.
     // A platform with no answering Machine at all says why and leads to adding one, in place of the footer's wait
-    // line (PAGE-ACCEPT-176 R8-D6); a chosen away Machine keeps its own card's guide.
-    const platformNeedsMachine = draftStep === 'where' && onPlatform && platformDefinitionAccepted && !machines.some(answers);
+    // line (PAGE-ACCEPT-176 R8-D6); a chosen away Machine keeps its own card's guide. Only a settled inventory can say
+    // none answers: before the Home's first Machine list arrives the answer is unknown, not no.
+    const platformNeedsMachine = draftStep === 'where' && onPlatform && platformDefinitionAccepted && allMachines != null
+      && !machines.some(answers);
     const whereWaitingFor = draftStep === 'where' && platformDefinitionAccepted && !platformNeedsMachine
       && (chosen === null || !answers(chosen)) ? t('newApp.deploy.waitMachine') : null;
     const pressStep = useEventCallback(() => {
