@@ -62,7 +62,12 @@ type ProjectionCustody = {
 
 type AdmittedUsageProjection = ProjectionCustody & {
     opened: ReturnType<typeof openProviderAccountUsagePageProjectionV1>;
-    settled?: { range: HistoryRange; coverage: DailyHistoryCoverage };
+    settled?: {
+        range: HistoryRange;
+        throughCursor: number | undefined;
+        history: NonNullable<ConnectedServiceQuotaGetResultV1['history']>;
+        coverage: DailyHistoryCoverage;
+    };
     view?: {
         record: unknown;
         history: NonNullable<ConnectedServiceQuotaGetResultV1['history']>;
@@ -295,8 +300,18 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     const heldDaily = publication?.prior ?? options.projectionDocuments?.get(recordId)?.daily;
     const priorDaily = hasUsageProjectionCustody(heldDaily, options, credentialScope, materialBytes) ? heldDaily : undefined;
     const change = options.dayChange?.recordId === recordId ? options.dayChange : undefined;
+    const changedDate = change && { startAtMs: change.dayStartAtMs, endAtMs: change.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS };
+    const priorExact = options.projectionDocuments?.get(recordId)?.exact?.admitted;
+    const priorExactBasis = priorExact?.settled;
+    const scopedExact = change && changedDate && exactDemand && priorExactBasis
+        && hasUsageProjectionCustody(priorExact, options, credentialScope, materialBytes)
+        && (priorExactBasis.throughCursor ?? -1) >= change.afterCursor
+        && priorExactBasis.range.startAtMs <= exactDemand.range.startAtMs
+        && (exactDemand.range.endAtMs <= priorExactBasis.range.endAtMs
+            || priorExactBasis.range.endAtMs >= changedDate.startAtMs && exactDemand.range.endAtMs <= changedDate.endAtMs)
+        ? priorExactBasis : undefined;
     const scopeDay = daily && change && (priorDaily?.throughCursor ?? -1) >= change.afterCursor ? change : undefined;
-    const changedDate = scopeDay && { startAtMs: scopeDay.dayStartAtMs, endAtMs: scopeDay.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS };
+    const summaryDate = scopeDay || !daily && scopedExact ? changedDate : undefined;
     const throughCursor = change?.throughCursor ?? options.changesCursor;
     let settledRecent: DailyRecentBasis | undefined;
     // One instant per read: price, Pending and pacing revisions of this read keep its derived pace and
@@ -394,35 +409,35 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         });
         return entries;
     };
-    const deltaRange = publication?.kind === 'observation' && changedDate && scopeDay?.history
-        ? { startAtMs: scopeDay.history.fromAtMs, endAtMs: changedDate.endAtMs } : undefined;
+    const deltaRange = publication?.kind === 'observation' && summaryDate && scopeDay?.history
+        ? { startAtMs: scopeDay.history.fromAtMs, endAtMs: summaryDate.endAtMs } : undefined;
     let deltaEntries: NonNullable<ConnectedServiceQuotaGetResultV1['history']>['entries'] = [];
-    const summaries = (deltaRange && priorDaily && changedDate ? (async () => {
+    const summaries = (deltaRange && priorDaily && summaryDate ? (async () => {
         deltaEntries = await readDailyRange(deltaRange);
-        const previous = priorDaily.summaries.find(day => day.dayStartAtMs === changedDate.startAtMs);
+        const previous = priorDaily.summaries.find(day => day.dayStartAtMs === summaryDate.startAtMs);
         let precedingSnapshot: ProviderAccountUsageSnapshotV1 | undefined;
         for (let index = priorDaily.summaries.length - 1; index >= 0; index -= 1) {
             const day = priorDaily.summaries[index];
-            if (day && day.dayStartAtMs < changedDate.startAtMs) {
+            if (day && day.dayStartAtMs < summaryDate.startAtMs) {
                 precedingSnapshot = day.lastSnapshot;
                 break;
             }
         }
         if (!deltaEntries.length) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
         // The stored day did not change. Fold the newly admitted exact suffix over its retained facts for this view.
-        return { missingDays: [], coverage: new Map<number, DayHistoryEvidence>(), summaries: [buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: changedDate.startAtMs,
+        return { missingDays: [], coverage: new Map<number, DayHistoryEvidence>(), summaries: [buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: summaryDate.startAtMs,
             previous, precedingSnapshot, snapshots: deltaEntries.map(entry => entry.snapshot) })] };
     })() : requestProviderAccountUsageDaySummaries(credentials, { recordId,
         // Clock evidence covers all admitted days, independently of the display range.
-        includeCoverage: true, ...(daily ? changedDate ? { range: changedDate } : {} : { range: displayDemand.range }) }, options))
+        includeCoverage: true, ...(summaryDate ? { range: summaryDate } : daily ? {} : { range: displayDemand.range }) }, options))
         .then(value => {
             if (!active) return;
-            if (daily && !value) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+            if ((daily || summaryDate) && !value) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
             daySummaries = value?.summaries ?? [];
             missingDays = daily ? value?.missingDays : undefined;
             if (value?.coverage) {
-                const coverage = new Map(changedDate ? priorDaily?.coverage : undefined);
-                if (changedDate) coverage.delete(changedDate.startAtMs);
+                const coverage = new Map(summaryDate ? (daily ? priorDaily?.coverage : scopedExact?.coverage) : undefined);
+                if (summaryDate) coverage.delete(summaryDate.startAtMs);
                 for (const [dayStartAtMs, day] of value.coverage) coverage.set(dayStartAtMs, day);
                 // The accepted suffix stands in until the producer publishes the settled day proof.
                 const suffixSummary = daySummaries[0];
@@ -438,10 +453,12 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                 }
                 dayCoverage = coverage;
             }
-            if (changedDate && priorDaily) {
-                daySummaries = [...priorDaily.summaries.filter(day => day.dayStartAtMs !== changedDate.startAtMs), ...daySummaries]
+            if (summaryDate && dayCoverage) {
+                daySummaries = [...dayCoverage.values()].flatMap(day => day.summary ? [day.summary] : [])
                     .sort((left, right) => left.dayStartAtMs - right.dayStartAtMs);
-                missingDays = [...priorDaily.missingDays.filter(day => day.dayStartAtMs !== changedDate.startAtMs), ...(missingDays ?? [])];
+                if (daily && priorDaily) missingDays = [
+                    ...priorDaily.missingDays.filter(day => day.dayStartAtMs !== summaryDate.startAtMs), ...(missingDays ?? []),
+                ];
             }
             if (daily) recentHistorySelection = resolveProviderAccountUsageRecentHistoryRangesV1({ current,
                 daySummaries, missingDays, nowMs: readNowMs });
@@ -528,6 +545,39 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             // result with newer coverage on the next admission.
             await summaries;
             const readExact = async () => {
+                if (scopedExact && priorExact && change && changedDate && dayCoverage) {
+                    const previous = scopedExact.coverage.get(change.dayStartAtMs);
+                    const next = dayCoverage.get(change.dayStartAtMs);
+                    const seenThrough = scopedExact.throughCursor ?? -1;
+                    const priorPublication = change.publication;
+                    const coveredRightEdge = demand.range.endAtMs <= scopedExact.range.endAtMs
+                        || (next?.coverage?.frontier?.observedAtMs ?? Infinity) < scopedExact.range.endAtMs;
+                    const settledSummary = priorPublication?.kind === 'summary' && seenThrough >= priorPublication.afterCursor
+                        && coveredRightEdge && sameDayHistoryEvidence(previous, next);
+                    const acceptedFrom = change.history && seenThrough >= change.history.afterCursor
+                        ? Math.min(change.history.fromAtMs, scopedExact.range.endAtMs) : changedDate.startAtMs;
+                    const range = { startAtMs: Math.max(changedDate.startAtMs, acceptedFrom, demand.range.startAtMs),
+                        endAtMs: Math.min(changedDate.endAtMs, demand.range.endAtMs) };
+                    const replace = !settledSummary && range.startAtMs < range.endAtMs;
+                    const entries = scopedExact.history.entries.filter(entry => entry.observedAtMs >= demand.range.startAtMs
+                        && entry.observedAtMs < demand.range.endAtMs
+                        && (!replace || entry.observedAtMs < range.startAtMs || entry.observedAtMs >= range.endAtMs));
+                    if (replace) {
+                        for (const entry of await readDailyRange(range)) entries.push(entry);
+                        entries.sort((left, right) => left.observedAtMs - right.observedAtMs || left.id.localeCompare(right.id));
+                    }
+                    if (!active) return;
+                    assertCurrent();
+                    admitted = priorExact;
+                    history = !replace && entries.length === scopedExact.history.entries.length
+                        ? scopedExact.history : { entries, nextCursor: null };
+                    // Update the local admission without changing the server's
+                    // protected projection, ETag or accepted frontier.
+                    if ((admitted.settled?.throughCursor ?? -1) <= change.throughCursor) {
+                        admitted.settled = { range: demand.range, throughCursor, coverage: dayCoverage, history };
+                    }
+                    return;
+                }
                 // A concurrent backfill or accepted tail can invalidate publication.
                 // Reopen canonical coverage before deriving another write.
                 while (active) {
@@ -572,7 +622,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                             materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened };
                         held.admitted = admitted;
                     }
-                    let entries = opened?.history.entries ?? [];
+                    let entries = reuse ? settled.history.entries : opened?.history.entries ?? [];
                     if (!read.complete) {
                         const range = { startAtMs: opened?.range.startAtMs ?? demand.range.startAtMs,
                             endAtMs: Math.max(opened?.range.endAtMs ?? 0, demand.range.endAtMs, raw.published?.demand.range.endAtMs ?? 0) };
@@ -647,12 +697,12 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     await summaries;
                     if (!active) return;
                     assertCurrent();
-                    if (admitted && !reuse && dayCoverage) admitted.settled = { range: demand.range, coverage: dayCoverage };
                     const view = admitted?.view;
                     const selected = entries.filter(entry => entry.observedAtMs >= demand.range.startAtMs && entry.observedAtMs < demand.range.endAtMs);
                     history = view && selected.length === view.history.entries.length
                         && selected.every((entry, index) => entry === view.history.entries[index])
                         ? view.history : { entries: selected, nextCursor: null };
+                    if (admitted && !reuse && dayCoverage) admitted.settled = { range: demand.range, throughCursor, coverage: dayCoverage, history };
                     pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record)
                         && sameStrictJsonValue(daySummaries ?? null, view.daySummaries ?? null) ? view.value.pageFacts : undefined;
                     return;

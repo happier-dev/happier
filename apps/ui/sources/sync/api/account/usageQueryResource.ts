@@ -630,7 +630,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
                 await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
                 publishProgress(index, undefined, true);
             } catch (error) { failSource(index, error); }
-        })), { includePendingWork: !!range, changesCursor, ...(daily ? { historyView: 'daily', exactHistoryRange, dayChange } : {}), readAllHistory: {
+        })), { includePendingWork: !!range, changesCursor, dayChange, ...(daily ? { historyView: 'daily', exactHistoryRange } : {}), readAllHistory: {
             views,
             onProgress: (value, projectedViews) => publishProgress(indexForSource(value.source), projectedViews),
             onViewFailure: (source, queryKeys, error) => failSource(indexForSource(source), error, queryKeys),
@@ -2008,13 +2008,16 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs?: number }>();
     let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
     const replaceAccounting = () => {
+        admittedAccounting = undefined;
+        accountingInputs.clear();
+        accountingReads.invalidate();
+    };
+    const replaceAccountInputs = () => {
         resourceInputs = {};
         sessionEvidenceInputs = resourceInputs;
         retainedCurrentness.dispose();
         retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
-        admittedAccounting = undefined;
-        accountingInputs.clear();
-        accountingReads.invalidate();
+        replaceAccounting();
     };
     // The quota derivation owner supplies the interval where unchanged facts
     // have unchanged time-derived meaning. Calculate it only when a Resource
@@ -2102,7 +2105,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // without scheduling a second read of those same admitted inputs.
     const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
         unwatchState?.reconcile();
-        if (!retainedCurrentness.isCurrent()) replaceAccounting();
+        if (!retainedCurrentness.isCurrent()) replaceAccountInputs();
         // Watching can name the first input before the initial cursor is ready.
         // Only an admitted read anchors its window. Established windows still
         // advance at the local-day boundary even while closed.
@@ -2275,7 +2278,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const readDemand = [...listeners.values()].filter(watched => resourceKey(watched.reference) === resourceKey(reference))
                     .map(watched => watched.takeReadDemand());
                 try {
-                if (readDemand.some(demand => demand.authorityChanged)) replaceAccounting();
+                if (readDemand.some(demand => demand.authorityChanged)) replaceAccountInputs();
                 const retained = readUsageAdmission(reference, queries);
                 const { readInputs, nowMs, admission, quotaClockCurrent } = retained;
                 if (retained.reusable && retained.content && (readDemand.length === 0 || readDemand.every(demand => demand.unchanged))) return retained.content;
@@ -2567,7 +2570,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 };
                 const observe = (event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]) => {
                     const accountModeChanged = takeAccountModeChange();
-                    if (accountModeChanged) replaceAccounting();
+                    if (accountModeChanged) replaceAccountInputs();
                     if (!accountModeChanged && typeof change === 'object' && change.source === 'connected'
                         && change.changesCatchUp === true && !readNeedsRecovery(reference)) return;
                     if (!accountModeChanged && typeof change === 'object' && isUsagePresentationHomeAccountChange(change)) return;
@@ -2578,17 +2581,18 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         || typeof change === 'object' && isUsageQuotaHomeAccountChange(change))) return;
                     const accountingChange = typeof change === 'object' && change.usageAccountingChange
                         ? readUsageAccountingChangeScope(change) : undefined;
-                    if (!accountModeChanged && accountingChange && !usageAccountingChangeAffectsQueries(queries, accountingChange)) return;
+                    const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs'
+                        || change === 'quota-pool-inputs' || change === 'material-inputs'
+                        || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds()));
+                    if (!accountModeChanged && !allowanceChanged
+                        && accountingChange && !usageAccountingChangeAffectsQueries(queries, accountingChange)) return;
                     // Session/accounting evidence does not change Capacity.
                     // Material Profile/Settings/Machine inputs still invalidate
                     // through their existing state subscription below.
                     if (!accountModeChanged && (allowanceOnlyQuery || quotaSourceKey !== undefined) && (change === 'session-evidence'
-                        || typeof change === 'object' && (!readsAllowance || !isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds())))) return;
+                        || typeof change === 'object' && !allowanceChanged)) return;
                     // Keep acquisition demand with the existing watch record until
                     // its next read. Only this input's own changes demand quota.
-                    const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs'
-                        || change === 'quota-pool-inputs' || change === 'material-inputs'
-                        || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds()));
                     if (allowanceChanged) {
                         const changedIds = accountModeChanged ? undefined : quotaRecordIds
                             ?? (typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined);
@@ -2603,7 +2607,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     projectionOnly = projectionOnly !== false && !accountModeChanged
                         && (change === 'projection-inputs' || change === 'quota-projection-inputs');
                     allowanceOnlyDemand = allowanceOnlyDemand !== false && !accountModeChanged
-                        && (change === 'quota-inputs' || typeof change === 'object' && isUsageQuotaHomeAccountChange(change));
+                        && (change === 'quota-inputs' || typeof change === 'object'
+                            && (isUsageQuotaHomeAccountChange(change) || allowanceOnlyQuery && allowanceChanged));
                     woken = true;
                     const accountingWake = typeof change === 'object'
                         && change.source !== 'connected' && change.source !== 'snapshot'
@@ -2719,7 +2724,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 owner.retrySessionInputFailures(new Set(queries.map(getUsageQueryKey)));
             }
             // An explicit refresh asks the server again at a new instant.
-            replaceAccounting();
+            replaceAccountInputs();
             const key = resourceKey(reference);
             for (const watched of listeners.values()) {
                 if (resourceKey(watched.reference) === key) watched.requestAllowanceRead();
@@ -2767,17 +2772,22 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             if (!lifetime.isCurrent()) return;
             // A replacement demanded by this wake must not join pre-wake accounting.
             // Existing borrowers retain their own publication and Account fences.
-            // Session, quota-input and projection wakes change no server answer.
-            const quotaChange = typeof homeChange === 'object' && (isUsageQuotaHomeAccountChange(homeChange)
-                || homeChange.usageAccountingAffects === false && isUsageProjectionHomeAccountChange(homeChange, true));
+            // A consumed page can carry separate accounting and quota changes.
+            const quotaChange = typeof homeChange === 'object' && isUsageProjectionHomeAccountChange(homeChange, true);
             if (typeof homeChange === 'object' && homeChange.source === 'connected' && homeChange.changesCatchUp === true) {
                 // Catch-up owns changed facts. Recover interrupted transports
                 // without discarding this Account's settled accounting answers.
                 accountingReads.invalidate();
-            } else if (homeChange === undefined || typeof homeChange === 'object' && !quotaChange && !isUsagePresentationHomeAccountChange(homeChange)) {
-                const change = typeof homeChange === 'object' ? readUsageAccountingChangeScope(homeChange) : undefined;
-                if (!change) replaceAccounting();
-                else {
+            } else if (homeChange === undefined || typeof homeChange === 'object' && homeChange.source === 'snapshot') {
+                replaceAccountInputs();
+            } else if (typeof homeChange === 'object' && !isUsagePresentationHomeAccountChange(homeChange)
+                && (homeChange.usageAccountingChange !== undefined
+                    || homeChange.usageAccountingAffects !== false && !isUsageQuotaHomeAccountChange(homeChange))) {
+                const change = readUsageAccountingChangeScope(homeChange);
+                if (!change) {
+                    if (homeChange.feedPageConsumed === true || homeChange.usageAccountingChange) replaceAccounting();
+                    else replaceAccountInputs();
+                } else {
                     // Relevance belongs to the Account admission, including
                     // closed references and slices entering a different batch.
                     const changedRequests = new Set<string>();
@@ -2807,7 +2817,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     }
                     accountingReads.invalidate(affected);
                 }
-            } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
+            }
+            if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
             else if (quotaChange || typeof homeChange === 'string') replaceResourceInputs(homeChange === 'projection-inputs' ? [] : homeChange === 'quota-inputs' ? quotaRecordIds
                 : typeof homeChange === 'object' ? readUsageQuotaChangedRecordIds(homeChange) : undefined);
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange, quotaRecordIds);
@@ -2863,6 +2874,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             // Reconnects and Sessions absent from that owner still need fresh
             // admission when the wake cannot name the changed Session.
             const privateInputsChanged = sessionInputs.invalidateForHomeChange(event);
+            if (privateInputsChanged && (event.changeKinds?.includes('session') || event.sessionSystemRecords?.length)) {
+                sessionEvidenceInputs = {};
+            }
             syncQualifiedSubscriptions();
             const accountingUnchanged = event.usageAccountingAffects === false
                 && event.source !== 'snapshot' && !event.usageAccountingChange;

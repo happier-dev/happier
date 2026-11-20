@@ -14,6 +14,7 @@ import { resolveProviderAccountUsageRecentHistoryRangesV1 } from '@happier-dev/p
 import type { QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistorySchemasV1';
 import { QualifiedConnectedServiceUsageSourceResolutionV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageEventIngestRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -26,9 +27,10 @@ import { featuresRoutes } from '../../../server/sources/app/api/routes/features/
 import { sessionPendingRoutes } from '../../../server/sources/app/api/routes/session/pendingRoutes';
 import { registerSessionListingRoutes } from '../../../server/sources/app/api/routes/session/registerSessionListingRoutes';
 import { registerSessionOrganizationRoutes } from '../../../server/sources/app/api/routes/session/registerSessionOrganizationRoutes';
+import { registerSessionReadBatchRoute } from '../../../server/sources/app/api/routes/session/registerSessionReadBatchRoute';
 import { kvRoutes } from '../../../server/sources/app/api/routes/kv/kvRoutes';
 import { machinesRoutes } from '../../../server/sources/app/api/routes/machines/machinesRoutes';
-import { markAccountProjectionChanges } from '../../../server/sources/app/changes/markAccountChanged';
+import { markAccountProjectionChanges, markSessionAccountsChanged } from '../../../server/sources/app/changes/markAccountChanged';
 import { createAuthenticatedTestApp } from '../../../server/sources/app/api/testkit/sqliteFastify';
 import { enableMonitoring } from '../../../server/sources/app/api/utils/enableMonitoring';
 import { db } from '../../../server/sources/storage/db';
@@ -240,7 +242,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const began = new WeakMap<object, number>();
         app.addHook('onRequest', async request => {
             began.set(request, performance.now());
-            if (request.url.startsWith('/v2/changes?')) {
+            if (request.url === '/v2/changes' || request.url.startsWith('/v2/changes?')) {
                 onChangesRequest?.();
                 await heldChangesRead;
             }
@@ -321,6 +323,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         sessionPendingRoutes(app);
         registerSessionListingRoutes(app);
         registerSessionOrganizationRoutes(app);
+        registerSessionReadBatchRoute(app);
         changesRoutes(app);
         featuresRoutes(app);
         kvRoutes(app);
@@ -354,9 +357,27 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
         onTestFinished(() => { clock.mockRestore(); webStorage.restore(); locks.restore(); });
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        const accountingSession = await db.session.create({ data: { accountId: account.id, tag: 'quota-rig-accounting',
+            encryptionMode: 'plain', metadata: '{}' }, select: { id: true } });
         const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
         const credentials = { token };
         const { request, send } = makeRigHttp(origin, token);
+        const ingestAccounting = async (externalKey: string) => {
+            const response = await request('/v2/usage-events', {
+                method: 'POST',
+                body: UsageEventIngestRequestSchema.parse({ sessionId: accountingSession.id,
+                    observedAt: now, agentId: 'codex', modelId: 'rig-model-0', source: 'codex_app_server',
+                    scope: 'turn_delta', isCumulative: false, externalKey,
+                    tokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 },
+                    cost: { reportedUsd: null, estimatedUsd: 0.05, currency: 'USD', costSource: 'pricing_estimate' },
+                }),
+            });
+            expect(response.status).toBe(200);
+            await response.json();
+            // The HTTP ingest owns ledger rows. The Session publisher supplies
+            // their durable accounting wake, just as it does on a real turn.
+            await inTx(tx => markSessionAccountsChanged(tx, new Map([[accountingSession.id, [account.id]]])));
+        };
         const initial = performance.now();
         const records = [];
         for (const provider of PROVIDERS) {
@@ -413,11 +434,12 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const resets = resolveUsageWidgetQuery(year, {}, 'usage_resets', false)!.query;
         const planFit = resolveUsageWidgetQuery(year, {}, 'usage_plan_fit', false)!.query;
         const subscriptions: Array<() => void> = [];
-        const quotaChanges: Array<{ source: HomeAccountChangeEvent['source']; recordIds?: readonly string[]; day?: number; through?: number }> = [];
+        const quotaChanges: Array<{ source: HomeAccountChangeEvent['source']; recordIds?: readonly string[]; day?: number;
+            through?: number; accounting?: boolean }> = [];
         const observeChanges = subscribeHomeAccountChange(event => {
             if (event.usageQueryAffects !== false) quotaChanges.push({ source: event.source,
                 recordIds: event.providerAccountUsageRecordIds, day: event.providerAccountUsageDayChange?.dayStartAtMs,
-                through: event.providerAccountUsageDayChange?.throughCursor });
+                through: event.providerAccountUsageDayChange?.throughCursor, accounting: event.usageAccountingAffects });
         }, { serverIds: [serverId], reconnect: 'refresh' });
         const mount = (queries: readonly typeof capacity[]) => {
             const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries }) });
@@ -554,8 +576,10 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                         } : undefined;
                     };
                     const expected = { current: 30 + tick, day: 30 + tick };
-                    const result = tick === 1 ? await (async () => {
+                    const result = tick <= 2 ? await (async () => {
                         const allowSummaryWrite = createDeferred<void>();
+                        const allowChanges = createDeferred<void>();
+                        if (tick === 2) heldChangesRead = allowChanges.promise;
                         let summaryStarted = false;
                         beforeSummaryWrite = () => {
                             summaryStarted = true;
@@ -565,10 +589,20 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                         let completed: Awaited<typeof running>;
                         try {
                             await expect.poll(() => summaryStarted, { timeout: 20_000 }).toBe(true);
+                            if (tick === 2) {
+                                await ingestAccounting('mixed-quota-wake');
+                                now += 1;
+                                heldChangesRead = undefined;
+                                allowChanges.resolve();
+                                await expect.poll(() => quotaChanges.slice(changesBeforeWake).some(change => change.accounting === true
+                                    && change.day === today && change.recordIds?.length === 1 && change.recordIds[0] === changed.write.recordId)).toBe(true);
+                            }
                             await expect.poll(seen, { timeout: 60_000 }).toEqual(expected);
                             expect(traffic.slice(begin).filter(row => row.method === 'GET' && row.kind === 'summary'
                                 && row.purpose !== 'connected-accounts:usage-persistence')).toEqual([]);
                         } finally {
+                            heldChangesRead = undefined;
+                            allowChanges.resolve();
                             beforeSummaryWrite = undefined;
                             allowSummaryWrite.resolve();
                             completed = await running;
@@ -608,7 +642,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                         : Math.max(row.afterAtMs ?? 0, row.range?.startAtMs ?? 0) < previousAtMs);
                     const reads = (rows: readonly Traffic[]) => rows.map(({ recordId, kind, bytes, range, afterAtMs }) =>
                         ({ recordId, kind, bytes, range, afterAtMs }));
-                    console.info('quota-rig settled history', JSON.stringify({ tick, reads: reads(settledReads) }));
+                    console.info('quota-rig settled history', JSON.stringify({ tick, traffic: summarizeTraffic(clientHistoryReads),
+                        siblings: reads(siblingReads), settled: reads(settledReads) }));
                     expect({ siblings: reads(siblingReads), settled: reads(settledReads) }).toEqual({ siblings: [], settled: [] });
                     expect({
                         currentDayBodies: clientHistoryReads.filter(row => row.kind === 'summary' && row.days?.some(day => day.dayStartAtMs === today)).length,
@@ -623,6 +658,15 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     }
                 });
             }
+            await cell('Accounting-only wake and idle quota traffic', async () => {
+                const begin = traffic.length;
+                const changesBeforeWake = quotaChanges.length;
+                await ingestAccounting('accounting-only-wake');
+                await expect.poll(() => quotaChanges.slice(changesBeforeWake).some(change => change.accounting === true
+                    && change.recordIds === undefined)).toBe(true);
+                expect(plansEntry?.isAllowanceReadPending()).toBe(false);
+                expect(summarizeTraffic(traffic.slice(begin).filter(row => row.path.startsWith('/v4/connect/qualified/provider-account-usage'))).httpReads).toBe(0);
+            });
             await cell('Daemon repairs missing summaries', async () => {
                 if (!plansEntry) throw new Error('Plans entry is missing');
                 const recordsWithoutSummaries = records.filter(record => 'missingSummary' in record.provider);
@@ -713,6 +757,56 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 const slice = await read(second, weekProjections);
                 expect(slice.quota?.some(row => row.pageFacts?.historyStatus === 'complete')).toBe(true);
                 expect(countSettledQuotaReads(traffic.slice(mark))).toEqual(noSettledReads);
+            });
+            await cell('Seven-day mixed accounting and named quota wake', async () => {
+                subscriptions.splice(0).reverse().forEach(dispose => dispose());
+                const entry = mount([weekProjections, weekCapacity]);
+                await read(entry, weekProjections);
+                const { sync } = await import('../sync/sync');
+                const before = CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json()).cursor;
+                await expect.poll(() => sync.readAppliedAccountChangesCursor(serverId, account.id)).toBe(before);
+                const begin = traffic.length;
+                const changesBeforeWake = quotaChanges.length;
+                const changed = records.find(({ provider }) => provider.id === 'muse')!;
+                now += 1_000;
+                const acceptedAt = now;
+                const current = quotaSnapshot(changed.provider, acceptedAt, lastReset, 42);
+                const allowChanges = createDeferred<void>();
+                heldChangesRead = allowChanges.promise;
+                try {
+                    await ingestAccounting('seven-day-mixed-wake');
+                    await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token,
+                        write: { ...changed.write, snapshot: current, fetchedAt: acceptedAt }, nowMs: acceptedAt }));
+                    now += 1;
+                } finally {
+                    heldChangesRead = undefined;
+                    allowChanges.resolve();
+                }
+                await expect.poll(() => quotaChanges.slice(changesBeforeWake).some(change => change.accounting === true
+                    && change.day === today && change.recordIds?.length === 1 && change.recordIds[0] === changed.write.recordId)).toBe(true);
+                await expect.poll(() => {
+                    const snapshot = entry.getSnapshot();
+                    if (snapshot.pending !== 'idle' || !snapshot.value) return undefined;
+                    return decodeUsageQueryResource(snapshot.value).results.find(row => row.key === getUsageQueryKey(weekProjections))
+                        ?.quota?.find(row => row.current?.recordId === changed.write.recordId)?.current?.meters[0]?.used;
+                }, { timeout: 60_000 }).toBe(42);
+                const clientReads = traffic.slice(begin).filter(row => row.path.startsWith('/v4/connect/qualified/provider-account-usage')
+                    && row.method === 'GET' && row.purpose !== 'connected-accounts:usage-persistence');
+                const namedReads = summarizeTraffic(clientReads.filter(row => row.recordId === changed.write.recordId));
+                const otherHistory = clientReads.filter(row => row.recordId !== changed.write.recordId && row.kind !== 'other');
+                const precedingHistory = clientReads.filter(row => row.kind === 'summary' ? row.days?.some(day => day.dayStartAtMs < today)
+                    : // The retained range can end just before the newly accepted sample. Reopen that
+                    // gap inside the named day to cover any accepted rows in between.
+                    row.kind === 'exact' && Math.max(row.afterAtMs ?? 0, row.range?.startAtMs ?? 0) < today);
+                // At retained-history scale the mixed wake went from 5 GETs / 35,695 decoded bytes
+                // to 4 GETs / 4,485 bytes. Scope and admitted observations set the assertions below.
+                console.info('quota-rig mixed seven-day traffic', JSON.stringify({ namedReads,
+                    unnamed: summarizeTraffic(otherHistory), preceding: summarizeTraffic(precedingHistory) }));
+                expect({ projection: namedReads.projection, unnamedReads: otherHistory.length, precedingReads: precedingHistory.length }).toEqual({
+                    projection: { requests: 0, bodies: 0, bytes: 0 }, unnamedReads: 0, precedingReads: 0,
+                });
+                expect(namedReads.exact.requests).toBe(1);
+                expect(namedReads.exact.observations).toBe(1);
             });
         } finally {
             observeChanges();
