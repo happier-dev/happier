@@ -15,52 +15,15 @@
  * and two spellings of one timestamp must not compare equal.
  */
 
-import { normalizeTriageSingleLineV1 } from '@happier-dev/triage-protocol/v1';
 import type { GitlabIssueStateRowV1 } from './contracts.js';
 import type { GitlabMutationSubjectV1 } from './preflight.js';
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
-}
-
-function readLabel(value: unknown): string | null {
-  const text = readNonEmptyString(value);
-  if (text === null) return null;
-  const normalized = normalizeTriageSingleLineV1(text);
-  return normalized === '' ? null : normalized;
-}
-
-function readTimestampMs(value: unknown): number | null {
-  const text = readNonEmptyString(value);
-  if (text === null) return null;
-  const parsed = Date.parse(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
+import { readLabel, readNonEmptyString, readRecord, readTimestampMs, readUsernameList } from './rowValues.js';
 
 function readStringList(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const values: string[] = [];
   for (const member of value) {
     const item = readLabel(member);
-    if (item === null) return undefined;
-    if (!values.includes(item)) values.push(item);
-  }
-  return Object.freeze(values);
-}
-
-function readUsernameList(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const values: string[] = [];
-  for (const member of value) {
-    const item = readLabel(readRecord(member)?.username);
     if (item === null) return undefined;
     if (!values.includes(item)) values.push(item);
   }

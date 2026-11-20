@@ -13,47 +13,10 @@
  * from one confirming read.
  */
 
-import { normalizeTriageSingleLineV1 } from '@happier-dev/triage-protocol/v1';
 import { readGitlabMergeRequestHeadSha } from '../mapping/mergeRequestHead.js';
 import type { GitlabMergeRequestStateRowV1 } from './contracts.js';
 import type { GitlabMutationSubjectV1 } from './preflight.js';
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
-}
-
-function readLabel(value: unknown): string | null {
-  const text = readNonEmptyString(value);
-  if (text === null) return null;
-  const normalized = normalizeTriageSingleLineV1(text);
-  return normalized === '' ? null : normalized;
-}
-
-function readTimestampMs(value: unknown): number | null {
-  const text = readNonEmptyString(value);
-  if (text === null) return null;
-  const parsed = Date.parse(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function readUsernameList(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const usernames: string[] = [];
-  for (const member of value) {
-    const username = readLabel(readRecord(member)?.username);
-    if (username === null) return undefined;
-    if (!usernames.includes(username)) usernames.push(username);
-  }
-  return Object.freeze(usernames);
-}
+import { readLabel, readNonEmptyString, readRecord, readTimestampMs, readUsernameList } from './rowValues.js';
 
 /**
  * GitLab has spelled scheduled auto-merge more than one way across its own
