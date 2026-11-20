@@ -14,6 +14,8 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSourceEvent } from './sessionIntentionalRestartSignal';
@@ -325,10 +327,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (...args: unknown[]) => useFeatureEnabledMock(...args),
 }));
 
-vi.mock('@/sync/ops/connectedServices/sessionAuthSwitch', () => ({
-    setSessionConnectedServiceAuthBinding: (...args: unknown[]) => setSessionConnectedServiceAuthBindingMock(...args),
-}));
-
 // Leaf import, not the barrel — see the factory-deadlock note above.
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -589,15 +587,20 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
     it.each(['provider_session_state_unavailable_for_resume', 'continuity_unsupported'] as const)('opens a fresh editable session under the selected account without retrying %s', async (errorCode) => {
         let sourceSession: ReturnType<typeof createSessionFixture> | undefined;
+        seedCodexProfile();
+        const profile = AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current });
+        const features = createRootLayoutFeaturesResponse();
         const connection = await restoreServerAccountForTest({ serverUrl: 'http://auth-switch-fresh.example.test', accountId: 'account-a',
-            request: async url => {
+            request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+                if (path === '/v1/account/profile') return Response.json(profile);
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
                 if (sourceSession && path === `/v2/sessions/${sourceSession.id}`) return Response.json(createPlainSessionByIdResponseFixture(sourceSession));
-                return null;
+                return createEmptyAccountBootstrapHttpResponse(path, init);
             } });
-        seedCodexProfile();
         const previousBinding = errorCode === 'continuity_unsupported'
             ? { source: 'connected', selection: 'profile', profileId: 'happier' } as const
             : { source: 'native' } as const;
@@ -605,11 +608,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             ? { source: 'native' } as const
             : { source: 'connected', selection: 'profile', profileId: 'happier' } as const;
         storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'account-a' },
-            profile: AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current }) });
+            profile });
         const session = createSessionFixture({ id: 'fresh-source', serverId: connection.home.id, metadata: {
             path: '/workspace/checkout-service', host: 'test', machineId: 'machine-1',
             flavor: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             connectedServices: { v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: previousBinding } },
         } });
         sourceSession = session;
@@ -639,7 +642,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             const startFresh = buttons.find(button => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress;
             expect(startFresh).toBeTypeOf('function');
             await act(async () => {
-                startFresh?.();
+                await startFresh?.();
                 await vi.waitFor(() => expect(routerPushMock).toHaveBeenCalled());
             });
             expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(1);
