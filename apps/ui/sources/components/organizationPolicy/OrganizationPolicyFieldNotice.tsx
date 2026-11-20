@@ -47,7 +47,7 @@ export function readOrganizationPolicyFieldState(
  * itself and leave out choices that cannot succeed, so this line never sits next to a dead control.
  */
 export function OrganizationPolicyManagedLine(
-  props: Readonly<{ lock: OrganizationPolicyLock; testID?: string }>,
+  props: Readonly<{ lock: OrganizationPolicyLock; testID?: string; interactive?: boolean }>,
 ) {
   const label = t('organizationPolicy.managedBy', {
     organization: props.lock.organization,
@@ -72,6 +72,7 @@ export function OrganizationPolicyManagedLine(
           <SupportLink
             url={props.lock.supportUrl}
             testID={props.testID ? `${props.testID}-support` : undefined}
+            interactive={props.interactive}
           />
         </>
       ) : null}
@@ -132,7 +133,7 @@ export function OrganizationPolicyManagedState(props: Readonly<{
     );
 }
 
-function SupportLink(props: Readonly<{ url: string; label?: string; testID?: string }>) {
+function SupportLink(props: Readonly<{ url: string; label?: string; testID?: string; interactive?: boolean }>) {
   const [, open] = useOpenExternalUrl(props.url);
   const label = props.label ?? t('organizationPolicy.support');
   return (
@@ -140,7 +141,8 @@ function SupportLink(props: Readonly<{ url: string; label?: string; testID?: str
       testID={props.testID}
       accessibilityRole="link"
       accessibilityLabel={label}
-      onPress={open}
+      disabled={props.interactive === false}
+      onPress={props.interactive === false ? undefined : open}
     >
       <Text style={styles.support}>{label}</Text>
     </HappierPressable>
@@ -156,6 +158,10 @@ const ORGANIZATION_POLICY_GUIDE_URL = 'https://docs.happier.dev/self-hosting/org
  */
 export function OrganizationPolicyInvalidNextStep() {
   if (readOrganizationPolicy().status !== 'invalid') return null;
+  return <OrganizationPolicyInvalidHelp />;
+}
+
+export function OrganizationPolicyInvalidHelp({ interactive }: Readonly<{ interactive?: boolean }>) {
   return (
     <View testID="organization-policy-invalid-next-step" style={styles.line}>
       <Text style={styles.label}>{t('organizationPolicy.invalidNextStep')}</Text>
@@ -166,6 +172,7 @@ export function OrganizationPolicyInvalidNextStep() {
         url={ORGANIZATION_POLICY_GUIDE_URL}
         label={t('organizationPolicy.guide')}
         testID="organization-policy-invalid-next-step-guide"
+        interactive={interactive}
       />
     </View>
   );

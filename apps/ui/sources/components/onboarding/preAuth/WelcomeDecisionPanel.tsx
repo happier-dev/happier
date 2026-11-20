@@ -13,7 +13,8 @@ import { presentUseServiceAsHomeSheet } from '@/components/homes/journeys/servic
 import { resolveReverseQrTargetProfileId } from '@/components/onboarding/restore/loginWays';
 import { usePublishFirstOpenWelcomeModel } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
-import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { getOrganizationPolicyFieldLock, readOrganizationPolicy } from '@/sync/domains/organizationPolicy/organizationPolicy';
 import { useReturningGreeting } from './useReturningGreeting';
 import type { WelcomeActionAdmission } from './WelcomeActionList';
 import { WelcomeEntryView } from './WelcomeEntryView';
@@ -176,6 +177,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         lastSignInMethodId,
     });
     const returningGreeting = useReturningGreeting({ besideLogin: model.hasLoginDoor });
+    const policyField = homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome';
+    const policyLock = homePolicy.lock ?? servicePolicy.lock ?? getOrganizationPolicyFieldLock('personalHome');
     const viewModel = projectWelcomeEntryViewModel(model, {
         options,
         showGreeting: !props.restoreWays && props.showGreeting !== false,
@@ -184,6 +187,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         hasHome,
         serviceName,
         canRetryService: accountServiceEntry != null,
+        policy: props.restoreWays ? undefined : policyLock ? { kind: 'managed', field: policyField, lock: policyLock }
+            : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
     });
     usePublishFirstOpenWelcomeModel(props.restoreWays ? null : viewModel);
 
@@ -222,10 +227,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         onRetry,
         onSelfHosting: props.onChangeRelay,
         waysLeading: props.waysLeading,
-        retention: props.restoreWays ? null : options.retentionDisclosure,
-        policyNotice: props.restoreWays ? undefined : <>
-            <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
-            <OrganizationPolicyInvalidNextStep />
-        </>,
+        onRetryRetention: options.retentionDisclosure?.kind === 'unreadable' ? options.retentionDisclosure.retry : undefined,
     }} />;
 });

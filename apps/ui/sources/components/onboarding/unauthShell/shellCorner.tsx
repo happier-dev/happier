@@ -3,13 +3,10 @@ import * as React from 'react';
 export type ShellCornerDoor = Readonly<{
   testID: string;
   label: string;
-  onPress: () => void;
+  onPress?: () => void;
 }>;
 
-type ShellCornerSlot = (
-  door: Readonly<{ testID: string; label: string }> | null,
-  onPress: () => void,
-) => void;
+type ShellCornerSlot = (door: ShellCornerDoor | null) => void;
 
 /** The page's top-right corner on a computer, provided by `WorkflowPanel`; absent on a phone. */
 export const ShellCornerContext = React.createContext<ShellCornerSlot | null>(
@@ -30,10 +27,11 @@ export function useShellCornerDoor(door: ShellCornerDoor | null): boolean {
   onPress.current = door?.onPress;
   const testID = door?.testID ?? null;
   const label = door?.label ?? null;
+  const interactive = door?.onPress !== undefined;
   useIsomorphicLayoutEffect(() => {
     if (!slot || testID === null || label === null) return undefined;
-    slot({ testID, label }, () => onPress.current?.());
-    return () => slot(null, () => {});
-  }, [slot, testID, label]);
+    slot({ testID, label, onPress: interactive ? () => onPress.current?.() : undefined });
+    return () => slot(null);
+  }, [interactive, slot, testID, label]);
   return slot !== null && door !== null;
 }

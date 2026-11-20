@@ -15,7 +15,7 @@ import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { StepBackContext, useStepBackSlot } from './stepBack';
-import { ShellCornerContext } from './shellCorner';
+import { ShellCornerContext, type ShellCornerDoor } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 // Mobile welcome wordmark sits at the same coordinates as the brand hero's
@@ -114,10 +114,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     });
     const cornerBack = isMobile || !inRow;
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
-    const [cornerDoor, setCornerDoor] = React.useState<Readonly<{ testID: string; label: string; onPress: () => void }> | null>(null);
-    const cornerSlot = React.useMemo(() => isMobile ? null : (
-        door: Readonly<{ testID: string; label: string }> | null, onPress: () => void,
-    ) => setCornerDoor(door ? { ...door, onPress } : null), [isMobile]);
+    const [cornerDoor, setCornerDoor] = React.useState<ShellCornerDoor | null>(null);
+    const cornerSlot = isMobile ? null : setCornerDoor;
     const cardDimensions = useModalCardDimensions({ size: 'md', width: WORKFLOW_CARD_WIDTH_HINT });
     const layoutMaxWidth = useLayoutMaxWidth();
     // The pane is capped at exactly the wizard card width (~500px) including
@@ -220,7 +218,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             {cornerDoor ? (
                 <View testID="unauth-shell-corner" style={styles.cornerDoor} pointerEvents="box-none">
                     <WelcomeActionCard testID={cornerDoor.testID} title={cornerDoor.label} presentation="pill"
-                        iconName="hard-drives" onPress={cornerDoor.onPress} />
+                        iconName="hard-drives" disabled={!cornerDoor.onPress} onPress={() => cornerDoor.onPress?.()} />
                 </View>
             ) : null}
             <ShellCornerContext.Provider value={cornerSlot}>

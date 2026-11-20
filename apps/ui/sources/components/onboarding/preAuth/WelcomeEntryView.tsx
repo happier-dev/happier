@@ -9,8 +9,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
-import { RelayRetentionDisclosure, type RelayRetentionDisclosureState } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
+import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { useShellCornerDoor } from '@/components/onboarding/unauthShell/shellCorner';
+import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { t } from '@/text';
 
 import { WelcomeActionCard, WelcomeWayButton } from './WelcomeActionCard';
@@ -25,11 +26,9 @@ export type WelcomeEntryViewInteraction = Readonly<{
     onAction: (index: number) => Promise<void> | void;
     onRetry: (testID: string) => void;
     onSelfHosting: () => void;
-    policyNotice?: React.ReactNode;
     /** Marks the host puts first on the ways row (Approve: Back on a computer, then the recovery key). */
     waysLeading?: React.ReactNode;
-    /** The Home's retention summary, under the trust line; it fades in later and never moves the doors. */
-    retention?: RelayRetentionDisclosureState | null;
+    onRetryRetention?: () => void;
 }>;
 
 /** The doors' column (lab direction A: 380 px), narrower than the headline above it. */
@@ -64,8 +63,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     };
     const waysLeading = interaction?.waysLeading;
     // A computer's shell takes the self-hosting door to its top-right corner; a phone keeps it under the column.
-    const selfHostingInCorner = useShellCornerDoor(interaction && model.selfHosting ? {
-        testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction.onSelfHosting,
+    const selfHostingInCorner = useShellCornerDoor(model.selfHosting ? {
+        testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction?.onSelfHosting,
     } : null);
     const hasWays = model.quietWays.length > 0 || waysLeading != null;
     const renderNotice = (notice: WelcomeEntryViewModel['notices'][number]) => (
@@ -89,7 +88,9 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     </Text>
                 ) : null}
             </View> : null}
-            {interaction?.policyNotice}
+            {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine lock={model.policy.lock}
+                testID={`organization-policy-${model.policy.field}`} interactive={Boolean(interaction)} /> :
+                model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
             {model.signupNotice ? (
                 <Text testID="welcome-signup-disabled" style={[styles.statusText, styles.signupDisabledNotice]}>
                     {model.signupNotice}
@@ -114,13 +115,12 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     {model.trust ? (
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
-                            {interaction ? (
-                                <View style={styles.retention}>
-                                    {interaction.retention ? (
-                                        <RelayRetentionDisclosure testID="welcome-retention" disclosure={interaction.retention} />
-                                    ) : null}
-                                </View>
-                            ) : null}
+                            <View style={styles.retention}>
+                                {model.retention ? (
+                                    <RelayRetentionDisclosure testID="welcome-retention"
+                                        disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
+                                ) : null}
+                            </View>
                         </View>
                     ) : null}
                     {model.selfHosting && !selfHostingInCorner ? (

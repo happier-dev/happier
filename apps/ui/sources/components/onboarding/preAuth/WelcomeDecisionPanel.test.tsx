@@ -24,7 +24,7 @@ it('renders the same display model live and in an inert opening replica', async 
     const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();
     const screen = await renderScreen(
         <FirstOpenWelcomeModelContext.Provider value={publish}>
-            <WelcomeDecisionPanel authEntryOptions={baseOptions} onOpenRestore={vi.fn()}
+            <WelcomeDecisionPanel authEntryOptions={{ ...baseOptions, retentionDisclosure: { kind: 'summary', summary: 'Home retention sample' } }} onOpenRestore={vi.fn()}
                 onOpenSecretKeyLogin={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
                 onContinueWithHomeAuthentication={vi.fn()} />
         </FirstOpenWelcomeModelContext.Provider>,
@@ -41,6 +41,8 @@ it('renders the same display model live and in an inert opening replica', async 
     expect(replica.findByTestId('welcome-primary-start-title')?.props.children).toEqual(
         screen.findByTestId('welcome-primary-start-title')?.props.children,
     );
+    expect(screen.findByTestId('welcome-retention')).toBeTruthy();
+    expect(replica.findByTestId('welcome-retention')).toBeTruthy();
 });
 
 // The controller supplies the camera affordance to the panel as a fact.
@@ -430,9 +432,19 @@ describe('WelcomeDecisionPanel', () => {
             organizationPolicyError: { path: 'home.url', code: 'invalid_format' },
         } });
         try {
-            const screen = await renderPanel().screenPromise;
+            const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();
+            const screen = await renderScreen(
+                <FirstOpenWelcomeModelContext.Provider value={publish}>
+                    <WelcomeDecisionPanel authEntryOptions={baseOptions} onOpenRestore={() => {}} onChangeRelay={() => {}} />
+                </FirstOpenWelcomeModelContext.Provider>,
+            );
             expect(screen.findByTestId('organization-policy-invalid-next-step')).toBeTruthy();
             expect(screen.findByTestId('organization-policy-invalid-next-step-guide')).toBeTruthy();
+            const replica = await renderScreen(<WelcomeEntryView
+                model={JSON.parse(JSON.stringify(publish.mock.calls[0]?.[0]))} compact={false} />);
+            expect(replica.findByTestId('organization-policy-invalid-next-step')).toBeTruthy();
+            expect(replica.findByTestId('organization-policy-invalid-next-step-guide')?.props.accessibilityState?.disabled)
+                .toBe(true);
         } finally {
             vi.unstubAllGlobals();
         }

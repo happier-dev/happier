@@ -12,12 +12,16 @@ import { t } from '@/text';
  * policy that answered, or that it could not be checked (with a retry). It never falls silent on a
  * failed read, since silence would read as "nothing is deleted".
  */
-export type RelayRetentionDisclosureState =
+export type RelayRetentionDisclosureModel =
     | Readonly<{ kind: 'summary'; summary: string }>
+    | Readonly<{ kind: 'unreadable' }>;
+
+export type RelayRetentionDisclosureState =
+    | Extract<RelayRetentionDisclosureModel, { kind: 'summary' }>
     | Readonly<{ kind: 'unreadable'; retry: () => void }>;
 
 export type RelayRetentionDisclosureProps = Readonly<{
-    disclosure: RelayRetentionDisclosureState;
+    disclosure: RelayRetentionDisclosureModel & Readonly<{ retry?: () => void }>;
     testID?: string;
 }>;
 
@@ -46,6 +50,7 @@ export const RelayRetentionDisclosure = React.memo(function RelayRetentionDisclo
                     <Text
                         testID={`${testID}-retry`}
                         accessibilityRole="button"
+                        accessibilityState={{ disabled: !props.disclosure.retry }}
                         onPress={props.disclosure.retry}
                         style={styles.retry}
                     >

@@ -1,7 +1,9 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
+import type { OrganizationPolicyField, OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { describeHomeAuthenticationAction } from '@/components/account/auth/homeAuthenticationActionPresentation';
+import type { RelayRetentionDisclosureModel } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { t } from '@/text';
 
 import type { WelcomeAuthenticationMethod, WelcomeEntryModel } from './composeWelcomeEntryModel';
@@ -32,6 +34,9 @@ export type WelcomeEntryViewModel = Readonly<{
     signupNotice?: string;
     /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
     trust?: string;
+    retention?: RelayRetentionDisclosureModel;
+    policy?: Readonly<{ kind: 'managed'; field: OrganizationPolicyField; lock: OrganizationPolicyLock }>
+        | Readonly<{ kind: 'invalid' }>;
     quietWaysTitle?: string;
     doors: readonly Readonly<{ index: number; display: Action }>[];
     quietWays: readonly Readonly<{ index: number; display: Action }>[];
@@ -131,9 +136,11 @@ export function projectWelcomeEntryViewModel(
         hasHome: boolean;
         serviceName: string | null;
         canRetryService: boolean;
+        policy?: WelcomeEntryViewModel['policy'];
     }>,
 ): WelcomeEntryViewModel {
     const { options } = input;
+    const retention = options.retentionDisclosure;
     const home = options.homeLabel ?? t('settingsAccount.thisHomeTitle');
     const service = input.serviceName ?? t('welcome.yourSignInService');
     const returning = model.heading === 'returning';
@@ -193,6 +200,9 @@ export function projectWelcomeEntryViewModel(
                     intro: t('welcome.brandSubTagline'),
                     compact: { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle') } },
         trust: input.showGreeting && !input.terminalWaiting ? t('welcome.welcomeTrustLine') : undefined,
+        retention: retention?.kind === 'summary' ? { kind: 'summary', summary: retention.summary }
+            : retention ? { kind: 'unreadable' } : undefined,
+        policy: input.policy,
         signupNotice: signupClosed ? t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') : undefined,
         quietWaysTitle: model.showWaysHeading ? t('homesJourneys.alreadyUseTitle') : undefined,
         doors,
