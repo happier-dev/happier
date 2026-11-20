@@ -6,6 +6,7 @@ import { observeReviewCommentChanges } from '@/sync/domains/reviews/comments/com
 import {
     EMPTY_REVIEW_RUN_COMMENTS_SNAPSHOT,
     decideReviewRunFinding,
+    decideReviewRunFindings,
     ensureReviewRunComments,
     loadMoreReviewRunComments,
     loadReviewRunComments,
@@ -14,6 +15,7 @@ import {
     subscribeReviewRunComments,
     type ReviewRunCommentsSnapshot,
     type ReviewRunCommentsTarget,
+    type ReviewFindingBulkDecisionResult,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -22,6 +24,7 @@ export type ReviewCommentsModel = ReviewRunCommentsSnapshot & Readonly<{
     refresh: () => Promise<void>;
     loadMore: () => Promise<void>;
     decide: (commentId: string, decision: ReviewTriageStatus) => Promise<boolean>;
+    decideMany: (commentIds: readonly string[], decision: ReviewTriageStatus) => Promise<ReviewFindingBulkDecisionResult>;
 }>;
 
 const EMPTY_REVIEW_COMMENTS_MODEL: ReviewCommentsModel = Object.freeze({
@@ -29,6 +32,7 @@ const EMPTY_REVIEW_COMMENTS_MODEL: ReviewCommentsModel = Object.freeze({
     refresh: () => Promise.resolve(),
     loadMore: () => Promise.resolve(),
     decide: () => Promise.resolve(false),
+    decideMany: (commentIds: readonly string[]) => Promise.resolve({ updated: [], failed: commentIds }),
 });
 
 /** Each reviewer run's comment window and actions, in the order of `runIds`. */
@@ -46,6 +50,7 @@ function useReviewCommentTargets(params: Readonly<{
         refresh: () => loadReviewRunComments({ ...target, execute }),
         loadMore: () => loadMoreReviewRunComments({ ...target, execute }),
         decide: (commentId: string, decision: ReviewTriageStatus) => decideReviewRunFinding({ ...target, execute, commentId, decision }),
+        decideMany: (commentIds: readonly string[], decision: ReviewTriageStatus) => decideReviewRunFindings({ ...target, execute, commentIds, decision }),
     })), [execute, targets]);
     const cacheRef = React.useRef<Readonly<{
         sources: readonly ReviewRunCommentsSnapshot[];

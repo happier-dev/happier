@@ -15,6 +15,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
+import * as commentWindows from './reviewRunComments';
 
 import {
     decideReviewRunFinding,
@@ -77,10 +78,63 @@ async function serveTwoHomes() {
 }
 
 describe('review run comments (one cache, bound to its Home and Account)', () => {
+    it('bulk-decides selected roots through the real mutation transport and shares only confirmed partial successes', async () => {
+        const selected = ['selected-first', 'selected-conflict'];
+        const roots = ['selected-first', 'selected-conflict', 'unselected'].map(id =>
+            comment('author', { id, threadId: id, reviewId: 'bulk-review', roundOrdinal: 1, state: 'open', reviewTriageStatus: 'accept' }));
+        const stored = new Map(roots.map(root => [root.id, storePlainReviewCommentFixture(root)]));
+        const preparations: ReviewCommentPrepareMutationResponseV1[] = [];
+        const execute = createReviewCommentsHttpActionExecutor({
+            request: async (path, init) => {
+                if (path.endsWith('/mutations/prepare')) {
+                    const request = ReviewCommentPrepareMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    const derived = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'recipient',
+                        actor: { kind: 'user', userId: 'recipient' }, current: [...stored.values()].map(row => row.structural.id === 'selected-conflict'
+                            ? { ...row.structural, serverRevision: row.structural.serverRevision + 1 } : row.structural),
+                        runtime: { now: () => 10, createId: prefix => `${prefix}-bulk` } });
+                    const prepared = ReviewCommentPrepareMutationResponseV1Schema.parse({ v: 1, request, receipt: 'bulk-decision', replayed: false,
+                        ...derived, records: derived.records.map(record => ({ ...record, previous: { structural: stored.get(record.structural.id)!.structural,
+                            source: { v: 1, layout: 'canonical_v1', envelope: stored.get(record.structural.id)!.sensitiveEnvelope } } })) });
+                    preparations.push(prepared);
+                    return Response.json(prepared);
+                }
+                if (path.endsWith('/mutations/commit')) {
+                    const request = ReviewCommentCommitMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    const prepared = preparations.at(-1)!;
+                    return Response.json({ v: 1, replayed: false, failed: prepared.failed, bulkActionId: prepared.bulkActionId,
+                        comments: request.records.map(record => ({ v: 1,
+                            structural: prepared.records.find(item => item.structural.id === record.commentId)!.structural,
+                            sensitiveEnvelope: record.sensitiveEnvelope })) });
+                }
+                return Response.json({ items: [...stored.values()], cursor: null });
+            },
+            resolveReviewResourceContext: async reviewId => ({ accountId: 'recipient', resource: { reviewId, mode: 'plain',
+                open: async content => content.t === 'plain' ? content.v : null,
+                seal: async value => ({ t: 'plain', v: value }),
+                commitment: (purpose, value) => computeCanonicalDomainSeparatedKeyedDigest(new Uint8Array(32).fill(8), 'bulk-test', [reviewId, purpose, value]),
+            } }),
+        });
+        const target = { scope: { serverId: 'bulk-home', accountId: 'recipient' }, reviewId: 'bulk-review' };
+        const otherAccount = { ...target, scope: { ...target.scope, accountId: 'other' } };
+        await loadReviewRunComments({ ...target, execute });
+        await loadReviewRunComments({ ...target, runId: 'run_1', execute });
+        await loadReviewRunComments({ ...otherAccount, execute });
+        const result = await commentWindows.decideReviewRunFindings({ ...target, execute, commentIds: selected, decision: 'defer' });
+        expect(result).toEqual({ updated: ['selected-first'], failed: ['selected-conflict'] });
+        expect(preparations).toHaveLength(1);
+        for (const window of [target, { ...target, runId: 'run_1' }]) {
+            expect(readReviewRunComments(window).comments.map(row => [row.id, row.reviewTriageStatus])).toEqual([
+                ['selected-first', 'defer'], ['selected-conflict', 'accept'], ['unselected', 'accept'],
+            ]);
+            expect(readReviewRunComments(window).pending).toEqual({});
+        }
+        expect(readReviewRunComments(otherAccount).comments.map(row => row.reviewTriageStatus)).toEqual(['accept', 'accept', 'accept']);
+    });
     it.each([
         { name: 'new finding', state: 'proposed', status: undefined, decision: 'accept', nextState: 'open', writes: 1 },
         // QA live-finish-apply-first-readback: a state-only bulk Ignore left the earlier accept at revision 5.
         { name: 'bulk-dismissed accepted finding', state: 'dismissed', status: 'accept', decision: 'accept', nextState: 'open', writes: 1 },
+        { name: 'bulk-dismissed pending finding', state: 'dismissed', status: 'needs_refinement', decision: 'needs_refinement', nextState: 'open', writes: 1 },
         { name: 'new refinement', state: 'proposed', status: undefined, decision: 'needs_refinement', nextState: 'proposed', writes: 1 },
         { name: 'already requested refinement', state: 'proposed', status: 'needs_refinement', decision: 'needs_refinement', nextState: 'proposed', writes: 0 },
     ] as const)('shares Review-key decisions across Sessions and authors: $name', async ({ state, status, decision, nextState, writes }) => {

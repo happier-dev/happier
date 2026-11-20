@@ -18,6 +18,25 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 
 afterEach(standardCleanup);
 
+it('sends selected durable root identities to one bulk writer and refuses View writes', async () => {
+    const root = buildReviewCommentFixture({ id: 'selected-root', reviewId: 'bulk-review', findingIdentity: '1'.repeat(64),
+        finding: { id: 'engine-local', title: 'Selected finding', summary: 'Selected', severity: 'high', category: 'correctness' } });
+    const other = { ...root, id: 'other-root', threadId: 'other-root', findingIdentity: '2'.repeat(64) };
+    const writes: unknown[] = [];
+    const hook = await renderHook(({ canAct }) => useReviewFindingsModel({ members: [], reviewerCount: 0,
+        record: { round: { reviewId: root.reviewId!, roundOrdinal: 1, state: 'completed', reviewerIds: [] }, comments: [root, other] },
+        scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct, pending: {}, onDecideComment: async () => false,
+        onBulkDecideComments: async (commentIds, decision) => { writes.push({ commentIds, decision }); return { updated: [...commentIds], failed: [] }; },
+    }), { initialProps: { canAct: false } });
+    try {
+        await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'defer'); });
+        expect(writes).toEqual([]);
+        await hook.rerender({ canAct: true });
+        await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'defer'); });
+        expect(writes).toEqual([{ commentIds: [root.id], decision: 'defer' }]);
+    } finally { await hook.unmount(); }
+});
+
 it.each(['page', 'card'] as const)('keeps a View recipient’s persisted decision readable without offering decision writes in %s', async density => {
     const root = buildReviewCommentFixture({ id: 'view-root', reviewId: 'view-review', findingIdentity: 'c'.repeat(64),
         state: 'dismissed', reviewTriageStatus: 'accept',

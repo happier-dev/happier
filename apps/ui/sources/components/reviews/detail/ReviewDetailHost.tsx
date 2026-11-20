@@ -24,7 +24,9 @@ import { useReviewDetail } from '../useReviewDetail';
 import { useReviewHumanActions } from '../useReviewHumanActions';
 import { useReviewHistory } from '../useReviewHistory';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
-import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { ReviewFindingRow, REVIEW_FINDING_DECISIONS, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
 import { useReviewFindingsModel, type ReviewFindingDecisionTarget } from '../finding/useReviewFindingsModel';
 import { ReviewQuestions, ReviewFollowUpDock } from '../finding/ReviewQuestions';
 import { useReviewQuestionRuns } from './useReviewQuestionRuns';
@@ -36,6 +38,7 @@ import { presentSessionAddressSelection } from '@/components/sessions/transcript
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewSubmitPanel } from './ReviewSubmitPanel';
+import { ReviewPeopleEditor } from './ReviewPeopleEditor';
 import { reviewFindingFacts, reviewHistoryFacts } from './reviewFindingFacts';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { useReviewNewRound } from './useReviewNewRound';
@@ -118,6 +121,7 @@ const VERDICT_KEYS = {
 } as const satisfies Record<ReviewVerdictKindV1, string>;
 
 const EMPTY_PRINCIPALS: readonly PrincipalRefV1[] = Object.freeze([]);
+const NO_SELECTED_FINDINGS: ReadonlySet<string> = new Set();
 
 /** Every person the opened Review names: requested reviewers of every round and every verdict's author. */
 function humanPrincipals(human: ReviewHumanActionStateV1 | null): readonly PrincipalRefV1[] {
@@ -167,7 +171,8 @@ export function projectPeople(input: Readonly<{
     return {
       id: request.id,
       ...presentPerson(request.principal),
-      qualifier: request.required ? null : t('reviewWalkthrough.detail.optional'),
+      qualifier: joinHappierFacts(request.required ? null : t('reviewWalkthrough.detail.optional'),
+        request.needsAccess ? t('reviewWalkthrough.detail.needsAccess') : null) || null,
       body: verdict?.body,
       state,
       tone: (verdict?.verdict === 'request_changes' || (isViewer && waitingForViewer && !verdict)) ? 'attention' : null,
@@ -230,6 +235,11 @@ export function ReviewDetailHost(props: Readonly<{
   const [changesView, setChangesView] = React.useState<'files' | 'walkthrough'>('files');
   const [hideViewed, setHideViewed] = React.useState(false);
   const [submitOpen, setSubmitOpen] = React.useState(false);
+  const [peopleOpen, setPeopleOpen] = React.useState(false);
+  const selectionKey = JSON.stringify([scope?.serverId, scope?.accountId, artifact.id, selectedRound]);
+  const [selection, setSelection] = React.useState<Readonly<{ key: string; ids: ReadonlySet<string> }>>({ key: selectionKey, ids: NO_SELECTED_FINDINGS });
+  const selectedFindingIds = selection.key === selectionKey ? selection.ids : NO_SELECTED_FINDINGS;
+  const selectedRowIds = React.useMemo(() => [...selectedFindingIds], [selectedFindingIds]);
   const principals = React.useMemo(() => humanPrincipals(human), [human]);
   const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, scope?.serverId ?? null);
   const humanActions = useReviewHumanActions(scope, human);
@@ -288,7 +298,8 @@ export function ReviewDetailHost(props: Readonly<{
   const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
-    onDecideComment: decide });
+    selectedRowIds: selectedRowIds.length > 0 ? selectedRowIds : undefined,
+    onDecideComment: decide, onBulkDecideComments: comments.decideMany });
   const findingById = React.useMemo(() => new Map(findings.rows.map(row => [row.rowId, row])), [findings.rows]);
   const commentById = React.useMemo(() => new Map(comments.comments.map(comment => [comment.id, comment])), [comments.comments]);
   const openedFindingComment = openFinding && findingById.has(openFinding) ? commentById.get(openFinding) : undefined;
@@ -302,7 +313,29 @@ export function ReviewDetailHost(props: Readonly<{
   const roundComments = React.useMemo(() => comments.comments.filter(comment =>
     comment.appearances?.some(appearance => appearance.roundOrdinal === selectedRound)
       || comment.roundOrdinal === selectedRound), [comments.comments, selectedRound]);
-  const openComment = React.useCallback((commentId: string) => { setTab('findings'); setOpenFinding(commentId); }, []);
+  const viewCommands = useCurrentUiContextLocalCommands([
+    { key: 'review.detail.tab', title: t('runPage.review.findings'), description: 'Open a Review tab with {tab: findings | changes | runs | activity}.', invoke: input => {
+      if (!isJsonObject(input)) return false;
+      const next = tabs.find(item => item.id === input.tab);
+      if (!next) return false;
+      setTab(next.id);
+    } },
+    { key: 'review.detail.round', title: t('reviewWalkthrough.detail.rounds'), description: 'Open a saved Review round with {ordinal: number}.', invoke: input => {
+      if (!isJsonObject(input) || typeof input.ordinal !== 'number' || !record?.rounds.some(round => round.ordinal === input.ordinal)) return false;
+      setSelected(input.ordinal); setOpenFinding(null); setPeopleOpen(false);
+    } },
+    { key: 'review.detail.open_finding', title: t('runPage.review.findings'), description: 'Open a finding with {commentId: string}, or close it with {commentId: null}.', invoke: input => {
+      if (!isJsonObject(input) || (input.commentId !== null && (typeof input.commentId !== 'string' || !findingById.has(input.commentId)))) return false;
+      setTab('findings'); setOpenFinding(input.commentId);
+    } },
+    { key: 'review.detail.selection', title: t('runPage.review.findings'), description: 'Select canonical finding roots with {rowIds: string[]}. An empty array clears selection.', invoke: input => {
+      if (!isJsonObject(input) || !Array.isArray(input.rowIds)) return false;
+      const ids: string[] = [];
+      for (const id of input.rowIds) { if (typeof id !== 'string' || !findingById.has(id)) return false; ids.push(id); }
+      setSelection({ key: selectionKey, ids: new Set(ids) });
+    } },
+  ], { unbound: 'local' });
+  const openComment = React.useCallback((commentId: string) => { void viewCommands.invoke('review.detail.open_finding', { commentId }); }, [viewCommands]);
   const implementFindings = React.useCallback(async () => {
     if (!scope) return;
     const picker = presentSessionAddressSelection(scope.serverId, undefined, {
@@ -312,7 +345,17 @@ export function ReviewDetailHost(props: Readonly<{
     if (destination?.kind === 'existingSession') findings.implement.runInSession(destination.sessionId);
     else if (destination?.kind === 'newSession') await findings.implement.runInNewSession();
   }, [findings.implement, scope]);
-  const toggleFinding = React.useCallback((commentId: string) => setOpenFinding(current => current === commentId ? null : commentId), []);
+  const toggleFinding = React.useCallback((commentId: string) => { void viewCommands.invoke('review.detail.open_finding', { commentId: openFinding === commentId ? null : commentId }); }, [openFinding, viewCommands]);
+  const changeSelection = React.useCallback((rowIds: readonly string[]) => { void viewCommands.invoke('review.detail.selection', { rowIds: [...rowIds] }); }, [viewCommands]);
+  const toggleSelection = React.useCallback((id: string) => {
+    const next = new Set(selectedFindingIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    changeSelection([...next]);
+  }, [changeSelection, selectedFindingIds]);
+  const bulkDecide = React.useCallback(async (decision: ReviewTriageStatus) => {
+    await findings.onDecideMany(selectedRowIds, decision);
+  }, [findings.onDecideMany, selectedRowIds]);
+  const bulkBusy = selectedRowIds.some(id => comments.pending[id] !== undefined);
   React.useEffect(() => { setOpenFinding(props.focusThreadId ?? null); }, [artifact.id, props.focusThreadId]);
   const submitVerdict = humanActions.submitVerdict;
   const submit = React.useCallback(async (input: Readonly<{ verdict: ReviewVerdictKindV1; body: string | undefined }>) => {
@@ -321,12 +364,20 @@ export function ReviewDetailHost(props: Readonly<{
     if (result.ok) { setSubmitOpen(false); void detail.refresh(); return { ok: true as const }; }
     return { ok: false as const, message: resolveActionExecutionErrorMessage(result, t('common.error')) };
   }, [detail, submitVerdict]);
+  const setReviewers = humanActions.setReviewers;
+  const savePeople = React.useCallback(async (reviewers: Parameters<NonNullable<typeof setReviewers>>[0]) => {
+    if (!setReviewers) return { ok: false as const, message: t('common.error') };
+    const result = await setReviewers(reviewers);
+    if (result.ok) { setPeopleOpen(false); void detail.refresh(); return { ok: true as const }; }
+    return { ok: false as const, message: resolveActionExecutionErrorMessage(result, t('common.error')) };
+  }, [detail, setReviewers]);
 
   if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
   if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
   if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
 
   const canSubmit = Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
+  const canEditPeople = canEdit && human?.roundOrdinal === selectedRound && setReviewers !== undefined;
   const meta = [
     ...(review ? [{ key: 'subject', text: reviewSubjectLabel(review.subjectKind) }] : []),
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
@@ -341,32 +392,43 @@ export function ReviewDetailHost(props: Readonly<{
       meta={meta}
       primaryAction={canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
         : newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null}
-      notice={newRound.approval.approvalPending && newRound.approval.approvalId && scope ? <ActionApprovalPendingNotice
+      notice={scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
+        || (humanActions.approval.approvalPending && humanActions.approval.approvalId)) ? <>{newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
+        {humanActions.approval.approvalPending && humanActions.approval.approvalId && scope ? <ActionApprovalPendingNotice
+          testID="review-detail:people-approval" message={t('approvals.title')}
+          onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(humanActions.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}</> : null}
       menu={[...(canSubmit && newRound.available ? [{ id: 'new-round', testID: 'review-detail:new-round',
         title: t('reviewWalkthrough.detail.newRound'), onSelect: newRound.open }] : []),
+        ...(canEditPeople ? [{ id: 'edit-reviewers', testID: 'review-detail:edit-reviewers', title: t('reviewWalkthrough.detail.people'),
+          disabled: !humanActions.ready, onSelect: () => setPeopleOpen(true) }] : []),
         { id: 'copy-fix-prompt', testID: 'review-detail:copy-fix-prompt', title: t('reviewWalkthrough.detail.copyFixPrompt'),
         disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } }, ...menu]}
       glance={projectReviewGlance(round, review)}
       quality={projectReviewRoundQualityV1(round, qualityAggregation)}
       rounds={rounds}
       selectedRound={selectedRound}
-      onSelectRound={setSelected}
+      onSelectRound={ordinal => { void viewCommands.invoke('review.detail.round', { ordinal }); }}
       submit={canSubmit && submitOpen ? (
         <ReviewSubmitPanel roundOrdinal={selectedRound} onCancel={() => setSubmitOpen(false)} onSubmit={submit} />
       ) : null}
       tabs={tabs}
       activeTab={activeTab}
-      onSelectTab={setTab}
+      onSelectTab={tab => { void viewCommands.invoke('review.detail.tab', { tab }); }}
     >
+      {canEditPeople && peopleOpen && scope && human ? <ReviewPeopleEditor key={selectionKey} scope={scope} roundOrdinal={selectedRound}
+        names={names} initialReviewers={human.requests.filter(request => request.roundOrdinal === selectedRound)
+          .map(request => ({ principal: request.principal, required: request.required }))}
+        onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
-        {canEdit && findings.rows.length > 0 ? <ReviewDetailInset><RoundButton testID="review-detail:implement" size="small"
+        {canEdit && findings.rows.length > 0 && selectedRowIds.length === 0 ? <ReviewDetailInset><RoundButton testID="review-detail:implement" size="small"
           title={t('runPage.review.implementFixes', { count: findings.implement.count })}
           disabled={findings.implement.destinationDisabled} loading={findings.implement.busy}
           onPress={implementFindings} /></ReviewDetailInset> : null}
         {comments.status === 'idle' || comments.status === 'loading' ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
-          : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findings.rows.map(row => ({ rowId: row.rowId, severity: row.finding.severity, decision: row.decision }))}
+          : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findings.rows.map(row => ({ rowId: row.rowId, title: row.finding.title, severity: row.finding.severity, decision: row.decision }))}
+              selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy } : undefined}
               renderRow={(rowId, divided) => {
                 const row = findingById.get(rowId);
                 return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
@@ -388,6 +450,21 @@ export function ReviewDetailHost(props: Readonly<{
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}
           label={t(comments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')} onPress={() => void comments.loadMore()} /> : null}
+        {canEdit ? <SelectionActionBar testID="review-detail:selection" visible={selectedRowIds.length > 0}
+          label={t('sessionsList.selectionSelectedCount', { count: selectedRowIds.length })}
+          dismiss={{ label: t('common.cancel'), presentation: 'glyph', disabled: bulkBusy, onPress: () => changeSelection([]) }}
+          actions={[
+            { id: 'implement', label: t('runPage.review.implementFixes', { count: findings.implement.count }), emphasis: 'primary',
+              testID: 'review-detail:bulk:implement', disabled: bulkBusy || findings.implement.destinationDisabled,
+              busy: findings.implement.busy, onPress: () => { void implementFindings(); } },
+            ...REVIEW_FINDING_DECISIONS.map(decision => ({ id: decision, label: reviewFindingDecisionLabel(decision), emphasis: 'secondary' as const,
+              testID: `review-detail:bulk:${decision}`, disabled: bulkBusy, onPress: () => { void bulkDecide(decision); } })),
+            { id: 'needs_refinement', label: reviewFindingDecisionLabel('undecided'), emphasis: 'secondary',
+              testID: 'review-detail:bulk:needs_refinement', disabled: bulkBusy, onPress: () => { void bulkDecide('needs_refinement'); } },
+            { id: 'create-task', label: t('runPage.review.createTask'), emphasis: 'secondary', placement: 'menu',
+              testID: 'review-detail:bulk:create-task', disabled: bulkBusy,
+              onPress: () => { void findings.createTask(selectedRowIds); } },
+          ]} /> : null}
         {questionRuns.state.kind === 'loading' && questionRuns.members.length === 0
           ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
         {questionRuns.state.kind === 'unavailable' ? <SurfaceStateCard testID="review-detail:questions-unavailable"

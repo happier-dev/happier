@@ -25,6 +25,27 @@ const ROWS: readonly ReviewFindingsListRow[] = [
 ];
 
 describe('ReviewFindingsList', () => {
+  it('keeps selected finding identities while the person filters the list', async () => {
+    function SelectedFindings() {
+      const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
+      return <ReviewFindingsList rows={ROWS} renderRow={rowId => <RowProbe rowId={rowId} />}
+        selection={{ selectedRowIds: selected, onToggle: rowId => setSelected(current => {
+          const next = new Set(current);
+          if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
+          return next;
+        }) }} />;
+    }
+    const screen = await renderScreen(<SelectedFindings />);
+    try {
+      await screen.pressByTestIdAsync('review-findings:select:blocker-a');
+      await screen.pressByTestIdAsync('review-findings:filter:accept');
+      await screen.pressByTestIdAsync('review-findings:select:blocker-b');
+      await screen.pressByTestIdAsync('review-findings:filter:all');
+      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props.accessibilityState.checked).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props.accessibilityState.checked).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:high')?.props.accessibilityState.checked).toBe(false);
+    } finally { await screen.unmount(); }
+  });
   it('groups rows by severity, most severe first, and filters them by decision in one press', async () => {
     const screen = await renderScreen(
       <ReviewFindingsList

@@ -29,6 +29,7 @@ import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringA
 import { beginClipboardWriteFromUi } from '@/utils/ui/clipboard';
 import { projectReviewFindingRoots } from './reviewFindingRoots';
 export { projectReviewFindingRoots } from './reviewFindingRoots';
+import type { ReviewFindingBulkDecisionResult } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 export type ReviewFindingsMember = ReviewMember & Readonly<{
     /** The producing Session, when admitted for reviewer follow-up. */
@@ -104,7 +105,9 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     reviewId?: string;
     canAct: boolean;
     pending: Readonly<Record<string, ReviewTriageStatus>>;
+    selectedRowIds?: readonly string[];
     onDecideComment: (target: ReviewFindingDecisionTarget, decision: ReviewFindingDecision) => Promise<boolean>;
+    onBulkDecideComments?: (commentIds: readonly string[], decision: ReviewTriageStatus) => Promise<ReviewFindingBulkDecisionResult>;
 }>) {
     const { members, record, reviewerCount, scope, accountLifetime, serverId, sessionId, draftRunId, canAct, pending, onDecideComment } = params;
     const reviewId = params.reviewId ?? record?.round.reviewId;
@@ -137,11 +140,17 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         }
         return sources;
     }, [members, native.roots, record, rootById]);
+    const selectedRows = React.useMemo(() => params.selectedRowIds === undefined ? null : new Set(params.selectedRowIds), [params.selectedRowIds]);
+    const selectedCommentIds = React.useMemo(() => selectedRows === null ? undefined : [...new Set([...selectedRows].flatMap(id => {
+        const root = rootById.get(id);
+        return root ? [root.id] : rowById.get(id)?.sources.flatMap(source => source.comment ? [source.comment.id] : []) ?? [];
+    }))], [rootById, rowById, selectedRows]);
     const acceptedRows = React.useMemo(
-        () => rows.filter((row) => rowDecision(row, pending) === 'accept'),
-        [pending, rows],
+        () => rows.filter((row) => (selectedRows === null || selectedRows.has(row.rowId)) && rowDecision(row, pending) === 'accept'),
+        [pending, rows, selectedRows],
     );
-    const acceptedCount = record ? sealedRows.filter(row => readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]) === 'accept').length
+    const acceptedCount = record ? sealedRows.filter(row => (selectedRows === null || selectedRows.has(row.rowId))
+        && readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]) === 'accept').length
         : acceptedRows.length;
     const hasPendingDecisions = Object.keys(pending).length > 0;
 
@@ -218,6 +227,24 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             );
         }
     }, [onDecideComment, pending, rootById, rowById]);
+
+    const bulkDecide = React.useCallback(async (rowIds: readonly string[], decision: ReviewTriageStatus): Promise<ReviewFindingBulkDecisionResult> => {
+        const ids = [...new Set(rowIds)];
+        if (!canActRef.current || !params.onBulkDecideComments) return { updated: [], failed: ids };
+        const commentIds = ids.filter(id => rootById.has(id));
+        if (commentIds.length === 0) return { updated: [], failed: ids };
+        setError(null);
+        try {
+            const result = await params.onBulkDecideComments(commentIds, decision);
+            const updated = new Set(result.updated);
+            const failed = ids.filter(id => !updated.has(id));
+            if (failed.length > 0) setError(t('runPage.review.couldNotSaveChoice'));
+            return { updated: ids.filter(id => updated.has(id)), failed };
+        } catch {
+            setError(t('runPage.review.couldNotSaveChoice'));
+            return { updated: [], failed: ids };
+        }
+    }, [params.onBulkDecideComments, rootById]);
 
     const sendFollowUp = React.useCallback(async (params: Readonly<{
         sessionId: string | null;
@@ -303,7 +330,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
                     .map(comment => comment.reviewId).filter((reviewId): reviewId is string => Boolean(reviewId))))];
                 if (reviewIds.length > 0) {
                     await Promise.all(reviewIds.map(reviewId => followUpExecution.executeValue('review.apply',
-                        { sessionId, reviewId }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') })));
+                        { sessionId, reviewId, ...(selectedCommentIds === undefined ? {} : { commentIds: selectedCommentIds }) },
+                        { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') })));
                 } else {
                     // Legacy unbound runs have no Review resource yet; retain their admitted
                     // run-scoped input until the producer materializes a Review identity.
@@ -329,7 +357,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
                 setIsApplying(false);
             }
         })(), { tag: 'useReviewFindingsModel.implementFixes' });
-    }, [acceptedCount, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, reviewId, scope]);
+    }, [acceptedCount, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, reviewId, scope, selectedCommentIds]);
 
     /** The Review Action prepares one fresh prompt; each destination keeps its own admission and approval. */
     const applyPreparedPrompt = React.useCallback(async (destination: 'newSession' | 'clipboard'): Promise<boolean> => {
@@ -343,7 +371,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         setIsApplying(true);
         try {
             const result = ReviewFindingsApplyResultV1Schema.parse(await followUpExecution.executeValue('review.apply',
-                { reviewId, destination: 'prompt' }));
+                { reviewId, destination: 'prompt', ...(selectedCommentIds === undefined ? {} : { commentIds: selectedCommentIds }) }));
             if (result.status !== 'prepared') return false;
             if (destination === 'newSession') {
                 const opened = await openSessionAuthoringAction({ seed: { prompt: result.prompt } }, capturedLifetime,
@@ -366,7 +394,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             setIsApplying(false);
         }
     }, [acceptedCount, accountLifetime, followUpExecution.execute, followUpExecution.executeValue,
-        followUpExecution.isCurrent, hasPendingDecisions, reviewId, scope]);
+        followUpExecution.isCurrent, hasPendingDecisions, reviewId, scope, selectedCommentIds]);
 
     const questions = React.useMemo(() => members.flatMap(member => member.questions
         .filter(question => question.status !== 'superseded').map(question => ({ member, question }))), [members]);
@@ -464,6 +492,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         followUp,
         pendingQuestionByRowId,
         onDecide: decide,
+        onDecideMany: bulkDecide,
         onAsk: askAboutRow,
         createTask,
         onCreateTask: createTaskForRow,

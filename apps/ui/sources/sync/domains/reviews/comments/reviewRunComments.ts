@@ -1,5 +1,5 @@
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
-import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1, type ReviewCommentGetResponseV1, type ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1, type ReviewCommentGetResponseV1, type ReviewCommentTransitionResponseV1, type ReviewCommentBulkTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentScopeV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { readReviewFindingDecisionV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -13,8 +13,8 @@ import type { ReviewCommentUiActionExecutor } from './api';
 /**
  * The durable `ReviewComment`s one review run materialized, shared by every surface that shows that
  * review (its transcript card, its run pane). A finding's decision lives only in its comment: this
- * module reads it with `reviews.comments.list` and writes it with `reviews.comments.transition`
- * (CAS), so a decision made in one place is the decision every other place shows.
+ * module reads it with `reviews.comments.list` and writes single or selected decisions with
+ * `reviews.comments.transition` / `reviews.comments.bulkTransition` (CAS), so every surface agrees.
  *
  * Every entry belongs to the exact Home and Account the review was opened under: reads and writes
  * go through the one Action front door bound to that Home with that Account expected, so a review
@@ -331,16 +331,18 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
         const comment = entry.snapshot.comments.find((item) => item.id === params.commentId);
         try {
             if (!comment) throw new Error('review_comment_reference_unavailable');
-            if (readReviewFindingDecisionV1(comment.reviewTriageStatus, comment.state) === params.decision
-                || (params.decision === 'needs_refinement' && comment.reviewTriageStatus === params.decision)) {
-                confirmed = true;
-                return;
-            }
-            const response = await execute('reviews.comments.transition', buildReviewTriageTransitionRequestV1({
+            const request = buildReviewTriageTransitionRequestV1({
                 comment,
                 decision: params.decision,
                 clientMutationId: `review-finding-decision:${randomUUID()}`,
-            })) as ReviewCommentTransitionResponseV1;
+            });
+            const sameDecision = readReviewFindingDecisionV1(comment.reviewTriageStatus, comment.state) === params.decision
+                || (params.decision === 'needs_refinement' && comment.reviewTriageStatus === params.decision);
+            if (sameDecision && request.toState === comment.state) {
+                confirmed = true;
+                return;
+            }
+            const response = await execute('reviews.comments.transition', request) as ReviewCommentTransitionResponseV1;
             upsert(entry, response.comment);
             recordReviewCommentWrites([response.comment], params.scope);
             confirmed = true;
@@ -353,6 +355,66 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
     });
     chain.write = write;
     return write.then(() => confirmed);
+}
+
+export type ReviewFindingBulkDecisionResult = Readonly<{ updated: readonly string[]; failed: readonly string[] }>;
+
+/** Selected roots share the same per-comment write chains and confirmed windows as a single decision. */
+export function decideReviewRunFindings(params: ReviewRunCommentsTarget & Readonly<{
+    commentIds: readonly string[];
+    decision: ReviewTriageStatus;
+    execute?: ReviewCommentUiActionExecutor;
+}>): Promise<ReviewFindingBulkDecisionResult> {
+    const entry = entryFor(params);
+    const execute = resolveReviewCommentExecutor(params.scope, params.execute);
+    const ids = [...new Set(params.commentIds)];
+    const previous = ids.map(id => writeChains.get(commentWriteKey(params.scope, id))?.write ?? Promise.resolve());
+    const chains = ids.map(id => {
+        const chain: CommentWriteChain = { write: Promise.resolve(), pending: params.decision };
+        writeChains.set(commentWriteKey(params.scope, id), chain);
+        setPending(entry, id, params.decision);
+        return chain;
+    });
+    const write = Promise.all(previous).then(async () => {
+        const updated = new Set<string>();
+        const groups = new Map<string, { request: ReturnType<typeof buildReviewTriageTransitionRequestV1>; ids: string[]; revisions: Record<string, number> }>();
+        const commentsById = new Map(entry.snapshot.comments.map(comment => [comment.id, comment]));
+        for (const id of ids) {
+            const comment = commentsById.get(id);
+            if (!comment) continue;
+            const request = buildReviewTriageTransitionRequestV1({ comment, decision: params.decision,
+                clientMutationId: `review-finding-decision:${randomUUID()}` });
+            const sameDecision = readReviewFindingDecisionV1(comment.reviewTriageStatus, comment.state) === params.decision
+                || (params.decision === 'needs_refinement' && comment.reviewTriageStatus === params.decision);
+            if (sameDecision && request.toState === comment.state) { updated.add(id); continue; }
+            const { commentId: _id, expectedServerRevision: _revision, clientMutationId: _mutation, ...shared } = request;
+            const key = JSON.stringify(shared);
+            let group = groups.get(key);
+            if (!group) { group = { request, ids: [], revisions: {} }; groups.set(key, group); }
+            group.ids.push(id);
+            group.revisions[id] = comment.serverRevision;
+        }
+        let reload = false;
+        try {
+            for (const group of groups.values()) {
+                const { commentId: _id, expectedServerRevision: _revision, ...request } = group.request;
+                try {
+                    const result = await execute('reviews.comments.bulkTransition', { ...request,
+                        commentIds: group.ids, expectedServerRevisions: group.revisions }) as ReviewCommentBulkTransitionResponseV1;
+                    recordReviewCommentWrites(result.updated, params.scope);
+                    for (const comment of result.updated) updated.add(comment.id);
+                } catch { reload = true; }
+            }
+            if (reload) await loadReviewRunComments({ ...entry.target, execute }).catch(() => undefined);
+            return { updated: ids.filter(id => updated.has(id)), failed: ids.filter(id => !updated.has(id)) };
+        } finally {
+            for (const [index, id] of ids.entries()) {
+                if (writeChains.get(commentWriteKey(params.scope, id)) === chains[index]) setPending(entry, id, null);
+            }
+        }
+    });
+    for (const chain of chains) chain.write = write.then(() => undefined);
+    return write;
 }
 
 /** Test seam: forget every run's comments. */

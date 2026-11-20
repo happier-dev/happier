@@ -52,19 +52,32 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-async function mountModel(canAct = true) {
+async function mountModel(canAct = true, selectedRowIds?: readonly string[], comments = [root]) {
     let bound = false;
     const hook = await renderHook(() => {
         const { binding } = useServerCredentialAccountScopeBinding(serverId);
         bound = binding !== null;
         return useReviewFindingsModel({ members: [], reviewerCount: 1,
-            record: { round: { reviewId, roundOrdinal: 1, state: 'completed', reviewerIds: ['first'] }, comments: [root] },
+            record: { round: { reviewId, roundOrdinal: 1, state: 'completed', reviewerIds: ['first'] }, comments },
             serverId, scope: binding?.scope ?? null, accountLifetime: binding, sessionId: null,
-            canAct, pending: {}, onDecideComment: async () => false });
+            canAct, pending: {}, selectedRowIds, onDecideComment: async () => false });
     });
     await waitForHomeGovernance(() => expect(bound).toBe(true));
     return hook;
 }
+
+it('prepares only selected canonical accepted findings while leaving the other accepted finding out', async () => {
+    const other = { ...root, id: 'unselected-comment', threadId: 'unselected-comment', findingIdentity: 'b'.repeat(64),
+        body: 'Unselected accepted explanation.', finding: { ...root.finding!, id: 'other-finding', title: 'Another accepted defect' } };
+    homes.answer(serverId, 'GET /v1/reviews/comments', { body: { items: [root, other].map(storePlainReviewCommentFixture), cursor: null } });
+    const hook = await mountModel(true, [root.id], [root, other]);
+    try {
+        expect(hook.getCurrent().implement.count).toBe(1);
+        await act(async () => { expect(await hook.getCurrent().implement.copyPrompt()).toBe(true); });
+        expect(effects.copy.mock.calls[0]?.[0]).toContain(root.body);
+        expect(effects.copy.mock.calls[0]?.[0]).not.toContain(other.body);
+    } finally { await hook.unmount(); }
+});
 
 it('copies the canonical current accepted prompt without a Session and opens the identical prompt in an editable New Session draft', async () => {
     const hook = await mountModel();
