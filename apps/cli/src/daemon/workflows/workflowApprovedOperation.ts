@@ -137,8 +137,10 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         const actionLeaf = structure.leaf;
         const producerResult = operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result');
         const occurrence = savedTrigger && producerResult ? readDeploymentBackupOccurrenceV1(structure.definition, actionLeaf) : null;
+        // Saving projects authored blocks; acceptance freezes concrete
+        // execution fields into `definition`, so compare the authored source.
         if (savedTrigger && !sameStrictJsonValue(operation.steps, projectWorkflowTriggerConsentSteps({
-          definition: accepted.definition, children: accepted.frozenChildren, materializedLeaves: accepted.materializedLeaves,
+          definition: accepted.authoredDefinition, children: accepted.frozenChildren, materializedLeaves: accepted.materializedLeaves,
           deployment: operation.steps.some(step => step.binding?.kind === 'deployment_sha'),
           ...(accepted.source.kind === 'automation' && accepted.source.definitionId !== undefined
             ? { workflowRef: accepted.source.definitionId } : {}),
@@ -193,7 +195,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           if (step.binding.kind === 'producer_result') {
             if (step.binding.scheduleStep) {
               const trigger = AutomationScheduleTriggerInputSchema.safeParse(actual.data.trigger);
-              if (!savedTrigger || structure.sourceKey !== '$root' || !sameStrictJsonValue(step.binding.scheduleStep, actionLeaf)
+              if (!savedTrigger || structure.sourceKey !== '$root' || step.binding.scheduleStep.id !== actionLeaf.id
                 || !trigger.success || !trigger.data.enabled || trigger.data.schedule.kind !== 'once') continue;
             } else if (savedTrigger && !occurrence) continue;
           }

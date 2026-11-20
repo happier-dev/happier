@@ -38,6 +38,7 @@ import { createActionExecutorBoundaryFixture } from '../../../../../packages/tes
 import { createScheduledMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { materializeWorkflowTriggerActionDefinition, projectWorkflowTriggerConsentSteps, readWorkflowTriggerActionConsent } from '@happier-dev/protocol/actions/executor/workflowTriggerConsent';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowTriggerEventValuesV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
@@ -344,11 +345,21 @@ describe('Workflow approved operation private custody', () => {
       const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'schedule', triggerId, triggerRevision: 0,
         occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
         occurredAt: 1, evidence: { scheduledFor: 1 } });
-      const { materialized } = await materializeWorkflowTriggerActionDefinition({ definition, inputs: {}, project, resolveWorkflow: unavailable });
+      // Run acceptance freezes concrete execution fields into its definition;
+      // the saved declaration stays the authored block.
+      const source = { kind: 'automation', automationId, definitionId: workflow,
+        revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null } as const;
+      const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition, context: { source, inputs: {},
+        machineId: project.machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { ...project, checkoutRootPath: project.directory } },
+        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+        effects: { resolveTargetAvailability: async () => true,
+          readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+        admission: { kind: 'trigger', workDepth: 0, admitLeaf: unavailable } });
       if (!materialized.ok) throw new Error(materialized.error.code);
-      const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...snapshot(), definition, authoredDefinition: definition,
-        source: { kind: 'automation', automationId, definitionId: workflow, revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null },
-        materializedLeaves: materialized.materializedLeaves, approvedOperation: operation });
+      const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...snapshot(), definition: materialized.snapshot.definition,
+        authoredDefinition: materialized.snapshot.authoredDefinition, source,
+        materializedLeaves: materialized.snapshot.materializedLeaves, approvedOperation: operation });
       const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId: 'host', state: 'running',
         origin: { kind: 'automation', automationId, cause }, keyCensus: createPlainWorkflowRunKeyCensusFixture({ runId, accountId }),
         acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
