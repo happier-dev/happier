@@ -26,7 +26,7 @@ export const en = {
     memberReplaced: 'Replaced',
     memberTemporary: 'Temporary',
     memberNotOwned: 'Only your own machines can be added to this pool.',
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} of ${enabled} enabled connected`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? 'No machine online' : `${connected} of ${enabled} online`,
     availabilityUnknown: 'Connection availability unknown',
     notVerified: 'Not verified',
     brokerUnavailable: 'No broker available',

@@ -11451,7 +11451,7 @@ const it = {
     executionMachine: "Esegui su",
     chosenFrom: "Scelto da",
     aMachinePool: "Un pool di macchine",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} di ${enabled} macchine abilitate connesse`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Nessuna macchina online" : `${connected} di ${enabled} online`,
     fallback: ({ number }: { number: number }) => `Alternativa ${number}`,
 };
 

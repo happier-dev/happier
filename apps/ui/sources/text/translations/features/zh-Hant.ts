@@ -11337,7 +11337,7 @@ const zhHant = {
     executionMachine: "執行於",
     chosenFrom: "選自",
     aMachinePool: "機器集區",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${enabled} 台已啟用機器中有 ${connected} 台已連線`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "沒有在線的機器" : `${enabled} 台中有 ${connected} 台在線`,
     fallback: ({ number }: { number: number }) => `後備 ${number}`,
 };
 

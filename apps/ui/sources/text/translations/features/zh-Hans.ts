@@ -11337,7 +11337,7 @@ const zhHans = {
     executionMachine: "运行于",
     chosenFrom: "选自",
     aMachinePool: "机器池",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${enabled} 台已启用机器中有 ${connected} 台已连接`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "没有在线的机器" : `${enabled} 台中有 ${connected} 台在线`,
     fallback: ({ number }: { number: number }) => `后备 ${number}`,
 };
 

@@ -11339,7 +11339,7 @@ const es = {
     executionMachine: "Ejecutar en",
     chosenFrom: "Elegido de",
     aMachinePool: "Un pool de máquinas",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} de ${enabled} habilitadas conectadas`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Ninguna máquina en línea" : `${connected} de ${enabled} en línea`,
     fallback: ({ number }: { number: number }) => `Alternativa ${number}`,
 };
 

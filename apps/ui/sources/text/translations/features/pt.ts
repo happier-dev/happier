@@ -11438,7 +11438,7 @@ const pt = {
     executionMachine: "Executar em",
     chosenFrom: "Escolhido de",
     aMachinePool: "Um pool de máquinas",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} de ${enabled} ativadas ligadas`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Nenhuma máquina online" : `${connected} de ${enabled} online`,
     fallback: ({ number }: { number: number }) => `Alternativa ${number}`,
 };
 

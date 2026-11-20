@@ -11397,7 +11397,7 @@ const ja = {
     executionMachine: "実行先",
     chosenFrom: "選択元",
     aMachinePool: "マシンプール",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `有効な${enabled}台のうち${connected}台が接続中`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "オンラインのマシンはありません" : `${enabled}台中${connected}台がオンライン`,
     fallback: ({ number }: { number: number }) => `フォールバック ${number}`,
 };
 

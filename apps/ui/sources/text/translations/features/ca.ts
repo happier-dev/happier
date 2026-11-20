@@ -11444,7 +11444,7 @@ const ca = {
     executionMachine: "Executa a",
     chosenFrom: "Escollit entre",
     aMachinePool: "Un pool de màquines",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} de ${enabled} d’activades connectades`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Cap màquina en línia" : `${connected} de ${enabled} en línia`,
     fallback: ({ number }: { number: number }) => `Alternativa ${number}`,
 };
 

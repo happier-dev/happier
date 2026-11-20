@@ -11472,7 +11472,7 @@ const ru = {
     executionMachine: "Запустить на",
     chosenFrom: "Выбрано из",
     aMachinePool: "Пул машин",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `Подключено ${connected} из ${enabled} включённых`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Нет машин в сети" : `В сети ${connected} из ${enabled}`,
     fallback: ({ number }: { number: number }) => `Резерв ${number}`,
 };
 

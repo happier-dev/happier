@@ -11474,7 +11474,7 @@ const pl = {
     executionMachine: "Uruchom na",
     chosenFrom: "Wybrany z",
     aMachinePool: "Pula maszyn",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `Połączono ${connected} z ${enabled} włączonych`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Żadna maszyna nie jest online" : `Online: ${connected} z ${enabled}`,
     fallback: ({ number }: { number: number }) => `Zapasowa ${number}`,
 };
 

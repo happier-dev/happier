@@ -49,6 +49,11 @@ describe('machinePoolTranslations', () => {
         expect(inherited).toEqual([]);
     });
 
+    it('says a Pool’s connection state as an outcome, not a count of enabled members', () => {
+        expect(machinePoolTranslations.en.availabilityKnown({ connected: 0, enabled: 1 })).toBe('No machine online');
+        expect(machinePoolTranslations.en.availabilityKnown({ connected: 2, enabled: 3 })).toBe('2 of 3 online');
+    });
+
     it('labels the concept “machine pool” wherever a Connected Service Pool could be confused with it', () => {
         // Settings, the New Session picker and the delete confirmation all sit within reach of the
         // Connected Service Pools surface, so the Machine Pool entry points name the exact concept

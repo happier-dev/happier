@@ -11455,7 +11455,7 @@ const de = {
     executionMachine: "Ausführen auf",
     chosenFrom: "Ausgewählt aus",
     aMachinePool: "Ein Rechner-Pool",
-    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => `${connected} von ${enabled} aktivierten verbunden`,
+    availabilityKnown: ({ connected, enabled }: { connected: number; enabled: number }) => connected === 0 ? "Keine Maschine online" : `${connected} von ${enabled} online`,
     fallback: ({ number }: { number: number }) => `Ausweichstufe ${number}`,
 };
 

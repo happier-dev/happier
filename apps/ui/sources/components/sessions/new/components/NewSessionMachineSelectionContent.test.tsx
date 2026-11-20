@@ -380,7 +380,7 @@ describe('NewSessionMachineSelectionContent', () => {
         />);
 
         const props = getLastSelectionList();
-        expect(props.rootStep.sections.map((section) => section.id)).toEqual(['machine-pools', 'all']);
+        expect(props.rootStep.sections.map((section) => section.id)).toEqual(['all', 'machine-pools']);
         const poolOption = getOption(getSection(props, 'machine-pools'), `pool:server-a:${pool.pool.id}`);
         expect(poolOption.label).toBe('Development');
         expect(poolOption.subtitle).toContain('Select');

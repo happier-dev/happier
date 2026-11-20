@@ -1115,8 +1115,10 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             }));
             const poolGroup = poolGroups.find((candidate) => candidate.serverId === group.serverId);
             const poolOptions = poolGroup ? buildPoolSectionOptions(poolGroup, group, 24) : [];
+            // Pools follow your machines and shared ones (lab m-pick): a Pool whose machines are all offline must not
+            // push the selected, online machine below the fold.
             if (poolOptions.length > 0) {
-                sections.unshift({
+                sections.push({
                     kind: 'static',
                     id: 'machine-pools',
                     title: t('machinePools.title'),
@@ -1254,7 +1256,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 count: poolGroup.pools.length,
                 options: poolOptions,
             };
-            return [poolSection, ...machineSections];
+            return [...machineSections, poolSection];
         });
         for (const section of [managedMachineSection, temporaryComputerSection, connectSection]) if (section) sections.push(section);
 

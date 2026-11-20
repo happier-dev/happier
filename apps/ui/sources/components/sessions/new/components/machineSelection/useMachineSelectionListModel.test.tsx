@@ -193,6 +193,19 @@ async function renderModel(fixture: Fixture, initialProps: Handlers) {
     );
 }
 
+/** The Pool section follows the machine sections (lab m-pick), so Pool cases find it by id. */
+function poolSectionOf(model: ReturnType<typeof UseMachineSelectionListModel>) {
+    return model.rootStep.sections.find((section) => section.id === 'machine-pools' || section.id.endsWith(':machine-pools'));
+}
+
+function firstPoolOption(model: ReturnType<typeof UseMachineSelectionListModel>) {
+    const section = poolSectionOf(model);
+    if (section?.kind !== 'static') throw new Error('expected the Pool section');
+    const option = section.options[0];
+    if (!option) throw new Error('expected a Pool row');
+    return option;
+}
+
 function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel>) {
     const section = model.rootStep.sections[0];
     if (section?.kind !== 'static') throw new Error('expected a leading static section');
@@ -229,6 +242,32 @@ describe('useMachineSelectionListModel', () => {
         for (const id of ['server:server-a', 'server:server-b']) expect(sectionCount(id)).toBe(1);
         expect(poolSubtitle()).toContain('member-a');
         expect(poolSubtitle()).toContain('machinePools.availabilityKnown');
+        await rendered.unmount();
+    });
+
+    it.each([1, 2])('leads with your machines, then shared ones, then Machine pools across %s Homes (lab m-pick)', async homeCount => {
+        const own = createMachine('own-a');
+        const shared = { ...createMachine('alice-a'), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'ready' as const,
+        } };
+        const fixture = { ...createFixture([own, shared]), recent: [], favorites: [] };
+        const groups = homeCount === 1 ? fixture.groups
+            : [fixture.groups[0]!, { ...fixture.groups[0]!, serverId: 'server-b', serverName: 'Server B', machines: [] }];
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, makeHandlers()),
+            groups, showFavorites: false, showRecent: false, poolGroups: [{
+                serverId: 'server-a', accountId: 'account-a', serverName: 'Server A', status: 'idle' as const,
+                projectionReady: true, pools: [{ pool: { id: 'pool-a', name: 'Development', description: null,
+                    revision: 1, createdAt: 1, updatedAt: 1,
+                    members: [{ machineId: 'own-a', enabled: true, priorityTier: 0 }] },
+                    availability: { state: 'known' as const, connectedCount: 0, enabledCount: 1 } }],
+            }] }));
+        const ids = rendered.getCurrent().rootStep.sections.map((section) => section.id);
+        const home = (id: string) => homeCount === 1 ? id : `server:server-a:${id}`;
+        const at = (id: string) => ids.indexOf(id);
+        expect(at(home(homeCount === 1 ? 'all' : 'owned'))).toBe(0);
+        expect(at(home('shared:alice'))).toBeGreaterThan(0);
+        expect(at(home('machine-pools'))).toBeGreaterThan(at(home('shared:alice')));
         await rendered.unmount();
     });
 
@@ -1264,7 +1303,7 @@ describe('useMachineSelectionListModel', () => {
             },
         );
 
-        let poolOption = firstStaticOption(rendered.getCurrent());
+        let poolOption = firstPoolOption(rendered.getCurrent());
         expect(poolOption.subtitle).toBe('machinePools.resolvingTarget');
         expect(poolOption.disabled).toBe(true);
 
@@ -1278,7 +1317,7 @@ describe('useMachineSelectionListModel', () => {
                 reason: 'no_available_machine',
             },
         });
-        poolOption = firstStaticOption(rendered.getCurrent());
+        poolOption = firstPoolOption(rendered.getCurrent());
         expect(poolOption.subtitle).toBe('machinePools.resolveNoAvailable');
         expect(poolOption.disabled).toBe(false);
         await rendered.unmount();
@@ -1308,7 +1347,7 @@ describe('useMachineSelectionListModel', () => {
             onRefreshPools: vi.fn(),
         }));
 
-        const poolOption = firstStaticOption(rendered.getCurrent());
+        const poolOption = firstPoolOption(rendered.getCurrent());
         expect(poolOption.disabled).toBe(true);
         expect(poolOption.subtitle).toContain('machinePools.refreshFailed');
         expect(poolOption.subtitle).not.toContain('machinePools.availabilityKnown');
@@ -1340,7 +1379,7 @@ describe('useMachineSelectionListModel', () => {
             onSelectPool,
         }));
 
-        const poolOption = firstStaticOption(rendered.getCurrent());
+        const poolOption = firstPoolOption(rendered.getCurrent());
         expect(poolOption.disabled).toBe(true);
         expect(poolOption.subtitle).toContain('common.error');
         expect(poolOption.subtitle).not.toContain('machinePools.availabilityKnown');
@@ -1391,7 +1430,7 @@ describe('useMachineSelectionListModel', () => {
             onSelectPool: vi.fn(),
         }));
 
-        const poolOption = firstStaticOption(rendered.getCurrent());
+        const poolOption = firstPoolOption(rendered.getCurrent());
         // A member whose details cannot be read is a locked machine, never a raw or short id.
         const { getMachineDisplayName } = await import('@/utils/sessions/machineDisplayNames');
         const lockedName = getMachineDisplayName(unidentifiedMachine);
@@ -1427,7 +1466,7 @@ describe('useMachineSelectionListModel', () => {
             onSelectPool: vi.fn(),
         }));
 
-        const poolOption = firstStaticOption(rendered.getCurrent());
+        const poolOption = firstPoolOption(rendered.getCurrent());
         expect(poolOption.subtitle).toContain('m-2, m-3');
         expect(poolOption.subtitle).not.toContain('m-1');
         expect(poolOption.accessibilityLabel).toContain('m-2, m-3');
@@ -1496,7 +1535,7 @@ describe('useMachineSelectionListModel', () => {
             onSelectPool: vi.fn(),
             onRefreshPools,
         }));
-        const section = rendered.getCurrent().rootStep.sections[0];
+        const section = poolSectionOf(rendered.getCurrent());
         if (section?.kind !== 'static') throw new Error('expected the Pool section');
         expect(section.options.map((option) => option.id)).toEqual(['pool-refresh:server-a']);
         const row = section.options[0]!;
@@ -1533,7 +1572,7 @@ describe('useMachineSelectionListModel', () => {
             onRefreshPools,
         }));
 
-        const section = rendered.getCurrent().rootStep.sections[0];
+        const section = poolSectionOf(rendered.getCurrent());
         if (section?.kind !== 'static') throw new Error('expected the Pool section');
         const retry = section.options.find((option) => option.id === 'pool-refresh:server-a');
         // One cause, one row: the failure in words and its Retry at the row's end, never a second row.
@@ -1585,7 +1624,7 @@ describe('useMachineSelectionListModel', () => {
         );
 
         const optionIdsOf = () => {
-            const section = rendered.getCurrent().rootStep.sections[0];
+            const section = poolSectionOf(rendered.getCurrent());
             if (section?.kind !== 'static') throw new Error('expected the Pool section');
             return section.options;
         };
