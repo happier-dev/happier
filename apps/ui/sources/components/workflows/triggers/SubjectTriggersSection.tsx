@@ -9,6 +9,7 @@ import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/auto
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider, useListPresentation } from '@/components/ui/lists/listPresentation';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
@@ -139,12 +140,16 @@ function SubjectTriggersReadState(props: SubjectTriggersReadStateProps) {
 
 function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof ItemGroup>, 'testID' | 'action' | 'children'>
   & Readonly<{ description: string; widget?: boolean }>) {
-  return <ItemGroup testID={props.testID ?? 'subject-triggers'}
+  // A page section wherever it is mounted: a plugin page draws it through its host with no list presentation of its
+  // own, where it fell back to a grouped card (its description under the rows, its empty line in a pill; DBW M10).
+  const page = useListPresentation() === 'page';
+  const section = <ItemGroup testID={props.testID ?? 'subject-triggers'}
     {...(props.widget ? { surface: 'none' as const }
       : { title: t('workflows.triggers.section.title'), description: props.description, action: props.action })}>
     {props.widget ? <WidgetGlanceRow variant="fact" title={props.description} testID="subject-triggers-description" /> : null}
     {props.children}
   </ItemGroup>;
+  return props.widget || page ? section : <ListPresentationProvider value="page">{section}</ListPresentationProvider>;
 }
 
 /** A host whose subject read has not succeeded keeps the shared section without inventing an identity. */
