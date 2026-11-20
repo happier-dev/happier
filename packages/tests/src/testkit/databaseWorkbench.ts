@@ -94,7 +94,7 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     const machine = await fixture.enrollDaemon(owner, { env: daemonEnv });
     const pluginInstallation = await installDatabaseWorkbenchPluginFixture({ daemonPort: machine.daemon.state.httpPort,
       controlToken: machine.daemon.state.controlToken });
-    const opened = await owner.execute('projects.open', {
+    const opened = await owner.executeReviewed('projects.open', {
       serverId: fixture.serverId, machineId: machine.target.machineId,
       source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' },
     }, { presentUserConfirmation: { actionId: 'projects.open' } });
