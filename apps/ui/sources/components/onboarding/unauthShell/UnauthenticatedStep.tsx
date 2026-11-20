@@ -9,7 +9,13 @@ import { Typography } from '@/constants/Typography';
 
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 
-import { STEP_ROW_BUTTON_PX, StepRowBackButton, useStepRowBack } from './stepBack';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+
+import { useUnauthShellLayout } from './useUnauthShellLayout';
+import { STEP_ROW_BUTTON_PX, StepRowBackButton, UNAUTH_LEAVE_TEST_ID, useStepLeave, useStepRowBack } from './stepBack';
+
+/** A dead end's way out, drawn as the page's pill: its own exit, or the shell's Back when it has none. */
+export type StepLeaveAction = Readonly<{ label: string; onPress?: () => void; testID?: string }>;
 
 export type UnauthenticatedStepProps = Readonly<{
   /** The step's page heading. Omit when the body owns its own heading (a form with sub-views). */
@@ -17,6 +23,13 @@ export type UnauthenticatedStepProps = Readonly<{
   subtitle?: React.ReactNode;
   /** One quiet line above the heading naming what the step acts on (the Home being signed in to). */
   context?: React.ReactNode;
+  /** A round mark over the heading naming what the step is about ({@link StepMark}). */
+  mark?: React.ReactNode;
+  /**
+   * A terminal answer (a link that leads nowhere): the column stands lower over the planet with fewer words, and its
+   * way out is the page's pill instead of the shell's Back (lab direction A, problem steps).
+   */
+  problem?: Readonly<{ leave?: StepLeaveAction }>;
   children?: React.ReactNode;
   /** Actions under the body: the primary button, a quiet escape. */
   footer?: React.ReactNode;
@@ -37,6 +50,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   context?: React.ReactNode;
+  mark?: React.ReactNode;
   testID?: string;
 }>) {
   useUnistyles();
@@ -44,6 +58,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
   const headingRef = useStepFocal('heading');
   return (
     <View style={styles.header}>
+      {props.mark ? <View style={styles.mark}>{props.mark}</View> : null}
       {props.context ? <View style={styles.context}>{props.context}</View> : null}
       <Text ref={headingRef} testID={props.testID} accessibilityRole="header" style={styles.title}>
         {props.title}
@@ -58,21 +73,29 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
   const styles = stylesheet;
   const hasHeader = props.title != null && props.title !== '';
   const body = props.children == null ? null : <View style={styles.body}>{props.children}</View>;
+  const leave = props.problem?.leave;
+  const compact = useUnauthShellLayout() === 'compact';
 
   return (
-    <View testID={props.testID} style={styles.root}>
+    <View
+      testID={props.testID}
+      style={[styles.root, props.problem ? (compact ? styles.rootProblemCompact : styles.rootProblem) : null]}
+    >
       <View style={styles.content}>
         {hasHeader ? (
           <UnauthenticatedStepHeading
             title={props.title}
             subtitle={props.subtitle}
             context={props.context}
+            mark={props.mark}
             testID={props.testID ? `${props.testID}-title` : undefined}
           />
         ) : null}
         {body}
       </View>
-      {props.footer ? <UnauthenticatedStepFooter>{props.footer}</UnauthenticatedStepFooter> : null}
+      {props.footer || leave ? (
+        <UnauthenticatedStepFooter leave={leave}>{props.footer}</UnauthenticatedStepFooter>
+      ) : null}
     </View>
   );
 }
@@ -81,15 +104,47 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
  * A step's actions, centred on the column (direction A). On a computer the step's Back stands to the left of its
  * Continue and an equal space balances it on the right, so Continue stays on the column's axis.
  */
-function UnauthenticatedStepFooter(props: Readonly<{ children: React.ReactNode }>) {
+function UnauthenticatedStepFooter(props: Readonly<{ children?: React.ReactNode; leave?: StepLeaveAction }>) {
+  return props.leave
+    ? <LeaveStepFooter leave={props.leave}>{props.children}</LeaveStepFooter>
+    : <RowBackStepFooter>{props.children}</RowBackStepFooter>;
+}
+
+function RowBackStepFooter(props: Readonly<{ children?: React.ReactNode }>) {
   useUnistyles();
   const styles = stylesheet;
   const back = useStepRowBack();
+  const compact = useUnauthShellLayout() === 'compact';
   return (
     <View style={styles.footer}>
       {back ? <StepRowBackButton onPress={back} /> : null}
-      <View style={styles.footerActions}>{props.children}</View>
+      <View style={[styles.footerActions, compact ? styles.footerActionsCompact : null]}>{props.children}</View>
       {back ? <View style={styles.footerBalance} /> : null}
+    </View>
+  );
+}
+
+/** A dead end's actions: its one action (if any), then its way out as the page's pill, in place of the shell's Back. */
+function LeaveStepFooter(props: Readonly<{ children?: React.ReactNode; leave: StepLeaveAction }>) {
+  useUnistyles();
+  const styles = stylesheet;
+  const back = useStepLeave();
+  const onLeave = props.leave.onPress ?? back;
+  const compact = useUnauthShellLayout() === 'compact';
+  return (
+    <View style={styles.footer}>
+      <View style={[styles.footerActions, compact ? styles.footerActionsCompact : null]}>
+        {props.children}
+        {onLeave ? (
+          <WelcomeActionCard
+            testID={props.leave.testID ?? UNAUTH_LEAVE_TEST_ID}
+            title={props.leave.label}
+            presentation="pill"
+            escape
+            onPress={onLeave}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -109,11 +164,21 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: '100%',
     gap: theme.space.s24,
   },
-  // The description sits directly under the title, as on every page (PageHeader): the title's own line
-  // box is the air between them, so the two read as one block (owner review 11-16).
+  // The description sits close under the title so the two read as one block (owner review 11-16); the final lab
+  // (direction A) sets that air at s10.
   header: {
     width: '100%',
     alignItems: 'center',
+  },
+  // A terminal answer stands lower over the planet than a working step (lab direction A, problem steps).
+  rootProblem: {
+    paddingTop: theme.space.s48 + theme.space.s24,
+  },
+  rootProblemCompact: {
+    paddingTop: theme.space.s40,
+  },
+  mark: {
+    marginBottom: theme.space.s24,
   },
   context: {
     marginBottom: theme.space.s8,
@@ -130,7 +195,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
     textAlign: 'center',
     maxWidth: 440,
-    marginTop: theme.space.s6,
+    marginTop: theme.space.s10,
     ...HAPPIER_BALANCED_TEXT_WRAP,
   },
   body: {
@@ -147,6 +212,10 @@ const stylesheet = StyleSheet.create((theme) => ({
   footerActions: {
     alignItems: 'center',
     gap: theme.space.s12,
+  },
+  // On a phone the actions take the column's width, so a step's primary can span it (lab direction A).
+  footerActionsCompact: {
+    flex: 1,
   },
   footerBalance: {
     width: STEP_ROW_BUTTON_PX,

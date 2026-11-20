@@ -406,12 +406,13 @@ describe('TeamJoinScreen', () => {
 
     it('exits a cold-start invitation link through the safe back owner when there is no history', async () => {
         const rendered = await renderScreen(<TeamJoinScreen token="not-a-token" />);
-        // The state reads as a step: its heading names the problem and the shell's
-        // back chevron is the one way out, never a second Back row under it.
+        // The state reads as a dead-end step: its heading names the problem and "Back to Happier"
+        // is the one way out, in place of the shell's back chevron.
         expect(rendered.findByTestId('team-join-invalid-title')).not.toBeNull();
         expect(rendered.findByTestId('team-join-back')).toBeNull();
+        expect(rendered.findByTestId('unauth-shell-back-chevron')).toBeNull();
 
-        await rendered.pressByTestIdAsync('unauth-shell-back-chevron');
+        await rendered.pressByTestIdAsync('unauth-shell-leave');
 
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
@@ -424,7 +425,7 @@ describe('TeamJoinScreen', () => {
 
         expect(runtimeFetchMock).not.toHaveBeenCalled();
         expect(rendered.findByTestId('team-join-invalid')).not.toBeNull();
-        expect(rendered.findByTestId('unauth-shell-back-chevron')).not.toBeNull();
+        expect(rendered.findByTestId('unauth-shell-leave')).not.toBeNull();
         expect(rendered.findByTestId('team-join-shell')).not.toBeNull();
         expect(rendered.findAll((node) => node.props.role === 'status'
             && node.props['aria-live'] === 'polite'

@@ -6,10 +6,11 @@ import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/Step
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FlowSurfaceActions, type FlowSurfaceAction } from '@/components/ui/flowSurface';
+import { t } from '@/text';
 
 import { UnauthenticatedRouteShell } from '../unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
-import { StepBackContext, useStepBackSlot } from '../unauthShell/stepBack';
+import { StepBackContext, useStepBackSlot, useStepPrimaryWidth } from '../unauthShell/stepBack';
 import { WizardModalShell } from './WizardModalShell';
 
 export type AuthRouteStepAction = Readonly<{
@@ -35,6 +36,8 @@ type RouteStepProps = Readonly<{
     secondary?: AuthRouteStepAction;
     /** One line under the actions saying what they do. */
     footerHint?: React.ReactNode;
+    /** The round mark over the heading naming what the step is about ({@link StepMark}). */
+    mark?: React.ReactNode;
     children?: React.ReactNode;
 }>;
 
@@ -53,17 +56,25 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
     shellTestID?: string;
     /** The shell's step identity when it differs from the step's testID. */
     stepId?: string;
-    /** Announce the step as a status (a link's terminal answer arriving after a check). */
+    /**
+     * A link's terminal answer arriving after a check: announced as a status and drawn as a problem step (lower over
+     * the planet, its mark over the heading, Back drawn as the "Back to Happier" pill).
+     */
     status?: boolean;
+    /** A status step's own way out ("Back to Happier" to the root); defaults to the shell's Back under that label. */
+    leave?: Readonly<{ onPress: () => void; testID?: string }>;
 }>) {
     // A lone quiet action (Cancel while a sign-in can still be stopped) stays quiet: it is a
     // text action on the column, never promoted to the step's filled primary.
+    const primaryWidth = useStepPrimaryWidth();
     const actions = props.primary ? (
-        <FlowSurfaceActions
-            placement="column"
-            primary={toFlowAction(props.primary)}
-            secondary={props.secondary ? toFlowAction(props.secondary) : undefined}
-        />
+        <View style={{ width: primaryWidth }}>
+            <FlowSurfaceActions
+                placement="column"
+                primary={toFlowAction(props.primary)}
+                secondary={props.secondary ? toFlowAction(props.secondary) : undefined}
+            />
+        </View>
     ) : props.secondary ? (
         <TextLinkButton
             testID={props.secondary.testID}
@@ -79,7 +90,19 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
         </>
     ) : undefined;
     const step = (
-        <UnauthenticatedStep testID={props.testID} title={props.title} subtitle={props.subtitle} context={props.context} footer={footer}>
+        <UnauthenticatedStep
+            testID={props.testID}
+            title={props.title}
+            subtitle={props.subtitle}
+            context={props.context}
+            mark={props.mark}
+            // A dead end with nothing left to do here leaves through the pill; one with its own action keeps Back,
+            // unless the step names its own exit.
+            problem={props.status ? {
+                leave: props.primary && !props.leave ? undefined : { label: t('teams.entry.returnToHappier'), ...props.leave },
+            } : undefined}
+            footer={footer}
+        >
             {props.children}
         </UnauthenticatedStep>
     );
@@ -112,6 +135,8 @@ type AuthRouteStepFrameProps = RouteStepProps & Readonly<{
     stepId?: string;
     /** The signed-in card's step counter, when the route is a step of a longer setup. */
     progress?: Readonly<{ index: number; count: number }>;
+    /** A terminal answer (a failed sign-in): announced, and drawn signed out as a problem step under its mark. */
+    status?: boolean;
     children: React.ReactNode;
 }>;
 
@@ -137,6 +162,8 @@ export function AuthRouteStepFrame(props: AuthRouteStepFrameProps) {
                 primary={props.primary}
                 secondary={props.secondary}
                 footerHint={props.footerHint}
+                mark={props.mark}
+                status={props.status}
             >
                 {props.children}
             </UnauthenticatedRouteStep>

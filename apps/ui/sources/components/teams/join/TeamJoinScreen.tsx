@@ -23,6 +23,8 @@ import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForId
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { teamDetailPath, teamSetupPath } from '@/components/settings/teams/teamsRoutes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { parseToken } from '@/utils/auth/parseToken';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { TeamJoinedContent } from './TeamJoinedContent';
@@ -44,6 +46,8 @@ function TeamJoinStateStep(props: Readonly<{
     testID: string;
     title: string;
     subtitle: string;
+    /** Which dead end it is, as the mark over the heading. */
+    glyph: IconName;
     onBack: () => void;
     primary?: AuthRouteStepAction;
     secondary?: AuthRouteStepAction;
@@ -58,6 +62,7 @@ function TeamJoinStateStep(props: Readonly<{
             onBack={props.onBack}
             primary={props.primary}
             secondary={props.secondary}
+            mark={<StepMark iconName={props.glyph} />}
             status
         />
     );
@@ -187,6 +192,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID="team-join-invalid"
                 title={t('teams.join.invalidTitle')}
                 subtitle={t('teams.join.askForNew')}
+                glyph="link"
                 onBack={exit}
             />
         );
@@ -205,6 +211,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID={target.kind === 'ambiguous' ? 'team-join-ambiguous-home' : 'team-join-unresolved-home'}
                 title={t('teams.join.unresolvedHomeTitle')}
                 subtitle={t('teams.join.unresolvedHomeBody')}
+                glyph="unlink"
                 onBack={exit}
             />
         );
@@ -233,6 +240,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID="team-join-unreachable-home"
                 title={t('teams.join.unknownHomeTitle')}
                 subtitle={t('teams.join.unknownHomeBody')}
+                glyph="server"
                 onBack={exit}
                 primary={{ testID: 'team-join-retry-home', label: t('common.retry'), onPress: target.retry }}
                 secondary={{ testID: 'team-join-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
@@ -247,6 +255,7 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                 testID="team-join-unknown-home"
                 title={t('teams.join.unknownHomeTitle')}
                 subtitle={t('teams.join.unknownHomeBody')}
+                glyph="server"
                 onBack={exit}
                 primary={{ testID: 'team-join-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
             />

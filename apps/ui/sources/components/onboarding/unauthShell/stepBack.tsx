@@ -5,6 +5,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
+import { useUnauthShellLayout } from './useUnauthShellLayout';
+
 
 /** Back's test id wherever a step draws it; the reversed step morph keys on it. */
 export const UNAUTH_BACK_TEST_ID = 'unauth-shell-back-chevron';
@@ -80,6 +82,19 @@ export function useStepRowBack(): (() => void) | null {
   return inRow ? slot.onBack : null;
 }
 
+/** The test id of a dead end's "Back to Happier" pill, which stands in for Back. */
+export const UNAUTH_LEAVE_TEST_ID = 'unauth-shell-leave';
+
+/**
+ * A dead end draws its way out as the page's pill on every device (lab direction A), so it takes the shell's Back on a
+ * computer and a phone alike: the shell then draws no Back of its own, while Escape and Android back still reach it.
+ */
+export function useStepLeave(): (() => void) | null {
+  const slot = React.useContext(StepBackContext);
+  useIsomorphicLayoutEffect(() => (slot ? slot.claim() : undefined), [slot]);
+  return slot ? slot.onBack : null;
+}
+
 /** Back as a round well, the same object as the ways beside it; the reversed step morph keys on its test id. */
 export function StepRowBackButton(props: Readonly<{ onPress: () => void; disabled?: boolean }>) {
   return (
@@ -99,6 +114,14 @@ export function StepRowBackButton(props: Readonly<{ onPress: () => void; disable
 export function StepRowBack() {
     const back = useStepRowBack();
     return back ? <StepRowBackButton onPress={back} /> : null;
+}
+
+/** A step's one primary on a computer (lab direction A: 240 px, centred); on a phone it spans the column. */
+const STEP_PRIMARY_WIDTH_PX = 240;
+
+/** The width of a signed-out step's primary action, decided once for every step. */
+export function useStepPrimaryWidth(): number | '100%' {
+  return useUnauthShellLayout() === 'compact' ? '100%' : STEP_PRIMARY_WIDTH_PX;
 }
 
 /** A choice step's column (lab "Where should your Home live?"): two option cards side by side at a readable width. */

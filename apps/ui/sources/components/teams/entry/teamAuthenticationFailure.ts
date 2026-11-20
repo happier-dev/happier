@@ -1,5 +1,6 @@
 import type { TeamEntryUnavailableReasonV1 } from '@happier-dev/protocol/auth/entry';
 
+import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 /**
@@ -25,6 +26,8 @@ export type TeamAuthenticationFailurePresentation = Readonly<{
     kind: 'unavailable' | 'warning';
     title: string;
     body: string;
+    /** The mark the answer stands under when it is a page of its own: which dead end it is, at a glance. */
+    glyph: IconName;
 }>;
 
 export function presentTeamAuthenticationFailure(
@@ -38,12 +41,14 @@ export function presentTeamAuthenticationFailure(
                 kind: 'unavailable',
                 title: t('teams.entry.notProvisionedTitle'),
                 body: t('teams.entry.notProvisionedBody'),
+                glyph: 'people',
             };
         case 'team_authentication_unavailable':
             return {
                 kind: 'unavailable',
                 title: t('teams.entry.accessRemovedTitle'),
                 body: t('teams.entry.accessRemovedBody'),
+                glyph: 'remove-circle',
             };
         case 'auth_provider_configuration_changed':
             // The provider binding moved under the attempt; the Team page
@@ -52,6 +57,7 @@ export function presentTeamAuthenticationFailure(
                 kind: 'warning',
                 title: t('teams.entry.providerChangedTitle'),
                 body: t('teams.entry.providerChangedBody'),
+                glyph: 'refresh',
             };
     }
 }
@@ -70,6 +76,7 @@ export function presentTeamsDisabledOnHome(): TeamAuthenticationFailurePresentat
         kind: 'unavailable',
         title: t('teams.unavailable.title'),
         body: t('teams.unavailable.disabled'),
+        glyph: 'people',
     };
 }
 
@@ -91,12 +98,14 @@ export function presentTeamEntryUnavailableReason(
                 kind: 'unavailable',
                 title: t('teams.entry.ssoRequiredTitle'),
                 body: t('teams.entry.ssoRequiredBody'),
+                glyph: 'key',
             };
         case 'wrong_account':
             return {
                 kind: 'unavailable',
                 title: t('teams.entry.wrongAccountTitle'),
                 body: t('teams.entry.wrongAccountBody'),
+                glyph: 'people',
             };
         case 'directory_delayed':
             // Access is expected to arrive from an upstream directory, so this
@@ -105,12 +114,14 @@ export function presentTeamEntryUnavailableReason(
                 kind: 'warning',
                 title: t('teams.entry.directoryDelayedTitle'),
                 body: t('teams.entry.directoryDelayedBody'),
+                glyph: 'clock',
             };
         case 'invitation_unavailable':
             return {
                 kind: 'unavailable',
                 title: t('teams.entry.invitationUnavailableTitle'),
                 body: t('teams.entry.invitationUnavailableBody'),
+                glyph: 'link',
             };
     }
 }

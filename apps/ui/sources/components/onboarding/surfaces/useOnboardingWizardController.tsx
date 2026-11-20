@@ -1384,6 +1384,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         <WideStepColumn>
             <SelectionTiles
                 variant="card"
+                // Option F: the glyph sits inline at the title's size (lab 16 px), the card's text at the compact step.
+                density="compact"
                 accessibilityLabel={t('setupOnboarding.preAuthTitle')}
                 options={relayChoices as Array<SelectionTile<string>>}
                 value={relayChoices.find((choice) => choice.selected)?.id ?? null}

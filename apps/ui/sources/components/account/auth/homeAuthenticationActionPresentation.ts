@@ -58,6 +58,11 @@ export function describeHomeAuthenticationAction(input: Readonly<{
     return {
         slug: `provider-${execution.providerId}`,
         title: t('welcome.signUpWithProvider', { provider: input.providerName }),
-        iconName: execution.providerId === 'github' ? 'github-logo' : 'sign-in',
+        iconName: oauthProviderIconName(execution.providerId),
     };
+}
+
+/** An OAuth provider's mark wherever a sign-in way or its return names it: its own logo when one ships, else sign-in. */
+export function oauthProviderIconName(providerId: string): IconName {
+    return providerId === 'github' ? 'github-logo' : 'sign-in';
 }

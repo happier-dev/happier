@@ -49,6 +49,8 @@ import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hoo
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { UnauthenticatedRouteStep } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { TEAM_ENTRY_LOGO_SIZE, TeamEntryIdentity, type TeamEntryLogo } from '@/components/teams/entry/TeamEntryIdentity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -1067,10 +1069,18 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
         const retryableTerminal = loadState.kind === 'offline'
             || loadState.kind === 'incompatible'
             || (loadState.kind === 'unavailable' && loadState.reason === 'directory_delayed');
-        content = (
-            <SurfaceStateCard
-                testID={`team-auth-entry-${loadState.kind}`}
-                kind={named?.kind ?? (isIncompatible ? 'warning' : isOffline ? 'error' : 'unavailable')}
+        // A terminal answer is a step of its own (lab direction A, problem steps): its mark, what happened, and its one
+        // way on. Every §10 refusal ends with "or go back to your own work", and a restricted Team reached from a public
+        // link is otherwise a dead end with nothing but an endless Retry; this is the same exit the OAuth Team failure
+        // card offers.
+        const testID = `team-auth-entry-${loadState.kind}`;
+        return (
+            <UnauthenticatedRouteStep
+                shellTestID="team-auth-entry-shell"
+                stepId={`team-auth-entry:${loadState.kind}`}
+                testID={testID}
+                status
+                mark={<StepMark iconName={named?.glyph ?? (isIncompatible ? 'refresh' : isOffline ? 'wifi-slash' : 'link')} />}
                 title={named?.title ?? (updateRequired
                     ? t('teams.join.updateRequiredTitle')
                     : isOffline
@@ -1078,20 +1088,10 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         : isIncompatible
                             ? t('teams.unavailable.title')
                             : t('teams.errors.notFound'))}
-                reason={named?.body ?? (isOffline ? t('teams.errors.loadFailed') : undefined)}
-                {...(loadState.kind === 'unavailable' && named
-                    ? { diagnosticCode: loadState.reason }
-                    : {})}
-                action={retryableTerminal ? { label: t('common.retry'), onPress: retry } : undefined}
-                // Every §10 refusal ends with "or go back to your own work", and
-                // a restricted Team reached from a public link is otherwise a
-                // dead end with nothing but an endless Retry. This is the same
-                // exit the OAuth Team failure card offers.
-                secondaryAction={{
-                    label: t('teams.entry.returnToHappier'),
-                    onPress: () => router.replace('/'),
-                }}
-                accessibilitySemantics="status"
+                subtitle={named?.body ?? (isOffline ? t('teams.errors.loadFailed') : undefined)}
+                onBack={props.onBack}
+                primary={retryableTerminal ? { testID: `${testID}-action`, label: t('common.retry'), onPress: retry } : undefined}
+                leave={{ testID: `${testID}-secondary-action`, onPress: () => router.replace('/') }}
             />
         );
     }

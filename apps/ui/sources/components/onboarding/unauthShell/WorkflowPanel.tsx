@@ -112,7 +112,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         priority: ESCAPE_LAYER_PRIORITIES.pane,
         onEscape: () => backSlot?.onBack(),
     });
-    const cornerBack = isMobile || !inRow;
+    // A step that draws Back itself (in its row on a computer, or a dead end's pill on any device) claims the slot.
+    const cornerBack = !inRow;
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
     const [cornerDoor, setCornerDoor] = React.useState<ShellCornerDoor | null>(null);
     const cornerSlot = isMobile ? null : setCornerDoor;
@@ -150,8 +151,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // The wordmark stands top-left on every welcome step and wherever a step asks for it (direction A).
     const showMobileWordmark = !isMobile || props.isWelcomeStep || props.showMobileWordmark === true;
     // A later step that keeps the wordmark (a Team entry) centres it in the Back row, clear of Back and the heading.
-    const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep;
-    const mobileBackRow = isMobile && props.onBack != null && !isFullBleed;
+    const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep && cornerBack;
+    const mobileBackRow = isMobile && props.onBack != null && !isFullBleed && cornerBack;
     const contentPaddingStyle: ViewStyle = isMobile
         ? isFullBleed
             ? styles.contentMobileFullBleedPadding
@@ -380,10 +381,10 @@ const stylesheet = StyleSheet.create(() => ({
         paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
         paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
     },
-    // A step after the welcome starts its column where the lab's steps do (direction A: 110 px from the window's top),
-    // clear of the wordmark row, rather than at the welcome's pane edge.
+    // A step after the welcome starts its column where the lab's steps do (direction A: the heading's first line at the
+    // lab's 100 px), clear of the wordmark row, rather than at the welcome's pane edge.
     contentDesktopStepPadding: {
-        paddingTop: 110,
+        paddingTop: 96,
         paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
         paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
     },

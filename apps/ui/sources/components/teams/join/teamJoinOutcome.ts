@@ -1,6 +1,7 @@
 import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 
 import { isAccountMissingOwnName } from '@/sync/domains/account/accountOwnName';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 /**
@@ -24,6 +25,8 @@ export type TeamJoinPresentation = Readonly<{
     /** Whether the person must act on their own identity first. */
     identityAction: 'sign_in_with_invited' | 'use_another_account' | null;
     exitToHappier?: true;
+    /** The mark a terminal answer stands under: which dead end it is, at a glance. */
+    glyph: IconName;
 }>;
 
 export function resolveTeamJoinPresentation(
@@ -45,6 +48,7 @@ export function resolveTeamJoinPresentation(
             // tell somebody their action did nothing when it just succeeded.
             return Object.freeze({
                 ...base,
+                glyph: 'checkmark-circle',
                 title: teamName
                     ? t('teams.join.joinedTeamTitle', { team: teamName })
                     : t('teams.join.joinedTitle'),
@@ -53,12 +57,14 @@ export function resolveTeamJoinPresentation(
         case 'already_member':
             return Object.freeze({
                 ...base,
+                glyph: 'checkmark-circle',
                 title: t('teams.join.alreadyMemberTitle'),
                 openTeamId: result.teamId,
             });
         case 'expired':
             return Object.freeze({
                 ...base,
+                glyph: 'clock',
                 title: t('teams.join.expiredTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -66,6 +72,7 @@ export function resolveTeamJoinPresentation(
         case 'revoked':
             return Object.freeze({
                 ...base,
+                glyph: 'remove-circle',
                 title: t('teams.join.revokedTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -73,6 +80,7 @@ export function resolveTeamJoinPresentation(
         case 'used':
             return Object.freeze({
                 ...base,
+                glyph: 'checkmark-circle',
                 title: t('teams.join.usedTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -80,6 +88,7 @@ export function resolveTeamJoinPresentation(
         case 'team_archived':
             return Object.freeze({
                 ...base,
+                glyph: 'archive',
                 title: t('teams.join.archivedTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,
@@ -87,6 +96,7 @@ export function resolveTeamJoinPresentation(
         case 'account_inactive':
             return Object.freeze({
                 ...base,
+                glyph: 'people',
                 title: t('teams.join.inactiveTitle'),
                 body: t('teams.join.inactiveBody'),
                 identityAction: 'use_another_account',
@@ -95,6 +105,7 @@ export function resolveTeamJoinPresentation(
             // The invitation is fine; this device is signed in as somebody else.
             return Object.freeze({
                 ...base,
+                glyph: 'mail',
                 title: t('teams.join.mismatchTitle'),
                 body: t('teams.join.mismatchBody'),
                 identityAction: 'sign_in_with_invited',
@@ -102,6 +113,7 @@ export function resolveTeamJoinPresentation(
         case 'feature_unavailable':
             return Object.freeze({
                 ...base,
+                glyph: 'refresh',
                 title: t('teams.join.updateRequiredTitle'),
                 body: t('teams.join.updateRequiredBody'),
                 exitToHappier: true,
@@ -109,6 +121,7 @@ export function resolveTeamJoinPresentation(
         case 'not_found':
             return Object.freeze({
                 ...base,
+                glyph: 'link',
                 title: t('teams.join.invalidTitle'),
                 body: t('teams.join.askForNew'),
                 askForNew: true,

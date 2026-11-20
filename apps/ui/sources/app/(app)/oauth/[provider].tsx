@@ -50,6 +50,8 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { trackAccountCreated, trackAccountRestored } from '@/track';
 
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { admitInternalRouteHref, admitOpaqueInternalReturnPath, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
@@ -85,7 +87,6 @@ import {
     presentTeamAuthenticationFailure,
     type TeamAuthenticationFailureCode,
 } from '@/components/teams/entry/teamAuthenticationFailure';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     classifyAccountServiceOAuthCallbackFailure,
     describeAccountServiceFailure,
@@ -1880,6 +1881,8 @@ function OAuthProviderReturnBody() {
         return (
             <AuthRouteStepFrame
                 testID="oauth-team-failure"
+                status
+                mark={<StepMark iconName={presentation.glyph} />}
                 title={presentation.title}
                 subtitle={presentation.body}
                 primary={{
@@ -1905,6 +1908,26 @@ function OAuthProviderReturnBody() {
         const directoryFailure = visibleAccountDirectoryJourney.kind === 'error'
             ? describeAccountServiceFailure(visibleAccountDirectoryJourney.failure)
             : null;
+        if (directoryFailure) {
+            // A failed sign-in is the step's own answer (lab direction A): the provider's mark, what happened, and
+            // Start again; never a card under a "Signing in…" heading that is no longer true.
+            return (
+                <AuthRouteStepFrame
+                    testID="oauth-account-directory-failure"
+                    status
+                    mark={<StepMark iconName={oauthProviderIconName(resolvedProviderId)} />}
+                    title={directoryFailure.title}
+                    subtitle={directoryFailure.body}
+                    primary={{
+                        label: t('settingsAccount.accountServiceOAuth.actions.startAgain'),
+                        disabled: busy,
+                        onPress: recoverAccountDirectoryJourney,
+                    }}
+                >
+                    {null}
+                </AuthRouteStepFrame>
+            );
+        }
         return (
             <AuthRouteStepFrame
                 testID="oauth-return-wizard"
@@ -1918,20 +1941,9 @@ function OAuthProviderReturnBody() {
                     </Text>
                 ) : undefined}
             >
-                {directoryFailure ? (
-                    <SurfaceStateCard
-                        testID="oauth-account-directory-failure"
-                        kind="error"
-                        title={directoryFailure.title}
-                        reason={directoryFailure.body}
-                        accessibilitySemantics="alert"
-                        action={{ label: t('settingsAccount.accountServiceOAuth.actions.startAgain'), busy, onPress: recoverAccountDirectoryJourney }}
-                    />
-                ) : (
-                    <View style={{ alignItems: 'flex-start' }}>
-                        <ActivitySpinner size="small" />
-                    </View>
-                )}
+                <View style={{ alignItems: 'flex-start' }}>
+                    <ActivitySpinner size="small" />
+                </View>
             </AuthRouteStepFrame>
         );
     }
@@ -1945,10 +1957,12 @@ function OAuthProviderReturnBody() {
     );
 
     if (externalFailure) return (
-        <AuthRouteStepFrame testID="oauth-external-failure" title={t('settingsAccount.accountServiceOAuth.errors.provider.title')}>
-            <SurfaceStateCard kind="error" title={externalFailure.reason} accessibilitySemantics="alert"
-                action={{ testID: 'oauth-external-start-again', label: t('settingsAccount.accountServiceOAuth.actions.startAgain'),
-                    onPress: () => externalFailure.retry ? setHomeOAuthRetry(externalFailure.retry) : router.replace(externalFailure.restart) }} />
+        <AuthRouteStepFrame testID="oauth-external-failure" status
+            mark={<StepMark iconName={oauthProviderIconName(resolvedProviderId)} />}
+            title={t('settingsAccount.accountServiceOAuth.errors.provider.title')} subtitle={externalFailure.reason}
+            primary={{ testID: 'oauth-external-start-again', label: t('settingsAccount.accountServiceOAuth.actions.startAgain'),
+                onPress: () => externalFailure.retry ? setHomeOAuthRetry(externalFailure.retry) : router.replace(externalFailure.restart) }}>
+            {null}
         </AuthRouteStepFrame>
     );
 

@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
+import { useStepPrimaryWidth } from '../unauthShell/stepBack';
 import { ActiveRelaySummary } from '../ui/ActiveRelaySummary';
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardModalShell } from '../ui/WizardModalShell';
@@ -86,10 +87,6 @@ type BareOnboardingWorkflowContentProps = Readonly<{
 }>;
 
 const bareStylesheet = StyleSheet.create(() => ({
-    // Direction A: one centred Continue (lab 240 px), Back to its left on a computer (the step frame's footer).
-    primaryButton: {
-        width: 240,
-    },
     skipButton: {
         maxWidth: 360,
     },
@@ -99,6 +96,8 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
     useUnistyles();
     const styles = bareStylesheet;
     const controller = props.controller;
+    // Direction A: one centred Continue, Back to its left on a computer (the step frame's footer).
+    const primaryWidth = useStepPrimaryWidth();
 
     if (controller.stepId === 'welcome') {
         return controller.body;
@@ -126,7 +125,7 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
             footer={hasFooter ? (
                 <>
                     {controller.onPrimary ? (
-                        <View style={styles.primaryButton}>
+                        <View style={{ width: primaryWidth }}>
                             <RoundButton
                                 testID={`${props.testID}-primary`}
                                 size="large"

@@ -522,9 +522,10 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-incompatible');
 
-        const terminal = screen.findByTestId('team-auth-entry-incompatible');
-        expect(terminal?.props.accessibilityLiveRegion).toBe('polite');
-        expect(terminal?.props['aria-live']).toBe('polite');
+        // The terminal step is announced politely as it arrives.
+        expect(screen.findAll((node) => node.props.role === 'status'
+            && node.props['aria-live'] === 'polite'
+            && node.props.accessibilityLiveRegion === 'polite')).not.toHaveLength(0);
 
         await screen.pressByTestIdAsync('team-auth-entry-incompatible-action');
         expect(await waitForTestId(screen, 'team-auth-entry-ready')).toBeTruthy();
@@ -544,7 +545,6 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(named, 'team-auth-entry-unavailable');
 
-        expect(named.findByTestId('team-auth-entry-unavailable-diagnostic-sso_required')).toBeTruthy();
         expect(named.getTextContent()).toContain(t('teams.entry.ssoRequiredTitle'));
         expect(named.getTextContent()).toContain(t('teams.entry.ssoRequiredBody'));
 
