@@ -1778,7 +1778,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         await exec.emit({ type: 'control_response', response: {
           subtype: 'error', request_id: controls()[1].request_id, error: 'Permission change refused',
         } });
-        await expect(rejectedUpdate).resolves.toEqual({ status: 'failed', reason: 'permission_mode_update_failed' });
+        await expect(rejectedUpdate).resolves.toMatchObject({ status: 'failed', reason: 'permission_mode_update_failed',
+          failureCause: { phase: 'turn_start', failureReason: 'unknown' } });
         expect(ctx.logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ error: expect.any(Error) }));
         if (state === 'interrupted') {
           await expect(operations.sendProviderTurnPrompt('continue after the refused change')).resolves.toEqual({ kind: 'accepted' });
@@ -3002,9 +3003,10 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       expect(resetSettled).toBe(false);
 
       releaseAssets?.();
-      await expect(prompt).resolves.toEqual({
+      await expect(prompt).resolves.toMatchObject({
         kind: 'rejected_before_effect',
         reason: 'Claude Agent SDK runtime is disposed.',
+        failureCause: { phase: 'turn_start', failureReason: 'unknown' },
       });
       await reset;
       expect(exec.spawnClient).not.toHaveBeenCalled();
