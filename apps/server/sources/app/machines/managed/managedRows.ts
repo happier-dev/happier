@@ -537,10 +537,18 @@ async function readCurrentMachineManagedEnrollmentsInTx(tx: Tx, machineIds: read
     }
     for (const row of rows) {
         const machine = row.enrolledMachineId ? byId.get(row.enrolledMachineId) : null;
-        if (row.homeId === homeId && machine && machine.accountId === readManagedEnrollmentAccountId(row)
-            && classifyMachineAvailabilityState(machine) === 'available') result.set(machine.id, row);
+        if (machine && isCurrentMachineManagedEnrollment(row, machine, homeId)) result.set(machine.id, row);
     }
     return result;
+}
+
+export function isCurrentMachineManagedEnrollment(
+    row: Pick<StoredManagedMachine, 'homeId' | 'admittedInput' | 'custodianAccountId'>,
+    machine: Pick<Prisma.MachineGetPayload<Record<string, never>>, 'accountId' | 'revokedAt' | 'replacedByMachineId'>,
+    homeId: string | null,
+): boolean {
+    return row.homeId === homeId && machine.accountId === readManagedEnrollmentAccountId(row)
+        && classifyMachineAvailabilityState(machine) === 'available';
 }
 
 /** A current workspace executes on the admitted Machine's own storage. */

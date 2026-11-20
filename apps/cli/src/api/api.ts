@@ -703,6 +703,8 @@ export class ApiClient {
         const response = await postSessionCreationRequest<CreateSessionResponse>({
           serverUrl: serverBaseUrl,
           token: this.credential.token,
+          ...(!managedCreation && this.localMachineId && 'sharedMetadata' in metadataEnvelopeFields
+            ? { localBirthMachineId: this.localMachineId } : {}),
           body: {
             tag: opts.tag,
             ...pickSessionCreateOriginFields(opts),

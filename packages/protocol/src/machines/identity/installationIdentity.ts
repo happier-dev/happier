@@ -77,6 +77,7 @@ export interface MachineInstallationProofPayloadV1 {
         expectedRevision: number; requestBodyDigest: string;
     };
     sessionCreation?: { sourceExecutionDigest: string; requestBodyDigest: string };
+    managedSessionBirth?: { requestBodyDigest: string };
     externalActionOrigin?: {
         homeId: string; actionId: z.infer<typeof ExternalActionActionIdV1Schema>; requestId: string;
         requestEnvelopeDigest: string;
@@ -136,6 +137,9 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
     })),
     sessionCreation: z.optional(z.strictObject({
         sourceExecutionDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+        requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+    managedSessionBirth: z.optional(z.strictObject({
         requestBodyDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     })),
     externalActionOrigin: z.optional(z.strictObject({
@@ -342,6 +346,7 @@ export function buildMachineInstallationProofPayloadBytes(
             sourceExecutionDigest: normalized.sessionCreation.sourceExecutionDigest,
             requestBodyDigest: normalized.sessionCreation.requestBodyDigest,
         } } : {}),
+        ...(normalized.managedSessionBirth ? { managedSessionBirth: normalized.managedSessionBirth } : {}),
         ...(normalized.externalActionOrigin ? { externalActionOrigin: {
             homeId: normalized.externalActionOrigin.homeId,
             actionId: normalized.externalActionOrigin.actionId,

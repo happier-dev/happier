@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { expect } from 'vitest';
+import nacl from 'tweetnacl';
+import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { db } from '@/storage/db';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { registerSessionCreateOrLoadRoute } from './registerSessionCreateOrLoadRoute';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
+import { getMachinePreset, listMachinePresets } from '@/app/machines/managed/machinePresetService';
 
 /** Same real HTTP → Session commit → exact lookup journey on each database provider. */
 export async function exerciseManagedSessionBirth(options: Readonly<{
@@ -14,12 +18,17 @@ export async function exerciseManagedSessionBirth(options: Readonly<{
     const outsider = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
     const controller = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
         installationId: randomUUID(), metadata: '{}' } });
-    const guest = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}' } });
+    const keys = nacl.sign.keyPair();
+    const guestInstallationId = randomUUID();
+    const guest = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}',
+        installationId: guestInstallationId, installationPublicKey: Buffer.from(keys.publicKey) } });
     const homeId = await getOrCreateServerIdentityId();
+    const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id,
+        name: 'Managed Session fixture', setup: { scripts: [{ body: 'echo setup' }] } } });
     const managed = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
         controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
         admittedActionRequestId: randomUUID(), admittedInput: {}, launch: {}, retention: {}, wakeOnAcceptedMessage: false,
-        allocation: 'bound', enrolledMachineId: guest.id } });
+        allocation: 'bound', enrolledMachineId: guest.id, presetId: preset.id } });
     const managedCreation = { homeId, managedId: managed.id,
         controller: { machineId: controller.id, installationId: controller.installationId! } };
     const body = { tag: randomUUID(), metadataLayoutVersion: 1, encryptionMode: 'plain',
@@ -33,9 +42,13 @@ export async function exerciseManagedSessionBirth(options: Readonly<{
         const created = await app.inject({ method: 'POST', url: '/v1/sessions', headers, payload: body });
         expect(created.statusCode, created.body).toBe(200);
         const sessionId: string = created.json().session.id;
+        const freshBirth = await db.session.findUniqueOrThrow({ where: { id: sessionId } });
+        const readPreset = () => getMachinePreset({ accountId: account.id, input: { homeId, id: preset.id } });
+        expect(await readPreset()).toMatchObject({ kind: 'found', preset: { lastUsedAt: freshBirth.createdAt.getTime() } });
         const rejoined = await app.inject({ method: 'POST', url: '/v1/sessions', headers, payload: body });
         expect(rejoined.statusCode, rejoined.body).toBe(200);
         expect(rejoined.json().session.id).toBe(sessionId);
+        expect(await readPreset()).toMatchObject({ kind: 'found', preset: { lastUsedAt: freshBirth.createdAt.getTime() } });
         const unauthorized = await app.inject({ method: 'POST', url: '/v1/sessions',
             headers: { ...headers, 'x-test-user-id': outsider.id }, payload: { ...body, tag: randomUUID() } });
         expect(unauthorized.statusCode).toBe(403);
@@ -72,6 +85,27 @@ export async function exerciseManagedSessionBirth(options: Readonly<{
         expect(ordinary.statusCode, ordinary.body).toBe(200);
         const stored = await db.session.findUniqueOrThrow({ where: { id: ordinary.json().session.id } });
         expect(stored.managedCreationId).toBeNull();
+        expect(await readPreset()).toMatchObject({ kind: 'found', preset: { lastUsedAt: freshBirth.createdAt.getTime() } });
+
+        const ordinaryBody = { tag: randomUUID(), metadataLayoutVersion: 1, encryptionMode: 'plain',
+            sharedMetadata: body.sharedMetadata, ownerMetadata: body.ownerMetadata, dataEncryptionKey: null };
+        const proof = signMachineInstallationProof({ privateKey: keys.secretKey,
+            payload: buildManagedSessionBirthProofPayloadV1({ accountId: account.id, machineId: guest.id,
+                installationId: guestInstallationId, body: ordinaryBody }) });
+        const signedHeaders = { ...headers, [MANAGED_SESSION_BIRTH_HEADER_V1]: JSON.stringify({ machineId: guest.id, proof }) };
+        const misattributed = await app.inject({ method: 'POST', url: '/v1/sessions', headers: signedHeaders,
+            payload: { ...ordinaryBody, tag: randomUUID() } });
+        expect(misattributed.statusCode, misattributed.body).toBe(200);
+        expect(await readPreset()).toMatchObject({ kind: 'found', preset: { lastUsedAt: freshBirth.createdAt.getTime() } });
+        const admitted = await app.inject({ method: 'POST', url: '/v1/sessions', headers: signedHeaders, payload: ordinaryBody });
+        expect(admitted.statusCode, admitted.body).toBe(200);
+        const ordinaryBirth = await db.session.findUniqueOrThrow({ where: { id: admitted.json().session.id } });
+        const latest = { id: preset.id, lastUsedAt: ordinaryBirth.createdAt.getTime() };
+        expect(await readPreset()).toMatchObject({ kind: 'found', preset: latest });
+        expect(await listMachinePresets({ accountId: account.id, input: { homeId } })).toMatchObject({
+            kind: 'listed', presets: [latest],
+        });
+        expect(await listMachinePresets({ accountId: outsider.id, input: { homeId } })).toEqual({ kind: 'listed', presets: [] });
         // Multiple births retain the old recognizer's ambiguity semantics.
         await db.managedMachine.update({ where: { id: managed.id },
             data: { controllerInstallationId: managedCreation.controller.installationId } });
@@ -82,6 +116,7 @@ export async function exerciseManagedSessionBirth(options: Readonly<{
     });
     await db.session.deleteMany({ where: { accountId: account.id } });
     await db.managedMachine.delete({ where: { id: managed.id } });
+    await db.managedMachinePreset.delete({ where: { id: preset.id } });
     await db.machine.deleteMany({ where: { accountId: account.id } });
     await db.account.deleteMany({ where: { id: { in: [account.id, outsider.id] } } });
 }

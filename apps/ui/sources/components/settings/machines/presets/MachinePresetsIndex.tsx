@@ -41,7 +41,7 @@ import { projectSandboxPresetHostCounts } from '@/sync/domains/machines/machineI
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 /** Facts the table shows once their owner delivers them (MACH-PRESETS-DATA-1119): In use now; Last used follows its link. */
-const DELIVERED_FACTS = Object.freeze({ inUse: true, lastUsed: false });
+const DELIVERED_FACTS = Object.freeze({ inUse: true, lastUsed: true });
 const NO_MANAGED: readonly ManagedMachineV1[] = Object.freeze([]);
 
 /**

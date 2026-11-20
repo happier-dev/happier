@@ -53,8 +53,6 @@ export type PresetTableItem = Readonly<{
   note?: string;
   /** What uses it now: machines created from it, or sandboxes running; `undefined` while its owner delivers no fact. */
   inUse?: number;
-  /** When it last started a machine or a sandbox; `null`: never; `undefined` while its owner delivers no fact. */
-  lastUsedAt?: number | null;
   /** The Sandboxes table's Runs in cell ("On devbox", a cloud place). */
   runsIn?: string;
 }>;
@@ -496,11 +494,11 @@ function PresetInUseCell(
 }
 
 function PresetLastUsedCell(props: Readonly<{ item: PresetTableItem }>) {
-  const at = props.item.lastUsedAt;
+  const at = props.item.preset?.lastUsedAt;
   if (at === undefined) return null;
   return (
-    <Text numberOfLines={1} style={at === null ? styles.quiet : styles.cell}>
-      {at === null ? t('machinePresets.lastUsedNever') : formatRelativeTime(at)}
+    <Text numberOfLines={1} style={styles.cell}>
+      {formatRelativeTime(at)}
     </Text>
   );
 }

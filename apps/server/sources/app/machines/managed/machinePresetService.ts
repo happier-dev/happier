@@ -20,6 +20,7 @@ import { readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
 import { resolveMachinePoolForManagedPresetInTx } from '@/app/machines/pools/machinePoolService';
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
+import { log } from '@/utils/logging/log';
 import {
     resolveTeamActorContextInTx, qualifyTeamOperationAuthenticationInTx,
     resolveTeamActorContextsInTx, qualifyTeamOperationAuthenticationsInTx,
@@ -118,7 +119,7 @@ function readStoredPresetContent(row: StoredPreset) {
     });
 }
 
-function projectPreset(row: StoredPreset): ManagedMachinePresetV1 {
+function projectPreset(row: StoredPreset, lastUsedAt?: number): ManagedMachinePresetV1 {
     const stored = readStoredPresetContent(row);
     return ManagedMachinePresetV1Schema.parse({
         id: row.id, homeId: row.homeId, revision: row.revision, configurationRevision: row.configurationRevision,
@@ -133,6 +134,7 @@ function projectPreset(row: StoredPreset): ManagedMachinePresetV1 {
         ...(row.teamAcquireDelegated ? { teamAcquireDelegated: true } : {}),
         ...(row.simultaneousMaximum !== null ? { simultaneousLimit: { maximum: row.simultaneousMaximum } } : {}),
         ...(row.archivedAt !== null ? { archivedAt: row.archivedAt.getTime() } : {}),
+        ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
     });
 }
 
@@ -307,6 +309,16 @@ export async function rewriteMachinePresetContentInTx(tx: Tx, input: Readonly<{
 export async function invalidatePresetInTx(tx: Tx, row: Pick<StoredPreset, 'teamId' | 'custodianAccountId'>): Promise<void> {
     const accountIds = await readMachinePresetPublicationAudienceInTx(tx, ownerOf(row));
     await markAccountsChanged(tx, { accountIds, entityId: MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+}
+
+/** The durable birth is already committed. Resolve the current preset audience outside the Session's Account fence. */
+export function publishPresetSessionUse(input: Readonly<{ homeId: string; presetId: string }>): void {
+    void inTx(async tx => {
+        const preset = await tx.managedMachinePreset.findFirst({
+            where: { id: input.presetId, homeId: input.homeId }, select: { teamId: true, custodianAccountId: true },
+        });
+        if (preset) await invalidatePresetInTx(tx, preset);
+    }).catch(() => log({ module: 'machines', level: 'warn' }, 'Preset Session usage wake failed'));
 }
 
 export async function readMachinePresetPublicationAudienceInTx(tx: Tx, owner: ManagedMachinePresetV1['owner']): Promise<string[]> {
@@ -918,6 +930,21 @@ export async function getMachinePreset(params: PresetPreparationContext & Readon
     try { return await inTx(tx => getMachinePresetInTx(tx, params)); } catch (error) { return refusal(error); }
 }
 
+async function readPresetLastUsedTimesInTx(tx: Tx, homeId: string, presetIds: readonly string[]): Promise<Map<string, number>> {
+    const byPreset = new Map<string, number>();
+    for (const ids of portableQueryChunks({ values: presetIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const rows = await tx.managedMachine.groupBy({
+            by: ['presetId'],
+            where: { homeId, presetId: { in: [...ids] }, lastSessionStartedAt: { not: null } },
+            _max: { lastSessionStartedAt: true },
+        });
+        for (const row of rows) {
+            if (row.presetId && row._max.lastSessionStartedAt) byPreset.set(row.presetId, row._max.lastSessionStartedAt.getTime());
+        }
+    }
+    return byPreset;
+}
+
 /** Setup consumes the same current preset reader in its exact-target transaction. */
 export async function getMachinePresetInTx(tx: Tx, params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetGetInputV1 }>): Promise<ManagedMachinePresetGetResultV1> {
     if (!params.presetPreparationAdmission) await requireHomeInTx(tx, params.input.homeId);
@@ -925,7 +952,9 @@ export async function getMachinePresetInTx(tx: Tx, params: PresetPreparationCont
     const access = row ? params.presetPreparationAdmission ? { teamArchivedAt: null }
         : await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
     if (!row || !access) return { kind: "refused", code: "preset_not_found" };
-    return { kind: "found", preset: projectPreset(inheritPresetOwnerArchive(row, access.teamArchivedAt)) };
+    const lastUsedAt = params.presetPreparationAdmission ? undefined
+        : (await readPresetLastUsedTimesInTx(tx, row.homeId, [row.id])).get(row.id);
+    return { kind: "found", preset: projectPreset(inheritPresetOwnerArchive(row, access.teamArchivedAt), lastUsedAt) };
 }
 
 /** Both Team counts and pages consume preset read admission and inherited archive state here. */
@@ -964,13 +993,17 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         const readRows = (where: Prisma.ManagedMachinePresetWhereInput) => input.projection === 'revisions'
             ? tx.managedMachinePreset.findMany({ where, select: revisionSelect, orderBy: { id: 'asc' } })
             : tx.managedMachinePreset.findMany({ where, orderBy: { id: 'asc' } });
-        const projectRows = (rows: Awaited<ReturnType<typeof readRows>>,
-            sharedWithTeamScope?: 'team'): ManagedMachinePresetListResultV1 =>
-            input.projection === 'revisions' ? { kind: 'revisions', presets: rows.map(row => ({
+        const projectRows = async (rows: Awaited<ReturnType<typeof readRows>>,
+            sharedWithTeamScope?: 'team'): Promise<ManagedMachinePresetListResultV1> => {
+            if (input.projection === 'revisions') return { kind: 'revisions', presets: rows.map(row => ({
                 id: row.id, homeId: row.homeId, revision: row.revision, setupRevision: row.setupRevision,
                 ...(row.archivedAt === null ? {} : { archivedAt: row.archivedAt.getTime() }),
-            })) } : { kind: 'listed', presets: rows.flatMap(row => 'launch' in row ? [{ ...projectPreset(row),
-                ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) }] : []) };
+            })) };
+            const fullRows = rows.filter((row): row is StoredPreset => 'launch' in row);
+            const lastUsed = await readPresetLastUsedTimesInTx(tx, input.homeId, fullRows.map(row => row.id));
+            return { kind: 'listed', presets: fullRows.map(row => ({ ...projectPreset(row, lastUsed.get(row.id)),
+                ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) })) };
+        };
         if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return projectRows([]);
         if (input.sharedWithTeamId) {
             const scope = await scopedPresetListWhereInTx(tx, params, { ...input, sharedWithTeamId: input.sharedWithTeamId });

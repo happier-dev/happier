@@ -33,7 +33,7 @@ import {
     scheduleReleasedDirectShareEvent,
 } from "@/app/session/access/publishSessionAccessChange";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
-import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
+import { bindManagedCreationScopeRetentionInTx, recordManagedPresetSessionBirthInTx, readEnrolledManagedSessionBirthInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
 import { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } from "@/app/discussions/accessService";
 import {
     validatePlannedSessionTeamCredentialBindingIntentInTx,
@@ -271,6 +271,10 @@ export async function insertLayout1SessionRowInTx(
         }),
     }).then(decodeSessionStoredContent);
     if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'session', sessionId: session.id });
+    const presetBirth = managedBirth ?? (prepared.enrolledManagedBirth
+        ? await readEnrolledManagedSessionBirthInTx(tx, prepared.accountId, prepared.enrolledManagedBirth)
+        : null);
+    if (presetBirth) await recordManagedPresetSessionBirthInTx(tx, presetBirth, createdAt);
     // The owner is an ordinary recipient of their own Session key, so their
     // envelope lands in the one canonical tuple inside this same transaction. A
     // plain Session is genuinely keyless and writes nothing; a legacy-credential

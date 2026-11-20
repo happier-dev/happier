@@ -22,12 +22,36 @@ import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import type { SessionCreationAuthorizationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+
+function readManagedSessionBirthHeader(machineId: string | undefined, token: string, body: unknown): string | undefined {
+  if (!machineId) return undefined;
+  const accountId = readAccountIdFromToken(token);
+  if (!accountId) return undefined;
+  try {
+    const installation = readInstallationIdentityIfExistsSync();
+    if (!installation) return undefined;
+    const proof = signMachineInstallationProof({
+      privateKey: installation.privateKey,
+      payload: buildManagedSessionBirthProofPayloadV1({ machineId, accountId, installationId: installation.installationId, body }),
+    });
+    return JSON.stringify({ machineId, proof });
+  } catch {
+    // Missing or unreadable local proof can leave usage unknown without blocking a valid Session.
+    return undefined;
+  }
+}
+
 
 /** One HTTP boundary for the API client's and seeded creator's Session birth. */
 export async function postSessionCreationRequest<T>(params: Readonly<{
   serverUrl: string;
   token: string;
   body: Readonly<Record<string, unknown>>;
+  localBirthMachineId?: string;
   creationAuthorizationToken?: string;
   /** Binds the admitted Action's child-creation proof to the exact birth body posted here. */
   prepareCreationAuthorizationProof?: SessionCreationAuthorizationV1['prepareRequestProof'];
@@ -39,6 +63,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   params.signal?.throwIfAborted();
   const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(params.body);
   const body = creationAuthorizationProof ? { ...params.body, creationAuthorizationProof } : params.body;
+  const managedBirthHeader = readManagedSessionBirthHeader(params.localBirthMachineId, params.token, body);
   const refuseConfirmedRollback = (status: number, data: unknown): void => {
     if (status === 409 && readServerRefusalCode(data) === SESSION_MANAGED_TARGET_BUSY_CODE) {
       throw createHttpStatusError(status, 'The shared sandbox already has a Session', SESSION_MANAGED_TARGET_BUSY_CODE);
@@ -49,6 +74,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   const response = await axios.post<T>(`${params.serverUrl}/v1/sessions`, body, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      ...(managedBirthHeader ? { [MANAGED_SESSION_BIRTH_HEADER_V1]: managedBirthHeader } : {}),
       ...(params.creationAuthorizationToken ? { [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: params.creationAuthorizationToken } : {}),
       ...(params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path: '/v1/sessions', body })
         : { Authorization: `Bearer ${params.token}` }),

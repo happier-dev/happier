@@ -668,7 +668,8 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         const opened = selected === raw ? initiallyOpened : await openStoredPreset(selected, reader);
         if (!opened || opened === MACHINE_PRESET_TEAM_KEY_PENDING) return opened;
         const { content: _stored, recipients: _recipients, ...structural } = selected;
-        return { ...structural, ...opened.content, recipientProjection: opened.recipientProjection };
+        return { ...structural, ...opened.content, recipientProjection: opened.recipientProjection,
+            ...(raw.lastUsedAt !== undefined ? { lastUsedAt: raw.lastUsedAt } : {}) };
     }
 
     /**

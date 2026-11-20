@@ -14064,6 +14064,19 @@ unchanged.
 
 ## Managed guest authority (unreleased 0.3)
 
+Preset Last used is the latest committed Session birth on an allocation
+derived from that preset. Explicit managed creation supplies its already
+admitted allocation. Ordinary enrolled Session creation may send a separate
+installation proof bound to the exact authenticated birth request. A missing
+or unverified proof contributes no usage and the ordinary Session can still
+start. Rejoining an existing Session contributes no usage.
+
+Full preset reads expose the timestamp to anyone admitted to read that preset.
+The projection carries no actor identity. Existing allocations have no
+recorded time until a qualifying birth. The optional request header is
+compatible with older servers. The preset view field and nullable managed
+allocation column are unreleased 0.3 changes.
+
 Managed guest CLI updates use the connected Home's guest payload through the
 existing bootstrap retry operation. Updating an enrolled guest requires a
 provider with a native bootstrap transport. Other providers return

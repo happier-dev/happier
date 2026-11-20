@@ -36,6 +36,7 @@ export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$Zo
     teamAcquireDelegated: z.optional(z.boolean()),
     simultaneousLimit: z.optional(ManagedMachinePresetLimitV1Schema),
     archivedAt: z.optional(z.number().check(z.nonnegative())),
+    lastUsedAt: z.optional(z.number().check(z.nonnegative())),
   };
 }
 

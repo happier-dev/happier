@@ -12,7 +12,7 @@ import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmis
 import type { SessionAccessGrantErrorCode } from "@/app/session/access/sessionAccessGrantService";
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingRejection } from "@/app/teams/credentials/sessionBinding";
-import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionManagedCreationV1Schema, type ManagedSessionBirthProofV1, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import {
     resolveRequestedSessionModeRejectionCode,
@@ -70,6 +70,7 @@ export type FreshBoundLayout1SessionCreateRejection =
 
 export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 & {
     managedCreation?: SessionManagedCreationV1;
+    enrolledManagedBirth?: ManagedSessionBirthProofV1 & { body: unknown };
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -96,6 +97,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
 
 export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 & {
     managedCreation?: SessionManagedCreationV1;
+    enrolledManagedBirth?: Layout1SessionCreateRequest['enrolledManagedBirth'];
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -268,6 +270,7 @@ export function prepareLayout1SessionCreate(
         ok: true,
         prepared: {
             ...(managedCreation.data ? { managedCreation: managedCreation.data } : {}),
+            ...(request.enrolledManagedBirth ? { enrolledManagedBirth: request.enrolledManagedBirth } : {}),
             ...origin.data,
             ...(manager.data ? { manager: manager.data } : {}),
             accountId: request.accountId,

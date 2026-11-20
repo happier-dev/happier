@@ -2719,6 +2719,7 @@ model ManagedMachine {
     presetRevision Int?
     presetConfigurationRevision Int?
     presetSetupRevision Int?
+    lastSessionStartedAt DateTime?
     launch Json
     reviewedFacts Json?
     machineSetup Json?
@@ -2744,6 +2745,7 @@ model ManagedMachine {
 
     @@unique([homeId, admittedActionRequestId])
     @@index([homeId, custodianAccountId, archivedAt, createdAt], map: "ManagedMachine_home_custodian_archived_idx")
+    @@index([homeId, presetId, lastSessionStartedAt], map: "ManagedMachine_preset_usage_idx")
     @@index([controllerMachineId, controllerInstallationId])
 }
 

@@ -1,11 +1,13 @@
-import type { SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import type { Tx } from '@/storage/inTx';
+import { buildManagedSessionBirthProofPayloadV1, type ManagedSessionBirthProofV1, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { afterTx, type Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { isManagedMachineCreator } from './managedRead';
 import type { ManagedMachineBirthSourceV1 } from '@happier-dev/protocol/machines/managed/birthSourceV1';
+import { publishPresetSessionUse } from './machinePresetService';
 import { readManagedAdmissionState, invalidateManagedMachineInTx, publishManagedMachinePolicyChangeInTx,
-    type StoredManagedMachine, readManagedController, resolveManagedMachineRoleInTx, sameManagedInput } from './managedRows';
+    type StoredManagedMachine, isCurrentMachineManagedEnrollment, readManagedController, resolveManagedMachineRoleInTx, sameManagedInput } from './managedRows';
 
 /** Optimistic shared selection lost to an incumbent birth; the caller may acquire again. */
 export class ManagedCreationBusyError extends Error {
@@ -61,6 +63,39 @@ export async function validateManagedCreationBirthInTx(tx: Tx, input: Readonly<{
     return creator || await resolveManagedMachineRoleInTx(tx, resource, input.accountId) ? resource : false;
 }
 
+
+/** Ordinary births can contribute usage when the current enrolled installation signed the exact request. */
+export async function readEnrolledManagedSessionBirthInTx(tx: Tx, accountId: string,
+    input: ManagedSessionBirthProofV1 & { body: unknown }): Promise<Pick<StoredManagedMachine, 'id' | 'homeId' | 'presetId'> | null> {
+    const row = await tx.managedMachine.findUnique({
+        where: { enrolledMachineId: input.machineId },
+        select: {
+            id: true, homeId: true, presetId: true, admittedInput: true, custodianAccountId: true,
+            archivedAt: true, allocation: true, creationState: true,
+            enrolledMachine: { select: { accountId: true, revokedAt: true, replacedByMachineId: true,
+                installationId: true, installationPublicKey: true } },
+        },
+    });
+    const machine = row?.enrolledMachine;
+    if (!row?.presetId || row.archivedAt !== null || row.allocation !== 'bound' || row.creationState !== 'active'
+        || !machine?.installationId || !machine.installationPublicKey
+        || !isCurrentMachineManagedEnrollment(row, machine, await readCurrentServerIdentityId(process.env, tx))) return null;
+    const payload = buildManagedSessionBirthProofPayloadV1({ accountId, machineId: input.machineId,
+        installationId: machine.installationId, body: input.body });
+    return verifyMachineInstallationProof({ payload, proof: input.proof, publicKey: machine.installationPublicKey }) ? row : null;
+}
+
+/** Usage belongs to the retained allocation and advances only with a committed fresh Session. */
+export async function recordManagedPresetSessionBirthInTx(tx: Tx,
+    row: Pick<StoredManagedMachine, 'id' | 'homeId' | 'presetId'>, createdAt: Date): Promise<void> {
+    const { presetId, homeId } = row;
+    if (!presetId) return;
+    const advanced = await tx.managedMachine.updateMany({
+        where: { id: row.id, OR: [{ lastSessionStartedAt: null }, { lastSessionStartedAt: { lt: createdAt } }] },
+        data: { lastSessionStartedAt: createdAt },
+    });
+    if (advanced.count) afterTx(tx, () => publishPresetSessionUse({ homeId, presetId }));
+}
 
 /** The successful birth admission supplies its exact resource; do not re-authorize it. */
 export async function bindManagedCreationScopeRetentionInTx(tx: Tx, row: StoredManagedMachine, source: ManagedMachineBirthSourceV1): Promise<void> {

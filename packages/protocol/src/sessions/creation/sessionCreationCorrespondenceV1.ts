@@ -1,3 +1,7 @@
+import { MachineInstallationProofV1Schema } from '../../machines/identity/installationKeySchemas.js';
+import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -41,6 +45,43 @@ export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.strictObject
   controller: z.optional(ManagedControllerV1Schema),
 }));
 export type SessionManagedCreationV1 = z.infer<typeof SessionManagedCreationV1Schema>;
+
+export const MANAGED_SESSION_BIRTH_HEADER_V1 = 'x-happier-managed-session-birth';
+
+export const ManagedSessionBirthProofV1Schema = lazyZodSchema(() => z.strictObject({
+    machineId: z.string().check(z.minLength(1)),
+    proof: MachineInstallationProofV1Schema,
+}));
+export type ManagedSessionBirthProofV1 = z.infer<typeof ManagedSessionBirthProofV1Schema>;
+
+export function readManagedSessionBirthProofHeaderV1(header: unknown): ManagedSessionBirthProofV1 | undefined {
+    if (typeof header !== 'string') return undefined;
+    try {
+        const parsed = ManagedSessionBirthProofV1Schema.safeParse(JSON.parse(header));
+        return parsed.success ? parsed.data : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export function buildManagedSessionBirthProofPayloadV1(input: Readonly<{
+    accountId: string;
+    machineId: string;
+    installationId: string;
+    body: unknown;
+}>) {
+    return {
+        version: 1 as const,
+        accountId: input.accountId,
+        machineId: input.machineId,
+        installationId: input.installationId,
+        managedSessionBirth: {
+            requestBodyDigest: computeCanonicalDomainSeparatedDigest('happier-managed-session-birth-v1', [
+                createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(input.body)),
+            ]),
+        },
+    };
+}
 
 const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   ...AgentSessionToolPolicyShapeV1,

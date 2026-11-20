@@ -357,7 +357,7 @@ function MachineIsolationRowControls(props: Readonly<{ children: (stacked: boole
 }
 
 /** Running is delivered (MACH-PRESETS-DATA-1119); Last used follows the Machine → preset link. */
-const FACTS = Object.freeze({ inUse: true, lastUsed: false });
+const FACTS = Object.freeze({ inUse: true, lastUsed: true });
 
 /**
  * The sandbox types this Machine added, through the one preset table (lab scene 6): the type with its provider, its
