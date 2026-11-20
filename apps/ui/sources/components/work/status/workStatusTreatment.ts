@@ -98,6 +98,14 @@ export function workStatusGlyphColor(colors: ToneColors, tone: WorkStatusTone): 
     });
 }
 
+/**
+ * The unread ink: full-strength primary ink, never an accent. A Session row's news dot and the transcript's "New"
+ * divider both draw with it, so unread looks the same everywhere (UI refinements D1, 2026-11-20).
+ */
+export function workStatusUnreadInk(colors: Readonly<{ text: Readonly<{ primary: string }> }>): string {
+    return colors.text.primary;
+}
+
 /** Explicit quiet ink also works for standalone/custom subtitle text in either theme. */
 export function workStatusWordStyle(tone: WorkStatusTone) {
     if (tone === 'attention') return styles.wordAttention;

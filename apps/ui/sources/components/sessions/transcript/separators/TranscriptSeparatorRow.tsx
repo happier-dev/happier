@@ -9,6 +9,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { workStatusUnreadInk } from '@/components/work/status/workStatusTreatment';
 
 export function TranscriptSeparatorRow(props: Readonly<{
   testID?: string;
@@ -48,7 +49,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
   // The rule spans the reply column every message row uses, so its ends meet the text edges.
   const layoutMaxWidth = useLayoutMaxWidth();
   const rowWidthStyle = { maxWidth: padding === 'none' ? layoutMaxWidth : layoutMaxWidth - 2 * SEPARATOR_INSET };
-  const lineStyle = [styles.line, unread ? styles.lineUnread : null, { backgroundColor: unread ? theme.colors.text.primary : theme.colors.border.default }];
+  const lineStyle = [styles.line, unread ? styles.lineUnread : null, { backgroundColor: unread ? workStatusUnreadInk(theme.colors) : theme.colors.border.default }];
   const chipContent = (
     <>
       {props.iconName ? <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} /> : null}

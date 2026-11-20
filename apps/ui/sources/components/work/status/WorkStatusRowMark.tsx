@@ -6,7 +6,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
-import { WORK_STATUS_WORKING_SPINNER_VARIANT, workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { WORK_STATUS_WORKING_SPINNER_VARIANT, workStatusGlyphColor, workStatusUnreadInk } from '@/components/work/status/workStatusTreatment';
 
 import { useCollectionRowNeedsYouHighlight, type CollectionRowNeedsYouFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 
@@ -34,7 +34,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: UNREAD_CENTER_SIZE,
         height: UNREAD_CENTER_SIZE,
         borderRadius: UNREAD_CENTER_SIZE / 2,
-        backgroundColor: theme.colors.text.primary,
+        backgroundColor: workStatusUnreadInk(theme.colors),
     },
 }));
 
@@ -80,7 +80,7 @@ export const WorkStatusRowMark = React.memo(function WorkStatusRowMark(props: Re
                 ) : (
                     <StatusDot
                         testID={dotTestID}
-                        color={mark === 'news' ? theme.colors.text.primary : workStatusGlyphColor(theme.colors, mark === 'danger' ? 'danger' : 'attention')}
+                        color={mark === 'news' ? workStatusUnreadInk(theme.colors) : workStatusGlyphColor(theme.colors, mark === 'danger' ? 'danger' : 'attention')}
                         size={mark === 'news' ? NEWS_DOT_SIZE : STATE_DOT_SIZE}
                         animationEnabled={props.animationEnabled !== false}
                     />
