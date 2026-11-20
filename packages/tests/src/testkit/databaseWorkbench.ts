@@ -116,11 +116,20 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     const context = { accountId: readAccountIdFromToken(owner.credentials.token),
       installationId: installation.installationId, projectKey: accepted.facts.projectKey, workspace: accepted.workspace };
     const scope = { kind: 'worktree' as const, ...context };
+    const externalActionTarget = { kind: 'machine' as const, machineId: machine.target.machineId };
+    const databaseInvocation = (actionId: DatabaseActionIdV1, input: unknown) => ({
+      action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(actionId) }, input,
+    });
     function executeDatabase(actionId: DatabaseActionIdV1, input: unknown, context: Parameters<typeof owner.execute>[2] = {}) {
-      return owner.executeReviewed('action.invoke', {
-        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(actionId) }, input,
-      }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
-        presentUserConfirmation: { actionId: 'action.invoke' }, ...context });
+      return owner.executeReviewed('action.invoke', databaseInvocation(actionId, input), {
+        externalActionTarget, presentUserConfirmation: { actionId: 'action.invoke' }, ...context,
+      });
+    }
+    function executeDatabaseAsPerson(actionId: DatabaseActionIdV1, input: unknown) {
+      const invocation = databaseInvocation(actionId, input);
+      return owner.executeAsPerson('action.invoke', invocation, { externalActionTarget }, {
+        action: invocation.action, machineId: externalActionTarget.machineId,
+      });
     }
     async function connectDatabase(databaseUrl: string, label: string) {
       const created = await owner.execute('secrets.create', { name: label, kind: 'other', value: databaseUrl },
@@ -168,7 +177,7 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     // A stable evidence pointer identifies the running processes without DSNs,
     // credentials, telemetry, or a separate release representation.
     await writeFile(join(params.testDir, 'runtime.json'), `${JSON.stringify(runtime)}\n`);
-    return { ...fixture, owner, machine, scope, targets, runtime, executeDatabase, connectDatabase };
+    return { ...fixture, owner, machine, scope, targets, runtime, executeDatabase, executeDatabaseAsPerson, connectDatabase };
   } catch (error) {
     await fixture.stop();
     throw error;
