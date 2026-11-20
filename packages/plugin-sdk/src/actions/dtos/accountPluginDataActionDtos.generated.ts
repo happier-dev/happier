@@ -157,11 +157,11 @@ export type AccountPluginDataActionResultById = {
                         location: 'cloud' | 'local' | 'unknown';
                         stoppedBilling: 'billed' | 'not-billed' | 'unknown';
                         storageCharges?: undefined | {
+                            source: string;
+                            observedAt: number;
                             amount: string;
                             currency: string;
                             unit: string;
-                            source: string;
-                            observedAt: number;
                             label?: string | undefined | {
                                 key: string;
                                 fallback: string;
@@ -170,11 +170,11 @@ export type AccountPluginDataActionResultById = {
                         }[];
                     };
                     prices?: undefined | {
+                        source: string;
+                        observedAt: number;
                         amount: string;
                         currency: string;
                         unit: string;
-                        source: string;
-                        observedAt: number;
                         label?: string | undefined | {
                             key: string;
                             fallback: string;
@@ -331,11 +331,11 @@ export type AccountPluginDataActionResultById = {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
                     storageCharges?: undefined | {
+                        source: string;
+                        observedAt: number;
                         amount: string;
                         currency: string;
                         unit: string;
-                        source: string;
-                        observedAt: number;
                         label?: string | undefined | {
                             key: string;
                             fallback: string;
@@ -344,11 +344,11 @@ export type AccountPluginDataActionResultById = {
                     }[];
                 };
                 prices?: undefined | {
+                    source: string;
+                    observedAt: number;
                     amount: string;
                     currency: string;
                     unit: string;
-                    source: string;
-                    observedAt: number;
                     label?: string | undefined | {
                         key: string;
                         fallback: string;

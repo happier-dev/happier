@@ -15,6 +15,18 @@ export type MachineConnectionActionInputById = {
             workspaceId: string;
             machineId: string;
             rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
         };
         cols?: number | undefined;
         rows?: number | undefined;
@@ -50,6 +62,18 @@ export type MachineConnectionActionInputById = {
             serverId: string;
             workspaceId: string;
             machineId: string;
+            rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
             rootPath: string;
         };
         machineShell?: true | undefined;
@@ -114,6 +138,18 @@ export type MachineConnectionActionInputById = {
             serverId: string;
             workspaceId: string;
             machineId: string;
+            rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
             rootPath: string;
         };
         cols?: number | undefined;
@@ -391,6 +427,10 @@ export type MachineConnectionActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -423,6 +463,10 @@ export type MachineConnectionActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -474,6 +518,10 @@ export type MachineConnectionActionResultById = {
             requestId?: string | undefined;
             effectAttempted?: boolean | undefined;
             details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
             failureCause?: ActionFailureCauseV1 | undefined;
             goalControlFailure?: undefined | {
                 phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -569,6 +617,10 @@ export type MachineConnectionActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -607,6 +659,10 @@ export type MachineConnectionActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';

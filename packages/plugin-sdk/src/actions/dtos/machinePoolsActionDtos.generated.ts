@@ -12,8 +12,7 @@ export type MachinePoolsActionInputById = {
         poolId: string;
     };
     readonly "machines.pools.create": {
-        poolId: string;
-        name: {
+        name: string | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -29,12 +28,13 @@ export type MachinePoolsActionInputById = {
                 };
             }[];
         };
+        poolId: string;
         members: {
             machineId: string;
             priorityTier: number;
             enabled: boolean;
         }[];
-        description?: null | undefined | {
+        description?: null | string | undefined | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -58,9 +58,7 @@ export type MachinePoolsActionInputById = {
         };
     };
     readonly "machines.pools.update": {
-        poolId: string;
-        expectedRevision: number;
-        name: {
+        name: string | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -76,12 +74,14 @@ export type MachinePoolsActionInputById = {
                 };
             }[];
         };
+        poolId: string;
+        expectedRevision: number;
         members: {
             machineId: string;
             priorityTier: number;
             enabled: boolean;
         }[];
-        description?: null | undefined | {
+        description?: null | string | undefined | {
             content: {
                 t: 'encrypted';
                 c: string;

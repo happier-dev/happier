@@ -256,6 +256,7 @@ export type ExecutionRunControlActionInputById = {
                             color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                             size: 'l' | 'm' | 's';
                             id: string;
+                            note?: string | undefined;
                         } | {
                             kind: 'text';
                             at: {
@@ -550,6 +551,7 @@ export type ExecutionRunControlActionInputById = {
                                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                 size: 'l' | 'm' | 's';
                                 id: string;
+                                note?: string | undefined;
                             } | {
                                 kind: 'text';
                                 at: {
@@ -1098,6 +1100,7 @@ export type ExecutionRunControlActionInputById = {
                                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                 size: 'l' | 'm' | 's';
                                 id: string;
+                                note?: string | undefined;
                             } | {
                                 kind: 'text';
                                 at: {
@@ -1392,6 +1395,7 @@ export type ExecutionRunControlActionInputById = {
                                     color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                     size: 'l' | 'm' | 's';
                                     id: string;
+                                    note?: string | undefined;
                                 } | {
                                     kind: 'text';
                                     at: {
@@ -2061,6 +2065,10 @@ export type ExecutionRunControlActionInputById = {
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
                 reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                quality?: undefined | {
+                    score: number;
+                    rationale: string;
+                };
                 questions?: undefined | {
                     [x: string]: unknown;
                     id: string;
@@ -2093,6 +2101,7 @@ export type ExecutionRunControlActionInputById = {
                     };
                     findingId?: string | undefined;
                     severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    extensions?: unknown;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
                 }[];
@@ -2971,6 +2980,10 @@ export type ExecutionRunControlActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -2990,6 +3003,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -3784,6 +3798,10 @@ export type ExecutionRunControlActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -3803,6 +3821,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -4596,6 +4615,10 @@ export type ExecutionRunControlActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -4615,6 +4638,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -5409,6 +5433,10 @@ export type ExecutionRunControlActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -5428,6 +5456,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -6962,6 +6991,10 @@ export type ExecutionRunControlActionResultById = {
             comparisonId?: string | undefined;
             fileCount?: number | undefined;
             reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+            quality?: undefined | {
+                score: number;
+                rationale: string;
+            };
             proposedComments?: undefined | {
                 body: string;
                 anchor: {
@@ -6981,6 +7014,7 @@ export type ExecutionRunControlActionResultById = {
                 };
                 findingId?: string | undefined;
                 severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
             }[];
@@ -8016,6 +8050,10 @@ export type ExecutionRunControlActionResultById = {
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
                 reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                quality?: undefined | {
+                    score: number;
+                    rationale: string;
+                };
                 proposedComments?: undefined | {
                     body: string;
                     anchor: {
@@ -8035,6 +8073,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                     findingId?: string | undefined;
                     severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    extensions?: Record<string, JSONType> | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
                 }[];
@@ -8829,6 +8868,10 @@ export type ExecutionRunControlActionResultById = {
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
                 reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                quality?: undefined | {
+                    score: number;
+                    rationale: string;
+                };
                 proposedComments?: undefined | {
                     body: string;
                     anchor: {
@@ -8848,6 +8891,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                     findingId?: string | undefined;
                     severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    extensions?: Record<string, JSONType> | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
                 }[];
@@ -9641,6 +9685,10 @@ export type ExecutionRunControlActionResultById = {
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
                 reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                quality?: undefined | {
+                    score: number;
+                    rationale: string;
+                };
                 proposedComments?: undefined | {
                     body: string;
                     anchor: {
@@ -9660,6 +9708,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                     findingId?: string | undefined;
                     severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    extensions?: Record<string, JSONType> | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
                 }[];
@@ -10454,6 +10503,10 @@ export type ExecutionRunControlActionResultById = {
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
                 reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                quality?: undefined | {
+                    score: number;
+                    rationale: string;
+                };
                 proposedComments?: undefined | {
                     body: string;
                     anchor: {
@@ -10473,6 +10526,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                     findingId?: string | undefined;
                     severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    extensions?: Record<string, JSONType> | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
                 }[];

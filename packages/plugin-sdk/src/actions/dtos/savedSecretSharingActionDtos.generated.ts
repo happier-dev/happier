@@ -1030,14 +1030,6 @@ export type SavedSecretSharingActionInputById = {
                     t: 'plain';
                     v: {
                         v: 1;
-                        machineGrants: {
-                            v: 1;
-                            machineId: string;
-                            connectionId: string;
-                            endpointSetFingerprint: string;
-                            connectionSecurityFingerprint: string;
-                            confirmedAt: number;
-                        }[];
                         accountGrants: {
                             v: 1;
                             connectionId: string;
@@ -1179,6 +1171,14 @@ export type SavedSecretSharingActionInputById = {
                             contributionKey: null | string;
                             lastDisplayName: string;
                             deletedAt: number;
+                        }[];
+                        machineGrants: {
+                            v: 1;
+                            machineId: string;
+                            connectionId: string;
+                            endpointSetFingerprint: string;
+                            connectionSecurityFingerprint: string;
+                            confirmedAt: number;
                         }[];
                         secretBindingsByConnectionId: Record<string, {
                             account?: Record<string, string> | undefined;
@@ -2160,6 +2160,7 @@ export type SavedSecretSharingActionInputById = {
                 }[];
             };
         };
+        onlyIfUnshared?: true | undefined;
         managedResourceDispositions?: ({
             managedId: string;
             expectedIntentRevision: number;

@@ -5,33 +5,111 @@ import type { FilesystemTreeNode } from './pluginActionDtoSupport.generated.js';
 
 export type FilesystemActionInputById = {
     readonly "daemon.filesystem.readFile": {
-        rootPath: string;
         path: string;
+        rootPath: string;
         offset?: number | undefined;
         length?: number | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.writeFile": {
-        rootPath: string;
         path: string;
         content: string;
+        rootPath: string;
         expectedHash?: null | string | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.createDirectory": {
-        rootPath: string;
         path: string;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.rename": {
-        rootPath: string;
         from: string;
         to: string;
         overwrite: boolean;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.delete": {
-        rootPath: string;
         path: string;
         recursive: boolean;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.copy": {
+        from: string;
+        to: string;
+        overwrite: boolean;
+        recursive: boolean;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
+    } | {
         kind: 'prepared_transfer';
         source: {
             kind: 'file';
@@ -98,15 +176,8 @@ export type FilesystemActionInputById = {
         };
         overwrite: boolean;
         recursive: boolean;
-    } | {
-        rootPath: string;
-        from: string;
-        to: string;
-        overwrite: boolean;
-        recursive: boolean;
     };
     readonly "daemon.filesystem.upload": {
-        rootPath: string;
         path: string;
         source: {
             sourceId: string;
@@ -114,31 +185,92 @@ export type FilesystemActionInputById = {
             sha256?: string | undefined;
         };
         overwrite: boolean;
+        rootPath: string;
         expectedHash?: null | string | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.download": {
-        rootPath: string;
         path: string;
         destination: {
             destinationId: string;
         };
         asZip: boolean;
+        rootPath: string;
         format?: 'entry_tree' | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.transfer.cancel": {
-        rootPath: string;
         direction: 'download' | 'upload';
         transferId: string;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.listDirectory": {
-        rootPath: string;
         path: string;
+        rootPath: string;
         includeGitIgnore?: boolean | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.getDirectoryTree": {
-        rootPath: string;
         path: string;
         maxDepth: number;
+        rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "daemon.filesystem.listRoots": {
         [x: string]: never;
@@ -165,6 +297,18 @@ export type FilesystemActionInputById = {
     };
     readonly "daemon.filesystem.listFiles": {
         rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
         query?: string | undefined;
         includeHidden?: boolean | undefined;
         limit?: number | undefined;

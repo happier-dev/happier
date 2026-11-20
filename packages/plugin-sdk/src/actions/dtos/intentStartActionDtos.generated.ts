@@ -238,12 +238,6 @@ export type IntentStartActionInputById = {
         reviewId: string;
         roundOrdinal: number;
     };
-    readonly "review.verdict.submit": {
-        verdict: 'approve' | 'comment' | 'request_changes';
-        reviewId: string;
-        roundOrdinal: number;
-        body?: string | undefined;
-    };
     readonly "review.prepare_round": {
         reviewRound: {
             reviewId: string;
@@ -625,6 +619,7 @@ export type IntentStartActionInputById = {
                 kind: 'person';
             })[];
             instructions: string;
+            inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
             roleId?: string | undefined;
             launchProfileId?: string | undefined;
             approvalProfileId?: null | string | undefined;
@@ -1978,6 +1973,7 @@ export type IntentStartActionInputById = {
             kind: 'person';
         })[];
         instructions: string;
+        inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
         approvalProfileId?: null | string | undefined;
@@ -2796,8 +2792,8 @@ export type IntentStartActionResultById = {
         verdicts: {
             accountId: string;
             revision: number;
-            roundOrdinal: number;
             verdict: 'approve' | 'comment' | 'request_changes';
+            roundOrdinal: number;
             submittedAt: number;
             body?: string | undefined;
         }[];
@@ -2834,46 +2830,8 @@ export type IntentStartActionResultById = {
         verdicts: {
             accountId: string;
             revision: number;
-            roundOrdinal: number;
             verdict: 'approve' | 'comment' | 'request_changes';
-            submittedAt: number;
-            body?: string | undefined;
-        }[];
-    };
-    readonly "review.verdict.submit": {
-        reviewId: string;
-        roundOrdinal: number;
-        requests: {
-            needsAccess: boolean;
-            principal: {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
-            };
-            required: boolean;
-            id: string;
             roundOrdinal: number;
-        }[];
-        needsYou: {
-            reviewId: string;
-            roundOrdinal: number;
-            reason: 'review_needs_you';
-            needsYou: boolean;
-            requestedVerdict: boolean;
-            pendingDecisions: boolean;
-            canSubmitVerdict: boolean;
-        };
-        verdicts: {
-            accountId: string;
-            revision: number;
-            roundOrdinal: number;
-            verdict: 'approve' | 'comment' | 'request_changes';
             submittedAt: number;
             body?: string | undefined;
         }[];
@@ -2883,6 +2841,7 @@ export type IntentStartActionResultById = {
             reviewId: string;
             roundOrdinal: number;
         };
+        inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
         comparisonId?: string | undefined;
         comparison?: undefined | {
             id: string;
@@ -2971,6 +2930,11 @@ export type IntentStartActionResultById = {
         callId: string;
         sidechainId: string;
         comparisonId?: string | undefined;
+        narration?: undefined | {
+            [x: string]: unknown;
+            ok: boolean;
+            updatedToolResult?: unknown;
+        };
         requestedConfiguration?: undefined | {
             modelId?: string | undefined;
             reasoningEffort?: string | undefined;
@@ -3811,6 +3775,10 @@ export type IntentStartActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -3830,6 +3798,7 @@ export type IntentStartActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -4624,6 +4593,10 @@ export type IntentStartActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -4643,6 +4616,7 @@ export type IntentStartActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -5436,6 +5410,10 @@ export type IntentStartActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -5455,6 +5433,7 @@ export type IntentStartActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -6249,6 +6228,10 @@ export type IntentStartActionResultById = {
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
                     reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    quality?: undefined | {
+                        score: number;
+                        rationale: string;
+                    };
                     proposedComments?: undefined | {
                         body: string;
                         anchor: {
@@ -6268,6 +6251,7 @@ export type IntentStartActionResultById = {
                         };
                         findingId?: string | undefined;
                         severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        extensions?: Record<string, JSONType> | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
                     }[];
@@ -6358,6 +6342,7 @@ export type IntentStartActionResultById = {
             reviewId: string;
             roundOrdinal: number;
         };
+        inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
         comparisonId?: string | undefined;
         comparison?: undefined | {
             id: string;

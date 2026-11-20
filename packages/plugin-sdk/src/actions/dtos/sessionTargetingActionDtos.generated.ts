@@ -60,6 +60,10 @@ export type SessionTargetingActionInputById = {
             attentionCursor?: string | undefined;
             limit?: number | undefined;
             includeAttention?: boolean | undefined;
+            ordinaryPage?: undefined | {
+                limit?: number | undefined;
+                includeAttention?: boolean | undefined;
+            };
             coordinator?: 'coordinator' | undefined;
             folderIds?: string[] | undefined;
             projectKeys?: undefined | {
@@ -527,6 +531,21 @@ export type SessionTargetingActionResultById = {
             };
             title?: string | undefined;
             statusReason?: string | undefined;
+            nowLine?: string | undefined;
+            nowLineKind?: 'goal' | 'note' | 'task' | undefined;
+            statusReasonSetAt?: number | undefined;
+            staleSinceObservationAtMs?: number | undefined;
+            turnRetry?: undefined | {
+                reason: 'connection_failed' | 'rate_limited' | 'server_error' | 'unknown';
+                attempt: number;
+            };
+            progress?: undefined | {
+                dim: boolean;
+                complete: boolean;
+                done: number;
+                total: number;
+                label?: string | undefined;
+            };
             processTerminalState?: 'stopped' | undefined;
             workStatus?: 'waiting_for_startup_lock' | undefined;
             currentWork?: undefined | {
@@ -536,6 +555,11 @@ export type SessionTargetingActionResultById = {
                 status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
                 activeWorkflowRunCount?: number | undefined;
             };
+            taskProgress?: undefined | {
+                done: number;
+                total: number;
+            };
+            runningWorkCount?: number | undefined;
             lineage?: undefined | {
                 relation: 'fork' | 'replay';
                 sourceSessionId?: string | undefined;
@@ -622,6 +646,21 @@ export type SessionTargetingActionResultById = {
         };
         title?: string | undefined;
         statusReason?: string | undefined;
+        nowLine?: string | undefined;
+        nowLineKind?: 'goal' | 'note' | 'task' | undefined;
+        statusReasonSetAt?: number | undefined;
+        staleSinceObservationAtMs?: number | undefined;
+        turnRetry?: undefined | {
+            reason: 'connection_failed' | 'rate_limited' | 'server_error' | 'unknown';
+            attempt: number;
+        };
+        progress?: undefined | {
+            dim: boolean;
+            complete: boolean;
+            done: number;
+            total: number;
+            label?: string | undefined;
+        };
         processTerminalState?: 'stopped' | undefined;
         workStatus?: 'waiting_for_startup_lock' | undefined;
         currentWork?: undefined | {
@@ -631,6 +670,11 @@ export type SessionTargetingActionResultById = {
             status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
             activeWorkflowRunCount?: number | undefined;
         };
+        taskProgress?: undefined | {
+            done: number;
+            total: number;
+        };
+        runningWorkCount?: number | undefined;
         lineage?: undefined | {
             relation: 'fork' | 'replay';
             sourceSessionId?: string | undefined;

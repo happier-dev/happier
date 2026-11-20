@@ -10,8 +10,8 @@ export type MessagingActionInputById = {
         sessionId: SessionTargetV1<true>;
         message: string;
         wait?: boolean | undefined;
-        timeoutSeconds?: number | undefined;
         reply?: 'none' | 'return' | 'wait' | undefined;
+        timeoutSeconds?: number | undefined;
         recipient?: undefined | {
             kind: 'agent_team_broadcast';
             teamId: string;
@@ -144,6 +144,10 @@ export type MessagingActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 failureCause?: ActionFailureCauseV1 | undefined;
                 goalControlFailure?: undefined | {
                     phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';

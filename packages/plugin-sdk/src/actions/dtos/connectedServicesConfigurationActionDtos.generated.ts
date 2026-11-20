@@ -124,8 +124,8 @@ export type ConnectedServicesConfigurationActionInputById = {
             accountId: string;
         };
         price: null | {
-            amount: number;
             currency: string;
+            amount: number;
         };
     };
     readonly "connectedServices.configuration.get": {
@@ -997,6 +997,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
+                            required?: true | undefined;
                             availability?: undefined | {
                                 disabledWhen: PluginPolicyExpressionV2;
                                 disabledReason: string | {
@@ -1066,6 +1067,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
+                            required?: true | undefined;
                             availability?: undefined | {
                                 disabledWhen: PluginPolicyExpressionV2;
                                 disabledReason: string | {
@@ -3640,6 +3642,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     fallback: string;
                     params?: Record<string, number | string> | undefined;
                 };
+                required?: true | undefined;
                 availability?: undefined | {
                     disabledWhen: PluginPolicyExpressionV2;
                     disabledReason: string | {
@@ -3709,6 +3712,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     fallback: string;
                     params?: Record<string, number | string> | undefined;
                 };
+                required?: true | undefined;
                 availability?: undefined | {
                     disabledWhen: PluginPolicyExpressionV2;
                     disabledReason: string | {
@@ -5532,8 +5536,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                 source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                 scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
                 providerLimitId?: string | undefined;
-                modelId?: null | string | undefined;
                 confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                modelId?: null | string | undefined;
                 currency?: string | undefined;
                 resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 windowDurationMs?: number | undefined;
@@ -6262,11 +6266,11 @@ export type ConnectedServicesConfigurationActionResultById = {
                     location: 'cloud' | 'local' | 'unknown';
                     stoppedBilling: 'billed' | 'not-billed' | 'unknown';
                     storageCharges?: undefined | {
+                        source: string;
+                        observedAt: number;
                         amount: string;
                         currency: string;
                         unit: string;
-                        source: string;
-                        observedAt: number;
                         label?: string | undefined | {
                             key: string;
                             fallback: string;
@@ -6275,11 +6279,11 @@ export type ConnectedServicesConfigurationActionResultById = {
                     }[];
                 };
                 prices?: undefined | {
+                    source: string;
+                    observedAt: number;
                     amount: string;
                     currency: string;
                     unit: string;
-                    source: string;
-                    observedAt: number;
                     label?: string | undefined | {
                         key: string;
                         fallback: string;
@@ -6372,6 +6376,7 @@ export type ConnectedServicesConfigurationActionResultById = {
         } | {
             status: 'complete';
         };
+        savedSecretCleanup?: 'incomplete' | undefined;
     } | {
         status: 'revoked';
         account: {

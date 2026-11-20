@@ -138,18 +138,19 @@ export type ReviewCommentsActionInputById = {
             id: string;
             title: string;
             summary: string;
-            category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
             severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-            evidence?: string | undefined;
+            category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+            publicationPlacement?: 'summary' | undefined;
             confidence?: number | undefined;
+            evidence?: string | undefined;
             filePath?: string | undefined;
-            extensions?: unknown;
+            suggestion?: string | undefined;
             startLine?: number | undefined;
             endLine?: number | undefined;
-            suggestion?: string | undefined;
-            patch?: string | undefined;
             scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+            extensions?: unknown;
             whyItMatters?: string | undefined;
+            patch?: string | undefined;
             attributionConfidence?: string | undefined;
         };
         workspaceId?: string | undefined;
@@ -242,7 +243,7 @@ export type ReviewCommentsActionInputById = {
         sessionId?: string | undefined;
         runId?: string | undefined;
         states?: ('delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved')[] | undefined;
-        authorKind?: 'agent' | 'plugin' | 'user' | 'workflow' | undefined;
+        authorKind?: 'agent' | 'executionRun' | 'plugin' | 'user' | 'workflow' | undefined;
         authorId?: string | undefined;
         engineId?: string | undefined;
         filePath?: string | undefined;
@@ -659,6 +660,7 @@ export type ReviewCommentsActionInputById = {
                 sha256?: string | undefined;
             };
             body: string;
+            placement?: 'summary' | undefined;
         }[];
         verdict: null | {
             kind: 'approve' | 'comment' | 'requestChanges';
@@ -837,6 +839,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -870,6 +876,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -898,6 +908,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -959,18 +973,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -1010,6 +1025,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -1192,6 +1211,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -1225,6 +1248,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -1253,6 +1280,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -1314,18 +1345,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -1365,6 +1397,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -1547,6 +1583,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -1580,6 +1620,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -1608,6 +1652,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -1669,18 +1717,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -1720,6 +1769,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -1901,6 +1954,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -1934,6 +1991,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -1962,6 +2023,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2023,18 +2088,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -2074,6 +2140,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2255,6 +2325,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -2288,6 +2362,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -2316,6 +2394,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2377,18 +2459,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -2428,6 +2511,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2609,6 +2696,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -2642,6 +2733,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -2670,6 +2765,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2731,18 +2830,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -2782,6 +2882,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -2961,6 +3065,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -2994,6 +3102,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -3022,6 +3134,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -3083,18 +3199,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -3134,6 +3251,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -3315,6 +3436,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -3348,6 +3473,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -3376,6 +3505,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -3437,18 +3570,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -3488,6 +3622,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -3669,6 +3807,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -3702,6 +3844,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -3730,6 +3876,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -3791,18 +3941,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -3842,6 +3993,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -4023,6 +4178,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -4056,6 +4215,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -4084,6 +4247,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -4145,18 +4312,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -4196,6 +4364,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -4378,6 +4550,10 @@ export type ReviewCommentsActionResultById = {
                     agentId: string;
                     sessionId: string;
                 } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
+                } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
@@ -4411,6 +4587,10 @@ export type ReviewCommentsActionResultById = {
                 agentId: string;
                 sessionId: string;
             } | {
+                kind: 'executionRun';
+                agentId: string;
+                runId: string;
+            } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
@@ -4439,6 +4619,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
@@ -4500,18 +4684,19 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
-                evidence?: string | undefined;
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                publicationPlacement?: 'summary' | undefined;
                 confidence?: number | undefined;
+                evidence?: string | undefined;
                 filePath?: string | undefined;
-                extensions?: Record<string, JSONType> | undefined;
+                suggestion?: string | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                suggestion?: string | undefined;
-                patch?: string | undefined;
                 scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
+                extensions?: Record<string, JSONType> | undefined;
                 whyItMatters?: string | undefined;
+                patch?: string | undefined;
                 attributionConfidence?: string | undefined;
             };
             workspaceId?: string | undefined;
@@ -4551,6 +4736,10 @@ export type ReviewCommentsActionResultById = {
                     kind: 'agent';
                     agentId: string;
                     sessionId: string;
+                } | {
+                    kind: 'executionRun';
+                    agentId: string;
+                    runId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;

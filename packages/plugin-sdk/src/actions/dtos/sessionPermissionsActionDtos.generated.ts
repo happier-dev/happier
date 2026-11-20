@@ -84,27 +84,27 @@ export type SessionPermissionsActionInputById = {
         mode: 'continue' | 'wait';
         type: 'blocked' | 'decision';
         questions: ({
-            choices: {
-                id: string;
-                label?: string | undefined;
-                description?: string | undefined;
-            }[];
-            id: string;
-            prompt: string;
-            type: 'multipleChoice' | 'singleChoice';
-            minSelections?: number | undefined;
-            maxSelections?: number | undefined;
-            description?: string | undefined;
-            required?: boolean | undefined;
-            allowCustom?: boolean | undefined;
-            allowNote?: boolean | undefined;
-        } | {
             id: string;
             prompt: string;
             type: 'text';
             description?: string | undefined;
             initialValue?: string | undefined;
             required?: boolean | undefined;
+            allowNote?: boolean | undefined;
+        } | {
+            type: 'multipleChoice' | 'singleChoice';
+            id: string;
+            prompt: string;
+            choices: {
+                id: string;
+                label?: string | undefined;
+                description?: string | undefined;
+            }[];
+            minSelections?: number | undefined;
+            maxSelections?: number | undefined;
+            description?: string | undefined;
+            required?: boolean | undefined;
+            allowCustom?: boolean | undefined;
             allowNote?: boolean | undefined;
         })[];
         sessionId?: string | undefined;

@@ -212,6 +212,7 @@ export type WorkflowAuthoringActionInputById = {
             };
             title?: string | undefined;
             primaryTeamId?: null | string | undefined;
+            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -233,7 +234,6 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -548,6 +548,7 @@ export type WorkflowAuthoringActionInputById = {
             };
             title?: string | undefined;
             primaryTeamId?: null | string | undefined;
+            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -569,7 +570,6 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1591,6 +1591,19 @@ export type WorkflowAuthoringActionInputById = {
                         } | {
                             t: 'plain';
                             v: unknown;
+                        } | {
+                            t: 'workflow';
+                            revision: {
+                                headerVersion: number;
+                                bodyVersion: number;
+                            };
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: unknown;
+                            };
                         };
                         kind: 'action';
                         phase: 'after' | 'before';
@@ -2284,7 +2297,9 @@ export type WorkflowAuthoringActionResultById = {
                                         machineId: string;
                                         rootPath: string;
                                         kind?: undefined;
-                                    } | {
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    }) | ({
                                         v: 2;
                                         kind: 'managed';
                                         serverId: string;
@@ -2295,7 +2310,9 @@ export type WorkflowAuthoringActionResultById = {
                                             installationId: string;
                                         };
                                         rootPath: string;
-                                    }) & JsonValue;
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    });
                                     installationId: string;
                                     projectKey: string;
                                     kind: 'manual';
@@ -2319,7 +2336,9 @@ export type WorkflowAuthoringActionResultById = {
                                         machineId: string;
                                         rootPath: string;
                                         kind?: undefined;
-                                    } | {
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    }) | ({
                                         v: 2;
                                         kind: 'managed';
                                         serverId: string;
@@ -2330,7 +2349,9 @@ export type WorkflowAuthoringActionResultById = {
                                             installationId: string;
                                         };
                                         rootPath: string;
-                                    }) & JsonValue;
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    });
                                     installationId: string;
                                     projectKey: string;
                                     kind: 'worktree';
@@ -2496,7 +2517,9 @@ export type WorkflowAuthoringActionResultById = {
                                         machineId: string;
                                         rootPath: string;
                                         kind?: undefined;
-                                    } | {
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    }) | ({
                                         v: 2;
                                         kind: 'managed';
                                         serverId: string;
@@ -2507,7 +2530,9 @@ export type WorkflowAuthoringActionResultById = {
                                             installationId: string;
                                         };
                                         rootPath: string;
-                                    }) & JsonValue;
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    });
                                     installationId: string;
                                     projectKey: string;
                                     kind: 'manual';
@@ -2531,7 +2556,9 @@ export type WorkflowAuthoringActionResultById = {
                                         machineId: string;
                                         rootPath: string;
                                         kind?: undefined;
-                                    } | {
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    }) | ({
                                         v: 2;
                                         kind: 'managed';
                                         serverId: string;
@@ -2542,7 +2569,9 @@ export type WorkflowAuthoringActionResultById = {
                                             installationId: string;
                                         };
                                         rootPath: string;
-                                    }) & JsonValue;
+                                    } & {
+                                        readonly [key: string]: JsonValue;
+                                    });
                                     installationId: string;
                                     projectKey: string;
                                     kind: 'worktree';
@@ -2669,6 +2698,19 @@ export type WorkflowAuthoringActionResultById = {
                             } | {
                                 t: 'plain';
                                 v: PluginJsonValueV2;
+                            } | {
+                                t: 'workflow';
+                                revision: {
+                                    headerVersion: number;
+                                    bodyVersion: number;
+                                };
+                                content: {
+                                    t: 'encrypted';
+                                    c: string;
+                                } | {
+                                    t: 'plain';
+                                    v: PluginJsonValueV2;
+                                };
                             };
                             kind: 'action';
                             phase: 'after' | 'before';

@@ -380,7 +380,7 @@ export type InventoryActionInputById = {
         sessionId?: null | string | undefined;
         machineId?: string | undefined;
         includeDisabled?: boolean | undefined;
-        scope?: 'paths' | undefined;
+        scope?: 'paths' | 'repository' | 'worktree' | undefined;
         profileSelections?: undefined | {
             engineId: string;
             profileId: string;
@@ -779,6 +779,13 @@ export type InventoryActionInputById = {
             };
         } | {
             kind: 'attach';
+            targetManaged?: undefined | {
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                managedId: string;
+            };
         } | {
             kind: 'sync';
             targetPath: string;
@@ -973,6 +980,7 @@ export type InventoryActionResultById = {
         ok: false;
         errorCode: string;
         currentRevision?: 'absent' | number | undefined;
+        details?: unknown;
         failureCause?: ActionFailureCauseV1 | undefined;
     } | {
         ok: true;
@@ -981,8 +989,7 @@ export type InventoryActionResultById = {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
                 picture: {
@@ -3321,6 +3328,10 @@ export type InventoryActionResultById = {
             requestId?: string | undefined;
             effectAttempted?: boolean | undefined;
             details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
             failureCause?: ActionFailureCauseV1 | undefined;
             goalControlFailure?: undefined | {
                 phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -3352,8 +3363,7 @@ export type InventoryActionResultById = {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
                 picture: {
@@ -3422,8 +3432,7 @@ export type InventoryActionResultById = {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
                 picture: {
@@ -3492,8 +3501,7 @@ export type InventoryActionResultById = {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
                 picture: {
@@ -3558,6 +3566,10 @@ export type InventoryActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -3602,11 +3614,11 @@ export type InventoryActionResultById = {
                 };
                 applications: {
                     file: string;
+                    framework: null | string;
                     runtime: null | {
                         name: string;
                         version: string;
                     };
-                    framework: null | string;
                 }[];
                 source: {
                     sourceId: string;
@@ -3647,11 +3659,11 @@ export type InventoryActionResultById = {
                 };
                 applications: {
                     file: string;
+                    framework: null | string;
                     runtime: null | {
                         name: string;
                         version: string;
                     };
-                    framework: null | string;
                 }[];
                 source: {
                     sourceId: string;
@@ -3664,8 +3676,7 @@ export type InventoryActionResultById = {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
                 picture: {
@@ -3729,6 +3740,10 @@ export type InventoryActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -3754,6 +3769,10 @@ export type InventoryActionResultById = {
         requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
+        setupRetry?: undefined | {
+            runId: string;
+            invocationId: string;
+        };
         failureCause?: ActionFailureCauseV1 | undefined;
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -3804,11 +3823,11 @@ export type InventoryActionResultById = {
                 };
                 applications: {
                     file: string;
+                    framework: null | string;
                     runtime: null | {
                         name: string;
                         version: string;
                     };
-                    framework: null | string;
                 }[];
                 source: {
                     sourceId: string;

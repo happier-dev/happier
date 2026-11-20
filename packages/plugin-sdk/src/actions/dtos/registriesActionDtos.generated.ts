@@ -487,6 +487,11 @@ export type RegistriesActionResultById = {
                         universal?: null | string | undefined;
                     };
                 };
+                pluginGit?: undefined | {
+                    locator: string;
+                    subdirectory?: string | undefined;
+                    ref?: string | undefined;
+                };
                 themeMetadata?: undefined | {
                     includes: {
                         key: string;
@@ -669,6 +674,11 @@ export type RegistriesActionResultById = {
                         support?: null | string | undefined;
                         universal?: null | string | undefined;
                     };
+                };
+                pluginGit?: undefined | {
+                    locator: string;
+                    subdirectory?: string | undefined;
+                    ref?: string | undefined;
                 };
                 themeMetadata?: undefined | {
                     includes: {
@@ -1111,6 +1121,17 @@ export type RegistriesActionResultById = {
                 };
             } | {
                 kind: 'plugin';
+                git: {
+                    locator: string;
+                    subdirectory?: string | undefined;
+                    ref?: string | undefined;
+                };
+                catalog: {
+                    sourceId: string;
+                    itemId: string;
+                };
+            } | {
+                kind: 'plugin';
                 listing: {
                     pluginId: string;
                     publisher: {
@@ -1193,6 +1214,7 @@ export type RegistriesActionResultById = {
                         commands: number;
                         mcpServers: number;
                         agents: number;
+                        other?: string[] | undefined;
                     };
                 };
             } | {

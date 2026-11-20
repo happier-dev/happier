@@ -18,8 +18,8 @@ export type PluginCollectionSharingActionInputById = {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.get": {
-        ownerAccountId: string;
         rowId: string;
+        ownerAccountId: string;
         collectionRef: {
             pluginId: string;
             collectionId: string;
@@ -66,8 +66,8 @@ export type PluginCollectionSharingActionInputById = {
             teamId: string;
         };
         expectedRevision: number;
-        accessLevel: 'edit' | 'view';
         rowId: string;
+        accessLevel: 'edit' | 'view';
         collectionRef: {
             pluginId: string;
             collectionId: string;

@@ -237,6 +237,7 @@ export type WorkflowDiagnosticsActionResultById = {
                     };
                     title?: string | undefined;
                     primaryTeamId?: null | string | undefined;
+                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -258,7 +259,6 @@ export type WorkflowDiagnosticsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
-                    memoryEnabled?: boolean | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -725,6 +725,7 @@ export type WorkflowDiagnosticsActionResultById = {
                     };
                     title?: string | undefined;
                     primaryTeamId?: null | string | undefined;
+                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -746,7 +747,6 @@ export type WorkflowDiagnosticsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
-                    memoryEnabled?: boolean | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -1170,7 +1170,9 @@ export type WorkflowDiagnosticsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -1181,7 +1183,9 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -1205,7 +1209,9 @@ export type WorkflowDiagnosticsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -1216,7 +1222,9 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -1382,7 +1390,9 @@ export type WorkflowDiagnosticsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -1393,7 +1403,9 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -1417,7 +1429,9 @@ export type WorkflowDiagnosticsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -1428,7 +1442,9 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -1555,6 +1571,19 @@ export type WorkflowDiagnosticsActionResultById = {
                 } | {
                     t: 'plain';
                     v: PluginJsonValueV2;
+                } | {
+                    t: 'workflow';
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: PluginJsonValueV2;
+                    };
                 };
                 kind: 'action';
                 phase: 'after' | 'before';

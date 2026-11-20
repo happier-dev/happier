@@ -317,12 +317,12 @@ export type WorkflowsActionInputById = {
         machineId?: string | undefined;
         automationId?: string | undefined;
         triggerId?: string | undefined;
-        attention?: 'required' | undefined;
-        states?: ('cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review')[] | undefined;
         runId?: string | undefined;
+        attention?: 'required' | undefined;
         starter?: 'current_account' | undefined;
         sourceArtifactId?: string | undefined;
         originSessionId?: string | undefined;
+        states?: ('cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review')[] | undefined;
         runIds?: string[] | undefined;
     };
     readonly "workflow.run.list": {
@@ -1187,6 +1187,7 @@ export type WorkflowsActionInputById = {
             };
             title?: string | undefined;
             primaryTeamId?: null | string | undefined;
+            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -1208,7 +1209,6 @@ export type WorkflowsActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1523,6 +1523,7 @@ export type WorkflowsActionInputById = {
             };
             title?: string | undefined;
             primaryTeamId?: null | string | undefined;
+            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -1544,7 +1545,6 @@ export type WorkflowsActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -2938,6 +2938,19 @@ export type WorkflowsActionInputById = {
             } | {
                 t: 'plain';
                 v: unknown;
+            } | {
+                t: 'workflow';
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
             };
             kind: 'action';
             phase: 'after' | 'before';
@@ -3484,6 +3497,19 @@ export type WorkflowsActionInputById = {
             } | {
                 t: 'plain';
                 v: unknown;
+            } | {
+                t: 'workflow';
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: unknown;
+                };
             };
             kind: 'action';
             phase: 'after' | 'before';
@@ -4722,6 +4748,19 @@ export type WorkflowsActionInputById = {
                 } | {
                     t: 'plain';
                     v: unknown;
+                } | {
+                    t: 'workflow';
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: unknown;
+                    };
                 };
                 kind: 'action';
                 phase: 'after' | 'before';
@@ -5700,6 +5739,7 @@ type WorkflowsActionSelection1 = {
     };
     title?: string | undefined;
     primaryTeamId?: null | string | undefined;
+    memoryEnabled?: boolean | undefined;
     organizationPlacement?: undefined | {
         folderId: null | string;
         tagIds: string[];
@@ -5721,7 +5761,6 @@ type WorkflowsActionSelection1 = {
             revision?: number | undefined;
         }>;
     };
-    memoryEnabled?: boolean | undefined;
     teamCredentialBindings?: ({
         v: 1;
         slot: {
@@ -6032,6 +6071,7 @@ type WorkflowsActionDefinition1 = Readonly<{
         };
         title?: string | undefined;
         primaryTeamId?: null | string | undefined;
+        memoryEnabled?: boolean | undefined;
         organizationPlacement?: undefined | {
             folderId: null | string;
             tagIds: string[];
@@ -6053,7 +6093,6 @@ type WorkflowsActionDefinition1 = Readonly<{
                 revision?: number | undefined;
             }>;
         };
-        memoryEnabled?: boolean | undefined;
         teamCredentialBindings?: ({
             v: 1;
             slot: {
@@ -6474,6 +6513,7 @@ export type WorkflowsActionResultById = {
                 };
                 title?: string | undefined;
                 primaryTeamId?: null | string | undefined;
+                memoryEnabled?: boolean | undefined;
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
@@ -6495,7 +6535,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -9974,6 +10013,7 @@ export type WorkflowsActionResultById = {
                     };
                     title?: string | undefined;
                     primaryTeamId?: null | string | undefined;
+                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -9995,7 +10035,6 @@ export type WorkflowsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
-                    memoryEnabled?: boolean | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -11810,6 +11849,7 @@ export type WorkflowsActionResultById = {
                     };
                     title?: string | undefined;
                     primaryTeamId?: null | string | undefined;
+                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -11831,7 +11871,6 @@ export type WorkflowsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
-                    memoryEnabled?: boolean | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -12565,6 +12604,7 @@ export type WorkflowsActionResultById = {
                 };
                 title?: string | undefined;
                 primaryTeamId?: null | string | undefined;
+                memoryEnabled?: boolean | undefined;
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
@@ -12586,7 +12626,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -19522,6 +19561,10 @@ export type WorkflowsActionResultById = {
             contentStatus: 'available';
             stepCount: number;
             previewSteps?: string[] | undefined;
+            previewAgents?: undefined | {
+                pluginId: string;
+                localId: string;
+            }[];
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
             access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
@@ -19690,6 +19733,10 @@ export type WorkflowsActionResultById = {
             };
             contentUnavailableReason: 'history_not_readable' | 'invalid_body' | 'invalid_header' | 'missing_body' | 'not_found' | 'revision_mismatch';
             previewSteps?: string[] | undefined;
+            previewAgents?: undefined | {
+                pluginId: string;
+                localId: string;
+            }[];
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
             access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
@@ -20151,6 +20198,7 @@ export type WorkflowsActionResultById = {
                 };
                 title?: string | undefined;
                 primaryTeamId?: null | string | undefined;
+                memoryEnabled?: boolean | undefined;
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
@@ -20172,7 +20220,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -20637,6 +20684,7 @@ export type WorkflowsActionResultById = {
                 };
                 title?: string | undefined;
                 primaryTeamId?: null | string | undefined;
+                memoryEnabled?: boolean | undefined;
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
@@ -20658,7 +20706,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -21445,7 +21492,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -21456,7 +21505,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -21480,7 +21531,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -21491,7 +21544,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -22280,6 +22335,7 @@ export type WorkflowsActionResultById = {
                         };
                         title?: string | undefined;
                         primaryTeamId?: null | string | undefined;
+                        memoryEnabled?: boolean | undefined;
                         organizationPlacement?: undefined | {
                             folderId: null | string;
                             tagIds: string[];
@@ -22301,7 +22357,6 @@ export type WorkflowsActionResultById = {
                                 revision?: number | undefined;
                             }>;
                         };
-                        memoryEnabled?: boolean | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
@@ -22565,6 +22620,36 @@ export type WorkflowsActionResultById = {
                                     };
                                     path: (number | string)[];
                                     optional?: true | undefined;
+                                }>;
+                            } | {
+                                kind: 'trigger_event';
+                                references: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                    kind: 'list';
+                                    items: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
+                                } | {
+                                    kind: 'object';
+                                    fields: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    }>;
+                                } | {
+                                    kind: 'origin_session_id';
+                                } | {
+                                    kind: 'text';
+                                    document: {
+                                        text: string;
+                                        references: {
+                                            [x: string]: unknown;
+                                            kind: string;
+                                            ref: string;
+                                            token: string;
+                                            label?: string | undefined;
+                                        }[];
+                                    };
+                                    input: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
                                 }>;
                             };
                         }[];
@@ -22964,7 +23049,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -22975,7 +23062,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'manual';
@@ -22999,7 +23088,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -23010,7 +23101,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'worktree';
@@ -23656,7 +23749,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -23667,7 +23762,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -23691,7 +23788,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -23702,7 +23801,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -24491,6 +24592,7 @@ export type WorkflowsActionResultById = {
                         };
                         title?: string | undefined;
                         primaryTeamId?: null | string | undefined;
+                        memoryEnabled?: boolean | undefined;
                         organizationPlacement?: undefined | {
                             folderId: null | string;
                             tagIds: string[];
@@ -24512,7 +24614,6 @@ export type WorkflowsActionResultById = {
                                 revision?: number | undefined;
                             }>;
                         };
-                        memoryEnabled?: boolean | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
@@ -24776,6 +24877,36 @@ export type WorkflowsActionResultById = {
                                     };
                                     path: (number | string)[];
                                     optional?: true | undefined;
+                                }>;
+                            } | {
+                                kind: 'trigger_event';
+                                references: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                    kind: 'list';
+                                    items: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
+                                } | {
+                                    kind: 'object';
+                                    fields: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    }>;
+                                } | {
+                                    kind: 'origin_session_id';
+                                } | {
+                                    kind: 'text';
+                                    document: {
+                                        text: string;
+                                        references: {
+                                            [x: string]: unknown;
+                                            kind: string;
+                                            ref: string;
+                                            token: string;
+                                            label?: string | undefined;
+                                        }[];
+                                    };
+                                    input: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
                                 }>;
                             };
                         }[];
@@ -25175,7 +25306,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -25186,7 +25319,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'manual';
@@ -25210,7 +25345,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -25221,7 +25358,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'worktree';
@@ -25525,7 +25664,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -25536,7 +25677,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -25560,7 +25703,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -25571,7 +25716,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -26360,6 +26507,7 @@ export type WorkflowsActionResultById = {
                         };
                         title?: string | undefined;
                         primaryTeamId?: null | string | undefined;
+                        memoryEnabled?: boolean | undefined;
                         organizationPlacement?: undefined | {
                             folderId: null | string;
                             tagIds: string[];
@@ -26381,7 +26529,6 @@ export type WorkflowsActionResultById = {
                                 revision?: number | undefined;
                             }>;
                         };
-                        memoryEnabled?: boolean | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
@@ -26645,6 +26792,36 @@ export type WorkflowsActionResultById = {
                                     };
                                     path: (number | string)[];
                                     optional?: true | undefined;
+                                }>;
+                            } | {
+                                kind: 'trigger_event';
+                                references: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                    kind: 'list';
+                                    items: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
+                                } | {
+                                    kind: 'object';
+                                    fields: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    }>;
+                                } | {
+                                    kind: 'origin_session_id';
+                                } | {
+                                    kind: 'text';
+                                    document: {
+                                        text: string;
+                                        references: {
+                                            [x: string]: unknown;
+                                            kind: string;
+                                            ref: string;
+                                            token: string;
+                                            label?: string | undefined;
+                                        }[];
+                                    };
+                                    input: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
                                 }>;
                             };
                         }[];
@@ -27044,7 +27221,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -27055,7 +27234,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'manual';
@@ -27079,7 +27260,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -27090,7 +27273,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'worktree';
@@ -27398,7 +27583,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -27409,7 +27596,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'manual';
@@ -27433,7 +27622,9 @@ export type WorkflowsActionResultById = {
                             machineId: string;
                             rootPath: string;
                             kind?: undefined;
-                        } | {
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        }) | ({
                             v: 2;
                             kind: 'managed';
                             serverId: string;
@@ -27444,7 +27635,9 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                        }) & JsonValue;
+                        } & {
+                            readonly [key: string]: JsonValue;
+                        });
                         installationId: string;
                         projectKey: string;
                         kind: 'worktree';
@@ -28233,6 +28426,7 @@ export type WorkflowsActionResultById = {
                         };
                         title?: string | undefined;
                         primaryTeamId?: null | string | undefined;
+                        memoryEnabled?: boolean | undefined;
                         organizationPlacement?: undefined | {
                             folderId: null | string;
                             tagIds: string[];
@@ -28254,7 +28448,6 @@ export type WorkflowsActionResultById = {
                                 revision?: number | undefined;
                             }>;
                         };
-                        memoryEnabled?: boolean | undefined;
                         teamCredentialBindings?: ({
                             v: 1;
                             slot: {
@@ -28518,6 +28711,36 @@ export type WorkflowsActionResultById = {
                                     };
                                     path: (number | string)[];
                                     optional?: true | undefined;
+                                }>;
+                            } | {
+                                kind: 'trigger_event';
+                                references: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                    kind: 'list';
+                                    items: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
+                                } | {
+                                    kind: 'object';
+                                    fields: Record<string, PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    }>;
+                                } | {
+                                    kind: 'origin_session_id';
+                                } | {
+                                    kind: 'text';
+                                    document: {
+                                        text: string;
+                                        references: {
+                                            [x: string]: unknown;
+                                            kind: string;
+                                            ref: string;
+                                            token: string;
+                                            label?: string | undefined;
+                                        }[];
+                                    };
+                                    input: (PluginActionWorkflowValueReferenceV1 | {
+                                        kind: 'origin_session_id';
+                                    })[];
                                 }>;
                             };
                         }[];
@@ -28917,7 +29140,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -28928,7 +29153,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'manual';
@@ -28952,7 +29179,9 @@ export type WorkflowsActionResultById = {
                                 machineId: string;
                                 rootPath: string;
                                 kind?: undefined;
-                            } | {
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            }) | ({
                                 v: 2;
                                 kind: 'managed';
                                 serverId: string;
@@ -28963,7 +29192,9 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                            }) & JsonValue;
+                            } & {
+                                readonly [key: string]: JsonValue;
+                            });
                             installationId: string;
                             projectKey: string;
                             kind: 'worktree';
@@ -29376,6 +29607,7 @@ type WorkflowsActionDefinition2 = Readonly<{
         };
         title?: string | undefined;
         primaryTeamId?: null | string | undefined;
+        memoryEnabled?: boolean | undefined;
         organizationPlacement?: undefined | {
             folderId: null | string;
             tagIds: string[];
@@ -29397,7 +29629,6 @@ type WorkflowsActionDefinition2 = Readonly<{
                 revision?: number | undefined;
             }>;
         };
-        memoryEnabled?: boolean | undefined;
         teamCredentialBindings?: ({
             v: 1;
             slot: {
@@ -29766,6 +29997,7 @@ type WorkflowsActionSelection2 = {
     };
     title?: string | undefined;
     primaryTeamId?: null | string | undefined;
+    memoryEnabled?: boolean | undefined;
     organizationPlacement?: undefined | {
         folderId: null | string;
         tagIds: string[];
@@ -29787,7 +30019,6 @@ type WorkflowsActionSelection2 = {
             revision?: number | undefined;
         }>;
     };
-    memoryEnabled?: boolean | undefined;
     teamCredentialBindings?: ({
         v: 1;
         slot: {
@@ -30199,7 +30430,9 @@ type WorkflowsActionDefinition3 = {
                 machineId: string;
                 rootPath: string;
                 kind?: undefined;
-            } | {
+            } & {
+                readonly [key: string]: JsonValue;
+            }) | ({
                 v: 2;
                 kind: 'managed';
                 serverId: string;
@@ -30210,7 +30443,9 @@ type WorkflowsActionDefinition3 = {
                     installationId: string;
                 };
                 rootPath: string;
-            }) & JsonValue;
+            } & {
+                readonly [key: string]: JsonValue;
+            });
             installationId: string;
             projectKey: string;
             kind: 'manual';
@@ -30234,7 +30469,9 @@ type WorkflowsActionDefinition3 = {
                 machineId: string;
                 rootPath: string;
                 kind?: undefined;
-            } | {
+            } & {
+                readonly [key: string]: JsonValue;
+            }) | ({
                 v: 2;
                 kind: 'managed';
                 serverId: string;
@@ -30245,7 +30482,9 @@ type WorkflowsActionDefinition3 = {
                     installationId: string;
                 };
                 rootPath: string;
-            }) & JsonValue;
+            } & {
+                readonly [key: string]: JsonValue;
+            });
             installationId: string;
             projectKey: string;
             kind: 'worktree';

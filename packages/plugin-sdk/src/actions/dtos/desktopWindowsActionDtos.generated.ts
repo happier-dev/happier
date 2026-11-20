@@ -109,6 +109,7 @@ export type DesktopWindowsActionInputById = {
                     evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
                 } | {
                     kind: 'workingTree';
+                    area?: 'both' | 'included' | 'pending';
                 };
                 view: 'commits' | 'files' | 'walkthrough';
                 explain?: boolean | undefined;
@@ -201,6 +202,7 @@ export type DesktopWindowsActionInputById = {
                     evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
                 } | {
                     kind: 'workingTree';
+                    area?: 'both' | 'included' | 'pending';
                 };
                 view: 'commits' | 'files' | 'walkthrough';
                 explain?: boolean | undefined;

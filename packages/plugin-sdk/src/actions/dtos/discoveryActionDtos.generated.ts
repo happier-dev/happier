@@ -4379,6 +4379,10 @@ export type DiscoveryActionResultById = {
                         descriptor: {
                             id: string;
                             name: string;
+                            upstreamRef?: undefined | {
+                                vendor: string;
+                                vendorModelId: string;
+                            };
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
                             aliases?: string[] | undefined;
                             description?: string | undefined;
@@ -4596,6 +4600,10 @@ export type DiscoveryActionResultById = {
                             descriptor: {
                                 id: string;
                                 name: string;
+                                upstreamRef?: undefined | {
+                                    vendor: string;
+                                    vendorModelId: string;
+                                };
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                                 aliases?: string[] | undefined;
                                 description?: string | undefined;
@@ -4872,6 +4880,10 @@ export type DiscoveryActionResultById = {
                         descriptor: {
                             id: string;
                             name: string;
+                            upstreamRef?: undefined | {
+                                vendor: string;
+                                vendorModelId: string;
+                            };
                             costTier?: 'low' | 'premium' | 'standard' | undefined;
                             aliases?: string[] | undefined;
                             description?: string | undefined;
@@ -5116,6 +5128,13 @@ export type DiscoveryActionResultById = {
                     connectionRole: 'default' | 'named';
                     connectionDisplayNameMode: 'automatic' | 'custom';
                     modelCount: number;
+                    upstreamModels?: undefined | {
+                        upstreamRef: {
+                            vendor: string;
+                            vendorModelId: string;
+                        };
+                        endpointHealth: 'available' | 'invalid_response' | 'not_checked' | 'rate_limited' | 'temporarily_unavailable' | 'unauthorized' | 'unreachable';
+                    }[];
                 }[];
                 currentSelectionRecovery?: null | undefined | {
                     kind: 'connection_deleted' | 'connection_missing' | 'contribution_unavailable' | 'model_not_found';

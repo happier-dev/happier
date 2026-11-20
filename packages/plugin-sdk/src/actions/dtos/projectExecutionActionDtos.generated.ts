@@ -3,6 +3,7 @@
 
 import type { ActionFailureCauseV1 } from '../../errors/index.js';
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
+import type { MachineSetupNonAccountPresetSourceEntryV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ProjectExecutionActionInputById = {
     readonly "projects.pages.list": {
@@ -319,6 +320,10 @@ export type ProjectExecutionActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 details?: undefined | {
                     authorityReason: 'descriptor' | 'descriptor_identity' | 'destination' | 'destination_not_allowed' | 'identity' | 'target';
                     authorityPhase: 'authenticated' | 'controller_approval' | 'first_contact' | 'post_claim';
@@ -330,6 +335,7 @@ export type ProjectExecutionActionResultById = {
                     domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
+                    reason?: 'target_link_revision_mismatch' | undefined;
                     requiredFact?: string | undefined;
                     failure?: undefined | {
                         kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -912,6 +918,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -957,6 +964,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -983,6 +991,7 @@ export type ProjectExecutionActionResultById = {
                         domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
+                        reason?: 'target_link_revision_mismatch' | undefined;
                         requiredFact?: string | undefined;
                         failure?: undefined | {
                             kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -2391,6 +2400,33 @@ export type ProjectExecutionActionResultById = {
                     name?: string | undefined;
                 };
                 managedId?: string | undefined;
+                source?: undefined | {
+                    sources: (MachineSetupNonAccountPresetSourceEntryV1 | {
+                        kind: 'accountPresetOpaque';
+                        presetId: string;
+                        presetRevision: number;
+                        contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
+                        presetContentOverride?: undefined | {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: unknown;
+                            };
+                        };
+                    })[];
+                    exclusions?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        reason: 'not_selected';
+                    }[];
+                    removeItemKeys?: string[] | undefined;
+                };
                 steps?: undefined | {
                     planIndex: number;
                     stepId: string;
@@ -2769,50 +2805,66 @@ export type ProjectExecutionActionResultById = {
                     coverage: {
                         rootDisk: boolean;
                         attachedVolumes: boolean;
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
                     cost: {
                         kind: 'billed';
                         source: string;
                         price?: undefined | {
+                            source: string;
+                            observedAt: number;
                             amount: string;
                             currency: string;
                             unit: string;
-                            source: string;
-                            observedAt: number;
                             label?: string | undefined | {
                                 key: string;
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
                         };
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
-                    consistency: 'running' | 'stopped' | 'unknown';
+                    consistency: ('running' & JsonValue) | ('stopped' & JsonValue) | ('unknown' & JsonValue);
                 } | {
                     kind: 'failed';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -2822,38 +2874,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'refused';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -2863,38 +2933,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unknown';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -2904,12 +2992,18 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unsupported';
                     code: string;
@@ -3049,6 +3143,10 @@ export type ProjectExecutionActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 details?: undefined | {
                     authorityReason: 'descriptor' | 'descriptor_identity' | 'destination' | 'destination_not_allowed' | 'identity' | 'target';
                     authorityPhase: 'authenticated' | 'controller_approval' | 'first_contact' | 'post_claim';
@@ -3060,6 +3158,7 @@ export type ProjectExecutionActionResultById = {
                     domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
+                    reason?: 'target_link_revision_mismatch' | undefined;
                     requiredFact?: string | undefined;
                     failure?: undefined | {
                         kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -3642,6 +3741,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -3687,6 +3787,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -3713,6 +3814,7 @@ export type ProjectExecutionActionResultById = {
                         domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
+                        reason?: 'target_link_revision_mismatch' | undefined;
                         requiredFact?: string | undefined;
                         failure?: undefined | {
                             kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -5121,6 +5223,33 @@ export type ProjectExecutionActionResultById = {
                     name?: string | undefined;
                 };
                 managedId?: string | undefined;
+                source?: undefined | {
+                    sources: (MachineSetupNonAccountPresetSourceEntryV1 | {
+                        kind: 'accountPresetOpaque';
+                        presetId: string;
+                        presetRevision: number;
+                        contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
+                        presetContentOverride?: undefined | {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: unknown;
+                            };
+                        };
+                    })[];
+                    exclusions?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        reason: 'not_selected';
+                    }[];
+                    removeItemKeys?: string[] | undefined;
+                };
                 steps?: undefined | {
                     planIndex: number;
                     stepId: string;
@@ -5499,50 +5628,66 @@ export type ProjectExecutionActionResultById = {
                     coverage: {
                         rootDisk: boolean;
                         attachedVolumes: boolean;
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
                     cost: {
                         kind: 'billed';
                         source: string;
                         price?: undefined | {
+                            source: string;
+                            observedAt: number;
                             amount: string;
                             currency: string;
                             unit: string;
-                            source: string;
-                            observedAt: number;
                             label?: string | undefined | {
                                 key: string;
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
                         };
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
-                    consistency: 'running' | 'stopped' | 'unknown';
+                    consistency: ('running' & JsonValue) | ('stopped' & JsonValue) | ('unknown' & JsonValue);
                 } | {
                     kind: 'failed';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -5552,38 +5697,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'refused';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -5593,38 +5756,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unknown';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -5634,12 +5815,18 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unsupported';
                     code: string;
@@ -5779,6 +5966,10 @@ export type ProjectExecutionActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 details?: undefined | {
                     authorityReason: 'descriptor' | 'descriptor_identity' | 'destination' | 'destination_not_allowed' | 'identity' | 'target';
                     authorityPhase: 'authenticated' | 'controller_approval' | 'first_contact' | 'post_claim';
@@ -5790,6 +5981,7 @@ export type ProjectExecutionActionResultById = {
                     domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
+                    reason?: 'target_link_revision_mismatch' | undefined;
                     requiredFact?: string | undefined;
                     failure?: undefined | {
                         kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -6372,6 +6564,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -6417,6 +6610,7 @@ export type ProjectExecutionActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -6443,6 +6637,7 @@ export type ProjectExecutionActionResultById = {
                         domainId: string;
                         step: 'native_execution';
                         providerOutput?: string | undefined;
+                        reason?: 'target_link_revision_mismatch' | undefined;
                         requiredFact?: string | undefined;
                         failure?: undefined | {
                             kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
@@ -7851,6 +8046,33 @@ export type ProjectExecutionActionResultById = {
                     name?: string | undefined;
                 };
                 managedId?: string | undefined;
+                source?: undefined | {
+                    sources: (MachineSetupNonAccountPresetSourceEntryV1 | {
+                        kind: 'accountPresetOpaque';
+                        presetId: string;
+                        presetRevision: number;
+                        contentEncryptionMode: 'e2ee' | 'plain';
+                        setupRevision?: number | undefined;
+                        presetContentOverride?: undefined | {
+                            content: {
+                                t: 'encrypted';
+                                c: string;
+                            } | {
+                                t: 'plain';
+                                v: unknown;
+                            };
+                        };
+                    })[];
+                    exclusions?: undefined | {
+                        ref: {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                        reason: 'not_selected';
+                    }[];
+                    removeItemKeys?: string[] | undefined;
+                };
                 steps?: undefined | {
                     planIndex: number;
                     stepId: string;
@@ -8229,50 +8451,66 @@ export type ProjectExecutionActionResultById = {
                     coverage: {
                         rootDisk: boolean;
                         attachedVolumes: boolean;
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
                     cost: {
                         kind: 'billed';
                         source: string;
                         price?: undefined | {
+                            source: string;
+                            observedAt: number;
                             amount: string;
                             currency: string;
                             unit: string;
-                            source: string;
-                            observedAt: number;
                             label?: string | undefined | {
                                 key: string;
                                 fallback: string;
                                 params?: Record<string, number | string> | undefined;
                             };
                         };
+                    } & {
+                        readonly [key: string]: JsonValue;
                     };
-                    consistency: 'running' | 'stopped' | 'unknown';
+                    consistency: ('running' & JsonValue) | ('stopped' & JsonValue) | ('unknown' & JsonValue);
                 } | {
                     kind: 'failed';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -8282,38 +8520,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'refused';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -8323,38 +8579,56 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unknown';
                     code: string;
-                    nativeCause?: {
+                    nativeCause?: ({
                         grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
                         code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'plugin_action_input_schema_invalid';
                         action: {
                             pluginId: string;
@@ -8364,12 +8638,18 @@ export type ProjectExecutionActionResultById = {
                             path: (number | string)[];
                             code: string;
                         }[];
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
-                    };
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                 } | {
                     kind: 'unsupported';
                     code: string;

@@ -6415,6 +6415,12 @@ export type UsageActionResultById = {
                     component: 'client' | 'daemon' | 'server';
                     reason: string;
                 };
+                unreadSessions?: undefined | {
+                    machine_unavailable?: number | undefined;
+                    not_entitled?: number | undefined;
+                    timed_out?: number | undefined;
+                    failed?: number | undefined;
+                };
             }[];
             pending: boolean;
             accounting?: undefined | {
@@ -6454,6 +6460,7 @@ export type UsageActionResultById = {
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                 currency: string;
                                 source: string;
+                                partial?: true | undefined;
                             };
                         };
                     };
@@ -6500,6 +6507,7 @@ export type UsageActionResultById = {
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                 currency: string;
                                 source: string;
+                                partial?: true | undefined;
                             };
                         };
                     };
@@ -6546,6 +6554,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6594,6 +6603,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6642,6 +6652,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6690,6 +6701,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6738,6 +6750,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6786,6 +6799,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6834,6 +6848,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6882,6 +6897,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -6973,6 +6989,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7014,6 +7031,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7056,6 +7074,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7097,6 +7116,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7139,6 +7159,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7180,6 +7201,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7222,6 +7244,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7263,6 +7286,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7305,6 +7329,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7346,6 +7371,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7388,6 +7414,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7429,6 +7456,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7475,6 +7503,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7516,6 +7545,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7562,6 +7592,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -7603,6 +7634,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7700,6 +7732,7 @@ export type UsageActionResultById = {
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                 currency: string;
                                 source: string;
+                                partial?: true | undefined;
                             };
                         };
                     };
@@ -7812,6 +7845,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -7860,11 +7894,11 @@ export type UsageActionResultById = {
                             };
                             eventCount: number;
                             label?: string | undefined;
-                            requestCount?: number | undefined;
                             context?: undefined | {
                                 usedTokens?: null | number | undefined;
                                 windowTokens?: null | number | undefined;
                             };
+                            requestCount?: number | undefined;
                             latestContextUsedTokens?: number | undefined;
                             latestContextWindowTokens?: number | undefined;
                         };
@@ -7904,6 +7938,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -7989,6 +8024,7 @@ export type UsageActionResultById = {
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                                 currency: string;
                                                 source: string;
+                                                partial?: true | undefined;
                                             };
                                         };
                                     };
@@ -8050,6 +8086,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8071,6 +8108,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8125,6 +8163,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8142,6 +8181,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8207,6 +8247,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8224,6 +8265,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8289,6 +8331,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8306,6 +8349,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8371,6 +8415,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8388,6 +8433,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8450,6 +8496,7 @@ export type UsageActionResultById = {
                                         currency: string;
                                         source: string;
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                        partial?: true | undefined;
                                     };
                                     busyMs: null | number;
                                     steeringCount: null | number;
@@ -8467,6 +8514,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8589,6 +8637,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -8706,6 +8755,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -8727,6 +8777,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8781,6 +8832,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8798,6 +8850,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -8863,6 +8916,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8880,6 +8934,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -8945,6 +9000,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -8962,6 +9018,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9027,6 +9084,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -9044,6 +9102,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9106,6 +9165,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -9123,6 +9183,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9308,6 +9369,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9362,6 +9424,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9439,6 +9502,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9516,6 +9580,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9593,6 +9658,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -9667,6 +9733,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -10298,8 +10365,8 @@ export type UsageActionResultById = {
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
                         providerLimitId?: string | undefined;
-                        modelId?: null | string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
+                        modelId?: null | string | undefined;
                         currency?: string | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
@@ -10875,6 +10942,12 @@ export type UsageActionResultById = {
                         component: 'client' | 'daemon' | 'server';
                         reason: string;
                     };
+                    unreadSessions?: undefined | {
+                        machine_unavailable?: number | undefined;
+                        not_entitled?: number | undefined;
+                        timed_out?: number | undefined;
+                        failed?: number | undefined;
+                    };
                     machineId?: string | undefined;
                     value?: undefined | {
                         group: {
@@ -11156,6 +11229,12 @@ export type UsageActionResultById = {
                         component: 'client' | 'daemon' | 'server';
                         reason: string;
                     };
+                    unreadSessions?: undefined | {
+                        machine_unavailable?: number | undefined;
+                        not_entitled?: number | undefined;
+                        timed_out?: number | undefined;
+                        failed?: number | undefined;
+                    };
                 };
                 accounting?: undefined | {
                     v: 1;
@@ -11194,6 +11273,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -11240,6 +11320,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -11286,6 +11367,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11334,6 +11416,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11382,6 +11465,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11430,6 +11514,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11478,6 +11563,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11526,6 +11612,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11574,6 +11661,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11622,6 +11710,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11713,6 +11802,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11754,6 +11844,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -11796,6 +11887,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11837,6 +11929,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -11879,6 +11972,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -11920,6 +12014,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -11962,6 +12057,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -12003,6 +12099,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12045,6 +12142,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -12086,6 +12184,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12128,6 +12227,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -12169,6 +12269,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12215,6 +12316,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -12256,6 +12358,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12302,6 +12405,7 @@ export type UsageActionResultById = {
                                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                         currency: string;
                                         source: string;
+                                        partial?: true | undefined;
                                     };
                                 };
                             };
@@ -12343,6 +12447,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12440,6 +12545,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -12552,6 +12658,7 @@ export type UsageActionResultById = {
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                             currency: string;
                                             source: string;
+                                            partial?: true | undefined;
                                         };
                                     };
                                 };
@@ -12600,11 +12707,11 @@ export type UsageActionResultById = {
                                 };
                                 eventCount: number;
                                 label?: string | undefined;
-                                requestCount?: number | undefined;
                                 context?: undefined | {
                                     usedTokens?: null | number | undefined;
                                     windowTokens?: null | number | undefined;
                                 };
+                                requestCount?: number | undefined;
                                 latestContextUsedTokens?: number | undefined;
                                 latestContextWindowTokens?: number | undefined;
                             };
@@ -12644,6 +12751,7 @@ export type UsageActionResultById = {
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                                 currency: string;
                                                 source: string;
+                                                partial?: true | undefined;
                                             };
                                         };
                                     };
@@ -12786,6 +12894,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -12807,6 +12916,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -12861,6 +12971,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -12878,6 +12989,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -12943,6 +13055,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -12960,6 +13073,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13025,6 +13139,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -13042,6 +13157,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13107,6 +13223,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -13124,6 +13241,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13186,6 +13304,7 @@ export type UsageActionResultById = {
                                             currency: string;
                                             source: string;
                                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                            partial?: true | undefined;
                                         };
                                         busyMs: null | number;
                                         steeringCount: null | number;
@@ -13203,6 +13322,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13325,6 +13445,7 @@ export type UsageActionResultById = {
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                                 currency: string;
                                                 source: string;
+                                                partial?: true | undefined;
                                             };
                                         };
                                     };
@@ -13458,6 +13579,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13512,6 +13634,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13589,6 +13712,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13666,6 +13790,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13743,6 +13868,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -13817,6 +13943,7 @@ export type UsageActionResultById = {
                                                 currency: string;
                                                 source: string;
                                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                                partial?: true | undefined;
                                             };
                                             busyMs: null | number;
                                             steeringCount: null | number;
@@ -14311,6 +14438,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -14373,6 +14501,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14427,6 +14556,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -14489,6 +14619,7 @@ export type UsageActionResultById = {
                         isCrossRepository?: boolean | undefined;
                         headSha?: null | string | undefined;
                         baseSha?: null | string | undefined;
+                        mergeCommitSha?: string | undefined;
                         createdAtMs?: number | undefined;
                         closedAtMs?: number | undefined;
                         mergedAtMs?: number | undefined;
@@ -14548,6 +14679,7 @@ export type UsageActionResultById = {
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                                     currency: string;
                                     source: string;
+                                    partial?: true | undefined;
                                 };
                             };
                         };
@@ -15035,6 +15167,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -15056,6 +15189,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15110,6 +15244,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15127,6 +15262,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -15192,6 +15328,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15209,6 +15346,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -15274,6 +15412,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15291,6 +15430,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -15356,6 +15496,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15373,6 +15514,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -15435,6 +15577,7 @@ export type UsageActionResultById = {
                                 currency: string;
                                 source: string;
                                 kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                partial?: true | undefined;
                             };
                             busyMs: null | number;
                             steeringCount: null | number;
@@ -15452,6 +15595,7 @@ export type UsageActionResultById = {
                                     currency: string;
                                     source: string;
                                     kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
+                                    partial?: true | undefined;
                                 };
                                 busyMs: null | number;
                                 steeringCount: null | number;
@@ -16434,6 +16578,7 @@ export type UsageActionResultById = {
                                 };
                                 title?: string | undefined;
                                 primaryTeamId?: null | string | undefined;
+                                memoryEnabled?: boolean | undefined;
                                 organizationPlacement?: undefined | {
                                     folderId: null | string;
                                     tagIds: string[];
@@ -16455,7 +16600,6 @@ export type UsageActionResultById = {
                                         revision?: number | undefined;
                                     }>;
                                 };
-                                memoryEnabled?: boolean | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {

@@ -1080,6 +1080,11 @@ export type ThemesActionResultById = {
                         universal?: null | string | undefined;
                     };
                 };
+                pluginGit?: undefined | {
+                    locator: string;
+                    subdirectory?: string | undefined;
+                    ref?: string | undefined;
+                };
                 themeMetadata?: undefined | {
                     includes: {
                         key: string;

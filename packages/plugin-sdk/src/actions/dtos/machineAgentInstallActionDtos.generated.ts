@@ -45,6 +45,48 @@ export type MachineAgentInstallActionResultById = {
                 message: string;
                 guideUrl?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                agentIsolationRefusal?: undefined | {
+                    reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                    phase: 'native_execution_preparation' | 'native_identity_binding';
+                    reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                    nativeFailure?: undefined | {
+                        kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        phase?: 'apply' | 'check' | undefined;
+                    };
+                    probeFailure?: undefined | {
+                        exitCode: number;
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    } | {
+                        transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    };
+                    readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                    operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                    remedy?: undefined | {
+                        kind: 'ask_machine_manager';
+                    } | {
+                        kind: 'open_machine_security';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                    };
+                };
             } | {
                 kind: 'succeeded';
                 version: null | string;
@@ -55,6 +97,54 @@ export type MachineAgentInstallActionResultById = {
         ok: false;
         errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
+    } | {
+        ok: false;
+        errorCode: 'member_install_unavailable';
+        error: string;
+        details: {
+            agentIsolationRefusal: {
+                reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                phase: 'native_execution_preparation' | 'native_identity_binding';
+                reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                nativeFailure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                };
+                probeFailure?: undefined | {
+                    exitCode: number;
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                } | {
+                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                };
+                readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                remedy?: undefined | {
+                    kind: 'ask_machine_manager';
+                } | {
+                    kind: 'open_machine_security';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                };
+            };
+        };
     } | {
         ok: true;
         jobId: string;
@@ -73,6 +163,48 @@ export type MachineAgentInstallActionResultById = {
                 message: string;
                 guideUrl?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                agentIsolationRefusal?: undefined | {
+                    reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                    phase: 'native_execution_preparation' | 'native_identity_binding';
+                    reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                    nativeFailure?: undefined | {
+                        kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        phase?: 'apply' | 'check' | undefined;
+                    };
+                    probeFailure?: undefined | {
+                        exitCode: number;
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    } | {
+                        transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                        check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                        identity: {
+                            username: string;
+                            uid: number;
+                            gid: number;
+                            home: string;
+                            cwd: string;
+                        };
+                    };
+                    readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                    operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                    remedy?: undefined | {
+                        kind: 'ask_machine_manager';
+                    } | {
+                        kind: 'open_machine_security';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                    };
+                };
             } | {
                 kind: 'succeeded';
                 version: null | string;
@@ -83,6 +215,54 @@ export type MachineAgentInstallActionResultById = {
         ok: false;
         errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
+    } | {
+        ok: false;
+        errorCode: 'member_install_unavailable';
+        error: string;
+        details: {
+            agentIsolationRefusal: {
+                reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                phase: 'native_execution_preparation' | 'native_identity_binding';
+                reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                nativeFailure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                };
+                probeFailure?: undefined | {
+                    exitCode: number;
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                } | {
+                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                };
+                readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                remedy?: undefined | {
+                    kind: 'ask_machine_manager';
+                } | {
+                    kind: 'open_machine_security';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                };
+            };
+        };
     } | {
         ok: true;
         jobId: string;
@@ -127,6 +307,48 @@ export type MachineAgentInstallActionResultById = {
             message: string;
             guideUrl?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
+            agentIsolationRefusal?: undefined | {
+                reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                phase: 'native_execution_preparation' | 'native_identity_binding';
+                reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                nativeFailure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                };
+                probeFailure?: undefined | {
+                    exitCode: number;
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                } | {
+                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                };
+                readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                remedy?: undefined | {
+                    kind: 'ask_machine_manager';
+                } | {
+                    kind: 'open_machine_security';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                };
+            };
         } | {
             kind: 'succeeded';
             version: null | string;

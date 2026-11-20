@@ -93,8 +93,8 @@ export type InternalTasksActionInputById = {
                 url: string;
                 title?: string | undefined;
             }[];
-            dueAt?: number | undefined;
             notes?: string | undefined;
+            dueAt?: number | undefined;
             createdBy?: string | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{

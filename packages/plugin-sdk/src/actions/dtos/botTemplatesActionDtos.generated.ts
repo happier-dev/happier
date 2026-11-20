@@ -1083,6 +1083,7 @@ export type BotTemplatesActionInputById = {
                                     color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                     size: 'l' | 'm' | 's';
                                     id: string;
+                                    note?: string | undefined;
                                 } | {
                                     kind: 'text';
                                     at: {
@@ -1377,6 +1378,7 @@ export type BotTemplatesActionInputById = {
                                         color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                         size: 'l' | 'm' | 's';
                                         id: string;
+                                        note?: string | undefined;
                                     } | {
                                         kind: 'text';
                                         at: {
@@ -2201,6 +2203,7 @@ export type BotTemplatesActionInputById = {
                             };
                             title?: string | undefined;
                             primaryTeamId?: null | string | undefined;
+                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2222,7 +2225,6 @@ export type BotTemplatesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
-                            memoryEnabled?: boolean | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -2717,6 +2719,7 @@ export type BotTemplatesActionInputById = {
                             };
                             title?: string | undefined;
                             primaryTeamId?: null | string | undefined;
+                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2738,7 +2741,6 @@ export type BotTemplatesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
-                            memoryEnabled?: boolean | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {

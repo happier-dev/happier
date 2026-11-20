@@ -150,6 +150,10 @@ export type SessionAgentTransitionActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 failureCause?: ActionFailureCauseV1 | undefined;
                 goalControlFailure?: undefined | {
                     phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';

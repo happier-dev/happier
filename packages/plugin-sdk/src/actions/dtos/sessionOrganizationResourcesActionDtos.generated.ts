@@ -208,6 +208,11 @@ export type SessionOrganizationResourcesActionResultById = {
                     reason: 'invalid_stored_display' | 'storage_mode_mismatch';
                 };
             }[];
+            entityFolderAssignments?: undefined | {
+                entityKind: 'workflow';
+                entityId: string;
+                folderId: string;
+            }[];
             attentionStandings?: undefined | {
                 sessionId: string;
                 standing: boolean;

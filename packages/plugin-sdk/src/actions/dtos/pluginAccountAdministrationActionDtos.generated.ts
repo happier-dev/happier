@@ -55,6 +55,10 @@ export type PluginAccountAdministrationActionResultById = {
                 contractDigest: string;
             }[];
             revision: string;
+            projectScope?: undefined | {
+                kind: 'only';
+                projectKeys: string[];
+            };
         };
     } | {
         kind: 'unavailable';

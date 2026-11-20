@@ -24,6 +24,7 @@ export type ModelPreferencesActionInputById = {
             configuredBackendId?: null | string | undefined;
             backendLabel?: string | undefined;
             modelLabel?: string | undefined;
+            reasoningEffort?: string | undefined;
             providerDisplaySnapshot?: undefined | {
                 providerName: string;
                 connectionName: string;

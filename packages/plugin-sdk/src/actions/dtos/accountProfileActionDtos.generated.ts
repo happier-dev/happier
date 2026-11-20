@@ -641,12 +641,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -664,8 +664,7 @@ export type AccountProfileActionInputById = {
             } | {
                 source: 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
             };
@@ -1292,12 +1291,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1315,8 +1314,7 @@ export type AccountProfileActionInputById = {
             } | {
                 source: 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
             };
@@ -1945,12 +1943,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
-                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
+                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1968,8 +1966,7 @@ export type AccountProfileActionInputById = {
             } | {
                 source: 'planet';
                 planet: {
-                    placement: 'corner' | 'rise' | 'side';
-                    style: 'airy' | 'balanced' | 'rich';
+                    intensity: 'calm' | 'full' | 'quiet';
                     digits: boolean;
                 };
             };
@@ -2556,12 +2553,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2579,8 +2576,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -2670,12 +2666,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2693,8 +2689,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -2702,6 +2697,162 @@ export type AccountProfileActionResultById = {
             };
             v: 1;
             state: 'published';
+            layout: {
+                v: 1;
+                items: ({
+                    kind: 'group';
+                    id: string;
+                    width: 'full' | 'half';
+                    frameStyle: 'card' | 'plain';
+                    dividers: 'hairline' | 'none';
+                    children: {
+                        kind: 'widget';
+                        id: string;
+                        size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                        frameStyle: 'card' | 'plain';
+                        presentation: {
+                            kind: 'declarative';
+                            document: Readonly<{
+                                version: 1;
+                                root: PluginDeclarativeNodeV2;
+                            }>;
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_atmosphere' | 'usage_daily' | 'usage_footprint' | 'usage_machines' | 'usage_period_summary' | 'usage_planet' | 'usage_projects' | 'usage_source_coverage';
+                            inputs: Record<string, never>;
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_breakdowns';
+                            inputs: {
+                                style?: 'breakdowns' | 'crew' | undefined;
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_constellation';
+                            inputs: {
+                                style: 'agentMix';
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_flow';
+                            inputs: {
+                                style: 'agentRiver';
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_orbit';
+                            inputs: {
+                                style?: 'moons' | 'orbit' | undefined;
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_outcomes';
+                            inputs: {
+                                style?: 'outcomes' | 'shipped' | undefined;
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_parallel';
+                            inputs: {
+                                style: 'peak';
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_recap';
+                            inputs: {
+                                style?: 'personalRecords' | 'recap' | undefined;
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_rhythm';
+                            inputs: {
+                                style: 'aroundPeriod' | 'daylight' | 'daysOnSurface' | 'heatmap' | 'ninetyPlanets' | 'ringedStreaks' | 'sky' | 'streakThread' | 'weekTide' | 'weekdayHour' | 'weeksSkyline';
+                                colourBy?: 'intensity' | undefined;
+                            };
+                        } | {
+                            kind: 'usage';
+                            widgetId: 'usage_run_length';
+                            inputs: {
+                                style?: 'galaxy' | 'runLength' | undefined;
+                            };
+                        };
+                        title?: string | undefined;
+                    }[];
+                    title?: string | undefined;
+                } | {
+                    kind: 'widget';
+                    id: string;
+                    size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                    frameStyle: 'card' | 'plain';
+                    presentation: {
+                        kind: 'declarative';
+                        document: Readonly<{
+                            version: 1;
+                            root: PluginDeclarativeNodeV2;
+                        }>;
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_atmosphere' | 'usage_daily' | 'usage_footprint' | 'usage_machines' | 'usage_period_summary' | 'usage_planet' | 'usage_projects' | 'usage_source_coverage';
+                        inputs: Record<string, never>;
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_breakdowns';
+                        inputs: {
+                            style?: 'breakdowns' | 'crew' | undefined;
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_constellation';
+                        inputs: {
+                            style: 'agentMix';
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_flow';
+                        inputs: {
+                            style: 'agentRiver';
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_orbit';
+                        inputs: {
+                            style?: 'moons' | 'orbit' | undefined;
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_outcomes';
+                        inputs: {
+                            style?: 'outcomes' | 'shipped' | undefined;
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_parallel';
+                        inputs: {
+                            style: 'peak';
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_recap';
+                        inputs: {
+                            style?: 'personalRecords' | 'recap' | undefined;
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_rhythm';
+                        inputs: {
+                            style: 'aroundPeriod' | 'daylight' | 'daysOnSurface' | 'heatmap' | 'ninetyPlanets' | 'ringedStreaks' | 'sky' | 'streakThread' | 'weekTide' | 'weekdayHour' | 'weeksSkyline';
+                            colourBy?: 'intensity' | undefined;
+                        };
+                    } | {
+                        kind: 'usage';
+                        widgetId: 'usage_run_length';
+                        inputs: {
+                            style?: 'galaxy' | 'runLength' | undefined;
+                        };
+                    };
+                    title?: string | undefined;
+                })[];
+            };
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -2915,162 +3066,6 @@ export type AccountProfileActionResultById = {
                         };
                     };
                 }[];
-            };
-            layout: {
-                v: 1;
-                items: ({
-                    kind: 'group';
-                    id: string;
-                    width: 'full' | 'half';
-                    frameStyle: 'card' | 'plain';
-                    dividers: 'hairline' | 'none';
-                    children: {
-                        kind: 'widget';
-                        id: string;
-                        size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
-                        frameStyle: 'card' | 'plain';
-                        presentation: {
-                            kind: 'declarative';
-                            document: Readonly<{
-                                version: 1;
-                                root: PluginDeclarativeNodeV2;
-                            }>;
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_atmosphere' | 'usage_daily' | 'usage_footprint' | 'usage_machines' | 'usage_period_summary' | 'usage_planet' | 'usage_projects' | 'usage_source_coverage';
-                            inputs: Record<string, never>;
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_breakdowns';
-                            inputs: {
-                                style?: 'breakdowns' | 'crew' | undefined;
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_constellation';
-                            inputs: {
-                                style: 'agentMix';
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_flow';
-                            inputs: {
-                                style: 'agentRiver';
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_orbit';
-                            inputs: {
-                                style?: 'moons' | 'orbit' | undefined;
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_outcomes';
-                            inputs: {
-                                style?: 'outcomes' | 'shipped' | undefined;
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_parallel';
-                            inputs: {
-                                style: 'peak';
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_recap';
-                            inputs: {
-                                style?: 'personalRecords' | 'recap' | undefined;
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_rhythm';
-                            inputs: {
-                                style: 'aroundPeriod' | 'daylight' | 'daysOnSurface' | 'heatmap' | 'ninetyPlanets' | 'ringedStreaks' | 'sky' | 'streakThread' | 'weekTide' | 'weekdayHour' | 'weeksSkyline';
-                                colourBy?: 'intensity' | undefined;
-                            };
-                        } | {
-                            kind: 'usage';
-                            widgetId: 'usage_run_length';
-                            inputs: {
-                                style?: 'galaxy' | 'runLength' | undefined;
-                            };
-                        };
-                        title?: string | undefined;
-                    }[];
-                    title?: string | undefined;
-                } | {
-                    kind: 'widget';
-                    id: string;
-                    size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
-                    frameStyle: 'card' | 'plain';
-                    presentation: {
-                        kind: 'declarative';
-                        document: Readonly<{
-                            version: 1;
-                            root: PluginDeclarativeNodeV2;
-                        }>;
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_atmosphere' | 'usage_daily' | 'usage_footprint' | 'usage_machines' | 'usage_period_summary' | 'usage_planet' | 'usage_projects' | 'usage_source_coverage';
-                        inputs: Record<string, never>;
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_breakdowns';
-                        inputs: {
-                            style?: 'breakdowns' | 'crew' | undefined;
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_constellation';
-                        inputs: {
-                            style: 'agentMix';
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_flow';
-                        inputs: {
-                            style: 'agentRiver';
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_orbit';
-                        inputs: {
-                            style?: 'moons' | 'orbit' | undefined;
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_outcomes';
-                        inputs: {
-                            style?: 'outcomes' | 'shipped' | undefined;
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_parallel';
-                        inputs: {
-                            style: 'peak';
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_recap';
-                        inputs: {
-                            style?: 'personalRecords' | 'recap' | undefined;
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_rhythm';
-                        inputs: {
-                            style: 'aroundPeriod' | 'daylight' | 'daysOnSurface' | 'heatmap' | 'ninetyPlanets' | 'ringedStreaks' | 'sky' | 'streakThread' | 'weekTide' | 'weekdayHour' | 'weeksSkyline';
-                            colourBy?: 'intensity' | undefined;
-                        };
-                    } | {
-                        kind: 'usage';
-                        widgetId: 'usage_run_length';
-                        inputs: {
-                            style?: 'galaxy' | 'runLength' | undefined;
-                        };
-                    };
-                    title?: string | undefined;
-                })[];
             };
             identity: {
                 name?: string | undefined;
@@ -3599,12 +3594,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -3622,8 +3617,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -4133,12 +4127,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4156,8 +4150,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -4666,12 +4659,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4689,8 +4682,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -5200,12 +5192,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5223,8 +5215,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -5733,12 +5724,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5756,8 +5747,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };
@@ -6266,12 +6256,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
-                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
+                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -6289,8 +6279,7 @@ export type AccountProfileActionResultById = {
                 } | {
                     source: 'planet';
                     planet: {
-                        placement: 'corner' | 'rise' | 'side';
-                        style: 'airy' | 'balanced' | 'rich';
+                        intensity: 'calm' | 'full' | 'quiet';
                         digits: boolean;
                     };
                 };

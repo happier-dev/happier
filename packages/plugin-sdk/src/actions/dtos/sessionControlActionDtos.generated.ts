@@ -159,6 +159,7 @@ export type SessionControlActionInputById = {
                             color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                             size: 'l' | 'm' | 's';
                             id: string;
+                            note?: string | undefined;
                         } | {
                             kind: 'text';
                             at: {
@@ -453,6 +454,7 @@ export type SessionControlActionInputById = {
                                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                 size: 'l' | 'm' | 's';
                                 id: string;
+                                note?: string | undefined;
                             } | {
                                 kind: 'text';
                                 at: {
@@ -1267,6 +1269,10 @@ export type SessionControlActionInputById = {
         skipCleanup?: boolean | undefined;
     };
     readonly "session.section.set": {
+        entityKind: 'workflow';
+        entityId: string;
+        sectionId: null | string;
+    } | {
         sessionId: string;
         sectionId: null | string;
     };
@@ -1712,6 +1718,7 @@ export type SessionControlActionResultById = {
                             color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                             size: 'l' | 'm' | 's';
                             id: string;
+                            note?: string | undefined;
                         } | {
                             kind: 'text';
                             at: {
@@ -2006,6 +2013,7 @@ export type SessionControlActionResultById = {
                                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                                 size: 'l' | 'm' | 's';
                                 id: string;
+                                note?: string | undefined;
                             } | {
                                 kind: 'text';
                                 at: {
@@ -2319,6 +2327,10 @@ export type SessionControlActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 failureCause?: ActionFailureCauseV1 | undefined;
                 goalControlFailure?: undefined | {
                     phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -2737,6 +2749,23 @@ export type SessionControlActionResultById = {
         success: true;
         sessionId: string;
         archivedAt?: number | undefined;
+        stopOutcome?: undefined | {
+            status: 'already_stopped';
+            reason: 'no_runtime_session_inactive';
+        } | {
+            status: 'physical_stop_unconfirmed';
+            reason: 'attachment_mismatch' | 'daemon_stop_requested' | 'destroy_failed' | 'disposition_in_progress' | 'explicit_stop_failed' | 'invalid_session_id' | 'legacy_attachment' | 'local_session_not_found' | 'marker_fallback_failed' | 'missing_attachment_identity' | 'missing_topology_proof' | 'process_owner_observation_unavailable' | 'runner_exit_observer_unavailable' | 'runner_exit_timeout' | 'runner_signal_incomplete' | 'target_daemon_unavailable' | 'target_session_not_found' | 'terminal_host_adapter_unavailable' | 'tracked_runner_absent' | 'transport_ambiguous' | 'unexpected_error';
+            processFailure?: undefined | {
+                phase: 'ownership_view' | 'tree_capture';
+                reason: string;
+            };
+        } | {
+            status: 'stopped_cleanup_incomplete';
+            reason: 'terminal_attachment_descriptor_retirement_failed' | 'terminal_control_serviceability_retirement_failed';
+        } | {
+            status: 'stopped_projection_unconfirmed';
+            reason: 'relay_inactive_not_observed';
+        };
         reports?: ({
             status: 'approval_pending';
             artifactId: string;
@@ -2745,6 +2774,23 @@ export type SessionControlActionResultById = {
         } | {
             status: 'archived';
             sessionId: string;
+            stopOutcome?: undefined | {
+                status: 'already_stopped';
+                reason: 'no_runtime_session_inactive';
+            } | {
+                status: 'physical_stop_unconfirmed';
+                reason: 'attachment_mismatch' | 'daemon_stop_requested' | 'destroy_failed' | 'disposition_in_progress' | 'explicit_stop_failed' | 'invalid_session_id' | 'legacy_attachment' | 'local_session_not_found' | 'marker_fallback_failed' | 'missing_attachment_identity' | 'missing_topology_proof' | 'process_owner_observation_unavailable' | 'runner_exit_observer_unavailable' | 'runner_exit_timeout' | 'runner_signal_incomplete' | 'target_daemon_unavailable' | 'target_session_not_found' | 'terminal_host_adapter_unavailable' | 'tracked_runner_absent' | 'transport_ambiguous' | 'unexpected_error';
+                processFailure?: undefined | {
+                    phase: 'ownership_view' | 'tree_capture';
+                    reason: string;
+                };
+            } | {
+                status: 'stopped_cleanup_incomplete';
+                reason: 'terminal_attachment_descriptor_retirement_failed' | 'terminal_control_serviceability_retirement_failed';
+            } | {
+                status: 'stopped_projection_unconfirmed';
+                reason: 'relay_inactive_not_observed';
+            };
             title?: string | undefined;
         } | {
             status: 'failed';
@@ -2762,6 +2808,11 @@ export type SessionControlActionResultById = {
         success: true;
     };
     readonly "session.section.set": {
+        entityKind: 'workflow';
+        entityId: string;
+        sectionId: null | string;
+        previousSectionId: null | string;
+    } | {
         sessionId: string;
         sectionId: null | string;
         previousSectionId: null | string;
@@ -3377,6 +3428,21 @@ export type SessionControlActionResultById = {
             };
             title?: string | undefined;
             statusReason?: string | undefined;
+            nowLine?: string | undefined;
+            nowLineKind?: 'goal' | 'note' | 'task' | undefined;
+            statusReasonSetAt?: number | undefined;
+            staleSinceObservationAtMs?: number | undefined;
+            turnRetry?: undefined | {
+                reason: 'connection_failed' | 'rate_limited' | 'server_error' | 'unknown';
+                attempt: number;
+            };
+            progress?: undefined | {
+                dim: boolean;
+                complete: boolean;
+                done: number;
+                total: number;
+                label?: string | undefined;
+            };
             processTerminalState?: 'stopped' | undefined;
             workStatus?: 'waiting_for_startup_lock' | undefined;
             currentWork?: undefined | {
@@ -3386,6 +3452,11 @@ export type SessionControlActionResultById = {
                 status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
                 activeWorkflowRunCount?: number | undefined;
             };
+            taskProgress?: undefined | {
+                done: number;
+                total: number;
+            };
+            runningWorkCount?: number | undefined;
             lineage?: undefined | {
                 relation: 'fork' | 'replay';
                 sourceSessionId?: string | undefined;
@@ -3475,6 +3546,10 @@ export type SessionControlActionResultById = {
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
                 failureCause?: ActionFailureCauseV1 | undefined;
                 goalControlFailure?: undefined | {
                     phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
@@ -4088,6 +4163,21 @@ export type SessionControlActionResultById = {
                         };
                         title?: string | undefined;
                         statusReason?: string | undefined;
+                        nowLine?: string | undefined;
+                        nowLineKind?: 'goal' | 'note' | 'task' | undefined;
+                        statusReasonSetAt?: number | undefined;
+                        staleSinceObservationAtMs?: number | undefined;
+                        turnRetry?: undefined | {
+                            reason: 'connection_failed' | 'rate_limited' | 'server_error' | 'unknown';
+                            attempt: number;
+                        };
+                        progress?: undefined | {
+                            dim: boolean;
+                            complete: boolean;
+                            done: number;
+                            total: number;
+                            label?: string | undefined;
+                        };
                         processTerminalState?: 'stopped' | undefined;
                         workStatus?: 'waiting_for_startup_lock' | undefined;
                         currentWork?: undefined | {
@@ -4097,6 +4187,11 @@ export type SessionControlActionResultById = {
                             status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
                             activeWorkflowRunCount?: number | undefined;
                         };
+                        taskProgress?: undefined | {
+                            done: number;
+                            total: number;
+                        };
+                        runningWorkCount?: number | undefined;
                         lineage?: undefined | {
                             relation: 'fork' | 'replay';
                             sourceSessionId?: string | undefined;

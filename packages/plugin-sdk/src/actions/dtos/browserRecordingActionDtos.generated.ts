@@ -121,7 +121,7 @@ export type BrowserRecordingActionResultById = {
             })[];
             navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -195,7 +195,7 @@ export type BrowserRecordingActionResultById = {
             })[];
             navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -205,7 +205,7 @@ export type BrowserRecordingActionResultById = {
                 sizeBytes: number;
             };
         };
-        reason: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped';
+        reason: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped';
     } | {
         status: 'finalized';
         recording: {
@@ -263,7 +263,7 @@ export type BrowserRecordingActionResultById = {
             })[];
             navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -337,7 +337,7 @@ export type BrowserRecordingActionResultById = {
             })[];
             navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';
@@ -409,7 +409,7 @@ export type BrowserRecordingActionResultById = {
         })[];
         navigationGenerationEnd?: number | undefined;
         stoppedAtMs?: number | undefined;
-        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
         expiresAtMs?: number | undefined;
         mediaRef?: undefined | {
             refKind: 'sessionMedia';
@@ -474,7 +474,7 @@ export type BrowserRecordingActionResultById = {
         })[];
         navigationGenerationEnd?: number | undefined;
         stoppedAtMs?: number | undefined;
-        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
         expiresAtMs?: number | undefined;
         mediaRef?: undefined | {
             refKind: 'sessionMedia';
@@ -541,7 +541,7 @@ export type BrowserRecordingActionResultById = {
             })[];
             navigationGenerationEnd?: number | undefined;
             stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
+            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
             expiresAtMs?: number | undefined;
             mediaRef?: undefined | {
                 refKind: 'sessionMedia';

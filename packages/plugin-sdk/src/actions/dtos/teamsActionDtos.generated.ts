@@ -233,7 +233,7 @@ export type TeamsActionInputById = {
         resourceId: string;
         expectedRevision: number;
         enabled?: boolean | undefined;
-        displayName?: undefined | {
+        displayName?: string | undefined | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -270,22 +270,6 @@ export type TeamsActionInputById = {
         };
         replacement?: undefined | {
             enabled?: boolean | undefined;
-            displayName?: undefined | {
-                content: {
-                    t: 'encrypted';
-                    c: string;
-                } | {
-                    t: 'plain';
-                    v: string;
-                };
-                recipients: {
-                    accountId: string;
-                    envelope: {
-                        encryptedDataKey: string;
-                        recipientContentPublicKeyFingerprint: string;
-                    };
-                }[];
-            };
             sessionUsePolicy?: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | undefined;
             requestPolicy?: null | undefined | {
                 allowedProtocolKinds: ('anthropic_messages' | 'openai_chat_completions' | 'openai_responses')[] | null;
@@ -364,6 +348,22 @@ export type TeamsActionInputById = {
                 }[];
                 deleteIds: string[];
             };
+            displayName?: string | undefined | {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipients: {
+                    accountId: string;
+                    envelope: {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                }[];
+            };
         };
     };
     readonly "teams.credentials.audience.set": {
@@ -436,10 +436,7 @@ export type TeamsActionInputById = {
         cursor?: string | undefined;
     };
     readonly "teams.credentials.externalKeys.create": {
-        resourceId: string;
-        teamMembershipId: string;
-        keyId: string;
-        label: {
+        label: string | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -455,6 +452,9 @@ export type TeamsActionInputById = {
                 };
             }[];
         };
+        resourceId: string;
+        teamMembershipId: string;
+        keyId: string;
         expiresAt?: null | string | undefined;
     };
     readonly "teams.credentials.externalKeys.authorize": {
@@ -1360,10 +1360,7 @@ export type TeamsActionInputById = {
         groupId: string;
     };
     readonly "teams.groups.create": {
-        v: 1;
-        teamId: string;
-        groupId: string;
-        name: {
+        name: string | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -1379,8 +1376,11 @@ export type TeamsActionInputById = {
                 };
             }[];
         };
+        v: 1;
+        teamId: string;
+        groupId: string;
         requestKey: string;
-        description?: null | undefined | {
+        description?: null | string | undefined | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -2045,6 +2045,10 @@ export type TeamsActionResultById = {
             descriptor: {
                 id: string;
                 name: string;
+                upstreamRef?: undefined | {
+                    vendor: string;
+                    vendorModelId: string;
+                };
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                 aliases?: string[] | undefined;
                 description?: string | undefined;
@@ -2526,6 +2530,10 @@ export type TeamsActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -2836,6 +2844,10 @@ export type TeamsActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -3462,6 +3474,7 @@ export type TeamsActionResultById = {
                         kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                         currency: string;
                         source: string;
+                        partial?: true | undefined;
                     };
                 };
             };
@@ -3515,6 +3528,7 @@ export type TeamsActionResultById = {
                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                             currency: string;
                             source: string;
+                            partial?: true | undefined;
                         };
                     };
                 };
@@ -3586,6 +3600,7 @@ export type TeamsActionResultById = {
                             kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
                             currency: string;
                             source: string;
+                            partial?: true | undefined;
                         };
                     };
                 };

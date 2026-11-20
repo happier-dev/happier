@@ -7,6 +7,7 @@ import type { ExtensionSelectionV1, QualifiedAudienceSelection, UpdatedSelection
 export type SettingsDeclarationsActionInputById = {
     readonly "settings.list": {
         pageId?: string | undefined;
+        query?: string | undefined;
         maxBytes?: number | undefined;
         cursor?: number | undefined;
     };
@@ -672,6 +673,108 @@ export type SettingsDeclarationsActionInputById = {
                     };
                     filter?: undefined | {
                         view: 'all' | 'running' | 'triggered';
+                        extensions?: Record<string, {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    };
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: null | string;
+            } | {
+                op: 'resetDefault';
+            };
+        } | {
+            kind: 'collection_space';
+            entityKind: 'workflowRun';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: {
+                        workflows?: unknown;
+                        results?: unknown;
+                        startedBy?: unknown;
+                        projects?: unknown;
+                        extensions?: Record<string, {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    };
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'workflowRun';
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    name?: string | undefined;
+                    icon?: undefined | {
+                        kind: 'icon';
+                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter?: undefined | {
+                        workflows?: unknown;
+                        results?: unknown;
+                        startedBy?: unknown;
+                        projects?: unknown;
                         extensions?: Record<string, {
                             kind: 'boolean';
                             value: boolean;

@@ -1578,6 +1578,12 @@ export type McpServersActionResultById = {
                 };
                 title?: string | undefined;
                 description?: string | undefined;
+                remote?: undefined | {
+                    url: string;
+                    auth: {
+                        kind: 'oauth';
+                    };
+                };
             })[];
             bindings: {
                 id: string;
@@ -1637,6 +1643,12 @@ export type McpServersActionResultById = {
                 };
                 title?: string | undefined;
                 description?: string | undefined;
+                remote?: undefined | {
+                    url: string;
+                    auth: {
+                        kind: 'oauth';
+                    };
+                };
             })[];
             bindings: {
                 id: string;
@@ -2312,6 +2324,12 @@ export type McpServersActionResultById = {
             };
             title?: string | undefined;
             description?: string | undefined;
+            remote?: undefined | {
+                url: string;
+                auth: {
+                    kind: 'oauth';
+                };
+            };
         };
         bindings: {
             id: string;

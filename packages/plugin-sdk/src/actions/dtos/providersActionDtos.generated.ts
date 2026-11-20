@@ -35,8 +35,8 @@ export type ProvidersActionInputById = {
         action: 'createContribution';
         connectionId: string;
         contributionKey: string;
-        enable: boolean;
         savedSecretId: null | string;
+        enable: boolean;
         authoringReview?: undefined | {
             candidateId: null | string;
             fingerprint: string;
@@ -47,7 +47,6 @@ export type ProvidersActionInputById = {
                 publicHeaders?: Record<string, string> | undefined;
             }[];
         };
-        roleModels?: Record<string, string> | null | undefined;
         deployment?: undefined | {
             kind: 'external';
         } | {
@@ -73,6 +72,7 @@ export type ProvidersActionInputById = {
                 groupId: string;
             }>;
         };
+        roleModels?: Record<string, string> | null | undefined;
         gatewayPlacement?: null | undefined | {
             kind: 'machine';
             machineId: string;
@@ -166,8 +166,8 @@ export type ProvidersActionInputById = {
                 };
             };
         };
-        enable: boolean;
         savedSecretId: null | string;
+        enable: boolean;
         manualModels?: undefined | {
             id: string;
             name?: string | undefined;
@@ -192,6 +192,31 @@ export type ProvidersActionInputById = {
     readonly "providers.connections.update": {
         displayName?: string | undefined;
         action: 'update';
+        deployment?: undefined | {
+            kind: 'external';
+        } | {
+            kind: 'managedLocal';
+            purposeBindingDefaults: Record<string, {
+                kind: 'account';
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'group';
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            }>;
+        };
         connectionId: string;
         roleModels?: Record<string, string> | null | undefined;
         template?: undefined | {
@@ -277,31 +302,6 @@ export type ProvidersActionInputById = {
                 };
             };
         };
-        deployment?: undefined | {
-            kind: 'external';
-        } | {
-            kind: 'managedLocal';
-            purposeBindingDefaults: Record<string, {
-                kind: 'account';
-                account: {
-                    service: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    accountId: string;
-                };
-            } | {
-                kind: 'group';
-                service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
-                    pluginId: string;
-                    localId: string;
-                };
-                groupId: string;
-            }>;
-        };
         gatewayPlacement?: null | undefined | {
             kind: 'machine';
             machineId: string;
@@ -350,8 +350,8 @@ export type ProvidersActionInputById = {
         scope: 'account' | 'machine';
         action: 'bindSecret';
         connectionId: string;
-        credentialSlotId: string;
         savedSecretId: null | string;
+        credentialSlotId: string;
         machineId?: string | undefined;
     };
     readonly "providers.models.list": {
@@ -362,15 +362,6 @@ export type ProvidersActionInputById = {
         mode?: 'management' | 'picker' | undefined;
         refreshPolicy?: 'current_only' | undefined;
         agentTargetKey: string;
-        application?: undefined | {
-            implementationIdentity: {
-                pluginId: string;
-                localId: string;
-            };
-            endpointTemplateId: string;
-            protocol: string;
-            agentTargetKey: string;
-        };
         connectedServices?: undefined | {
             v: 2;
             bindingsByServiceId?: Record<string, {
@@ -402,6 +393,19 @@ export type ProvidersActionInputById = {
                 };
             }> | undefined;
         };
+        application?: undefined | {
+            implementationIdentity: {
+                pluginId: string;
+                localId: string;
+            };
+            endpointTemplateId: string;
+            protocol: string;
+            agentTargetKey: string;
+        };
+        nativeSource?: undefined | {
+            resourceId: string;
+            expectedResourceRevision: number;
+        };
         connectedAccountTarget?: undefined | {
             kind: 'account';
             account: {
@@ -421,10 +425,6 @@ export type ProvidersActionInputById = {
                 localId: string;
             };
             groupId: string;
-        };
-        nativeSource?: undefined | {
-            resourceId: string;
-            expectedResourceRevision: number;
         };
         includeDirectMaterialization?: true | undefined;
         includeTeamCredentialRequestPolicySupport?: true | undefined;
@@ -499,6 +499,10 @@ export type ProvidersActionInputById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -900,6 +904,10 @@ export type ProvidersActionInputById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -1412,6 +1420,10 @@ export type ProvidersActionInputById = {
             model?: undefined | {
                 id: string;
                 name: string;
+                upstreamRef?: undefined | {
+                    vendor: string;
+                    vendorModelId: string;
+                };
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                 aliases?: string[] | undefined;
                 description?: string | undefined;
@@ -1749,6 +1761,10 @@ export type ProvidersActionInputById = {
                             staticModels?: undefined | {
                                 id: string;
                                 name: string;
+                                upstreamRef?: undefined | {
+                                    vendor: string;
+                                    vendorModelId: string;
+                                };
                                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                                 aliases?: string[] | undefined;
                                 description?: string | undefined;
@@ -5403,6 +5419,10 @@ export type ProvidersActionResultById = {
             descriptor?: undefined | {
                 id: string;
                 name: string;
+                upstreamRef?: undefined | {
+                    vendor: string;
+                    vendorModelId: string;
+                };
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                 aliases?: string[] | undefined;
                 description?: string | undefined;
@@ -5464,6 +5484,10 @@ export type ProvidersActionResultById = {
                 descriptor?: undefined | {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -5616,6 +5640,10 @@ export type ProvidersActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -5833,6 +5861,10 @@ export type ProvidersActionResultById = {
                     descriptor: {
                         id: string;
                         name: string;
+                        upstreamRef?: undefined | {
+                            vendor: string;
+                            vendorModelId: string;
+                        };
                         costTier?: 'low' | 'premium' | 'standard' | undefined;
                         aliases?: string[] | undefined;
                         description?: string | undefined;
@@ -6109,6 +6141,10 @@ export type ProvidersActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -6353,6 +6389,13 @@ export type ProvidersActionResultById = {
             connectionRole: 'default' | 'named';
             connectionDisplayNameMode: 'automatic' | 'custom';
             modelCount: number;
+            upstreamModels?: undefined | {
+                upstreamRef: {
+                    vendor: string;
+                    vendorModelId: string;
+                };
+                endpointHealth: 'available' | 'invalid_response' | 'not_checked' | 'rate_limited' | 'temporarily_unavailable' | 'unauthorized' | 'unreachable';
+            }[];
         }[];
         currentSelectionRecovery?: null | undefined | {
             kind: 'connection_deleted' | 'connection_missing' | 'contribution_unavailable' | 'model_not_found';
@@ -6581,6 +6624,10 @@ export type ProvidersActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -6798,6 +6845,10 @@ export type ProvidersActionResultById = {
                     descriptor: {
                         id: string;
                         name: string;
+                        upstreamRef?: undefined | {
+                            vendor: string;
+                            vendorModelId: string;
+                        };
                         costTier?: 'low' | 'premium' | 'standard' | undefined;
                         aliases?: string[] | undefined;
                         description?: string | undefined;
@@ -7074,6 +7125,10 @@ export type ProvidersActionResultById = {
                 descriptor: {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -7318,6 +7373,13 @@ export type ProvidersActionResultById = {
             connectionRole: 'default' | 'named';
             connectionDisplayNameMode: 'automatic' | 'custom';
             modelCount: number;
+            upstreamModels?: undefined | {
+                upstreamRef: {
+                    vendor: string;
+                    vendorModelId: string;
+                };
+                endpointHealth: 'available' | 'invalid_response' | 'not_checked' | 'rate_limited' | 'temporarily_unavailable' | 'unauthorized' | 'unreachable';
+            }[];
         }[];
         currentSelectionRecovery?: null | undefined | {
             kind: 'connection_deleted' | 'connection_missing' | 'contribution_unavailable' | 'model_not_found';
@@ -7422,6 +7484,10 @@ export type ProvidersActionResultById = {
             descriptor?: undefined | {
                 id: string;
                 name: string;
+                upstreamRef?: undefined | {
+                    vendor: string;
+                    vendorModelId: string;
+                };
                 costTier?: 'low' | 'premium' | 'standard' | undefined;
                 aliases?: string[] | undefined;
                 description?: string | undefined;
@@ -7483,6 +7549,10 @@ export type ProvidersActionResultById = {
                 descriptor?: undefined | {
                     id: string;
                     name: string;
+                    upstreamRef?: undefined | {
+                        vendor: string;
+                        vendorModelId: string;
+                    };
                     costTier?: 'low' | 'premium' | 'standard' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
@@ -7911,6 +7981,10 @@ export type ProvidersActionResultById = {
         models: Readonly<{
             id: string;
             name?: string | undefined;
+            upstreamRef?: Readonly<{
+                vendor: string;
+                vendorModelId: string;
+            }> | undefined;
             contextWindowTokens?: number | undefined;
             modelOptions?: readonly Readonly<{
                 id: string;
