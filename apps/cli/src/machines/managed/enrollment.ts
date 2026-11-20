@@ -4,6 +4,7 @@ import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/fir
 import { runManagedMachineEnrollment as runSharedManagedMachineEnrollment, projectManagedMachineBootstrapPrompt,
   SystemTaskExecutionError, type ManagedNativeBootstrapIO,
   type DeploymentAppMachineEnrollmentInput as PortableDeploymentAppEnrollmentInput,
+  type ManagedMachineEnrollmentInput as PortableManagedMachineEnrollmentInput,
   type ManagedMachineEnrollmentDependencies as PortableEnrollmentDependencies } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '@happier-dev/cli-common/systemTasks';
 import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -50,7 +51,7 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   onTask?: (task: Readonly<{ taskId: string; kind: 'remote.ssh.bootstrapMachine.v1' }>) => void | Promise<void>;
   /** The task's current unanswered question, then `null` once it is answered, so the waiting surface can ask it. */
   onPrompt?: (prompt: ManagedMachineBootstrapPromptV1 | null) => void;
-}>;
+}> & Pick<PortableManagedMachineEnrollmentInput, 'supportsAgentNativeSandbox'>;
 
 export type DeploymentAppMachineEnrollmentInput = Omit<PortableDeploymentAppEnrollmentInput, 'channel'>
   & Pick<ManagedMachineEnrollmentInput, 'channel' | 'onEvent' | 'onTask' | 'onPrompt'>

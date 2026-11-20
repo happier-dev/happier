@@ -62,8 +62,10 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
     projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
 }) });
 
-    it.each(['supported', 'deferred-clone', 'failed', 'approved-own-account', 'approved-admitted-own-account'] as const)(
+    it.each(['supported', 'deferred-clone', 'failed', 'approved-own-account', 'approved-admitted-own-account',
+        'enrolled-on', 'enrolled-off', 'enrolled-unsupported'] as const)(
       'joins primary daemon Session isolation acquisition before Session birth (%s)', async nativeSandbox => {
+        const enrolled = nativeSandbox.startsWith('enrolled-');
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
@@ -252,14 +254,17 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
                 }
             },
             sessionSpawnDirectTargetTransport: { machineId: 'controller', readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
-                metadata: { isolationPolicyV1: { agentNativeSandboxEnabled: true,
+                metadata: enrolled ? {
+                    isolationV1: { environment: 'managed-guest', provisionerId: 'acme.compute/vm',
+                        ...(nativeSandbox !== 'enrolled-unsupported' ? { supportsAgentNativeSandbox: true } : {}) },
+                } : { isolationPolicyV1: { agentNativeSandboxEnabled: true,
                     configuredSandboxes: { local: { provisioner: launch.provider, presetId: preset.id } },
                     workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
                         botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } } }),
                 prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
                 spawnedSession: { spawn: async request => { launched.push(request);
                     // The real Home refuses Session birth until its managed resource is bound.
-                    if (machine.allocation !== 'bound') return { type: 'error', errorMessage: 'session-origin-forbidden' };
+                    if (!enrolled && machine.allocation !== 'bound') return { type: 'error', errorMessage: 'session-origin-forbidden' };
                     return { type: 'success', sessionId: 'created',
                     sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
                     resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
@@ -321,7 +326,8 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
             configuration: { mode: { value: null, updatedAtMs: 1 },
                 model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
-                permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } });
+                permissionIntent: { value: null, updatedAtMs: 1 }, options: {},
+                ...(enrolled ? { nativeSandbox: nativeSandbox === 'enrolled-off' ? 'off' : 'on' } : {}) } });
         const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: 'session.spawn_new', input,
             requestId: 'isolation-spawn', target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller',
             accountId: 'account', accountEncryptionMode: 'plain', tokenEpochHint: 0, token, serverId: configuration.activeServerId,
@@ -383,9 +389,23 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
             expect(launched).toHaveLength(1);
             return;
         }
-        const pendingResult = operations.observeActionExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
+        const start = () => operations.observeActionExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
             actionContext: rootContext,
             execute: operation => executor.execute('session.spawn_new', input, { ...rootContext, ...operation }) });
+        if (enrolled) {
+            const result = await start();
+            expect(isolationAdmissions).toEqual([]);
+            if (nativeSandbox === 'enrolled-unsupported') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+                    details: { failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } } });
+                expect(launched).toEqual([]);
+            } else {
+                expect(result).toMatchObject({ ok: true, result: { type: 'success' } });
+                expect(launched).toEqual([expect.objectContaining({ nativeSandbox: nativeSandbox === 'enrolled-off' ? 'off' : 'on' })]);
+            }
+            return;
+        }
+        const pendingResult = start();
         let settledWhileAcquiring = false;
         void pendingResult.then(() => { settledWhileAcquiring = true; }, () => { settledWhileAcquiring = true; });
         await Promise.all([acquireAccepted, acquireStarted]);

@@ -646,6 +646,10 @@ provisionerId }` and default roles in the first Machine registration. The guest
 records the registered roles for first startup before it saves the bearer. `provisionerId` is the qualified plugin contribution identity. Created Lume
 VMs receive the fact even with personal/existing-user enrollment. Adopted hosts and
 Account-native or SSH enrollment of existing hosts carry no origin and gain no fact.
+Creation enrollment also records `isolationV1.supportsAgentNativeSandbox: true`
+when the qualified provisioner's session placement declares support for the
+retained launch choices. Older provenance without that optional field still
+defaults to OFF and cannot enable the native sandbox on that guest.
 The shared enrollment roles resolver excludes Credential broker from the initial
 role set for provider-created isolation guests and preserves saved role choices.
 The broker default follows creation provenance through the sealed preset path.

@@ -45,6 +45,7 @@ export function isResolvedSessionProjectFilesV1(choice: SessionProjectFilesV1): 
 export const MachineIsolationV1Schema = z.strictObject({
   environment: z.literal('managed-guest'),
   provisionerId: z.string().check(z.refine(value => parseQualifiedPluginContributionKey(value) !== null)),
+  supportsAgentNativeSandbox: z.optional(z.boolean()),
 });
 export type MachineIsolationV1 = z.infer<typeof MachineIsolationV1Schema>;
 const storedMachineIsolationV1Schema = createStoredReadSchema(MachineIsolationV1Schema);

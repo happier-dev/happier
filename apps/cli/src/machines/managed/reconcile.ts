@@ -32,7 +32,7 @@ import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
-import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readMachineProvisionerAgentNativeSandboxSupportV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
@@ -800,6 +800,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     let enrollmentAttempted = false;
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
+            supportsAgentNativeSandbox: readMachineProvisionerAgentNativeSandboxSupportV1(contribution.definition, machine.launch.choices),
             replacePayload: params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
             ...(params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 ? { guestCli: params.guestCli } : {}),
             onInstalled: enrollmentInput.onInstalled,

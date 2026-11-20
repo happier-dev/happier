@@ -137,7 +137,7 @@ export type ManagedAgentSandboxContext = Readonly<{
   nativeSandboxAvailable?: boolean;
   /** O-MACH isolationPolicyV1 projection; its owner reads and validates stored metadata. */
   machineIsolationPolicy?: Readonly<Pick<MachineIsolationPolicyV1, 'agentNativeSandboxEnabled'>> | null;
-  /** Canonical provisioner sessionPlacement support reader result; omission makes no support claim. */
+  /** Support for a selected sandbox; direct launches use their enrolled guest's provenance. */
   sandboxTypeSupportsNativeSandbox?: boolean;
   explicitAgentSandbox?: 'on' | 'off';
   /** Omission must preserve a native continuation's retained profile. */
@@ -148,13 +148,14 @@ export type ManagedAgentSandboxContext = Readonly<{
 export function resolveManagedAgentSandbox(input: ManagedAgentSandboxContext): ResolvedManagedSessionDefaults['agentSandbox'] {
   const isolated = input.machineIsolation != null;
   const machineSandboxEnabled = input.machineIsolationPolicy?.agentNativeSandboxEnabled === true;
+  const sandboxTypeSupportsNativeSandbox = input.sandboxTypeSupportsNativeSandbox ?? input.machineIsolation?.supportsAgentNativeSandbox;
   const source = input.explicitAgentSandbox !== undefined ? 'explicit'
     : !input.retainedNativeProfile && isolated && (input.nativeSandboxAvailable || machineSandboxEnabled) ? 'machine' : 'none';
   const value = source === 'explicit' ? input.explicitAgentSandbox
     : source === 'machine' ? machineSandboxEnabled ? 'on' : 'off' : undefined;
   const availability: ManagedAgentSandboxAvailability | undefined = value === undefined ? undefined
     : value === 'off' ? { status: 'disabled' }
-    : isolated && (!input.nativeSandboxAvailable || !input.sandboxTypeSupportsNativeSandbox)
+    : isolated && (!input.nativeSandboxAvailable || !sandboxTypeSupportsNativeSandbox)
       ? { status: 'unavailable', reason: 'not_available_in_sandbox_type' }
       : { status: 'enabled' };
   return { value, source, availability };

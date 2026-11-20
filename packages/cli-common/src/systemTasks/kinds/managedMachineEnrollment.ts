@@ -72,6 +72,8 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   onInstalled?(): Promise<void>;
   /** Host-private admitted Create carrier; never part of task params or a wire input. */
   reviewedChild?: HostReviewedChildPortV1;
+  /** The controller's qualified provisioner capability for the retained launch. */
+  supportsAgentNativeSandbox?: boolean;
   signal?: AbortSignal;
   channel: 'stable' | 'preview' | 'dev';
 }>;
@@ -184,6 +186,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     ...(roles ? { rolesV1: roles } : {}),
     ...(row.resource?.origin === 'created' ? { isolationV1: {
       environment: 'managed-guest' as const, provisionerId: buildQualifiedPluginContributionKey(row.resource.contributionRef),
+      ...(input.supportsAgentNativeSandbox ? { supportsAgentNativeSandbox: true } : {}),
     } } : {}),
   };
   const configuration = {

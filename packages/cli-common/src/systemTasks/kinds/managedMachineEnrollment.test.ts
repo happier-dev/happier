@@ -79,7 +79,7 @@ describe('portable managed enrollment', () => {
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
-    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, personalGuest: true },
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, personalGuest: true, supportsAgentNativeSandbox: true },
     { requesterEnrollment: true, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
@@ -101,11 +101,13 @@ describe('portable managed enrollment', () => {
       homeServerIdentityId: target.homeServerIdentityId, machineId: 'joined', encryptionType: 'tokenOnly',
       pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
     const personalGuest = 'personalGuest' in availability && availability.personalGuest === true;
+    const supportsAgentNativeSandbox = 'supportsAgentNativeSandbox' in availability ? availability.supportsAgentNativeSandbox : undefined;
     const carrierCaptured = new Error('Enrollment arrived at the guest');
     const nativeCorrelation = personalGuest ? { ...correlation, resource: { ...resource, origin: 'created' as const } } : correlation;
     const { resource: _sealedResource, ...structuralCorrelation } = nativeCorrelation;
     const enrollment = runManagedMachineEnrollment({ correlation: nativeCorrelation,
       homeCorrelation: personalGuest ? structuralCorrelation : nativeCorrelation, target, channel: 'stable', operationId: 'admitted-operation',
+      ...(supportsAgentNativeSandbox ? { supportsAgentNativeSandbox } : {}),
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 },
         ...('bridge' in availability && availability.bridge ? { homeNetworkHint: 'authored_network' } : {}) } }, {
@@ -132,6 +134,7 @@ describe('portable managed enrollment', () => {
             expect(enrollmentInput).toMatchObject({ managedEnrollment: structuralCorrelation,
               initialMachineMetadata: { rolesV1: { active: CORE_MACHINE_ROLE_IDS_V1.filter(id => id !== 'broker') },
                 isolationV1: { environment: 'managed-guest', provisionerId: 'test.provisioner/vm' } } });
+            expect(enrollmentInput.initialMachineMetadata.isolationV1.supportsAgentNativeSandbox).toBe(supportsAgentNativeSandbox);
             expect(enrollmentInput.managedEnrollment).not.toHaveProperty('resource');
             throw carrierCaptured;
           }

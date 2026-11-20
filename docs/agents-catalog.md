@@ -289,7 +289,10 @@ that sandbox off on a Machine whose opened metadata has the O-MACH-owned
 policy may enable it with `isolationPolicyV1.agentNativeSandboxEnabled`; an absent
 setting means off. An explicit sandbox choice wins. Enabling it requires both
 the Agent's declared native sandbox capability and the selected sandbox type's
-`sessionPlacement.supportsAgentNativeSandbox` declaration. An incapable type
+`sessionPlacement.supportsAgentNativeSandbox` declaration. For a retained enrolled
+guest, the controller records that support in `isolationV1` at enrollment using
+the qualified provisioner and its retained launch choices. Fresh Sessions and
+detached Runs use the same capability decision. An incapable type
 returns `unavailable` with `not_available_in_sandbox_type`, displayed before
 launch. Hosts without the isolation fact retain their native defaults. The resolved
 sandbox choice preserves permission intent; plugins translate it to their native
