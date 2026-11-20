@@ -28,11 +28,12 @@ const entryResponse = (providerId: string) => Response.json({
 
 describe('ProviderIdentityItems catalog recovery', () => {
     let readEntry: () => Promise<Response>;
+    let features: ReturnType<typeof createRootLayoutFeaturesResponse>;
     let homeId: string;
 
     beforeEach(async () => {
         readEntry = async () => entryResponse('workforce');
-        const features = createRootLayoutFeaturesResponse();
+        features = createRootLayoutFeaturesResponse();
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
             if (url.endsWith('/v1/auth/entry')) return await readEntry();
@@ -109,9 +110,14 @@ describe('ProviderIdentityItems catalog recovery', () => {
         expect(screen.findHostByTestId('settings-account-identity-workforce-connect')).toBeNull();
     });
 
-    it('holds the connections line while the catalog loads, and the failure takes that same line', async () => {
+    it('holds the connections line while the catalog loads on a Home that released no method list, and the failure takes that same line', async () => {
         const first = createDeferred<Response>();
         readEntry = () => first.promise;
+        // A Home whose features name no structured methods: only its live entry can say what connects.
+        const { methods: _released, ...legacyAuth } = features.capabilities.auth;
+        features = { ...features, capabilities: { ...features.capabilities, auth: legacyAuth } } as typeof features;
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://catalog-home-legacy.example.test', name: 'Home L' });
         const screen = await renderIdentities();
         // Nothing is inserted later: the row the connections will occupy is reserved while they load.
         await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-catalog')).not.toBeNull());
@@ -148,5 +154,56 @@ describe('ProviderIdentityItems catalog recovery', () => {
         await refreshHome();
         await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-workforce-connect')).toBeNull());
         expect(screen.findHostByTestId('settings-account-identity-catalog-retry')).not.toBeNull();
+    });
+});
+
+// Account › Sign-in & security on a return visit (TH-VISUAL-ACCEPT-16 D5): the Home's released methods are already
+// known, so the connections stand from them while the Home's live entry is read, and nothing below them moves.
+describe('ProviderIdentityItems while the live entry is read', () => {
+    let methods: unknown[];
+    let entry: ReturnType<typeof createDeferred<Response>>;
+
+    beforeEach(async () => {
+        entry = createDeferred<Response>();
+        const features = () => createRootLayoutFeaturesResponse({ capabilities: { auth: { methods: methods as never } } });
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+            if (url.endsWith('/v1/auth/entry')) return await entry.promise;
+            if (url.includes('/v1/features')) return Response.json(features());
+            return new Response(null, { status: 404 });
+        }));
+    });
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    async function renderOnHome(serverUrl: string) {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl, name: 'Northwind Home' });
+        return await renderScreen(<ProviderIdentityItems
+            profile={profileDefaults}
+            credentials={null}
+            applyProfile={() => {}}
+            returnTo="/settings/account"
+        />);
+    }
+
+    it('reserves no line when the Home offers no sign-in to connect', async () => {
+        methods = [{ id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] }];
+        const screen = await renderOnHome('https://reserve-none.example.test');
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull());
+        await act(async () => { entry.resolve(Response.json({
+            v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null,
+        } satisfies AuthEntryProjectionV1)); });
+        expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
+    });
+
+    it('shows the connection the Home already advertises before its live entry answers', async () => {
+        methods = [
+            { id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] },
+            { id: 'github', actions: [{ id: 'connect', enabled: true, mode: 'keyed' }] },
+        ];
+        const screen = await renderOnHome('https://reserve-github.example.test');
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-github-connect')).not.toBeNull());
+        expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
     });
 });

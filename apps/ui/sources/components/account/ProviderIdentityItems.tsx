@@ -21,7 +21,12 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { authProviderRegistry, getAuthProvider, normalizeProviderId } from '@/auth/providers/registry';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
-import { isNativeAuthenticationMethodId, projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
+import {
+    isNativeAuthenticationMethodId,
+    projectAuthEntryMethodCapabilities,
+    projectAuthenticationMethodCapabilities,
+    type AuthenticationMethodCapabilities,
+} from '@/auth/capabilities/authMethodCapabilities';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
@@ -116,6 +121,24 @@ async function openProviderConnectUrl(params: {
  * destructive and publication controls fail closed rather than guessing
  * "personal".
  */
+/** The connections a catalog offers, one per non-native method, as this list draws them. */
+function providerDescriptorsFrom(methods: AuthenticationMethodCapabilities['catalog']['methods']): readonly ProviderDescriptor[] {
+    const descriptors = new Map<string, ProviderDescriptor>();
+    for (const method of methods) {
+        const id = normalizeProviderId(method.id);
+        if (!id || isNativeAuthenticationMethodId(id)) continue;
+        descriptors.set(id, {
+            id,
+            displayName: method.presentation?.displayName ?? id,
+            ...(method.presentation?.iconHint !== undefined
+                ? { iconHint: method.presentation.iconHint }
+                : {}),
+            canConnect: method.enabledActions.some((action) => action.id === 'connect'),
+        });
+    }
+    return [...descriptors.values()];
+}
+
 function releasedIdentityControlsApply(catalog: ProviderCatalogState): boolean {
     return catalog.kind === 'legacy';
 }
@@ -315,10 +338,21 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
         requestStatus: 'loading',
     }));
     const [retryAttempt, setRetryAttempt] = React.useState(0);
-    const catalog: ProviderCatalogState = catalogSnapshot.targetKey === targetKey
+    const liveCatalog: ProviderCatalogState = catalogSnapshot.targetKey === targetKey
         ? catalogSnapshot.catalog
         : { kind: 'loading' };
-    const requestStatus = catalogSnapshot.targetKey === targetKey ? catalogSnapshot.requestStatus : 'loading';
+    // While the live entry is read, the methods the Home already released (its features, read before this page)
+    // stand for it: the connections draw at once and nothing below them moves when the entry agrees.
+    const releasedCatalog = React.useMemo<ProviderCatalogState | null>(() => {
+        if (liveCatalog.kind !== 'loading' || featuresSnapshot.status !== 'ready') return null;
+        const capabilities = projectAuthenticationMethodCapabilities(featuresSnapshot.features);
+        return capabilities.usesStructuredMethods
+            ? { kind: 'current', descriptors: providerDescriptorsFrom(capabilities.catalog.methods) }
+            : null;
+    }, [featuresSnapshot, liveCatalog.kind]);
+    const catalog = releasedCatalog ?? liveCatalog;
+    const liveRequestStatus = catalogSnapshot.targetKey === targetKey ? catalogSnapshot.requestStatus : 'loading';
+    const requestStatus = releasedCatalog && liveRequestStatus === 'loading' ? 'ready' : liveRequestStatus;
 
     React.useEffect(() => {
         const abortController = new AbortController();
@@ -352,22 +386,9 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
                 }
 
                 const capabilities = projectAuthEntryMethodCapabilities(result.projection);
-                const descriptors = new Map<string, ProviderDescriptor>();
-                for (const method of capabilities.catalog.methods) {
-                    const id = normalizeProviderId(method.id);
-                    if (!id || isNativeAuthenticationMethodId(id)) continue;
-                    descriptors.set(id, {
-                        id,
-                        displayName: method.presentation?.displayName ?? id,
-                        ...(method.presentation?.iconHint !== undefined
-                            ? { iconHint: method.presentation.iconHint }
-                            : {}),
-                        canConnect: method.enabledActions.some((action) => action.id === 'connect'),
-                    });
-                }
                 setCatalogSnapshot({
                     targetKey,
-                    catalog: { kind: 'current', descriptors: [...descriptors.values()] },
+                    catalog: { kind: 'current', descriptors: providerDescriptorsFrom(capabilities.catalog.methods) },
                     requestStatus: 'ready',
                 });
             })
