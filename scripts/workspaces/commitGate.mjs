@@ -76,7 +76,7 @@ export async function runCommitGate(options) {
   }
 }
 
-async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = process.env, cacheDir, label = 'commit-gate' }) {
+async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
   const treeMode = commitTreeGateMode(env);
@@ -139,8 +139,8 @@ async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = p
   }
 
   if (treeMode === 'block') {
-    if (cheapOnly) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
-    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, env }));
+    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly }));
+    if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
     if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
   } else if (treeMode === 'report' && !prior) {
     // Report mode records the verdict in the ledger without waiting; a recheck replays a packet whose first gate started it.
@@ -202,7 +202,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
   let accepted;
   let commit;
   const check = async (cheapOnly) => {
-    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, cheapOnly, label });
+    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, label });
     for (const note of gate.notes) console.error(`commit gate: ${note}`);
     if (gate.verdict === 'pass') {
       commit = createCommit(packet);

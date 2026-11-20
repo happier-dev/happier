@@ -66,37 +66,57 @@ function treeWorkspacePackages(git, tree) {
  * source runtimes resolve). A root-level script, config, manifest, lockfile or patch reaches every
  * graph; other root files (docs, images) reach none.
  */
-export async function selectCommitTreeEntryGraphs({ repo, base, tree }) {
+export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase }) {
   const git = gitAt(repo);
   let graphs;
   try {
     const source = git(['show', `${tree}:${ENTRY_GRAPHS_PATH}`]).toString();
     ({ ENTRY_GRAPHS: graphs } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`));
   } catch { return { graphs: [], selected: [], changed: [] }; }
-  const changed = git(['diff', '--no-renames', '--name-only', '-z', base, tree]).toString().split('\0').filter(Boolean);
+  const pathsBetween = (from, to) => git(['diff', '--no-renames', '--name-only', '-z', from, to]).toString().split('\0').filter(Boolean);
+  const changed = pathsBetween(base, tree);
   const packages = treeWorkspacePackages(git, tree);
   const { workspaceSourcePackageClosure } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
   const roots = [...packages].map(([name, { root }]) => [name, root]).sort((a, b) => b[1].length - a[1].length);
   const ownerOf = path => roots.find(([, root]) => path.startsWith(`${root}/`))?.[0] ?? null;
-  const owners = new Set();
-  let all = false;
-  for (const path of changed) {
-    const owner = ownerOf(path);
-    if (HARNESS.test(path)) all = true;
-    else if (owner) owners.add(owner);
-    else if (ROOT_RUNTIME_INPUT.test(path)) all = true;
-  }
-  const selected = graphs.filter(graph => {
-    if (all) return true;
-    const owner = ownerOf(graph.entry);
-    if (!owner) return owners.size > 0;
-    const closure = workspaceSourcePackageClosure(packages, [owner]);
-    return [...owners].some(name => closure.has(name));
-  }).map(graph => graph.id);
+  const reaches = paths => {
+    const owners = new Set();
+    for (const path of paths) {
+      const owner = ownerOf(path);
+      if (HARNESS.test(path) || (!owner && ROOT_RUNTIME_INPUT.test(path))) return () => true;
+      if (owner) owners.add(owner);
+    }
+    return entry => {
+      const owner = ownerOf(entry);
+      if (!owner) return owners.size > 0;
+      const closure = workspaceSourcePackageClosure(packages, [owner]);
+      return [...owners].some(name => closure.has(name));
+    };
+  };
+
   let routes = false;
   try { git(['cat-file', '-e', `${tree}:${SERVER_ROUTES_ENTRY}`]); routes = true; } catch { /* no server in this tree */ }
-  return { graphs: [...graphs.map(graph => graph.id), ...(routes ? [SERVER_ROUTES_GRAPH] : [])],
-    selected: [...selected, ...(routes && changed.some(path => SERVER_ROUTES_INPUT.test(path)) ? [SERVER_ROUTES_GRAPH] : [])], changed };
+  const entries = routes ? [...graphs, { id: SERVER_ROUTES_GRAPH, entry: SERVER_ROUTES_ENTRY }] : graphs;
+  const packetReaches = reaches(changed);
+  let selected = entries.filter(({ id, entry }) => id === SERVER_ROUTES_GRAPH
+    ? changed.some(path => SERVER_ROUTES_INPUT.test(path))
+    : packetReaches(entry));
+  if (prior && selected.length) {
+    // The shell wrapper passes a candidate commit, while the private-index helpers supply its parent explicitly.
+    let acceptedBase = priorBase;
+    if (!acceptedBase) {
+      try { acceptedBase = git(['rev-parse', '--verify', `${prior}^`]).toString().trim(); }
+      catch { /* A bare prior tree gives no basis for reusing the old comparison. */ }
+    }
+    if (acceptedBase) {
+      // A failure that used to be inherited can become new if the parent fixed it. Check changes to both sides.
+      const moved = [...pathsBetween(acceptedBase, base), ...pathsBetween(prior, tree)];
+      const inputMoved = reaches(moved);
+      selected = selected.filter(({ id, entry }) => inputMoved(entry)
+        || (id === SERVER_ROUTES_GRAPH && moved.some(path => SERVER_ROUTES_INPUT.test(path))));
+    }
+  }
+  return { graphs: entries.map(graph => graph.id), selected: selected.map(graph => graph.id), changed };
 }
 
 async function pruneGenerated(dir, keep) {
@@ -158,11 +178,11 @@ function childCpuMs() {
  * Returns `{ findings, preexisting, results, selected, timings }` (`findings` are the failures the packet adds); throws when the check cannot judge (extraction,
  * derivation or harness failure), which callers report as unavailable, never as a refusal.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false }) {
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
-  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree });
+  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase });
   const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const timings = {};
   const finish = (result) => {
@@ -171,7 +191,9 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
     return { ...result, selected, graphs: selection.graphs.length, timings: { ...timings, totalMs: Math.round(performance.now() - started),
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
-  if (!selected.length) return finish({ findings: [], preexisting: [], results: [] });
+  const empty = { findings: [], preexisting: [], results: [] };
+  if (!selected.length) return finish(empty);
+  if (cheapOnly) return finish({ ...empty, needsFull: true });
   const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings });
   // Like every other gate check, only failures the packet adds refuse it: the failing graphs load again from the
   // base tree (paid only when the candidate fails), and a failure the base already has is reported, not blamed.
