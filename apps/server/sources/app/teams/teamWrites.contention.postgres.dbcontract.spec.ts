@@ -1,4 +1,4 @@
-import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from "@happier-dev/protocol/changes";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
@@ -124,9 +124,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         if (kind === "group_update") {
             const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel("Initial group") } });
             return {
-                owner, url: "/v1/teams/groups/update", payload: { v: 1, teamId: team.id, groupId: group.id, name: "Updated group" },
+                owner, url: "/v1/teams/groups/update", payload: { v: 1, teamId: team.id, groupId: group.id, name: plainPrivateLabel("Updated group") },
                 verify: async () => {
-                    expect(await db.teamGroup.findUniqueOrThrow({ where: { id: group.id } })).toMatchObject({ name: "Updated group" });
+                    expect(await db.teamGroup.findUniqueOrThrow({ where: { id: group.id } })).toMatchObject({ name: storedPlainPrivateLabel("Updated group") });
                 },
             };
         }
@@ -268,7 +268,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         const resourceId = randomUUID();
         return {
             owner, url: "/v1/teams/credential-resources/create", payload: {
-                teamId: team.id, resourceId, displayName: "Contended broker resource", source,
+                teamId: team.id, resourceId, displayName: plainPrivateLabel("Contended broker resource"), source,
                 deliveryPolicy: { preferredAllowedModes: ["brokered"] }, sessionUsePolicy: "personal_allowed",
                 brokerPlacement: { kind: "machine", machineId: machine.id }, requestPolicy: null,
                 allMembersAllowedRoutes: ["brokered"], groupGrants: [], memberGrants: [], usageLimits: [],
@@ -356,7 +356,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
             responsibleAccountId: member.id,
-            teamGrants: { create: { teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } },
+            grants: { create: { principalKind: "team", teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } },
         } });
         const machine = await db.machine.create({ data: {
             id: randomUUID(), accountId: owner.id, metadata: "{}", kind: "persistent",
@@ -602,7 +602,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                 if (kind === "resource_delete") {
                     expect(repeated.statusCode, repeated.body).toBe(404);
                 } else if (kind === "limit_delete") {
-                    expect(repeated.statusCode, repeated.body).toBe(409);
+                    expect(repeated.statusCode, repeated.body).toBe(404);
+                    expect(repeated.json()).toEqual({ error: "not_found_or_not_visible" });
                 } else {
                     const repeatedDiagnostic = kind.startsWith("invitation_")
                         ? JSON.stringify({ statusCode: repeated.statusCode, error: repeated.json().error }) : repeated.body;
