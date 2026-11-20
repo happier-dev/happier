@@ -22,6 +22,8 @@ import type { WorkflowRunCollectionRow } from '../library/useWorkflowRunCollecti
 import { configureSessionDraftRepository, resetSessionDraftRepositoryForTests, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { WorkflowsRunsRoute } from '@/app/(app)/workflows/runs/index';
 import { WorkflowsColumn } from './WorkflowsColumn';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
@@ -165,6 +167,44 @@ async function pressView(screen: Awaited<ReturnType<typeof renderScreen>>, view:
 }
 
 describe('WorkflowsColumn', () => {
+    it('offers Events through the same mounted command as the tab on page and column', async () => {
+        let commands: ReturnType<typeof useCurrentUiContextComposedCommands> = [];
+        function Commands() { commands = useCurrentUiContextComposedCommands(); return null; }
+        const authority = captureActiveServerAccountScopeLifetime();
+        const screen = await renderScreen(<CurrentUiContextCommandsProvider authority={authority}>
+            <Commands /><WorkflowsColumn />
+        </CurrentUiContextCommandsProvider>, { wrapper: TestAuth });
+        const events = commands.find(row => row.title === 'workflows.tabs.events');
+        expect(events?.command.kind).toBe('hostLocal');
+        if (events?.command.kind !== 'hostLocal') throw new Error('Events command unavailable');
+        await act(async () => { expect(await events.command.invoke({ signal: new AbortController().signal,
+            context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+        expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(routerPush).toHaveBeenCalledWith('/workflows/events');
+        await screen.update(<CurrentUiContextCommandsProvider authority={authority}>
+            <Commands /><WorkflowsColumn surface="page" definitionsContent={<View />} />
+        </CurrentUiContextCommandsProvider>);
+        await pressView(screen, 'definitions');
+        routerPush.mockClear();
+        const pageEvents = commands.find(row => row.title === 'workflows.tabs.events');
+        if (pageEvents?.command.kind !== 'hostLocal') throw new Error('Page Events command unavailable');
+        await act(async () => { expect(await pageEvents.command.invoke({ signal: new AbortController().signal,
+            context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+        expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(routerPush).not.toHaveBeenCalled();
+    });
+    it('opens Events from the tab press even when the current context cannot resolve its mounted command (QA-LIVE ship3)', async () => {
+        // The navigation column is not always the surface the current context publishes; a press is the person's
+        // own choice and must not depend on that resolution.
+        const authority = captureActiveServerAccountScopeLifetime();
+        const screen = await renderScreen(<CurrentUiContextCommandsProvider authority={authority}>
+            <WorkflowsColumn />
+        </CurrentUiContextCommandsProvider>, { wrapper: TestAuth });
+        await screen.pressByTestIdAsync('workflows-column:view:events');
+        await flushHookEffects({ frames: 2 });
+        expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(routerPush).toHaveBeenCalledWith('/workflows/events');
+    });
     it('opens the page form on its name, with the Definitions and Runs switch under it in both views (FIN-DESIGN-REVIEW L6)', async () => {
         const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<View testID="workflow-definitions-content" />} />, { wrapper: TestAuth });
         const order = () => screen.tree.root.findAll((node) => typeof node.type === 'string'

@@ -124,6 +124,54 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('opens the selected Event sentence builder through the same UI and Agent command and retires it with the Event', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://workflow-event-command.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const { useWorkflowEventAutomate } = await import('@/components/workflows/events/WorkflowEventDetail');
+        const event = { key: 'session:started', kind: 'session', sessionId: 'session-a', event: 'started',
+            occurredAt: 1, coverage: 'live', sourceRevision: 1 } as const;
+        let automation: ReturnType<typeof useWorkflowEventAutomate> | undefined;
+        function EventControl() {
+            automation = useWorkflowEventAutomate({ fact: event, title: 'Session started', subtitle: null, glyph: 'pulse',
+                needsYou: false, lines: [], open: null, runsStarted: [] }, true);
+            // The command owner constructs the builder intent; its separate renderer is covered by the P04 journey.
+            return null;
+        }
+        const tree = (presented: boolean, publish = true) => <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <CurrentUiContextCommandsProvider authority={authority}>
+                        {publish ? <Publication /> : null}{presented ? <EventControl /> : null}
+                    </CurrentUiContextCommandsProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(true));
+        const command = reader!.readCurrentUiContext()!.commands.find(candidate => candidate.title === t('workflows.events.automate'));
+        expect(command).toBeDefined();
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: command!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(React.isValidElement<{ intent: { trigger: unknown } }>(automation!.builder)).toBe(true);
+        if (!React.isValidElement<{ intent: { trigger: unknown } }>(automation!.builder)) throw new Error('Event builder unavailable');
+        expect(automation!.builder.props.intent.trigger).toMatchObject({ kind: 'sessionLifecycle', enabled: true });
+        const firstBuilder = automation!.builder;
+        await act(async () => { automation!.open!(); });
+        await vi.waitFor(() => expect(automation!.builder).not.toBe(firstBuilder));
+        await screen.update(tree(false));
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id },
+            { surface: 'agent' })).toMatchObject({ ok: false });
+        await screen.update(tree(true, false));
+        expect(automation!.builder).toBeNull();
+        await act(async () => { automation!.open!(); });
+        expect(React.isValidElement(automation!.builder)).toBe(true);
+    });
+
     it('releases retired chart definitions across repeated renders and mounts while a native callback survives', async () => {
         const { Session } = await import('node:inspector');
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://chart-command-retention.test', accountId: 'account-a' }],

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -100,6 +101,9 @@ export function useWorkflowEventAutomate(
     const intent: WorkflowSentenceEditorIntent = { name: title, ...seed };
     setOpening({ lifetime, key: keyRef.current, intent });
   }, [fact, title]);
+  useCurrentUiContextLocalCommands(automatable ? [{
+    key: 'automate', title: t('workflows.events.automate'), invoke: open,
+  }] : [], { contextKey: fact?.key });
   const builder =
     opening === null ? null : (
       <WorkflowSentenceBuilder

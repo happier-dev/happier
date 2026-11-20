@@ -5,6 +5,7 @@ import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/bui
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -83,8 +84,22 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const setCreationRef = React.useCallback<NonNullable<React.ComponentProps<typeof WorkflowsLibraryHeaderActions>['controlRef']>>(
         target => { creationRef.current = target; }, []);
     const pathname = usePathname();
+    const router = useRouter();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => readPathView(pathname));
+    const selectView = useEventCallback((next: WorkflowsColumnView) => {
+        setView(next);
+        if (props.definitionsContent !== undefined) return;
+        // Beside the main pane Events and Runs open their pages there; an open run stays where it is.
+        if (next === 'events' && !isWorkflowEventsPath(pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
+        if (next === 'runs' && !isRunPath(pathname)) router.push(WORKFLOWS_RUNS_ROUTE as never);
+    });
+    // Agents reach Events through this mounted command; the person's own press selects the same view directly,
+    // because the navigation column is not always the surface the current context resolves (QA-LIVE ship3).
+    useCurrentUiContextLocalCommands(access.kind === 'workflows' ? [{
+        key: 'events', title: t('workflows.tabs.events'), invoke: () => selectView('events'),
+    }] : [], { unbound: 'local' });
+    const selectViewFromControl = selectView;
     const filtersRequested = useSettingRevealRequested([collectionSpaceSettingRefs('workflow').filters]);
     React.useEffect(() => {
         if (filtersRequested) setView('definitions');
@@ -111,7 +126,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     { id: 'events', label: t('workflows.tabs.events') },
                 ]}
                 activeTabId={view}
-                onSelectTab={setView}
+                onSelectTab={selectViewFromControl}
                 segmentSizing="equal"
                 />
             </View>
@@ -124,7 +139,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
         return <WorkflowsColumnCreationRefContext.Provider value={creationRef}>
             <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                 <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>
-                    <WorkflowsPhonePage view={view} onSelectView={setView} ownsCreation={ownsCreation} pathname={pathname}
+                    <WorkflowsPhonePage view={view} onSelectView={selectViewFromControl} ownsCreation={ownsCreation} pathname={pathname}
                         definitionsContent={props.definitionsContent} />
                 </WorkflowsColumnHeadsPageContext.Provider>
             </WorkflowsColumnOwnsCreationContext.Provider>
@@ -164,7 +179,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
     if (access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
-            <WorkflowsColumnList surface={props.surface ?? 'plane'} view={view} onSelectView={setView} headerAction={headerAction} pathname={pathname} />
+            <WorkflowsColumnList surface={props.surface ?? 'plane'} view={view} onSelectView={selectViewFromControl} headerAction={headerAction} pathname={pathname} />
         </View>;
     }
     return <View testID="workflows-column" style={styles.column}>
@@ -195,14 +210,6 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     const eventsShown = props.view === 'events';
     const libraryView = useWorkflowLibraryView(presented && definitions);
     const events = useWorkflowsColumnEvents(presented && eventsShown);
-    const router = useRouter();
-    // Beside the main pane the Events view opens its page there ("Pick an event"); the other views leave main as it is.
-    const selectView = useEventCallback((next: WorkflowsColumnView) => {
-        props.onSelectView(next);
-        if (next === 'events' && !isWorkflowEventsPath(props.pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
-        // Beside the main pane Runs opens its table there (scene 8 D2); an open run stays where it is.
-        if (next === 'runs' && !isRunPath(props.pathname)) router.push(WORKFLOWS_RUNS_ROUTE as never);
-    });
     const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
     // The sidebar keeps its own search beside "+" and its spaces strip, as the Sessions sidebar does, also beside the
     // index page (owner 2026-11-19 15:10Z, over the lab's navigation-only column). Both places narrow through the one
@@ -255,7 +262,7 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
             { id: 'events', label: t('workflows.tabs.events'), icon: <Icon name="pulse" size={15} color={theme.colors.text.secondary} /> },
         ]}
         activeTabId={props.view}
-        onSelectTab={selectView}
+        onSelectTab={props.onSelectView}
     />;
     return <CollectionList
         testID="workflows-column:list"
