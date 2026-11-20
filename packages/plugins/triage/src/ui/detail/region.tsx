@@ -288,6 +288,13 @@ export type TriageDetailPinActionV1 = Readonly<{
   handlers: TriageRowPinHandlersV1;
 }>;
 
+function renderEntrySessionNotice(notice: TriageEntrySessionNoticeV1 | null, text: ReturnType<typeof usePluginTranslation>) {
+  if (notice === null) return null;
+  return notice.failureCode === undefined
+    ? <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
+    : <ActionFailureDetails code={notice.failureCode} message={text(notice.labelKey, notice.label)} />;
+}
+
 /**
  * The transient action/review controller for exactly one entry and observing
  * connection.
@@ -298,13 +305,6 @@ export type TriageDetailPinActionV1 = Readonly<{
  * render. Keeping the hooks inside this boundary is load-bearing: a keyed JSX
  * wrapper around hooks owned by the parent would remount no state at all.
  */
-function renderEntrySessionNotice(notice: TriageEntrySessionNoticeV1 | null, text: ReturnType<typeof usePluginTranslation>) {
-  if (notice === null) return null;
-  return notice.failureCode === undefined
-    ? <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
-    : <ActionFailureDetails code={notice.failureCode} message={text(notice.labelKey, notice.label)} />;
-}
-
 function TriageEntryScopedActionRegion(props: Readonly<{
   target: TriageActionTargetV1;
   actions: TriageMountedActionsV1;
