@@ -239,6 +239,7 @@ function chainCleanupCallbacks(
 export async function resolveSpawnChildEnvironment(params: {
   agentIsolation?: HostAgentIsolationLaunchContext;
   memberAgentCliLaunch?: MemberAgentCliLaunchContext;
+  admittedMemberAgentCliLaunchSpec?: AgentCliLaunchSpec;
   savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
@@ -287,6 +288,7 @@ export async function resolveSpawnChildEnvironment(params: {
 async function resolveSpawnChildEnvironmentImpl(params: {
   agentIsolation?: HostAgentIsolationLaunchContext;
   memberAgentCliLaunch?: MemberAgentCliLaunchContext;
+  admittedMemberAgentCliLaunchSpec?: AgentCliLaunchSpec;
   savedSecretOperationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
   happyHomeDir?: string;
   pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
@@ -351,7 +353,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       ...(params.pluginRuntimeRegistry ? { catalogSnapshot: params.pluginRuntimeRegistry.contributes } : {}),
       ...(signal ? { signal } : {}),
       readAdmittedAgentCli: () => params.memberAgentCliLaunch && resolvedAgentId && agentCliLaunchSpec
-        ? { agentId: resolvedAgentId, launch: agentCliLaunchSpec } : undefined,
+        ? { agentId: resolvedAgentId, launch: agentCliLaunchSpec, member: params.memberAgentCliLaunch } : undefined,
       installablesRegistry: () => resolveSpawnHookInstallablesRegistry(
         params.happyHomeDir,
         params.pluginRuntimeRegistry
@@ -554,13 +556,15 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       savedSecretOperationContext: params.savedSecretOperationContext });
   }
 
-  let agentCliLaunchSpec: AgentCliLaunchSpec | undefined;
+  let agentCliLaunchSpec = params.admittedMemberAgentCliLaunchSpec;
   // One executable admission per spawn: the final launch reuses this decision.
-  let agentCliAdmitted = false;
-  const preliminaryIsolation = params.providerBindingPrerequisitesOnly ? params.agentIsolation?.read() : undefined;
+  let agentCliAdmitted = agentCliLaunchSpec !== undefined;
+  const preliminaryIsolation = params.providerBindingPrerequisitesOnly && !params.memberAgentCliLaunch
+    ? params.agentIsolation?.read()
+    : undefined;
   const memberLaunchPending = preliminaryIsolation
     && resolveMachineAgentExecutionPlacementV1({ policy: preliminaryIsolation, platform: process.platform }) === 'member';
-  if (resolvedAgentId && !memberLaunchPending) {
+  if (resolvedAgentId && !memberLaunchPending && !agentCliAdmitted) {
     // Admission precedes prerequisite hooks: dependency setup cannot substitute
     // for the Agent executable or start a download for a missing Agent. A
     // member's admission runs as that member, and the hooks reuse it.
@@ -584,7 +588,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     agentCliAdmitted = true;
   }
 
-  if (!params.runtimePrerequisitesAlreadyResolved && params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
+  if (!memberLaunchPending && (!params.runtimePrerequisitesAlreadyResolved || params.memberAgentCliLaunch)
+    && params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
     const validation = await params.daemonSpawnHooks.resolveRuntimePrerequisites(buildRuntimeSelection());
     if (!validation.ok) {
       return {
@@ -601,14 +606,14 @@ async function resolveSpawnChildEnvironmentImpl(params: {
   recordEnvironmentPhase('agent_prerequisites');
   // Provider launches enter this function once after connection/grant
   // authorization and again after their final environment is materialized.
-  // Plugin decisions run for both environments: the first pass protects the
-  // authorization boundary, while the final pass validates settings and other
-  // prerequisites selected by the materialized child environment.
-  const shouldResolvePluginPrerequisites =
+  // The preliminary pass has no member launch material. Validate those
+  // prerequisites on the final pass, after the member's executable admission
+  // and before delivering the Provider environment to the Agent.
+  const shouldResolvePluginPrerequisites = !memberLaunchPending && (
     params.providerBindingPrerequisitesOnly
     || !params.runtimePrerequisitesAlreadyResolved
     || params.pluginRuntimeRegistry !== undefined
-    || params.providerBindingContext !== undefined;
+    || params.providerBindingContext !== undefined);
   if (shouldResolvePluginPrerequisites) {
     const pluginSpawnDecision = await readPluginSpawnDecision();
     if (!pluginSpawnDecision.allowed) {

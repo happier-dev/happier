@@ -301,6 +301,9 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
 
 export async function resolveForegroundFinalPluginPrerequisites(params: Readonly<{
   agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+  memberAgentCliLaunch?: Parameters<typeof resolveSpawnChildEnvironment>[0]['memberAgentCliLaunch'];
+  admittedMemberAgentCliLaunchSpec?: Parameters<typeof resolveSpawnChildEnvironment>[0]['admittedMemberAgentCliLaunchSpec'];
+  providerBindingContext?: Parameters<typeof resolveSpawnChildEnvironment>[0]['providerBindingContext'];
   happyHomeDir: string;
   pluginRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
   resolvedAgentId: string;
@@ -310,6 +313,9 @@ export async function resolveForegroundFinalPluginPrerequisites(params: Readonly
 }>): Promise<Awaited<ReturnType<typeof resolveSpawnChildEnvironment>>> {
   return await resolveSpawnChildEnvironment({
     agentIsolation: params.agentIsolation,
+    memberAgentCliLaunch: params.memberAgentCliLaunch,
+    admittedMemberAgentCliLaunchSpec: params.admittedMemberAgentCliLaunchSpec,
+    providerBindingContext: params.providerBindingContext,
     happyHomeDir: params.happyHomeDir,
     pluginRuntimeRegistry: params.pluginRuntimeRegistry,
     resolvedAgentId: params.resolvedAgentId,
@@ -1614,8 +1620,18 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 connectedServiceUnsetEnvironmentVariableNames,
               providerUnset: providerUnsetEnvironmentVariableNames,
             });
+            const memberAgentCliLaunch = createMemberAgentCliLaunchContext({ material: agentLaunchMaterials,
+              managedHappierBinaryPath: dependencies.agentIsolation?.managedHappierBinaryPath, signal: registration.retirementSignal });
+            const providerModel = activeProviderLaunch?.kind === 'managedPurpose'
+              ? activeProviderLaunch.selection
+              : request.selection?.ref;
             const finalSpawnEnvironment = await resolveForegroundFinalPluginPrerequisites({
               agentIsolation: dependencies.agentIsolation,
+              memberAgentCliLaunch,
+              ...(memberAgentCliLaunch ? { admittedMemberAgentCliLaunchSpec: childEnvironment.agentCliLaunchSpec } : {}),
+              ...(memberAgentCliLaunch && activeProviderLaunch && providerModel ? {
+                providerBindingContext: { v: 1, agentTargetKey: activeProviderLaunch.agentTargetKey, modelId: providerModel.modelId },
+              } : {}),
               happyHomeDir: configuration.happyHomeDir,
               pluginRuntimeRegistry: lease.registry,
               resolvedAgentId: request.agentId,

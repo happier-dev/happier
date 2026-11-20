@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessByStdio } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { TextDecoder } from 'node:util';
 
 import type {
@@ -30,6 +30,9 @@ import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/reg
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { resolveSystemToolLookupCandidates } from '@/plugins/runtime/exec/system/tools/lookupCandidates';
+import { createUnixAgentIdentityLaunch } from './agentIsolation/unixAgentIdentityAdapter';
+import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
+import type { MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
 
 export type DaemonResolvedToolV1 = AgentDaemonResolvedToolV1;
 export type DaemonRunToolResultV1 = AgentDaemonRunToolResultV1;
@@ -75,14 +78,21 @@ function toDaemonToolSource(source: 'override' | 'system' | 'managed'): Extract<
 }
 
 /** The spawn's one executable admission for its own Agent, when it was made as the separated member. */
-export type DaemonSpawnAdmittedAgentCliV1 = Readonly<{ agentId: string; launch: AgentCliLaunchSpec }>;
+type DaemonSpawnAdmittedAgentCliV1 = Readonly<{
+  agentId: string;
+  launch: AgentCliLaunchSpec;
+  member: MemberAgentCliLaunchContext;
+}>;
+
+type ResolvedSpawnTool = Extract<DaemonResolvedToolV1, { ok: true }>
+  & Readonly<{ member?: MemberAgentCliLaunchContext }>;
 
 function resolveProviderCliTool(input: Readonly<{
   toolId: string;
   processEnv: ProcessEnvInput;
   catalogSnapshot?: AgentCliResolutionOptions['catalogSnapshot'];
   admittedAgentCli?: DaemonSpawnAdmittedAgentCliV1;
-}>): Extract<DaemonResolvedToolV1, { ok: true }> | null {
+}>): ResolvedSpawnTool | null {
   try {
     const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(input.toolId, {
       catalogSnapshot: input.catalogSnapshot,
@@ -94,7 +104,7 @@ function resolveProviderCliTool(input: Readonly<{
       catalogSnapshot: input.catalogSnapshot,
     }).id === runtimeSpec.id) {
       return { ok: true, command: admitted.launch.command, args: [...admitted.launch.args],
-        source: toDaemonToolSource(admitted.launch.source) };
+        source: toDaemonToolSource(admitted.launch.source), member: admitted.member };
     }
     const resolved = resolveAgentCliCommandForRuntime(runtimeSpec, { processEnv: input.processEnv });
     if (!resolved) return null;
@@ -176,46 +186,49 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
     return (await installablesRegistryPromise) ?? BUILT_IN_INSTALLABLES_REGISTRY;
   }
 
+  async function resolveSystemTool(input: Readonly<{ toolId: string; lookupNames?: readonly string[] }>,
+    processEnv: ProcessEnvInput): Promise<ResolvedSpawnTool | Extract<DaemonResolvedToolV1, { ok: false }>> {
+    const providerCliTool = resolveProviderCliTool({
+      toolId: input.toolId,
+      processEnv,
+      catalogSnapshot: params.catalogSnapshot,
+      admittedAgentCli: params.readAdmittedAgentCli?.(),
+    });
+    if (providerCliTool) {
+      diagnostics.info({
+        code: 'provider_cli_tool_resolved',
+        message: `Resolved provider CLI "${input.toolId}".`,
+      });
+      return providerCliTool;
+    }
+    const lookupNames = input.lookupNames?.length ? input.lookupNames : [input.toolId];
+    for (const lookupName of lookupNames) {
+      const command = await resolveCommandOnPath(lookupName, params.processEnv);
+      if (command) {
+        diagnostics.info({
+          code: 'system_tool_resolved',
+          message: `Resolved system tool "${input.toolId}".`,
+        });
+        return { ok: true, command, args: [], source: 'system' };
+      }
+    }
+    return {
+      ok: false,
+      reasonCode: 'tool_unavailable',
+      errorMessage: `System tool "${input.toolId}" is unavailable.`,
+    };
+  }
+
   return {
     signal,
     resolveSystemTool: async (input): Promise<DaemonResolvedToolV1> => {
       if (signal.aborted) {
         return { ok: false, reasonCode: 'aborted', errorMessage: 'Tool resolution was cancelled.' };
       }
-      const providerCliTool = resolveProviderCliTool({
-        toolId: input.toolId,
-        processEnv: params.processEnv,
-        catalogSnapshot: params.catalogSnapshot,
-        admittedAgentCli: params.readAdmittedAgentCli?.(),
-      });
-      if (providerCliTool) {
-        diagnostics.info({
-          code: 'provider_cli_tool_resolved',
-          message: `Resolved provider CLI "${input.toolId}".`,
-        });
-        return providerCliTool;
-      }
-      const lookupNames = input.lookupNames?.length ? input.lookupNames : [input.toolId];
-      for (const lookupName of lookupNames) {
-        const resolved = await resolveCommandOnPath(lookupName, params.processEnv);
-        if (resolved) {
-          diagnostics.info({
-            code: 'system_tool_resolved',
-            message: `Resolved system tool "${input.toolId}".`,
-          });
-          return {
-            ok: true,
-            command: resolved,
-            args: [],
-            source: 'system',
-          };
-        }
-      }
-      return {
-        ok: false,
-        reasonCode: 'tool_unavailable',
-        errorMessage: `System tool "${input.toolId}" is unavailable.`,
-      };
+      const resolved = await resolveSystemTool(input, params.processEnv);
+      if (!resolved.ok) return resolved;
+      const { member: _member, ...tool } = resolved;
+      return tool;
     },
     runSystemTool: async (input): Promise<DaemonRunToolResultV1> => {
       if (signal.aborted) {
@@ -223,51 +236,10 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
       }
 
       const env = { ...params.processEnv, ...(input.env ?? {}) };
-      const resolved = await (async (): Promise<DaemonResolvedToolV1> => {
-        const providerCliTool = resolveProviderCliTool({
-          toolId: input.toolId,
-          processEnv: env,
-          catalogSnapshot: params.catalogSnapshot,
-        });
-        if (providerCliTool) {
-          diagnostics.info({
-            code: 'provider_cli_tool_resolved',
-            message: `Resolved provider CLI "${input.toolId}".`,
-          });
-          return providerCliTool;
-        }
-        const lookupNames = input.lookupNames?.length ? input.lookupNames : [input.toolId];
-        for (const lookupName of lookupNames) {
-          const command = await resolveCommandOnPath(lookupName, params.processEnv);
-          if (command) {
-            diagnostics.info({
-              code: 'system_tool_resolved',
-              message: `Resolved system tool "${input.toolId}".`,
-            });
-            return {
-              ok: true,
-              command,
-              args: [],
-              source: 'system',
-            };
-          }
-        }
-        return {
-          ok: false,
-          reasonCode: 'tool_unavailable',
-          errorMessage: `System tool "${input.toolId}" is unavailable.`,
-        };
-      })();
-
+      const resolved = await resolveSystemTool(input, env);
       if (!resolved.ok) return resolved;
 
       const args = [...resolved.args, ...(input.args ?? [])];
-      const invocation = resolveWindowsCommandInvocation({
-        command: resolved.command,
-        args,
-        env,
-        resolveCommandOnPath: false,
-      });
 
       return await new Promise<DaemonRunToolResultV1>((resolve) => {
         let settled = false;
@@ -276,7 +248,7 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
         const stdoutDecoder = new TextDecoder('utf-8');
         const stderrDecoder = new TextDecoder('utf-8');
         let outputDecodersFlushed = false;
-        let child: ChildProcessByStdio<null, Readable, Readable>;
+        let child: ChildProcessByStdio<Writable | null, Readable, Readable>;
         let forcedFailure: Extract<DaemonRunToolResultV1, { ok: false }> | null = null;
         let timeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -318,13 +290,27 @@ export function createDaemonSpawnToolResolutionContext(params: Readonly<{
         };
 
         try {
-          child = spawn(invocation.command, invocation.args, {
-            cwd: input.cwd,
-            env,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true,
-            windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-          });
+          if (resolved.member) {
+            const { managedHappierBinaryPath, memberIdentity, runtimeHome } = resolved.member;
+            const environment = { ...buildMemberAgentInstallEnvironment(memberIdentity.home), ...input.env };
+            const invocation = createUnixAgentIdentityLaunch({
+              managedHappierBinaryPath, memberIdentity, runtimeHome,
+              executable: resolved.command, args, cwd: input.cwd ?? memberIdentity.home,
+              environment, selectedEnvironmentKeys: Object.keys(environment), selectedMaterials: [],
+            });
+            child = spawn(invocation.command, invocation.args, { env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'] });
+            // The wrapper reports a failed handoff through its own process result.
+            child.stdin?.on('error', () => {});
+            child.stdin?.end(invocation.stdinPreamble);
+          } else {
+            const invocation = resolveWindowsCommandInvocation({
+              command: resolved.command, args, env, resolveCommandOnPath: false,
+            });
+            child = spawn(invocation.command, invocation.args, {
+              cwd: input.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+              windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+            });
+          }
         } catch (error) {
           finish(() => ({
             ok: false,

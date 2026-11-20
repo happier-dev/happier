@@ -1,8 +1,11 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { PassThrough, Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import { resolveAgentCliManagedCommandPathForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { PluginManifestV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as CODEX_MANIFEST } from '@happier-dev/plugins-codex/manifest';
 import { PLUGIN_MANIFEST as ANTIGRAVITY_MANIFEST } from '@happier-dev/plugins-antigravity/manifest';
@@ -35,6 +38,52 @@ import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/ses
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
+import { resolveMemberAgentInstallCli } from '@/capabilities/installJobs/memberResolveEffect';
+
+const memberProcess = vi.hoisted(() => ({ resolutions: 0, probes: [] as string[] }));
+
+// Keep the resolver, hook dispatch and probe subprocess real. Replace only the
+// privileged operating-system user switch in this unprivileged test runner.
+vi.mock('@/daemon/agentIsolation/runMemberNativeOperation', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/daemon/agentIsolation/runMemberNativeOperation')>();
+  return { ...actual, runMemberAgentEffect: async (input: Parameters<typeof actual.runMemberAgentEffect>[0]) => {
+    const request = input.request as { kind: string; runtimeSpec: AgentCliRuntimeDescriptor; sharedManagedToolsRoot?: string };
+    if (request.kind !== 'resolve') return await actual.runMemberAgentEffect(input);
+    const frame = await readAgentLaunchFrame(Readable.from([input.launch.stdinPreamble], { objectMode: false }));
+    if (!frame.nativeIdentity) throw new Error('Expected a member executable lookup');
+    memberProcess.resolutions++;
+    return input.readRecord({ t: 'resolved', launch: resolveMemberAgentInstallCli(
+      request, buildMemberAgentInstallEnvironment(frame.nativeIdentity.home),
+    ) });
+  } };
+});
+
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => {
+    if (command !== 'sudo' || args.at(-1) !== 'agent-launch') return actual.spawn(command, args, options);
+    // The fixture CLI reads no stdin. Use the existing frame on the simulated
+    // RunAs stdin to select the real executable at the native process boundary.
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+    });
+    void readAgentLaunchFrame(child.stdin).then(frame => {
+      if (!frame.nativeIdentity || !args.includes(frame.nativeIdentity.username)) throw new Error('Expected a member version probe');
+      memberProcess.probes.push(frame.executable);
+      const probe = actual.spawn(frame.executable, [...frame.args], {
+        cwd: frame.cwd, env: { ...frame.environment, HOME: frame.nativeIdentity.home },
+      });
+      probe.stdout.pipe(child.stdout);
+      probe.stderr.pipe(child.stderr);
+      probe.on('error', error => child.emit('error', error));
+      probe.on('close', (code, signal) => child.emit('close', code, signal));
+    }).catch(error => child.emit('error', error));
+    return child;
+  } };
+});
 
 async function createPinnedSpawnAgentRegistry(): Promise<ResolvedExecutablePluginRuntimeRegistry> {
   const manifests = [CODEX_MANIFEST, ANTIGRAVITY_MANIFEST].map((manifest) => PluginManifestV2Schema.parse(manifest));
@@ -78,6 +127,58 @@ async function createPinnedSpawnAgentRegistry(): Promise<ResolvedExecutablePlugi
 }
 
 describe('daemon Agent preconditions', () => {
+  it.skipIf(process.platform !== 'linux')('checks the Provider minimum on the actual member Codex selected for launch', async () => {
+    const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+    try {
+      await fixture.registry.activateContributionsOnDemand([{ pluginId: 'happier.agent.codex', family: 'agents', localId: 'codex' }]);
+      const daemonHome = fixture.happyHomeDir;
+      const home = join(daemonHome, 'members', 'member');
+      const identity = { ...deriveAgentIsolationMemberIdentity({
+        homeServerIdentityId: 'fixture-home',
+        requester: { serverId: 'fixture-server', accountId: 'fixture-member', machineId: 'fixture-machine', installationId: 'fixture-installation' },
+      }), home, agentUid: 12001, agentGid: 12001 };
+      const spec = fixture.registry.contributes.agentDefinitionsById.get('codex')?.runtimeSpec;
+      if (!spec) throw new Error('Codex fixture needs its declared CLI metadata');
+      const cli = resolveAgentCliManagedCommandPathForRuntime(spec, { processEnv: buildMemberAgentInstallEnvironment(home) });
+      const writeVersion = async (version: string) => {
+        await mkdir(dirname(cli), { recursive: true });
+        await writeFile(cli, `#!/bin/sh\n[ "$1" = "--version" ] || exit 1\nprintf '%s\\n' 'codex-cli ${version}'\n`, { mode: 0o755 });
+      };
+      await writeVersion('0.162.1');
+      const common = {
+        happyHomeDir: daemonHome, pluginRuntimeRegistry: fixture.registry, resolvedAgentId: 'codex',
+        options: { directory: home, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } },
+        profileEnvironmentVariables: {}, daemonSpawnHooks: null, processEnv: { HOME: daemonHome, PATH: '' },
+        providerBindingContext: { v: 1, agentTargetKey: 'codex', connectionId: 'pc_fixture', modelId: 'fixture-model' },
+        logDebug() {}, logInfo() {}, logWarn() {},
+      } satisfies Parameters<typeof resolveSpawnChildEnvironment>[0];
+      const managedHappierBinaryPath = '/opt/happier/cli/current/happier';
+      const preflight = await resolveSpawnChildEnvironment({ ...common, providerBindingPrerequisitesOnly: true,
+        agentIsolation: { managedHappierBinaryPath, read: () => ({
+          enabled: true, memberProvisioning: 'linuxUsersV1', status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [home],
+        }) },
+      });
+      expect(preflight, JSON.stringify(preflight)).toMatchObject({ ok: true });
+      const final = { ...common, runtimePrerequisitesAlreadyResolved: true, memberAgentCliLaunch: {
+        memberIdentity: identity, managedHappierBinaryPath, runtimeHome: join(home, 'runtime', 'session'),
+      } };
+      const resolutionsBefore = memberProcess.resolutions;
+      await expect(resolveSpawnChildEnvironment(final)).resolves.toMatchObject({
+        ok: true, agentCliLaunchSpec: { resolvedPath: cli },
+      });
+      expect(memberProcess.resolutions - resolutionsBefore).toBe(1);
+      expect(memberProcess.probes).toEqual([cli]);
+      await writeVersion('0.146.0');
+      await expect(resolveSpawnChildEnvironment(final)).resolves.toMatchObject({
+        ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: expect.stringContaining('0.147.0'),
+      });
+    } finally {
+      memberProcess.probes.length = 0;
+      await fixture.dispose();
+    }
+  });
+
   it('uses the same profile-selected executable for precommit and final launch admission', async () => {
     const home = await createTempDir('happier-spawn-profile-executable-', tmpdir());
     try {
