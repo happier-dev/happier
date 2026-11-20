@@ -184,7 +184,6 @@ vi.mock('@/components/onboarding/surfaces/useOnboardingWizardController', () => 
 vi.mock('@/components/onboarding/unauthShell', () => ({
     UnauthenticatedSplitShell: (props: Record<string, unknown>) =>
         React.createElement('UnauthenticatedSplitShell', props, props.children as React.ReactNode),
-    useApplyBrandHeroSeen: () => vi.fn(),
 }));
 
 vi.mock('@/components/updates/UpdatesPopoverButton', () => ({

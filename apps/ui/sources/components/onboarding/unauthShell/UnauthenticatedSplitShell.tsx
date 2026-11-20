@@ -4,8 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 
-import { BrandPanel } from './BrandPanel';
-import { StagePane } from './StagePane';
+import { WelcomeAtmosphere } from './WelcomeAtmosphere';
 import { WorkflowPanel, type WorkflowPanelPresentation } from './WorkflowPanel';
 import { useUnauthShellLayout } from './useUnauthShellLayout';
 import type { RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
@@ -40,23 +39,6 @@ export type UnauthenticatedSplitShellProps = Readonly<{
     retentionDisclosure?: RelayRetentionDisclosureState | null;
 
     /**
-     * Whether the one-time mobile brand hero may be shown on this step.
-     * Defaults to `isWelcomeStep`. Must be `false` for restore, OAuth
-     * callback, mTLS callback, and setup deep links so a fresh-device user
-     * never gets a brand prelude in front of an urgent recovery flow.
-     */
-    allowMobileBrandHero?: boolean;
-
-    /**
-     * Callback for the "Get started" button on the mobile brand hero
-     * prelude. Records the timestamp in device history through
-     * `useApplyBrandHeroSeen()` from this folder. The shell re-renders into
-     * `mobile-workflow` after that history changes.
-     * No wizard/route dispatch is required for this prelude.
-     */
-    onBrandHeroGetStarted: () => void;
-
-    /**
      * Back navigation callback. If undefined, no back chevron is rendered.
      */
     onBack?: () => void;
@@ -71,58 +53,28 @@ export type UnauthenticatedSplitShellProps = Readonly<{
     /** The workflow pane's one bottom-right control (the signed-out Updates entry); see `WorkflowPanel`. */
     footerAccessory?: React.ReactNode;
 
+    /** The opening replica is sized to the destination inside the larger presenter window. */
+    frameWidth?: number;
     testID?: string;
 }>;
 
 /**
- * Unified pre-auth shell for the Happier app. Owns the chrome around all
- * unauthenticated content:
- *
- * - **Desktop** (width > 720px): a split with a persistent StagePane (planet
- *   + brand) on the left and the swappable WorkflowPanel on the right.
- * - **Mobile** (width ≤ 720px): either the one-time BrandPanel prelude
- *   (when `brandHeroSeenAt == null` and `allowMobileBrandHero === true`) or
- *   a full-screen WorkflowPanel.
- *
- * Step bodies render inside the workflow pane as-is; the shell does not
- * inspect their internals.
- *
- * See `.project/plans/unified-onboarding-redesign/03-shared-shell.md` for
- * the full contract and `02-design-system.md` for visual values.
+ * The signed-out shell, direction A (owner 2026-11-19): one centred column over the welcome atmosphere (the glyph
+ * planet in the step's welcome pose and the living dot field, `WelcomeAtmosphere`) on every width. The wordmark
+ * stands top-left, the links are a quiet line bottom-left on a computer and a row under the column on a phone.
+ * Step bodies render inside the workflow column as-is; the shell does not inspect their internals.
  */
 export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSplitShell(
     props: UnauthenticatedSplitShellProps,
 ) {
     const styles = stylesheet;
-
-    const allowMobileBrandHero = props.allowMobileBrandHero ?? props.isWelcomeStep;
-    const layout = useUnauthShellLayout({ allowMobileBrandHero });
-
-    if (layout === 'mobile-hero') {
-        return (
-            <View
-                testID={props.testID ?? 'unauth-shell-mobile-hero'}
-                style={styles.mobileOnlyRoot}
-            >
-                <BrandPanel
-                    variant="mobile-hero"
-                    onGetStarted={props.onBrandHeroGetStarted}
-                />
-            </View>
-        );
-    }
-
-    const isSplit = layout === 'split';
-    // Keep the workflow in the same child slot across the breakpoint: its
-    // recovery forms and in-progress authentication must not remount.
+    const layout = useUnauthShellLayout(props.frameWidth);
+    const compact = layout === 'compact';
     return (
-        <View
-            testID={props.testID ?? (isSplit ? 'unauth-shell-split' : 'unauth-shell-mobile-workflow')}
-            style={isSplit ? styles.splitRoot : styles.mobileOnlyRoot}
-        >
-            {isSplit ? <StagePane /> : null}
+        <View testID={props.testID ?? 'unauth-shell'} style={styles.root}>
+            <WelcomeAtmosphere state={props.isWelcomeStep ? 'welcome' : 'deep'} phone={compact} />
             <WorkflowPanel
-                variant={isSplit ? 'desktop' : 'mobile'}
+                variant={compact ? 'mobile' : 'desktop'}
                 isWelcomeStep={props.isWelcomeStep}
                 showMobileWordmark={props.showMobileWordmark}
                 retentionDisclosure={props.retentionDisclosure}
@@ -144,12 +96,9 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     );
 });
 
-const stylesheet = StyleSheet.create(() => ({
-    splitRoot: {
+const stylesheet = StyleSheet.create((theme) => ({
+    root: {
         flex: 1,
-        flexDirection: 'row',
-    },
-    mobileOnlyRoot: {
-        flex: 1,
+        backgroundColor: theme.colors.background.canvas,
     },
 }));

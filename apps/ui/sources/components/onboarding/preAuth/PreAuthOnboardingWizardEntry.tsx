@@ -26,7 +26,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { OnboardingWizardSurfacePresentation } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
 import { useOnboardingWizardController } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import type { WelcomeAuthenticationActionContext } from '@/components/onboarding/surfaces/useOnboardingWizardController';
-import { UnauthenticatedSplitShell, useApplyBrandHeroSeen } from '@/components/onboarding/unauthShell';
+import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell';
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { UpdatesEntry } from '@/components/updates/UpdatesPopoverButton';
@@ -94,7 +94,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             ? { kind: 'enter', target: { kind: 'explicit', homeServerIdentityId: authEntryOptions.observedHomeServerIdentityId } }
             : { kind: 'enter', target: { kind: 'automatic' } }
     ), [authEntryOptions.observedHomeServerIdentityId, authEntryOptions.requestedHomeTarget]);
-    const applyBrandHeroSeen = useApplyBrandHeroSeen();
     const shellChromeHost = resolveAppShellChromeHost({
         isAuthenticated: false,
         isDesktopHost: isDesktopShell,
@@ -269,9 +268,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         <UnauthenticatedSplitShell
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
-            allowMobileBrandHero={controller.stepId === 'welcome'}
             retentionDisclosure={authEntryOptions.retentionDisclosure}
-            onBrandHeroGetStarted={applyBrandHeroSeen}
             onBack={controller.onBack ?? undefined}
             footerAccessory={workflowFooterAccessory}
             testID={shellTestID}

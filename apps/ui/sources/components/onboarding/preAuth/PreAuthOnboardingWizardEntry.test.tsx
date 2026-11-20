@@ -44,7 +44,6 @@ const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const serverRuntimeState = vi.hoisted(() => ({
     serverUrl: null as string | null,
 }));
-const applyBrandHeroSeenMock = vi.hoisted(() => vi.fn());
 const wizardControllerMock = vi.hoisted(() => {
     const goToStep = vi.fn();
     return {
@@ -207,17 +206,7 @@ vi.mock('@/components/onboarding/surfaces/useOnboardingWizardController', () => 
 
 vi.mock('@/components/onboarding/unauthShell', () => ({
     UnauthenticatedSplitShell: (props: Record<string, unknown>) =>
-        React.createElement(
-            'UnauthenticatedSplitShell',
-            props,
-            props.children as React.ReactNode,
-            React.createElement('BrandHeroGetStarted', {
-                key: 'brand-hero-get-started',
-                testID: 'brand-hero-get-started',
-                onPress: props.onBrandHeroGetStarted,
-            }),
-        ),
-    useApplyBrandHeroSeen: () => applyBrandHeroSeenMock,
+        React.createElement('UnauthenticatedSplitShell', props, props.children as React.ReactNode),
 }));
 
 vi.mock('@/components/updates/UpdatesPopoverButton', () => ({
@@ -264,7 +253,6 @@ describe('PreAuthOnboardingWizardEntry', () => {
             kind: 'completed',
         });
         runtimeFetchMock.mockReset();
-        applyBrandHeroSeenMock.mockReset();
         onboardingAuthHistoryState.set('completed', false);
         authState.isAuthenticated = false;
         wizardControllerMock.goToStep.mockReset();
@@ -384,15 +372,6 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findByType('UnauthenticatedSplitShell' as never).props.footerAccessory ?? null).toBeNull();
     });
 
-    it('writes the shell-local brand hero seen flag without changing wizard step history', async () => {
-        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
-        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
-
-        screen.pressByTestId('brand-hero-get-started');
-
-        expect(applyBrandHeroSeenMock).toHaveBeenCalledTimes(1);
-        expect(wizardControllerMock.goToStep).not.toHaveBeenCalled();
-    });
 
     it('uses runtimeFetch instead of global fetch for web mtls login', async () => {
         serverRuntimeState.serverUrl = 'https://api.example.test';

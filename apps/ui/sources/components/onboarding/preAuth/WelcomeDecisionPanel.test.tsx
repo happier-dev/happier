@@ -253,7 +253,7 @@ describe('WelcomeDecisionPanel', () => {
 
     it.each([
         { state: 'live', expiresInMs: 60_000, title: 'welcome.terminalContinuationTitle', subtitle: 'welcome.terminalContinuationSubtitle' },
-        { state: 'expired', expiresInMs: -1, title: 'welcome.welcomeQuestionTitle', subtitle: 'welcome.welcomeQuestionSubtitle' },
+        { state: 'expired', expiresInMs: -1, title: 'welcome.brandTaglineLine1', subtitle: 'welcome.brandTaglineLine2' },
     ] as const)('greets a person sent here by a $state terminal link', async ({ expiresInMs, title, subtitle }) => {
         const { setPendingTerminalConnect, clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -291,8 +291,8 @@ describe('WelcomeDecisionPanel', () => {
 
         const greetings = screen.findAll(node => typeof node.type === 'string'
             && node.props.accessibilityRole === 'header'
-            && (node.props.children === t('welcome.welcomeQuestionTitle')
-                || node.props.children === t('welcome.welcomeQuestionSubtitle')));
+            && (node.props.children === t('welcome.brandTaglineLine1')
+                || node.props.children === t('welcome.brandTaglineLine2')));
         expect(greetings).toHaveLength(0);
         await screen.pressByTestIdAsync('welcome-primary-start');
         expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({
@@ -901,7 +901,7 @@ describe('WelcomeDecisionPanel', () => {
                 const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
                 const screen = await screenPromise;
                 const text = screen.getTextContent();
-                expect(text).toContain(t('welcome.welcomeQuestionBodyWithKey'));
+                expect(text).toContain(t('welcome.brandSubTagline'));
                 expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomePrimaryButton'), t('welcome.welcomeSecondaryButton')]);
                 expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children).toBe(t('welcome.welcomePrimarySubtitle'));
                 // A computer's Login leads with the recovery key, so its door promises that first.
@@ -948,7 +948,7 @@ describe('WelcomeDecisionPanel', () => {
                     }],
                 });
                 const screen = await screenPromise;
-                expect(screen.getTextContent()).toContain(t('welcome.welcomeQuestionBody'));
+                expect(screen.getTextContent()).toContain(t('welcome.brandSubTagline'));
                 expect(screen.getTextContent()).not.toContain(t('welcome.welcomeQuestionBodyWithKey'));
                 expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children)
                     .toBe(t('welcome.newHereHomeSubtitle', { home: 'Home A' }));

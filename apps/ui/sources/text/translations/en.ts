@@ -18908,7 +18908,7 @@ const enWelcome = {
   brandTaglineLine1: 'Start coding anywhere.',
   brandTaglineLine2: 'Continue everywhere.',
   brandSubTagline:
-    'One control room for every coding agent — on every device you own.',
+    'One control room for every coding agent, on every device you own.',
   brandTrustStrip: 'END-TO-END ENCRYPTED · OPEN SOURCE · SELF-HOSTABLE',
   providerMarkRowAccessibilityLabel: 'Supported AI coding agents',
   brandWordmarkAccessibilityLabel: 'Happier',

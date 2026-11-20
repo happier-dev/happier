@@ -261,10 +261,8 @@ describe('TeamAuthEntrySurface', () => {
 
         expect(screen.findByTestId('team-auth-entry-shell')).toBeTruthy();
         const shell = screen.findAll((node) => node.props.testID === 'team-auth-entry-shell')
-            .find((node) => 'allowMobileBrandHero' in node.props);
-        expect(shell?.props.allowMobileBrandHero).toBe(false);
+            .find((node) => 'showMobileWordmark' in node.props);
         expect(shell?.props.showMobileWordmark).toBe(true);
-        expect(screen.findAllByTestId('unauth-shell-mobile-hero')).toHaveLength(0);
         const heading = screen.findByTestId('team-auth-entry-heading');
         expect(heading?.props.role).toBe('heading');
         expect(heading?.props.accessibilityLabel).toContain('A very long Team name');

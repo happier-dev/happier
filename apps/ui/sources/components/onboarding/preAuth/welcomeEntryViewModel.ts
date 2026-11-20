@@ -27,7 +27,8 @@ type Notice = Readonly<{
 
 /** Display-only payload shared by live Welcome and the opening window. */
 export type WelcomeEntryViewModel = Readonly<{
-    heading?: Readonly<{ title: string; subtitle: string; intro?: string }>;
+    /** `compact`: the phone's own two lines where they differ (direction A greets a phone with the welcome question). */
+    heading?: Readonly<{ title: string; subtitle: string; intro?: string; compact?: Readonly<{ title: string; subtitle: string }> }>;
     signupNotice?: string;
     quietWaysTitle?: string;
     doors: readonly Readonly<{ index: number; display: Action }>[];
@@ -179,8 +180,11 @@ export function projectWelcomeEntryViewModel(
         heading: !input.showGreeting ? undefined : input.terminalWaiting
             ? { title: t('welcome.terminalContinuationTitle'), subtitle: t('welcome.terminalContinuationSubtitle') }
             : returning ? input.returningGreeting
-                : { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle'),
-                    intro: t(model.showKeyProvisioningIntro ? 'welcome.welcomeQuestionBodyWithKey' : 'welcome.welcomeQuestionBody') },
+                // Direction A (owner 2026-11-19): the product's own line leads the first welcome; the door below says
+                // what starting here does ("Your key lives here" only where the key is made on this device).
+                : { title: t('welcome.brandTaglineLine1'), subtitle: t('welcome.brandTaglineLine2'),
+                    intro: t('welcome.brandSubTagline'),
+                    compact: { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle') } },
         signupNotice: signupClosed ? t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') : undefined,
         quietWaysTitle: model.showWaysHeading ? t('homesJourneys.alreadyUseTitle') : undefined,
         doors,

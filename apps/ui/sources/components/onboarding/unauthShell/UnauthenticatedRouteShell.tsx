@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 
-const NOOP = () => {};
 
 /**
  * The shell of every signed-out route that is one step rather than the welcome wizard itself: Team
@@ -26,8 +25,6 @@ export function UnauthenticatedRouteShell(props: Readonly<{
             stepId={props.stepId}
             isWelcomeStep={false}
             showMobileWordmark
-            allowMobileBrandHero={false}
-            onBrandHeroGetStarted={NOOP}
             onBack={props.onBack}
         >
             {/* Natural height: a state's own centering has nothing to centre in, so it sits at the top. */}

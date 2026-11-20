@@ -138,7 +138,6 @@ vi.mock('@/components/navigation/shell/MainView', () => ({
 
 vi.mock('@/components/onboarding/unauthShell', () => ({
     UnauthenticatedSplitShell: (props: any) => React.createElement('UnauthenticatedSplitShell', props, props.children),
-    useApplyBrandHeroSeen: () => vi.fn(),
 }));
 
 vi.mock('@/modal', async () => {

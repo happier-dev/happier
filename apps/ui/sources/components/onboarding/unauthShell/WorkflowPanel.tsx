@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { ScrollView, View, type ViewStyle } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,9 +12,7 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 
 import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
-import { PlanetBackground } from './PlanetBackground';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
-import { useBrandPaneTokens } from './brandPaneTokens';
 import type { RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
 
 // Mobile welcome wordmark sits at the same coordinates as the brand hero's
@@ -44,20 +41,13 @@ const WORKFLOW_MOBILE_TOP_PADDING = 28;
 const WORKFLOW_MOBILE_HORIZONTAL_PADDING = 24;
 const WORKFLOW_MOBILE_BOTTOM_PADDING = 28;
 /**
- * The phone Welcome copy scrim fades in across the heading's two 44px hero lines, so the heading keeps
- * the planet behind it and the body copy beneath always sits on the full scrim.
- */
-const WELCOME_SCRIM_FADE_PX = 88;
-const WELCOME_SCRIM_FADE_START = { x: 0, y: 0 } as const;
-const WELCOME_SCRIM_FADE_END = { x: 0, y: 1 } as const;
-const WELCOME_SCRIM_FADE_STYLE: ViewStyle = { height: WELCOME_SCRIM_FADE_PX };
-
-/**
  * The desktop horizontal padding that sits inside the pane's `maxWidth`. The
  * visible pane width = content width + 2× this gutter. Kept in sync with the
  * `desktopPadding` style below.
  */
 const WORKFLOW_DESKTOP_HORIZONTAL_GUTTER = 64;
+/** The desktop wordmark's corner inset, on the page's outer gutter (lab direction A). */
+const DESKTOP_WORDMARK_INSET_PX = 40;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
     flex: 1,
     minHeight: 0,
@@ -101,7 +91,7 @@ export type WorkflowPanelProps = Readonly<{
  * All colors come from theme tokens; the workflow pane respects light/dark.
  */
 export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPanelProps) {
-    const { theme } = useUnistyles();
+    useUnistyles();
     const safeAreaInsets = useSafeAreaInsets();
     const styles = stylesheet;
     const isMobile = props.variant === 'mobile';
@@ -138,8 +128,9 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // bottom (visual parity with the prior fixed-position layout); on short
     // screens the spacer collapses and the column scrolls — content and
     // footer always remain reachable instead of overlapping.
-    const showMobileWordmark = isMobile && (props.isWelcomeStep || props.showMobileWordmark === true);
-    const wordmarkInBackRow = showMobileWordmark && !props.isWelcomeStep;
+    // The wordmark stands top-left on every welcome step and wherever a step asks for it (direction A).
+    const showMobileWordmark = props.isWelcomeStep || props.showMobileWordmark === true;
+    const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep;
     const contentPaddingStyle: ViewStyle = isMobile
         ? isFullBleed
             ? styles.contentMobileFullBleedPadding
@@ -156,47 +147,12 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             }
         : styles.contentDesktopPadding;
 
-    // On mobile, the welcome step gets a cosmic backdrop — a heavily oversized,
-    // bottom-anchored planet behind the content. The brand hero on first
-    // launch already shows the same planet imagery; carrying it into the
-    // welcome step keeps the cosmic identity present rather than dropping
-    // back to flat canvas. Scoped to mobile + welcome so other steps stay
-    // clean and desktop uses StagePane for the planet.
-    const showMobileWelcomeBackdrop = isMobile && props.isWelcomeStep;
-    // When the planet backdrop renders, the underlying canvas color must
-    // match the planet's top-edge color so any area not covered by the
-    // oversized image blends seamlessly with it. Outside the welcome step
-    // (or on desktop) we keep the regular canvas color.
-    const brandPaneTokens = useBrandPaneTokens();
-    const paneBackgroundColor = showMobileWelcomeBackdrop
-        ? brandPaneTokens.background
-        : theme.colors.background.canvas;
-    // Same bottom fade the brand hero overlays on its planet (transparent →
-    // canvas color over the bottom 60%). Without it the welcome step's planet
-    // looked subtly different from the brand hero's. The fade also softens the
-    // backdrop behind the bottom-aligned heading + buttons for legibility.
-    const planetFadeColors = [brandPaneTokens.backgroundTransparent, brandPaneTokens.background] as const;
-
     return (
         <View
             testID={props.testID ?? 'unauth-shell-workflow-pane'}
-            style={[
-                styles.paneOuter,
-                {
-                    backgroundColor: paneBackgroundColor,
-                    maxWidth: paneMaxWidth,
-                },
-            ]}
+            // The pane is transparent: the shell's welcome atmosphere draws the page behind it.
+            style={styles.paneOuter}
         >
-            {showMobileWelcomeBackdrop ? <PlanetBackground variant="mobile" /> : null}
-            {showMobileWelcomeBackdrop ? (
-                <LinearGradient
-                    pointerEvents="none"
-                    colors={planetFadeColors}
-                    locations={[0, 1]}
-                    style={styles.planetBottomFade}
-                />
-            ) : null}
             {showMobileWordmark ? (
                 <View
                     testID="welcome-mobile-wordmark"
@@ -209,10 +165,10 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 right: safeAreaInsets.right,
                                 alignItems: 'center',
                             }
-                            : {
+                            : isMobile ? {
                                 top: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.top,
                                 left: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.left,
-                            },
+                            } : styles.desktopWordmark,
                     ]}
                     pointerEvents="box-none"
                 >
@@ -277,27 +233,6 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         <>
                             <View style={styles.footerSpacer} />
                             <View>
-                                {/*
-                                  * The copy column dims the planet behind it, edge to edge and down to the
-                                  * screen bottom, fading in across the heading: on a short phone the column
-                                  * climbs over the orb, where secondary text would lose its contrast.
-                                  */}
-                                <View
-                                    pointerEvents="none"
-                                    style={[styles.welcomeScrim, {
-                                        left: -(WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left),
-                                        right: -(WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right),
-                                        bottom: -(WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom),
-                                    }]}
-                                >
-                                    <LinearGradient
-                                        colors={[brandPaneTokens.backgroundTransparent, brandPaneTokens.scrim]}
-                                        start={WELCOME_SCRIM_FADE_START}
-                                        end={WELCOME_SCRIM_FADE_END}
-                                        style={WELCOME_SCRIM_FADE_STYLE}
-                                    />
-                                    <View style={[styles.welcomeScrimFill, { backgroundColor: brandPaneTokens.scrim }]} />
-                                </View>
                                 <StepMotionLayer
                                     layerKey="workflow"
                                     backTestID={UNAUTH_BACK_TEST_ID}
@@ -323,7 +258,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 testID="unauth-shell-step-transition"
                                 stepKey={props.transitionKey}
                                 compact={isMobile}
-                                style={STEP_TRANSITION_NATURAL_STYLE}
+                                style={[STEP_TRANSITION_NATURAL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                             >
                                 {props.children}
                             </StepMotionLayer>
@@ -346,7 +281,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             testID="unauth-shell-step-transition"
                             stepKey={props.transitionKey}
                             compact={isMobile}
-                            style={STEP_TRANSITION_FILL_STYLE}
+                            style={isMobile ? STEP_TRANSITION_FILL_STYLE : [STEP_TRANSITION_FILL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                         >
                             {props.children}
                         </StepMotionLayer>
@@ -440,20 +375,13 @@ const stylesheet = StyleSheet.create(() => ({
         // top + left are applied inline alongside the safe-area insets.
         zIndex: 1,
     },
-    welcomeScrim: {
-        position: 'absolute',
-        top: 0,
+    // Direction A: the step column stands centred in the window, the wordmark in its top-left corner.
+    desktopColumn: {
+        width: '100%',
+        alignSelf: 'center',
     },
-    welcomeScrimFill: {
-        flex: 1,
-    },
-    // Mirrors BrandPanel's bottomFadeMobile so the welcome-step planet fades
-    // to the canvas color over the bottom 60% exactly like the brand hero.
-    planetBottomFade: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: '60%',
+    desktopWordmark: {
+        top: DESKTOP_WORDMARK_INSET_PX,
+        left: DESKTOP_WORDMARK_INSET_PX,
     },
 }));

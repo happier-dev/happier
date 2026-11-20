@@ -22,6 +22,11 @@ export type WelcomeEntryViewInteraction = Readonly<{
     policyNotice?: React.ReactNode;
 }>;
 
+/** The doors' column (lab direction A: 380 px), narrower than the headline above it. */
+const WELCOME_DOOR_WIDTH_PX = 380;
+/** The subline wraps to two short balanced lines under the headline. */
+const WELCOME_INTRO_WIDTH_PX = 300;
+
 const noAction = () => {};
 const inertAdmission: WelcomeActionAdmission = { pendingActionId: null, run: async () => {} };
 
@@ -49,10 +54,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             importantForAccessibility={interaction ? 'auto' : 'no-hide-descendants'}>
             {model.heading ? <View style={styles.headingBlock}>
                 <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
-                    {model.heading.title}
+                    {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
                 </Text>
                 <Text accessibilityRole="header" style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]}>
-                    {model.heading.subtitle}
+                    {compact && model.heading.compact ? model.heading.compact.subtitle : model.heading.subtitle}
                 </Text>
                 {model.heading.intro ? (
                     <Text testID="welcome-intro" style={[styles.intro, compact ? styles.introCompact : null]}>
@@ -119,9 +124,11 @@ function WelcomeNotice({ notice, onRetry }: Readonly<{
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // Direction A: one centred column over the planet; the headline is art-directed, the doors narrower than it.
     root: {
         flex: 1,
         justifyContent: 'center',
+        alignItems: 'center',
         width: '100%',
         maxWidth: 520,
         alignSelf: 'center',
@@ -131,6 +138,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s16,
     },
     headingBlock: {
+        alignItems: 'center',
         // No vertical gap between the two title lines — matches the brand
         // tagline's `Start coding anywhere. / Continue everywhere.` rhythm, where
         // line-height == font-size and the lines sit flush against each other.
@@ -143,6 +151,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // tagline uses on the left pane.
         lineHeight: 44,
         letterSpacing: -1.54,
+        textAlign: 'center',
         color: theme.colors.text.primary,
         // Two short lines split evenly: no word alone on the last line (web; native has no balance).
         ...HAPPIER_BALANCED_TEXT_WRAP,
@@ -152,12 +161,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 44,
         lineHeight: 44,
         letterSpacing: -1.54,
+        textAlign: 'center',
         color: theme.colors.text.secondary,
         ...HAPPIER_BALANCED_TEXT_WRAP,
     },
     actionStack: {
         gap: theme.space.s12,
         width: '100%',
+        maxWidth: WELCOME_DOOR_WIDTH_PX,
+        alignSelf: 'center',
     },
     ways: {
         width: '100%',
@@ -172,9 +184,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s2,
     },
     intro: {
-        ...Typography.variant('reading'),
+        ...Typography.variant('body'),
         color: theme.colors.text.secondary,
+        textAlign: 'center',
+        maxWidth: WELCOME_INTRO_WIDTH_PX,
         marginTop: theme.space.s16,
+        ...HAPPIER_BALANCED_TEXT_WRAP,
     },
     introCompact: {
         ...Typography.variant('body'),

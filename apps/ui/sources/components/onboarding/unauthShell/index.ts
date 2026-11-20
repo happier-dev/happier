@@ -13,11 +13,8 @@ export {
 export { UnauthenticatedRouteShell } from './UnauthenticatedRouteShell';
 export { UnauthenticatedStep, UnauthenticatedStepHeading, type UnauthenticatedStepProps } from './UnauthenticatedStep';
 
-export { useApplyBrandHeroSeen } from './useApplyBrandHeroSeen';
-export { useBrandHeroSeenAt } from './useBrandHeroSeenAt';
 export {
     useUnauthShellLayout,
     type UnauthShellLayout,
-    type UnauthShellLayoutParams,
     MOBILE_MAX_WIDTH_PX,
 } from './useUnauthShellLayout';

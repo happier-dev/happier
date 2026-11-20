@@ -6,11 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
-import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 
-import { StagePane } from './StagePane';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 import type { UnauthShellLayout } from './useUnauthShellLayout';
 
@@ -63,8 +61,7 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 const initialStorageState = storage.getState();
 
 function setLayoutFixture(layout: UnauthShellLayout) {
-    deviceState.width = layout === 'split' ? 1000 : 390;
-    onboardingHistoryState.set('brandHeroSeenAt', layout === 'mobile-workflow' ? 1 : null);
+    deviceState.width = layout === 'desktop' ? 1000 : 390;
 }
 
 function FakeBody(props: { label: string }) {
@@ -97,7 +94,7 @@ describe('UnauthenticatedSplitShell', () => {
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); });
 
     it('keeps the signed-out recovery body mounted when credentials publish before the landing', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const content = (token?: string) => (
             <InjectedAuthProvider credentials={token ? { token } : null}>
                 <AuthRouteStepFrame testID="restore-manual" title="Restore your Home">
@@ -115,7 +112,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('keeps an in-progress recovery draft when resizing between phone and desktop', async () => {
-        setLayoutFixture('mobile-workflow');
+        setLayoutFixture('compact');
         const content = () => (
             <UnauthenticatedSplitShell
                 stepId="restore"
@@ -129,49 +126,17 @@ describe('UnauthenticatedSplitShell', () => {
         await act(async () => {
             screen.findByTestId('recovery-draft')!.props.onChangeText('in-progress pairing link');
         });
-        await act(async () => { setLayoutFixture('split'); });
+        await act(async () => { setLayoutFixture('desktop'); });
         await screen.update(content());
         expect(screen.findByTestId('recovery-draft')!.props.value).toBe('in-progress pairing link');
-        await act(async () => { setLayoutFixture('mobile-workflow'); });
+        await act(async () => { setLayoutFixture('compact'); });
         await screen.update(content());
         expect(screen.findByTestId('recovery-draft')!.props.value).toBe('in-progress pairing link');
         await screen.unmount();
     });
 
-    it('renders brand stage left and workflow right in split layout (R1 order)', async () => {
-        setLayoutFixture('split');
-        const screen = await renderScreen(
-            <UnauthenticatedSplitShell
-                stepId="welcome"
-                isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
-            >
-                <FakeBody label="welcome" />
-            </UnauthenticatedSplitShell>,
-        );
-
-        expect(screen.findByTestId('unauth-shell-split')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
-        expect(screen.findByTestId('fake-step-body')).toBeTruthy();
-
-        // R1 reference order (and D5): planet/brand pane LEFT, workflow column
-        // RIGHT. A mirrored shell (column-left) is a regression.
-        const splitRoot = screen.findByTestId('unauth-shell-split');
-        const paneOrder = splitRoot
-            ?.findAll((node) => (
-                node.props?.testID === 'unauth-shell-workflow-pane'
-                || node.props?.testID === 'unauth-shell-stage-pane'
-            ))
-            .map((node) => node.props.testID);
-        expect(paneOrder).toEqual([
-            'unauth-shell-stage-pane',
-            'unauth-shell-workflow-pane',
-        ]);
-    });
-
     it('keeps the workflow pane shrinkable so nested setup and restore scroll views can scroll', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="relay_select"
@@ -186,68 +151,20 @@ describe('UnauthenticatedSplitShell', () => {
         expect(flattenStyle(workflowPane?.props.style).minHeight).toBe(0);
     });
 
-    it('renders only the brand panel (with Get started) in mobile-hero layout', async () => {
-        setLayoutFixture('mobile-hero');
-        const onBrandHeroGetStarted = vi.fn();
+    // Direction A: one column over the welcome atmosphere at every width, no split brand pane and no phone prelude.
+    it.each(['desktop', 'compact'] as const)('draws the welcome atmosphere behind the one workflow column (%s)', async (layout) => {
+        setLayoutFixture(layout);
         const screen = await renderScreen(
-            <UnauthenticatedSplitShell
-                stepId="welcome"
-                isWelcomeStep
-                onBrandHeroGetStarted={onBrandHeroGetStarted}
-            >
-                <FakeBody label="welcome" />
+            <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
+                <FakeBody label="Welcome body" />
             </UnauthenticatedSplitShell>,
         );
-
-        expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
-        expect(screen.findByTestId('brand-hero-get-started')).toBeTruthy();
-        // The workflow pane is not mounted in mobile-hero.
-        expect(screen.findAllByTestId('fake-step-body')).toEqual([]);
-
-        screen.pressByTestId('brand-hero-get-started');
-        expect(onBrandHeroGetStarted).toHaveBeenCalledTimes(1);
+        expect(screen.findAllHostsByTestId('welcome-atmosphere')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('unauth-shell-workflow-pane')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('welcome-mobile-wordmark')).toHaveLength(1);
     });
-
-    it('keeps mobile brand hero content inside native safe areas', async () => {
-        setLayoutFixture('mobile-hero');
-        deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
-
-        const screen = await renderScreen(
-            <UnauthenticatedSplitShell
-                stepId="welcome"
-                isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
-            >
-                <FakeBody label="welcome" />
-            </UnauthenticatedSplitShell>,
-        );
-
-        const content = screen.findByTestId('unauth-shell-brand-content-mobile');
-        const style = flattenStyle(content?.props.style);
-        expect(style.top).toBe(68);
-        expect(style.bottom).toBe(62);
-    });
-
-    it('renders only the workflow pane in mobile-workflow layout', async () => {
-        setLayoutFixture('mobile-workflow');
-        const screen = await renderScreen(
-            <UnauthenticatedSplitShell
-                stepId="welcome"
-                isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
-            >
-                <FakeBody label="welcome" />
-            </UnauthenticatedSplitShell>,
-        );
-
-        expect(screen.findByTestId('unauth-shell-mobile-workflow')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
-        expect(screen.findByTestId('fake-step-body')).toBeTruthy();
-        expect(screen.findAllByTestId('unauth-shell-brand-pane')).toEqual([]);
-    });
-
     it('keeps mobile workflow content inside native safe areas and stretches transitioned content', async () => {
-        setLayoutFixture('mobile-workflow');
+        setLayoutFixture('compact');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
 
         const screen = await renderScreen(
@@ -272,7 +189,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('lets scanner-style mobile workflow steps render full-bleed without shell padding', async () => {
-        setLayoutFixture('mobile-workflow');
+        setLayoutFixture('compact');
         deviceState.safeAreaInsets = { top: 44, bottom: 34, left: 0, right: 0 };
 
         const screen = await renderScreen(
@@ -295,7 +212,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders WelcomeFooterLinks only when isWelcomeStep is true', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const screenWelcome = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
@@ -323,7 +240,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('puts the footer accessory at the end of the welcome help row and in the same bottom-right slot on later steps, never over the content', async () => {
-        for (const layout of ['split', 'mobile-workflow'] as const) {
+        for (const layout of ['desktop', 'compact'] as const) {
             setLayoutFixture(layout);
             const accessory = <Text testID="footer-accessory">updates</Text>;
             const welcome = await renderScreen(
@@ -372,7 +289,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders no footer accessory slot when the host passes none', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
@@ -386,7 +303,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('renders BackChevron only when onBack is provided', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const onBack = vi.fn();
         const screenWithBack = await renderScreen(
             <UnauthenticatedSplitShell
@@ -421,7 +338,7 @@ describe('UnauthenticatedSplitShell', () => {
     });
 
     it('does not expose the focused Home as a welcome auth authority and keeps footer links at their design size', async () => {
-        setLayoutFixture('split');
+        setLayoutFixture('desktop');
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
@@ -443,18 +360,5 @@ describe('UnauthenticatedSplitShell', () => {
             expect(style.minWidth).toBeUndefined();
             expect(style.minHeight).toBeUndefined();
         }
-    });
-});
-
-describe('StagePane', () => {
-    beforeEach(() => {
-        deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
-    });
-
-    it('renders the brand panel', async () => {
-        const screen = await renderScreen(<StagePane />);
-
-        expect(screen.findByTestId('unauth-shell-stage-pane')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
     });
 });
