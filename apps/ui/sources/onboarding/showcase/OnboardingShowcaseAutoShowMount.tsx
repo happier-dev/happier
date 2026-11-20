@@ -48,7 +48,9 @@ export function OnboardingShowcaseAutoShowMount(): null {
             showcase.markSeen();
             return;
         }
-        if (modalStackActive || !welcomeActive || landingPending || setupPending || getPendingTerminalConnect()) return;
+        // Inline auth admits Home in a layout effect of this same commit. Read the live handoff
+        // before opening the modal, then use the subscription to wake when the landing settles.
+        if (modalStackActive || !welcomeActive || isShowcaseHomeLandingPending() || setupPending || getPendingTerminalConnect()) return;
 
         ranRef.current = true;
         let modalId: string | null = null;

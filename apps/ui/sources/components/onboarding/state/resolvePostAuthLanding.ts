@@ -4,6 +4,14 @@ import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { setShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
 import { tryAdmitInternalRouteHref } from '@/utils/path/routeUtils';
 
+export function revealFirstArrivalHome(layer: string, commit: () => void): void {
+    setShowcaseHomeLandingPending(true);
+    runStepMove({
+        kind: 'home', layer, commit,
+        onSettled: () => setShowcaseHomeLandingPending(false),
+    });
+}
+
 /**
  * Apply the destination selected by the auth operation or its continuation owner.
  * Return URLs are only read for navigation because their opaque values may contain credentials.
@@ -21,11 +29,5 @@ export function resolvePostAuthLanding(input: Readonly<{
         input.replace(target);
         return;
     }
-    setShowcaseHomeLandingPending(true);
-    runStepMove({
-        kind: 'home',
-        layer: 'workflow',
-        commit: input.revealHome ?? (() => input.replace('/')),
-        onSettled: () => setShowcaseHomeLandingPending(false),
-    });
+    revealFirstArrivalHome('workflow', input.revealHome ?? (() => input.replace('/')));
 }

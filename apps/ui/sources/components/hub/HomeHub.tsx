@@ -79,6 +79,8 @@ import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
 import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { usePersonalHomeBootstrapCovered } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { HomeBotMoons } from './HomeBotMoons';
 import { homePlanetDrawnHeight, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
 import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
@@ -529,6 +531,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         height: homePlanetDrawnHeight(heroFrame.pane.height, planetFadeFrom !== undefined && planetFadeTo !== undefined
             ? { from: planetFadeFrom, to: planetFadeTo } : undefined) }), [heroFrame.pane.height, heroFrame.pane.width, planetFadeFrom, planetFadeTo]);
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
+    const homeCovered = usePersonalHomeBootstrapCovered();
     const firstArrival = useHomeGlyphArrival();
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
         guidanceKind: guidance.kind, heroActive, planetSource, pane: planetPane,
@@ -548,9 +551,11 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Parked Home's glass sleeps through the backing of the tabs shown in its place.
     const framed = (content: React.ReactNode) => (
         <GlassEnvironmentHold presented={presented} carriesAtmosphere={heroActive && heroFrame.hero !== null}>
-            <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
-                {content}
-            </HomeHubFrame>
+            <StepMotionLayer layerKey="home" active={focused && !homeLoading && !homeCovered} retainContent warmOnMount={false} style={styles.pane}>
+                <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
+                    {content}
+                </HomeHubFrame>
+            </StepMotionLayer>
         </GlassEnvironmentHold>
     );
     useVoiceBriefHomeRequest({

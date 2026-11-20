@@ -144,6 +144,26 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         expect(modalState.show).toHaveBeenCalledTimes(1);
     });
 
+    it('waits for a Home landing admitted in the same commit as authentication', async () => {
+        const { setShowcaseHomeLandingPending } = await import('./storage');
+        const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
+        function Landing() {
+            React.useLayoutEffect(() => {
+                if (authState.isAuthenticated) setShowcaseHomeLandingPending(true);
+            }, [authState.isAuthenticated]);
+            return <OnboardingShowcaseAutoShowMount />;
+        }
+        try {
+            const screen = await renderScreen(<Landing />);
+            await signIn(screen, <Landing />);
+            expect(modalState.show).not.toHaveBeenCalled();
+            await act(async () => setShowcaseHomeLandingPending(false));
+            expect(modalState.show).toHaveBeenCalledTimes(1);
+        } finally {
+            setShowcaseHomeLandingPending(false);
+        }
+    });
+
     it('offers Ask Happier on the last card as an explicit choice that closes the tour as seen', async () => {
         const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
         const { getShowcaseSeenVersion } = await import('./storage');

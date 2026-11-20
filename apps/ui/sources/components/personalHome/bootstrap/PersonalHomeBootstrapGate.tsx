@@ -3,7 +3,7 @@ import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native
 import { useUnistyles } from 'react-native-unistyles';
 
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
-import { playBuild, runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { revealFirstArrivalHome } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { useAtmosphereMoment } from '@/components/atmosphere/atmosphereMoments';
@@ -49,6 +49,12 @@ type PersonalHomeBootstrapPresentation = Readonly<{
     setupSurface?: PersonalHomeBootstrapGateProps['setupSurface'];
 }>;
 const PersonalHomeBootstrapPresentationContext = React.createContext<PersonalHomeBootstrapPresentation | null>(null);
+const PersonalHomeBootstrapCoverContext = React.createContext(false);
+
+/** The held setup frame stays in front until the bootstrap content owner releases it. */
+export function usePersonalHomeBootstrapCovered(): boolean {
+    return React.useContext(PersonalHomeBootstrapCoverContext);
+}
 
 /** The mounted bootstrap owner, not Tauri host eligibility, decides who owns signed-out Home. */
 export function usePersonalHomeBootstrapActive(): boolean {
@@ -72,13 +78,8 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
         const commit = () => setHeld(null);
         const firstArrival = presentation?.firstArrival === true && !firstArrivalPlayed.current;
         if (firstArrival) firstArrivalPlayed.current = true;
-        if (firstArrival && held.phase !== 'checking') {
-            runStepMove({ layer: 'personal-home-setup', kind: 'home', commit });
-        } else {
-            // Home is already mounted. Start its build before dropping the held checking layer.
-            if (firstArrival) void playBuild({ layer: 'home', choreography: 'home' });
-            commit();
-        }
+        if (firstArrival) revealFirstArrivalHome('personal-home-setup', commit);
+        else commit();
     }, [gating, held, presentation?.firstArrival]);
     const setupProps = presentation && frameSnapshot ? { ...presentation.setupProps, snapshot: frameSnapshot } : null;
     const customSurface = presentation?.setupSurface;
@@ -112,10 +113,7 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
                 importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
                 {...(Platform.OS === 'web' && covered ? { inert: true } : {})}
             >
-                <StepMotionLayer layerKey="home" stepKey={covered ? 'preparing' : 'ready'} retainContent warmOnMount={false}
-                    style={{ flex: 1 }}>
-                    {props.children}
-                </StepMotionLayer>
+                <PersonalHomeBootstrapCoverContext.Provider value={covered}>{props.children}</PersonalHomeBootstrapCoverContext.Provider>
             </View>
             {setupSurface && !customSurface ? (
                 <View pointerEvents="none" style={StyleSheet.absoluteFill}>
