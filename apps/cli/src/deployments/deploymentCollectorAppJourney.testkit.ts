@@ -26,11 +26,11 @@ const ComposeDocument = z.looseObject({ services: z.record(z.string(), z.looseOb
 export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = async context => {
     const { home, initiator, nativeDocker } = context;
     const catalog = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.list'].parse(
-        await initiator.accepted('registries.sources.list', { kind: 'app' })).sources
+        await initiator.accepted('registries.sources.list', { kind: 'app' }, home.machineId)).sources
         .find(source => 'packageContent' in source && source.origin.pluginId === 'happier.deployment.templates');
     if (!catalog) throw new Error('The enrolled host must publish its bundled App catalog');
     const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await initiator.accepted(
-        'registries.items.read', { kind: 'app', sourceId: catalog.id, itemId: 'telemetry-collector' })).item;
+        'registries.items.read', { kind: 'app', sourceId: catalog.id, itemId: 'telemetry-collector' }, home.machineId)).item;
     if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready' || !selected.summary.version) {
         throw new Error('The catalog must produce the ready collector App');
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
@@ -15,10 +15,12 @@ import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-
 import { projectMachineReachabilityObservation } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/accessActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { CORE_MACHINE_ROLE_IDS_V1, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema,
     projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
-import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineAccessGrantsListResultV1Schema, MachineAccessGrantSetInputV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
     DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
@@ -32,12 +34,14 @@ import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
 import { removeTeamMemberForActorInTx } from '../../../server/sources/app/teams/memberships/memberAdministration';
 import { DATABASE_CAPTURE_PLUGIN } from '../../../../packages/plugins/telemetry/src/manifest';
+import { plugin as deploymentTemplates } from '../../../../packages/plugins/deployment-templates/src/manifest';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { collectBlockingPluginReloadDiagnostics } from '@/plugins/runtime/reload/diagnostics';
 import * as installationStore from '@/daemon/identity/store';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -74,18 +78,34 @@ import {
 // native leg uses the actual OS API, including execFile's promisify contract.
 const { execFile } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
 const execute = promisify(execFile);
-type Invoke = (name: string, input: unknown) => Promise<ActionExecuteResult>;
+type Invoke = (name: string, input: unknown, machineId?: string) => Promise<ActionExecuteResult>;
 function createInvoke(
     executor: ReturnType<typeof createCliActionExecutorFromCredentials>,
     serverId: string,
-    target?: Readonly<{ kind: 'machine'; machineId: string }>,
+    accountId: string,
 ): Invoke {
-    return (name, input) => {
+    return async (name, input, machineId) => {
         const action = parseQualifiedPluginActionId(name);
         const actionId = action ? 'action.invoke' : ActionIdSchema.parse(name);
+        const actionRequestId = randomUUID();
+        if (actionId === MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1) {
+            const grant = MachineAccessGrantSetInputV1Schema.parse(input);
+            const context = {
+                surface: 'cli', authority: 'present_user', actionRequestId, runtimeAccountId: accountId,
+                serverId, serverIdentityId: serverId,
+                externalActionTarget: { kind: 'machine', machineId: grant.machineId },
+            } as const;
+            const review = await executor.execute(actionId, grant, context);
+            expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+            if (review.ok || review.errorCode !== 'action_interactive_review_required') return review;
+            const digest = review.details?.reviewDigest;
+            expect(digest, 'Machine sharing must carry its current review').toEqual(expect.any(String));
+            if (typeof digest !== 'string') return review;
+            return executor.execute(actionId, grant, bindPresentUserActionConfirmationV1(actionId, grant, context, digest));
+        }
         return executor.execute(actionId, action ? { action, input } : input, {
-            surface: 'cli', serverId, ...(target ? { externalActionTarget: target } : {}),
-            actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId },
+            surface: 'cli', serverId, ...(machineId ? { externalActionTarget: { kind: 'machine', machineId } } : {}),
+            actionRequestId, authority: 'present_user', presentUserConfirmation: { actionId },
         });
     };
 }
@@ -96,7 +116,7 @@ type TelemetryJourneyActor = Readonly<{
     accountId: string;
     credentials: ReturnType<typeof readS0ControllerCredentials>;
     invoke: Invoke;
-    accepted(name: string, input: unknown): Promise<unknown>;
+    accepted(name: string, input: unknown, machineId?: string): Promise<unknown>;
     prepare(kind: string, body: unknown): Promise<Readonly<{
         contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number;
     }>>;
@@ -248,13 +268,24 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     return Object.freeze({ ...declarations, pluginEnablementById: applyMachineRoleAdmission({
                         pluginEnablementById, machineRoles: declarations.machineRoles }) });
                 };
+                const templateManifest = deploymentTemplates.manifest;
+                const deploymentPluginIds = [DATABASE_CAPTURE_PLUGIN.manifest.id, templateManifest.id];
+                const templateFiles = Object.fromEntries(await Promise.all(templateManifest.contributes.registrySources.flatMap(source => {
+                    if (!('packageContent' in source)) return [];
+                    const path = source.packageContent.path;
+                    return [readFile(new URL(`../../../../packages/plugins/deployment-templates/${path}`, import.meta.url))
+                        .then(content => [path, content] as const)];
+                })));
                 const mounted = await runWithServerHttpBaseUrl(home.baseUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
                     controller: pluginReloadController, happyHomeDir: configuration.happyHomeDir,
                     plugins: [{ manifest: DATABASE_CAPTURE_PLUGIN.manifest, replaceExisting: true,
                         files: { [requireDaemonEntrypoint(DATABASE_CAPTURE_PLUGIN.manifest)]: 'export function activate() {}' },
                         instantiateCommittedModule: () => ({ activate: DATABASE_CAPTURE_PLUGIN.activate,
-                            daemonDatabases: DATABASE_CAPTURE_PLUGIN.daemonDatabases }) }],
-                    resolveContributes: readContributes, runtimeOptions,
+                            daemonDatabases: DATABASE_CAPTURE_PLUGIN.daemonDatabases }) },
+                    { manifest: templateManifest, replaceExisting: true,
+                        files: { ...templateFiles, [requireDaemonEntrypoint(templateManifest)]: 'export function activate() {}' },
+                        instantiateCommittedModule: () => ({ activate: deploymentTemplates.activate }) }],
+                    resolveContributes: readContributes, runtimeOptions: { ...runtimeOptions, pluginIds: deploymentPluginIds },
                 }));
                 cleanup.push(() => mounted.dispose());
                 if (!daemon.publishDaemonState) throw new Error('F14 requires the real Machine daemon-state publisher');
@@ -291,12 +322,18 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 console.info('F14 native private network', { provider: privateNetwork.provider, state: privateNetwork.state,
                     scope: 'existing host network; collector App and workload share this hosting Machine',
                     networkIdentityPresent: Boolean(privateNetwork.networkIdentity), addresses: privateNetwork.addresses.length });
-                const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
-                    externalActionClient: true, machineId: home.machineId, serverId: home.serverId,
-                    serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
-                const invoke = createInvoke(executor, home.serverId);
-                const accepted = async (name: string, input: unknown) => {
-                    const result = await support.settlePublicApproval(invoke, await invoke(name, input));
+                const createExecutor = (actorCredentials: typeof credentials, machineId?: string, disclosureAccountId?: string) => createCliActionExecutorFromCredentials({
+                    credentials: actorCredentials, readCredentials: async () => actorCredentials, externalActionClient: true,
+                    ...(machineId ? { machineId } : {}), serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
+                    ...(disclosureAccountId ? { onRequesterSessionCredentialDisclosure: disclosure =>
+                        disclosure.accountId === disclosureAccountId && disclosure.machineId === home.machineId
+                        && (disclosure.custodian === undefined || disclosure.custodian.accountId === home.accountId) } : {}),
+                });
+                const invokeLocal = createInvoke(createExecutor(credentials, home.machineId), home.serverId, home.accountId);
+                const invokeTargeted = createInvoke(createExecutor(credentials), home.serverId, home.accountId);
+                const invoke: Invoke = (name, input, machineId) => machineId ? invokeTargeted(name, input, machineId) : invokeLocal(name, input);
+                const accepted = async (name: string, input: unknown, machineId?: string) => {
+                    const result = await support.settlePublicApproval(invoke, await invoke(name, input, machineId));
                     let nativeDiagnostic: ActionExecuteResult | undefined;
                     if (!result.ok && name === 'deployments.deploy' && input !== null && typeof input === 'object'
                         && 'environmentId' in input && typeof input.environmentId === 'string') {
@@ -312,20 +349,18 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
                     return result.result;
                 };
-                const createReader = async () => {
+                const createReader = async (options?: Readonly<{ consentToFixtureHost: boolean }>) => {
                     const keys = encryptionMode === 'e2ee' ? nacl.box.keyPair() : null;
                     const account = await db.account.create({ data: { encryptionMode,
                         ...(keys ? createSignedAccountContentBinding(keys.publicKey) : {}) } });
                     const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
-                    const readerCredentials: ReturnType<typeof readS0ControllerCredentials> = { token,
+                    const readerCredentials = readS0ControllerCredentials({ ...home, token,
                         encryption: keys ? { type: 'dataKey', machineKey: new Uint8Array(keys.secretKey),
-                            publicKey: new Uint8Array(keys.publicKey) } : null };
-                    const readerExecutor = createCliActionExecutorFromCredentials({ credentials: readerCredentials,
-                        readCredentials: async () => readerCredentials, externalActionClient: true,
-                        serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
-                    const invokeReader = createInvoke(readerExecutor, home.serverId);
-                    const acceptedReader = async (name: string, input: unknown) => {
-                        const result = await support.settlePublicApproval(invokeReader, await invokeReader(name, input));
+                            publicKey: new Uint8Array(keys.publicKey) } : null });
+                    const invokeReader = createInvoke(createExecutor(readerCredentials, undefined,
+                        options?.consentToFixtureHost ? account.id : undefined), home.serverId, account.id);
+                    const acceptedReader = async (name: string, input: unknown, machineId?: string) => {
+                        const result = await support.settlePublicApproval(invokeReader, await invokeReader(name, input, machineId));
                         expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
                             : { name, errorCode: result.errorCode, failureCause: result.failureCause })).toBe(true);
                         if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
@@ -555,9 +590,13 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     controller: pluginReloadController, happyHomeDir: mounted.happyHomeDir,
                     runtimeOptions: { ...runtimeOptions, contributes: activeContributes,
                         generationAuthority: mounted.committed, preparedActivationGraphsByPluginId: mounted.preparedActivationGraphsByPluginId,
-                        pluginIds: [DATABASE_CAPTURE_PLUGIN.manifest.id] },
+                        pluginIds: deploymentPluginIds },
                 }));
                 cleanup.push(() => active.dispose());
+                const activationDiagnostics = collectBlockingPluginReloadDiagnostics(active.registry, [DATABASE_CAPTURE_PLUGIN.manifest.id]);
+                expect(activationDiagnostics.flatMap(({ diagnostics }) => diagnostics.map(({ code, stage, message }) => ({
+                    code, stage, message,
+                })))).toEqual([]);
                 const setup = await accepted('deployments.environments.telemetry.set', {
                     serverId: home.serverId, environmentId, expectedRevision: control.environment.revision,
                     collector: { machineId: home.machineId },
@@ -657,20 +696,20 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 expect(teammateEnvironment.ok, 'D29 starts with the teammate\'s real Environment read').toBe(true);
                 await assertNoTeammateMachineGrant([home.machineId]);
                 const teammateQueries = DatabaseCaptureQueriesListResultV1Schema.parse(await teammate.accepted(
-                    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 6 } }));
+                    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 6 } }, home.machineId));
                 expect(teammateQueries.ok).toBe(true);
                 if (!teammateQueries.ok) throw new Error(`F14 teammate queries unavailable: ${teammateQueries.code}`);
                 expect(teammateQueries.items).toEqual(queries.items);
                 const teammateTraces = DatabaseCaptureTracesListResultV1Schema.parse(await teammate.accepted(
-                    DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 2 } }));
+                    DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 2 } }, home.machineId));
                 expect(teammateTraces.ok).toBe(true);
                 if (!teammateTraces.ok) throw new Error(`F14 teammate traces unavailable: ${teammateTraces.code}`);
                 expect(teammateTraces.items).toEqual(traces.items);
                 const denied = await outsider.invoke(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, {
-                    source: captureSource, page: { limit: 6 } });
+                    source: captureSource, page: { limit: 6 } }, home.machineId);
                 if (denied.ok) expect(DatabaseCaptureQueriesListResultV1Schema.parse(denied.result).ok).toBe(false);
                 else expect(denied.effectAttempted).not.toBe(true);
-                const collectorOperator = await createReader();
+                const collectorOperator = await createReader({ consentToFixtureHost: true });
                 const operatorTeam = await db.team.create({ data: { name: 'F14 collector operators' } });
                 await db.teamMembership.createMany({ data: [
                     { teamId: operatorTeam.id, accountId: home.accountId, role: 'owner' },
@@ -678,8 +717,13 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 ] });
                 // Only AB receives deployment use. The separate AC reader Team
                 // never receives a collector or hosting-Machine grant.
-                await accepted('machines.access.grant.set', { serverId: home.serverId, machineId: home.machineId,
+                await accepted(MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1, { serverId: home.serverId, machineId: home.machineId,
                     principal: { kind: 'team', teamId: operatorTeam.id }, level: 'view' });
+                const savedOperatorGrant = await db.machineGrant.findFirst({
+                    where: { machineId: home.machineId, teamId: operatorTeam.id },
+                    select: { accessLevel: true },
+                });
+                expect(savedOperatorGrant).toEqual({ accessLevel: 'view' });
                 await accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId: home.machineId });
                 const operatorSourceResponse = await fetch(`${home.baseUrl}/v1/projects/sources`, {
                     method: 'POST', headers: { Authorization: `Bearer ${collectorOperator.token}`, 'Content-Type': 'application/json' },
@@ -703,9 +747,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const otherMeasurement = await measureRequests(otherAppUrl);
                 expect(otherMeasurement.sdk.exportedRecords).toBeGreaterThanOrEqual(8);
                 const otherSource = { ...captureSource, environmentId: otherEnvironmentId };
-                const listQueries = async (source = captureSource) => {
+                const listQueries = async (source = captureSource, machineId?: string) => {
                     const result = DatabaseCaptureQueriesListResultV1Schema.parse(await accepted(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, {
-                        source, page: { limit: 20 } }));
+                        source, page: { limit: 20 } }, machineId));
                     if (!result.ok) throw new Error(`F14 queries unavailable: ${result.code}`);
                     return result.items;
                 };
@@ -760,20 +804,19 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 // after A has moved away, even with forged resource labels.
                 expect((await originalClient.send({ serviceName: otherEnvironmentId })).status).toBe(401);
                 expect(await listQueries(otherSource)).toEqual(otherQueries);
-                expect(await listQueries()).toEqual([]);
+                const listMovedQueries = () => listQueries(captureSource, secondCollector.machineId);
+                expect(await listMovedQueries()).toEqual([]);
                 const movedAppUrl = await deploy();
                 // M2's receiver runs in its own deployed daemon. The original
                 // process's inspector cannot attribute work performed there.
                 const movedMeasurement = await measureRequests(movedAppUrl, false);
                 expect(movedMeasurement.sdk.exportedRecords).toBeGreaterThanOrEqual(8);
-                const movedQueries = await listQueries();
+                const movedQueries = await listMovedQueries();
                 expect(movedQueries).toHaveLength(6);
                 expect(movedQueries.some(query => queries.items.some(previous => previous.id === query.id))).toBe(false);
                 if (process.env.HAPPIER_RUN_DBW_METRICS_F15 === '1' || process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1'
                     || process.env.HAPPIER_RUN_DBW_EXCEPTIONS_F18A === '1') {
-                    const invokeOnCollector = createInvoke(executor, home.serverId, {
-                        kind: 'machine', machineId: secondCollector.machineId,
-                    });
+                    const invokeOnCollector: Invoke = (name, input) => invoke(name, input, secondCollector.machineId);
                     const acceptedOnCollector = async (name: string, input: unknown) => {
                         const result = await support.settlePublicApproval(invokeOnCollector, await invokeOnCollector(name, input));
                         expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -799,14 +842,14 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     }
                 }
                 await secondCollector.restart();
-                expect(await listQueries()).toEqual(movedQueries);
+                expect(await listMovedQueries()).toEqual(movedQueries);
                 const movedReaderQueries = DatabaseCaptureQueriesListResultV1Schema.parse(await teammate.accepted(
-                    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 20 } }));
+                    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 20 } }, secondCollector.machineId));
                 expect(movedReaderQueries.ok).toBe(true);
                 if (!movedReaderQueries.ok) throw new Error(`F14 moved teammate queries unavailable: ${movedReaderQueries.code}`);
                 expect(movedReaderQueries.items).toEqual(movedQueries);
                 const movedReaderTraces = DatabaseCaptureTracesListResultV1Schema.parse(await teammate.accepted(
-                    DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 2 } }));
+                    DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source: captureSource, page: { limit: 2 } }, secondCollector.machineId));
                 expect(movedReaderTraces.ok).toBe(true);
                 if (!movedReaderTraces.ok) throw new Error(`F14 moved teammate traces unavailable: ${movedReaderTraces.code}`);
                 expect(movedReaderTraces.items).toHaveLength(2);
@@ -814,7 +857,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 expect(await inTx(tx => removeTeamMemberForActorInTx(tx, { teamId: sourceTeam.id,
                     actorAccountId: teammate.accountId }))).toMatchObject({ ok: true });
                 const withdrawn = await teammate.invoke(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, {
-                    source: captureSource, page: { limit: 6 } });
+                    source: captureSource, page: { limit: 6 } }, secondCollector.machineId);
                 if (withdrawn.ok) expect(DatabaseCaptureQueriesListResultV1Schema.parse(withdrawn.result).ok).toBe(false);
                 else expect(withdrawn.effectAttempted).not.toBe(true);
 
@@ -826,7 +869,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 await secondCollector.start();
                 expect(await listQueries()).toEqual([]);
                 await selectCollector(secondCollector.machineId);
-                expect(await listQueries()).toEqual([]);
+                expect(await listMovedQueries()).toEqual([]);
                 await selectCollector(home.machineId);
                 const returnedAppUrl = await deploy();
                 expect((await measureRequests(returnedAppUrl)).sdk.exportedRecords).toBeGreaterThanOrEqual(8);
