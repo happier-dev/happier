@@ -10,7 +10,7 @@ import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredW
 import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary, createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createUsageQueryBatchFetchBoundary } from '@/dev/testkit/harness/usageQueryBatchHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -965,7 +965,17 @@ it.each([
     ['the viewer\'s own HTML on their own Session Board', 'own-session', false],
 ] as const)('classifies %s into the foreign-HTML Action audience only when someone else owns it', async (_label, shape, foreign) => {
     const http = createHomeHubArtifactHttpBoundary('viewer');
-    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request: http.request });
+    const listedSession = createPlainSessionCurrentProjectionRecordFixture({ id: 'listed-session' });
+    let listReads = 0;
+    const request = createCompactSessionListFetchBoundary(async (input, init) => {
+        const url = new URL(input);
+        if (url.pathname === '/v2/sessions' && url.searchParams.get('limit') === '1') {
+            listReads += 1;
+            return Response.json({ sessions: [listedSession], nextCursor: null, hasNext: false });
+        }
+        return http.request(input, init);
+    });
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request });
     const viewer = getActiveServerAccountScope();
     if (!viewer) throw new Error('Expected restored viewer Account');
     const disposeActionLoader = await installRealActionExecutorModuleLoader();
@@ -1001,14 +1011,15 @@ it.each([
             await guest.send('ready', { ready: true });
             await guest.send('hostApi', { wireVersion: 1, kind: 'negotiate', identity: guest.identity, apiRange: '^1.0.0' });
             result = await guest.send('hostApi', { wireVersion: 1, kind: 'request', identity: guest.identity, requestId: 'list',
-                method: 'executeAction', payload: { action: 'session.list', input: {} } });
+                method: 'executeAction', payload: { action: 'session.list', input: { limit: 1 } } });
         });
-        expect(result).toMatchObject({ kind: 'result' });
-        const payload = (result as { payload?: { kind?: string; error?: { code?: string } } }).payload;
-        const refusal = payload?.kind === 'error' ? payload.error?.code ?? null : null;
-        // Default settings: someone else's HTML is refused before execution. The viewer's own HTML keeps its
-        // ordinary policy and reaches the real executor (its unserved Session read fails at the HTTP boundary).
-        if (foreign) expect(refusal).toBe('action_disabled');
-        else expect(['action_disabled', 'approval_required']).not.toContain(refusal);
+        if (foreign) {
+            expect(result).toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'action_disabled' } } });
+            expect(listReads).toBe(0);
+        } else {
+            expect(result).toMatchObject({ kind: 'result', payload: { kind: 'result', result: {
+                sessions: [{ id: listedSession.id }],
+            } } });
+        }
     } finally { await screen.unmount(); await connection.dispose(); disposeActionLoader(); vi.unstubAllGlobals(); }
 });
