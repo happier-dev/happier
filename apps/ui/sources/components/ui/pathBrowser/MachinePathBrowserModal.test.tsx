@@ -602,6 +602,23 @@ describe('MachinePathBrowserModal', () => {
             .toEqual([expect.objectContaining({ input: expect.objectContaining({ path: { workspace, directory: '/guest' } }) })]);
     });
 
+    it('draws a workspace chooser as folders under its open root row, with search alone (lab browse-tree)', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'attached',
+            controller: { machineId: 'machine-1', installationId: 'installation' }, rootPath: '/guest' } as const;
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async input => input.directoryPath === '/guest'
+            ? { ok: true, entries: [{ name: '.cache', path: '/guest/.cache', type: 'directory' },
+                { name: 'repo', path: '/guest/repo', type: 'directory' }], truncated: false }
+            : await defaultDirectoryEntries(input));
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" workspace={workspace}
+            selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserRowTestId('/guest/repo'));
+        expect(screen.findByTestId(getPathBrowserRowTestId('/guest'))).toBeTruthy();
+        expect(screen.findByTestId(getPathBrowserRowTestId('/guest/.cache'))).toBeFalsy();
+        expect(screen.findByTestId('path-browser-more')).toBeFalsy();
+        expect(screen.findByTestId('path-browser-search')).toBeTruthy();
+    });
+
     it('can select the attached root itself when the guest directory is empty', async () => {
         const scope = await setFolderActionPolicy('allowed');
         const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'attached',

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -14,7 +15,9 @@ const styles = StyleSheet.create((theme) => ({
     },
     selectionText: {
         flex: 1,
-        ...Typography.variant('body'),
+        // A path: the mono face at the meta step (the page header's path convention).
+        ...Typography.mono(),
+        ...happierPageTextMetrics('meta'),
         color: theme.colors.text.secondary,
     },
 }));

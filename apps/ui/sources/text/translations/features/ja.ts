@@ -5743,6 +5743,7 @@ const filesPaneTranslations = { ja: {
         managedStoppedChangesReason: '起動すると変更が表示されます。',
         serverFolderTitle: 'サーバー上のフォルダー',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `初回のみ、Happier は ${workspace} の ~/.happier に小さなヘルパーをコピーします。使っていない間は何も実行されません。`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `${workspace} のフォルダーを検索`,
         serverFolderPreparing: 'ワークスペースへのアクセスを準備中',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失敗: ${reason}`,
         serverFolderUnsupportedTitle: 'このサーバーはまだサポートされていません',

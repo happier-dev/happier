@@ -48,6 +48,7 @@ import type { ManagedWorkspaceLocatorV2 } from '@happier-dev/protocol/workspaces
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     currentUiContextCommandScope?: string;
@@ -294,7 +295,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const rootDirectoryPath = React.useMemo(() => normalizeAbsolutePath(rootInput) ?? '', [rootInput]);
     const usesRootsListing = !workspace && rootDirectoryPath === '';
     const [searchQuery, setSearchQuery] = React.useState('');
-    const [showHidden, setShowHidden] = React.useState(true);
+    // A workspace chooser picks a folder to work in, so its dot-folders stay out of the way (remote workspaces lab).
+    const [showHidden, setShowHidden] = React.useState(() => !workspace);
     const [treeRead, setTreeRead] = React.useState(() => ({ nonce: 0, callerContext: props.callerContext }));
     const [queryRead, setQueryRead] = React.useState(() => ({ nonce: 0, callerContext: props.callerContext }));
     const initialPath = React.useMemo(() => normalizeAbsolutePath(props.initialPath ?? null), [props.initialPath]);
@@ -309,8 +311,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const initialExpandedPaths = React.useMemo(() => (
         usesRootsListing
             ? buildInitialExpandedPaths(initialPath)
-            : buildInitialExpandedPathsWithinRoot(rootDirectoryPath, initialPath)
-    ), [initialPath, rootDirectoryPath, usesRootsListing]);
+            : workspace
+                ? [rootDirectoryPath, ...buildInitialExpandedPathsWithinRoot(rootDirectoryPath, initialPath)]
+                : buildInitialExpandedPathsWithinRoot(rootDirectoryPath, initialPath)
+    ), [initialPath, rootDirectoryPath, usesRootsListing, workspace]);
+    // A workspace tree is drawn under its root path as its one root row, open, as a Machine's roots are.
+    const workspaceRootEntries = React.useMemo(() => (workspace && rootDirectoryPath !== '' ? [{
+        name: rootDirectoryPath, path: rootDirectoryPath, type: 'directory' as const, source: 'remote' as const,
+    }] : null), [rootDirectoryPath, workspace]);
     const initialSelectionCandidates = React.useMemo(() => initialExpandedPaths.slice().reverse(), [initialExpandedPaths]);
     const [pickedPath, setSelectedPath] = React.useState<string | null>(null);
     const machineHomeDir = useServerScopedMachine(props.serverId, props.machineId)?.metadata?.homeDir ?? undefined;
@@ -339,7 +347,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, [props.maxHeight]);
 
     const getCachedEntries = React.useCallback((directoryPath: string) => {
-        if (workspace) return null;
+        if (workspace) return directoryPath === '' ? workspaceRootEntries : null;
         if (usesRootsListing) {
             const previewEntries = buildInitialPathPreviewEntries({
                 directoryPath,
@@ -364,10 +372,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             sizeBytes: entry.sizeBytes,
             modifiedMs: entry.modifiedMs,
         })) ?? null;
-    }, [includeFiles, initialExpandedPaths, props.machineId, props.serverId, usesRootsListing, workspace]);
+    }, [includeFiles, initialExpandedPaths, props.machineId, props.serverId, usesRootsListing, workspace, workspaceRootEntries]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => {
-        if (workspace) return null;
+        if (workspace) return directoryPath === '' && workspaceRootEntries ? { truncated: false } : null;
         if (usesRootsListing && directoryPath === '') {
             return { truncated: false };
         }
@@ -377,9 +385,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             directoryPath,
             includeFiles,
         });
-    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace]);
+    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace, workspaceRootEntries]);
 
     const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
+        if (workspaceRootEntries && directoryPath === '') return { ok: true, entries: workspaceRootEntries };
         if (usesRootsListing && directoryPath === '') {
             const result = await listMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId, signal, callerContext });
             if (!result.ok) return result;
@@ -415,7 +424,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             })),
             truncated: result.truncated,
         };
-    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace]);
+    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace, workspaceRootEntries]);
 
     const warmDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
         if (usesRootsListing && directoryPath === '') {
@@ -466,7 +475,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         scopeKey: JSON.stringify([props.machineId, props.serverId, workspace?.controller.installationId,
             workspace?.managedId, includeFiles, rootDirectoryPath]),
         enabled: true,
-        rootDirectoryPath: usesRootsListing ? '' : rootDirectoryPath,
+        rootDirectoryPath: usesRootsListing || workspaceRootEntries ? '' : rootDirectoryPath,
         expandedPaths,
         onExpandedPathsChange: setExpandedPaths,
         reloadToken: treeRead.nonce,
@@ -529,6 +538,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const activeServer = useActiveServerSnapshot(props.serverId == null);
     const deepSearchServerId = props.serverId ?? activeServer.serverId;
+    // The attached workspace's own name (the Project header chip's owner); null while it resolves.
+    const managedName = useManagedMachineName(workspace ? deepSearchServerId ?? null : null, workspace?.managedId ?? null);
     const queryRootDirectoryPath = typedLookup ? typedLookup.directory : deepSearchRootDirectoryPath;
     const deepSearchScope = React.useMemo(() => ({
         machineId: props.machineId, serverId: deepSearchServerId, rootPath: queryRootDirectoryPath,
@@ -629,7 +640,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     // Typing or pasting a path opens the folders on the way to it, and picks it once it is there.
     React.useEffect(() => {
         if (!typedPath) return;
-        const way = workspace ? buildInitialExpandedPathsWithinRoot(rootDirectoryPath, typedPath.directory)
+        const way = workspace ? [rootDirectoryPath, ...buildInitialExpandedPathsWithinRoot(rootDirectoryPath, typedPath.directory)]
             : buildInitialExpandedPaths(typedPath.directory);
         setExpandedPaths((current) => way.every((path) => current.includes(path)) ? current : [...new Set([...current, ...way])]);
     }, [rootDirectoryPath, typedPath, workspace]);
@@ -942,6 +953,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             {/* New Session's Machine picker as a chip; a browser that cannot move Machines only names it. */}
             <SessionMachineField presentation="chip" testID={`${PATH_BROWSER_MODAL_TEST_ID}.machine`}
                 serverId={deepSearchServerId ?? ''} machineId={props.machineId} title={t('newSession.pathPicker.machine')}
+                {...(workspace ? { managedName } : {})}
                 {...(props.onMachineChange ? { onSelectMachine: (machine: Readonly<{ id: string }>) => props.onMachineChange?.(machine.id) } : {})} />
             <HappierPressable
                 testID={PATH_BROWSER_CREATE_FOLDER_TEST_ID}
@@ -958,7 +970,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             </HappierPressable>
             </>
         );
-    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, deepSearchServerId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
+    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, deepSearchServerId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome, workspace, managedName]);
 
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;
@@ -1016,6 +1028,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }>;
 
     const toolbarActions = React.useMemo<ToolbarActionConfig[]>(() => {
+        // A workspace chooser only finds a folder: search alone, no file-browser tools (remote workspaces lab).
+        if (workspace) return [];
         const actions: ToolbarActionConfig[] = [
             {
                 id: 'path-browser-filter',
@@ -1045,9 +1059,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         ];
         // Clearing the query is the search field's own control; the `clearSearch` command keeps its keyboard path.
         return actions;
-    }, [filterSelected, invokeBrowserCommand, theme.colors.text.link, theme.colors.text.secondary]);
+    }, [filterSelected, invokeBrowserCommand, theme.colors.text.link, theme.colors.text.secondary, workspace]);
 
     const buildOverflowItems = React.useCallback((hiddenActions: readonly FilesystemBrowserToolbarAction[]) => {
+        if (workspace) return [];
         const items: ItemAction[] = [
             {
                 id: 'path-browser-collapse-all',
@@ -1085,7 +1100,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         }
 
         return items;
-    }, [invokeBrowserCommand, canCollapse, canCreateFolder, props.onRequestClose]);
+    }, [invokeBrowserCommand, canCollapse, canCreateFolder, props.onRequestClose, workspace]);
 
         return (
             <View
@@ -1099,7 +1114,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     currentUiContextCommandScope={props.currentUiContextCommandScope}
                     testID="path-browser-toolbar"
                     searchTestID="path-browser-search"
-                    searchPlaceholder={t('files.searchPlaceholder')}
+                    searchPlaceholder={workspace && managedName ? t('files.pane.serverFolderSearch', { workspace: managedName })
+                        : t('files.searchPlaceholder')}
                     searchValue={searchQuery}
                     onSearchValueChange={value => invokeBrowserCommand('search', { value })}
                     actions={toolbarActions}

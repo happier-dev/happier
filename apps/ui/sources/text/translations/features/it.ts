@@ -5794,6 +5794,7 @@ const filesPaneTranslations = { it: {
         managedStoppedChangesReason: 'Avvialo per vedere le sue modifiche.',
         serverFolderTitle: 'Una cartella su un server',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `La prima volta, Happier copia un piccolo helper in ~/.happier su ${workspace}. Lì non gira nulla finché non lo usi.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Cerca cartelle in ${workspace}`,
         serverFolderPreparing: 'Preparazione dell’accesso al workspace',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Non riuscito: ${reason}`,
         serverFolderUnsupportedTitle: 'Questo server non è ancora supportato',

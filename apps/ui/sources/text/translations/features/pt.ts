@@ -5781,6 +5781,7 @@ const filesPaneTranslations = { pt: {
         managedStoppedChangesReason: 'Inicie-o para ver as alterações.',
         serverFolderTitle: 'Uma pasta num servidor',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `Na primeira vez, o Happier copia um pequeno auxiliar para ~/.happier em ${workspace}. Nada é executado lá enquanto você não o usa.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Pesquisar pastas em ${workspace}`,
         serverFolderPreparing: 'Preparando o acesso ao workspace',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Falhou: ${reason}`,
         serverFolderUnsupportedTitle: 'Este servidor ainda não é compatível',

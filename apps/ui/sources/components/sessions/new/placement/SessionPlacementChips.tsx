@@ -22,7 +22,8 @@ import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/
 import { useMachineManagedPresence } from '@/components/machines/useMachineManagedPresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { describeManagedCheckoutPlace } from '@/components/projects/shell/projectCheckoutPlace';
 import { Item } from '@/components/ui/lists/Item';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
@@ -406,6 +407,12 @@ export function SessionMachineField(props: Readonly<{
   machines?: readonly Machine[];
   /** The chosen Machine's name when no listed record names it (a Machine no longer known). */
   machineName?: string | null;
+  /**
+   * Present: the Machine is the controller of an attached workspace being browsed, and the chip names the place
+   * the way the Project header chip does ("qa-api · via nl3", `describeManagedCheckoutPlace`). Null while the
+   * workspace's name resolves (the chip names the Machine until then).
+   */
+  managedName?: string | null;
   title: string;
   subtitle?: string;
   icon?: React.ReactNode;
@@ -482,15 +489,25 @@ export function SessionMachineField(props: Readonly<{
   const openPicker = React.useCallback(() => setOpen(true), [setOpen]);
   const presence = useMachinePresenceSummary(props.serverId, props.presentation === 'chip'
     ? (props.presenceMachineId ?? props.machineId) : null);
+  const managedPlace = props.managedName && props.machineId ? describeManagedCheckoutPlace({
+    controllerMachineId: props.machineId, managedName: props.managedName,
+    machineNameParts: () => (machineLabel ? { name: machineLabel, hint: null } : null),
+  }) : null;
   if (props.presentation === 'chip') {
     const presenceShown = (props.presenceMachineId ?? props.machineId) != null;
     return (
       <SelectionListFilterChip filter={{
         id: props.testID ?? 'session-machine',
         label: props.title,
-        showLabel: true,
-        valueLabel: value ?? props.placeholder ?? t('agentInput.runOn'),
-        icon: <PlacementIcon name="desktop" />,
+        ...(managedPlace ? {
+          valueLabel: managedPlace.machineNameParts.name,
+          ...(managedPlace.machineNameParts.hint ? { valueQualifier: managedPlace.machineNameParts.hint } : {}),
+          icon: <PlacementIcon name={managedPlace.machineIcon} />,
+        } : {
+          showLabel: true,
+          valueLabel: value ?? props.placeholder ?? t('agentInput.runOn'),
+          icon: <PlacementIcon name="desktop" />,
+        }),
         ...(presenceShown ? { reservePresence: true } : {}),
         ...(presenceShown && presence.reachability === 'reachable' ? { presence: 'online' as const }
           : presenceShown && presence.reachability === 'unreachable' ? { presence: 'offline' as const } : {}),
@@ -541,7 +558,7 @@ function renderPlacementContent(
     : content;
 }
 
-function PlacementIcon(props: Readonly<{ name: 'desktop' | 'folder' }>): React.ReactElement {
+function PlacementIcon(props: Readonly<{ name: IconName }>): React.ReactElement {
   const { theme } = useUnistyles();
   return <Icon name={props.name} size={14} color={theme.colors.text.secondary} />;
 }

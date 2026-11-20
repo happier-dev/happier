@@ -5683,6 +5683,7 @@ const filesPaneTranslations = { 'zh-Hans': {
         managedStoppedChangesReason: '启动后即可查看其更改。',
         serverFolderTitle: '服务器上的文件夹',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `首次使用时，Happier 会把一个小助手复制到 ${workspace} 的 ~/.happier。不使用时那里不会运行任何东西。`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `在 ${workspace} 中搜索文件夹`,
         serverFolderPreparing: '正在准备工作区访问',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `失败：${reason}`,
         serverFolderUnsupportedTitle: '暂不支持此服务器',

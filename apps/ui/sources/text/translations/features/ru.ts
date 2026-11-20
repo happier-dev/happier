@@ -5811,6 +5811,7 @@ const filesPaneTranslations = { ru: {
         managedStoppedChangesReason: 'Запустите его, чтобы увидеть изменения.',
         serverFolderTitle: 'Папка на сервере',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `В первый раз Happier копирует небольшой помощник в ~/.happier на ${workspace}. Пока вы им не пользуетесь, там ничего не работает.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Искать папки в ${workspace}`,
         serverFolderPreparing: 'Подготовка доступа к рабочему пространству',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Ошибка: ${reason}`,
         serverFolderUnsupportedTitle: 'Этот сервер пока не поддерживается',

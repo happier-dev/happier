@@ -5810,6 +5810,7 @@ const filesPaneTranslations = { pl: {
         managedStoppedChangesReason: 'Uruchom go, aby zobaczyć jego zmiany.',
         serverFolderTitle: 'Folder na serwerze',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `Za pierwszym razem Happier kopiuje mały program pomocniczy do ~/.happier na ${workspace}. Nic tam nie działa, gdy go nie używasz.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Szukaj folderów w ${workspace}`,
         serverFolderPreparing: 'Przygotowywanie dostępu do obszaru roboczego',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Niepowodzenie: ${reason}`,
         serverFolderUnsupportedTitle: 'Ten serwer nie jest jeszcze obsługiwany',

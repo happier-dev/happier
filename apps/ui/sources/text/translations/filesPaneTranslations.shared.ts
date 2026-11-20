@@ -69,6 +69,7 @@ export type FilesPaneTranslations = Readonly<{
     managedStoppedChangesReason: string;
     serverFolderTitle: string;
     serverFolderHelperNote: (params: Readonly<{ workspace: string }>) => string;
+    serverFolderSearch: (params: Readonly<{ workspace: string }>) => string;
     serverFolderPreparing: string;
     serverFolderPrepareFailed: (params: Readonly<{ reason: string }>) => string;
     serverFolderUnsupportedTitle: string;
@@ -297,6 +298,7 @@ export const filesPaneTranslationsEnglish = { en: {
         managedStoppedChangesReason: 'Start it to see its changes.',
         serverFolderTitle: 'A folder on a server',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `The first time, Happier copies a small helper into ~/.happier on ${workspace}. Nothing runs there while you aren’t using it.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Search folders in ${workspace}`,
         serverFolderPreparing: 'Preparing workspace access',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Failed: ${reason}`,
         serverFolderUnsupportedTitle: 'This server isn’t supported yet',

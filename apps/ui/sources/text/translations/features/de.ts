@@ -5798,6 +5798,7 @@ const filesPaneTranslations = { de: {
         managedStoppedChangesReason: 'Starte es, um seine Änderungen zu sehen.',
         serverFolderTitle: 'Ein Ordner auf einem Server',
         serverFolderHelperNote: ({ workspace }: { workspace: string }) => `Beim ersten Mal kopiert Happier ein kleines Hilfsprogramm nach ~/.happier auf ${workspace}. Solange du es nicht nutzt, läuft dort nichts.`,
+        serverFolderSearch: ({ workspace }: { workspace: string }) => `Ordner in ${workspace} suchen`,
         serverFolderPreparing: 'Zugriff auf den Workspace wird vorbereitet',
         serverFolderPrepareFailed: ({ reason }: { reason: string }) => `Fehlgeschlagen: ${reason}`,
         serverFolderUnsupportedTitle: 'Dieser Server wird noch nicht unterstützt',
