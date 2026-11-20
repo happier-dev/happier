@@ -163,11 +163,11 @@ describe('theme proposal card controller', () => {
         expect([...state.rows.values()].map(row => row.document.profile.name).sort()).toEqual(['A', 'Sibling']);
         expect([...state.rows.values()].find(row => row.document.profile.name === 'A')!.document.raw.style).toEqual({ futurePresentation: { glow: true } });
         await act(async () => hook.getCurrent()!.onUndo());
-        await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('undone'));
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'undone' }, currentOptionKey: null }));
         expect([...state.rows.keys()]).toEqual([sibling.entry!.id]);
         await hook.unmount();
         hook = await mount();
-        expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'undone' }, theme: { name: 'A' } });
+        expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'undone' }, currentOptionKey: null, theme: { name: 'A' } });
         await act(async () => hook.getCurrent()!.onRedo());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('kept'));
         expect([...state.rows.values()].map(row => row.document.profile.name).sort()).toEqual(['A', 'Sibling']);
@@ -176,7 +176,11 @@ describe('theme proposal card controller', () => {
         await act(async () => hook.getCurrent()!.onUndo());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('undone'));
         await act(async () => hook.getCurrent()!.onTryOption('B'));
-        await vi.waitFor(() => expect(hook.getCurrent()?.theme.name).toBe('B'));
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'trying' }, currentOptionKey: 'B', busy: null }));
+        await act(async () => hook.getCurrent()!.onUndo());
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'reverted' }, currentOptionKey: null }));
+        await act(async () => hook.getCurrent()!.onRedo());
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'trying' }, currentOptionKey: 'B', busy: null }));
         await act(async () => { state.owner.begin({ document: themeActionDocument('newer'), mode: 'dark', origin: { kind: 'editor' } }); });
         await act(async () => hook.getCurrent()!.onKeep());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase).toMatchObject({ kind: 'failed', operation: 'keep', code: 'theme_preview_stale' }));

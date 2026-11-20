@@ -86,12 +86,12 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
     React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
         [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
-    const [localOptionKey, setCurrentOptionKey] = React.useState(() => retainedRedo ? retainedRedo.optionId : input.options.at(-1)?.id ?? null);
+    const [localOptionKey, setLocalOptionKey] = React.useState(() => retainedRedo ? retainedRedo.optionId : input.options.at(-1)?.id ?? null);
     // An earlier grouped proposal can settle after the final row already mounted.
     const activeOption = preview ? input.options.find(option => option.call.output.previewRef === preview.previewRef) : undefined;
     const outcome: Outcome = activeOption ? { kind: 'preview', output: activeOption.call.output } : localOutcome;
-    const currentOptionKey = activeOption?.id ?? localOptionKey;
-    const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
+    const selectedOptionKey = activeOption?.id ?? localOptionKey;
+    const selected = input.options.find(option => option.id === selectedOptionKey)?.call ?? input.replayTry;
     const [revealedCssSource, setRevealedCssSource] = React.useState<string | null>(null);
     // Replaced transcript cards retain their authored input, while preparations share CSS identity.
     const cssSource = preview?.document?.profile.css ?? selected?.input.document?.profile.css ?? '';
@@ -138,16 +138,16 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const onTryOption = React.useCallback((key: string) => {
         const option = input.options.find(option => option.id === key);
         if (!option) return;
-        perform('try', async () => { await tryOption(option.call); setCurrentOptionKey(key); });
+        perform('try', async () => { await tryOption(option.call); setLocalOptionKey(key); });
     }, [input.options, perform, tryOption]);
     const onKeep = React.useCallback(() => {
         if (outcome.kind !== 'preview') return;
         perform('keep', async () => {
             const output = await invoke(THEME_ACTION_IDS.keep, { previewRef: outcome.output.previewRef });
-            setCurrentOptionKey(currentOptionKey);
+            setLocalOptionKey(selectedOptionKey);
             setOutcome({ kind: 'kept', output });
         });
-    }, [outcome, currentOptionKey, perform, invoke]);
+    }, [outcome, selectedOptionKey, perform, invoke]);
     const onUndo = React.useCallback(() => {
         if (outcome.kind === 'undone') return;
         perform('undo', async () => {
@@ -155,12 +155,12 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
             else {
                 const { undoHandle } = outcome.output;
                 await invoke(THEME_ACTION_IDS.undo, { undoHandle });
-                facts.redo?.retain(undoHandle, { cardId: input.cardId, optionId: currentOptionKey });
+                facts.redo?.retain(undoHandle, { cardId: input.cardId, optionId: selectedOptionKey });
             }
-            setCurrentOptionKey(currentOptionKey);
+            setLocalOptionKey(selectedOptionKey);
             setOutcome({ kind: 'undone', previous: outcome.kind });
         });
-    }, [outcome, perform, invoke, facts.redo, input.cardId, currentOptionKey]);
+    }, [outcome, perform, invoke, facts.redo, input.cardId, selectedOptionKey]);
     const replay = React.useCallback(async () => {
         if (call.actionId === THEME_ACTION_IDS.apply) {
             setOutcome({ kind: 'applied', output: await invoke(THEME_ACTION_IDS.apply, call.input) });
@@ -206,7 +206,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         surfaceStyles,
         created: facts.created }, phase, busy, here: facts.here,
         before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
-        options, currentOptionKey, coverage,
+        options, currentOptionKey: phase.kind === 'trying' ? selectedOptionKey : null, coverage,
         webOnlyRules: coverage ? webOnlyRules : undefined,
         onRevealWebOnly: coverage && coverage.webOnly > 0 ? onRevealWebOnly : undefined,
         reshapes: coverage?.affectedSurfaces.map(address => themeSurfaceLabel(address.surface)),
