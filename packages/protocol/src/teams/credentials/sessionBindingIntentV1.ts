@@ -96,17 +96,20 @@ export function resolveRetainedTeamProviderBindingRevisionV1(
   return accepted.expectedResourceRevision;
 }
 
-export function sessionTeamCredentialSlotKeyV1(slot: SessionTeamCredentialSlotV1): string {
-  const parsed = SessionTeamCredentialSlotV1Schema.parse(slot);
-  return parsed.kind === 'provider_model'
+function parsedSlotKey(slot: SessionTeamCredentialSlotV1): string {
+  return slot.kind === 'provider_model'
     ? JSON.stringify(['provider_model'])
-    : JSON.stringify(['connected_service_purpose', parsed.purpose.consumer.pluginId, parsed.purpose.consumer.localId, parsed.purpose.purpose]);
+    : JSON.stringify(['connected_service_purpose', slot.purpose.consumer.pluginId, slot.purpose.consumer.localId, slot.purpose.purpose]);
+}
+
+export function sessionTeamCredentialSlotKeyV1(slot: SessionTeamCredentialSlotV1): string {
+  return parsedSlotKey(SessionTeamCredentialSlotV1Schema.parse(slot));
 }
 
 export const SessionTeamCredentialBindingIntentsV1Schema = lazyZodSchema(() => z.array(SessionTeamCredentialBindingIntentV1Schema).check(z.superRefine((intents, context) => {
     const seen = new Set<string>();
     for (const [index, intent] of intents.entries()) {
-      const key = sessionTeamCredentialSlotKeyV1(intent.slot);
+      const key = parsedSlotKey(intent.slot);
       if (seen.has(key)) context.addIssue({ code: 'custom', path: [index, 'slot'], message: 'Duplicate Session credential slot.' });
       seen.add(key);
     }
@@ -123,18 +126,17 @@ export function mergeSessionTeamCredentialBindingIntents(params: Readonly<{
   admitted: SessionTeamCredentialBindingIntentListV1 | null | undefined;
 }>): SessionTeamCredentialBindingIntentListV1 | undefined {
   if (!params.admitted || params.admitted.length === 0) return params.explicit;
-  const explicitSlotKeys = new Set(
-    (params.explicit ?? []).map((intent) => sessionTeamCredentialSlotKeyV1(intent.slot)),
-  );
+  const explicit = (params.explicit ?? []).map(intent => ({ intent, key: sessionTeamCredentialSlotKeyV1(intent.slot) }));
+  const admitted = params.admitted.map(intent => ({ intent, key: sessionTeamCredentialSlotKeyV1(intent.slot) }));
+  const explicitSlotKeys = new Set(explicit.map(({ key }) => key));
   return SessionTeamCredentialBindingIntentsV1Schema.parse([
-    ...(params.explicit ?? []).map(intent => {
+    ...explicit.map(({ intent, key }) => {
       if (intent.resourceId === null || intent.teamId !== undefined) return intent;
-      const admitted = params.admitted?.find(candidate => candidate.resourceId === intent.resourceId
-        && candidate.resourceId !== null && candidate.deliveryMode === intent.deliveryMode
-        && sessionTeamCredentialSlotKeyV1(candidate.slot) === sessionTeamCredentialSlotKeyV1(intent.slot));
-      return admitted?.resourceId && admitted.teamId ? { ...intent, teamId: admitted.teamId } : intent;
+      const matching = admitted.find(({ intent: candidate, key: admittedKey }) => admittedKey === key
+        && candidate.resourceId === intent.resourceId && candidate.deliveryMode === intent.deliveryMode)?.intent;
+      return matching?.resourceId && matching.teamId ? { ...intent, teamId: matching.teamId } : intent;
     }),
-    ...params.admitted.filter((intent) => !explicitSlotKeys.has(sessionTeamCredentialSlotKeyV1(intent.slot))),
+    ...admitted.filter(({ key }) => !explicitSlotKeys.has(key)).map(({ intent }) => intent),
   ]);
 }
 
