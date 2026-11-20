@@ -242,10 +242,11 @@ reversible visual edit; explicit per-Action Ask preferences still apply.
 
 Network approval is not permission to call host Actions or read Resources.
 Every bridge request is checked using the current viewer's ordinary authority.
-In unreleased 0.3 builds, agent HTML from a Session you do not own defaults to
-no host Actions or Resources. In **Settings → Actions**, open the exact Action
-or qualified Resource target and set **HTML in other people’s Sessions**
-deliberately. The grant uses your own authority, never the author's credentials.
+In unreleased 0.3 builds, HTML someone else owns defaults to no host Actions or
+Resources: agent HTML from a Session you do not own, and HTML widgets on a Home,
+Project dashboard, Work Board or page area that another person shares with you.
+In **Settings → Actions**, open the exact Action or qualified Resource target and
+set **HTML from other people** deliberately. The grant uses your own authority, never the author's credentials.
 Actions can use Ask first; Resources have no Ask continuation, so Ask refuses
 the read or subscription without opening a prompt. Choose Allowed explicitly
 for a Resource you intend that HTML to use. These choices do not grant missing

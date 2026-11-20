@@ -128,6 +128,8 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
     isSessionCurrent?: () => boolean;
     /** Host-observed ownership, not a fact supplied by the document. Missing ownership fails closed. */
     isSessionOwned?: () => boolean;
+    /** Host-admitted fact that someone other than the viewer owns the surface this HTML comes from. */
+    isContentForeign?: () => boolean;
     readActionsSettings?: (signal?: AbortSignal) => Promise<ActionsSettingsV1>;
     pluginTarget: CurrentCallerHostedHtmlPluginTarget | null;
     surfaceTarget?: PluginUiHostApiSurfaceTargetV1;
@@ -152,7 +154,9 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
     };
     const isCurrent = (): boolean => !disposed && input.isAccountCurrent()
         && (input.sessionId === undefined || input.isSessionCurrent?.() === true);
-    const callerContext = () => input.sessionId !== undefined && input.isSessionOwned?.() !== true
+    // The one audience decision: HTML from a Session or surface someone else owns.
+    const callerContext = () => input.isContentForeign?.() === true
+        || input.sessionId !== undefined && input.isSessionOwned?.() !== true
         ? { callerSurface: 'foreign_session_html' as const } : {};
     const readSettings = async (signal?: AbortSignal) => {
         const settings = await input.readActionsSettings?.(signal) ?? { v: 1 as const, actions: {} };

@@ -13084,11 +13084,11 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
                 subtitle: 'Disponible para plugins integrados e instalados de confianza.',
             },
             foreign_session_html: {
-                title: 'HTML en sesiones de otras personas',
-                subtitle: 'Permite que el HTML creado por agentes en sesiones que no son tuyas use esta acción. Desactivado por defecto.',
+                title: 'HTML de otras personas',
+                subtitle: 'Permite que el HTML de otra persona, en sus sesiones o en superficies que comparte contigo, use esta acción. Desactivado por defecto.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Permite lecturas de recursos y actualizaciones en directo desde HTML en sesiones que no son tuyas. Desactivado por defecto; no hay solicitudes de aprobación.',
+                subtitle: 'Permite lecturas de recursos y actualizaciones en directo desde HTML de otra persona. Desactivado por defecto; no hay solicitudes de aprobación.',
             },
             contextual_ui: {
                 title: "Dónde aparece",

@@ -13305,11 +13305,11 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
                 subtitle: 'Disponibile per i plugin integrati e installati attendibili.',
             },
             foreign_session_html: {
-                title: 'HTML nelle sessioni di altre persone',
-                subtitle: 'Consenti all’HTML creato dagli agenti nelle sessioni che non ti appartengono di usare questa azione. Disattivato per impostazione predefinita.',
+                title: 'HTML di altre persone',
+                subtitle: 'Consenti all’HTML di un’altra persona, nelle sue sessioni o nelle superfici che condivide con te, di usare questa azione. Disattivato per impostazione predefinita.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Consenti letture e aggiornamenti in tempo reale delle risorse da HTML in sessioni che non ti appartengono. Disattivato per impostazione predefinita; le richieste di approvazione non sono disponibili.',
+                subtitle: 'Consenti letture e aggiornamenti in tempo reale delle risorse da HTML di un’altra persona. Disattivato per impostazione predefinita; le richieste di approvazione non sono disponibili.',
             },
             contextual_ui: {
                 title: "Dove appare",

@@ -10844,11 +10844,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 subtitle: '受信任的內建和已安裝外掛均可使用。',
             },
             foreign_session_html: {
-                title: '他人工作階段中的 HTML',
-                subtitle: '允許代理在不屬於你的工作階段中建立的 HTML 使用此動作。預設關閉。',
+                title: '他人的 HTML',
+                subtitle: '允許他人的 HTML（在其工作階段中，或在其與你共享的頁面上）使用此動作。預設關閉。',
             },
             foreign_session_html_resources: {
-                subtitle: '允許他人工作階段中的 HTML 讀取資源並接收即時更新。預設關閉；不支援核准提示。',
+                subtitle: '允許他人的 HTML 讀取資源並接收即時更新。預設關閉；不支援核准提示。',
             },
             contextual_ui: {
                 title: "顯示位置",

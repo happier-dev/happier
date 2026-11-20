@@ -12922,11 +12922,11 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
                 subtitle: 'Disponible pour les plugins intégrés et installés approuvés.',
             },
             foreign_session_html: {
-                title: 'HTML dans les sessions d’autres personnes',
-                subtitle: 'Autorisez le HTML créé par des agents dans les sessions qui ne vous appartiennent pas à utiliser cette action. Désactivé par défaut.',
+                title: 'HTML d’autres personnes',
+                subtitle: 'Autorisez le HTML d’une autre personne, dans ses sessions ou sur des surfaces qu’elle partage avec vous, à utiliser cette action. Désactivé par défaut.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Autorisez la lecture des ressources et leurs mises à jour en direct depuis le HTML de sessions qui ne vous appartiennent pas. Désactivé par défaut ; aucune demande d’approbation disponible.',
+                subtitle: 'Autorisez la lecture des ressources et leurs mises à jour en direct depuis le HTML d’une autre personne. Désactivé par défaut ; aucune demande d’approbation disponible.',
             },
             contextual_ui: {
                 title: "Où elle apparaît",

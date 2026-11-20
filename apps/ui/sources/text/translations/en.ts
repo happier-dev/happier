@@ -14976,11 +14976,11 @@ const enSettingsActions = {
       },
     },
     foreign_session_html: {
-      title: 'HTML in other people’s Sessions',
-      subtitle: 'Allow agent-created HTML in Sessions you don’t own to use this Action. Off by default.',
+      title: 'HTML from other people',
+      subtitle: 'Allow HTML someone else owns, in their Sessions or on surfaces they share with you, to use this Action. Off by default.',
     },
     foreign_session_html_resources: {
-      subtitle: 'Allow Resource reads and live updates from HTML in Sessions you don’t own. Off by default; approval prompts aren’t available.',
+      subtitle: 'Allow Resource reads and live updates from HTML someone else owns. Off by default; approval prompts aren’t available.',
     },
 
     voice: {

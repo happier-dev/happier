@@ -134,7 +134,11 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
     isCurrent: () => boolean;
 }>): React.ReactElement {
     const sessionId = props.resolution.target.kind === 'session' ? props.resolution.target.sessionId : undefined;
-    const runtime = useSessionCallerHostedHtmlRuntime(props.scope.serverId, sessionId, props.resolution.runtime, props.isCurrent);
+    // A Session's Board and companion hold that Session's content; every other surface is its Account's.
+    const owner = props.scope.owner;
+    const runtime = useSessionCallerHostedHtmlRuntime(props.scope.serverId, sessionId, props.resolution.runtime, props.isCurrent,
+        owner.kind === 'sessionBoard' || owner.kind === 'companion' ? { kind: 'session', sessionId: owner.sessionId }
+            : { kind: 'account', accountId: props.scope.accountId });
     const checkout = props.resolution.target.kind === 'workspace' ? props.resolution.target.checkout : null;
     const projectContext = useProjectContext({ serverId: props.scope.serverId, projectRef: checkout, activeCheckout: checkout });
     const sessionTarget = usePluginSessionSurfaceTarget({ serverId: props.scope.serverId, sessionId, authority: props.resolution.runtime.accountLifetime });

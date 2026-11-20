@@ -13033,11 +13033,11 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
                 },
             },
             foreign_session_html: {
-                title: 'HTML in Sessions anderer Personen',
-                subtitle: 'Erlaube von Agenten erstelltem HTML in Sessions, die dir nicht gehören, diese Aktion zu nutzen. Standardmäßig aus.',
+                title: 'HTML anderer Personen',
+                subtitle: 'Erlaube HTML einer anderen Person – in ihren Sessions oder auf Flächen, die sie mit dir teilt –, diese Aktion zu nutzen. Standardmäßig aus.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Erlaube Ressourcen-Lesezugriffe und Live-Updates durch HTML in fremden Sessions. Standardmäßig aus; Genehmigungsdialoge sind nicht verfügbar.',
+                subtitle: 'Erlaube Ressourcen-Lesezugriffe und Live-Updates durch HTML einer anderen Person. Standardmäßig aus; Genehmigungsdialoge sind nicht verfügbar.',
             },
 
             voice: {

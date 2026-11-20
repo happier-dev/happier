@@ -12913,11 +12913,11 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
                 subtitle: 'Dostępne dla zaufanych wbudowanych i zainstalowanych wtyczek.',
             },
             foreign_session_html: {
-                title: 'HTML w sesjach innych osób',
-                subtitle: 'Zezwól kodowi HTML utworzonemu przez agentów w sesjach, których nie jesteś właścicielem, na użycie tej akcji. Domyślnie wyłączone.',
+                title: 'HTML innych osób',
+                subtitle: 'Zezwól kodowi HTML innej osoby – w jej sesjach lub na powierzchniach, które Ci udostępnia – na użycie tej akcji. Domyślnie wyłączone.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Zezwól na odczyt zasobów i aktualizacje na żywo z HTML w sesjach, których nie jesteś właścicielem. Domyślnie wyłączone; prośby o zatwierdzenie nie są dostępne.',
+                subtitle: 'Zezwól na odczyt zasobów i aktualizacje na żywo z HTML innej osoby. Domyślnie wyłączone; prośby o zatwierdzenie nie są dostępne.',
             },
             contextual_ui: {
                 title: "Gdzie się pojawia",

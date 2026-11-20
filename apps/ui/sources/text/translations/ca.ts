@@ -12322,11 +12322,11 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
                 subtitle: 'Disponible per als connectors integrats i instal·lats de confiança.',
             },
             foreign_session_html: {
-                title: 'HTML en sessions d’altres persones',
-                subtitle: 'Permet que l’HTML creat per agents en sessions que no són teves utilitzi aquesta acció. Desactivat per defecte.',
+                title: 'HTML d’altres persones',
+                subtitle: 'Permet que l’HTML d’una altra persona, a les seves sessions o en superfícies que comparteix amb tu, utilitzi aquesta acció. Desactivat per defecte.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Permet lectures de recursos i actualitzacions en directe des d’HTML en sessions que no són teves. Desactivat per defecte; no hi ha sol·licituds d’aprovació.',
+                subtitle: 'Permet lectures de recursos i actualitzacions en directe des d’HTML d’una altra persona. Desactivat per defecte; no hi ha sol·licituds d’aprovació.',
             },
             contextual_ui: {
                 title: "On apareix",

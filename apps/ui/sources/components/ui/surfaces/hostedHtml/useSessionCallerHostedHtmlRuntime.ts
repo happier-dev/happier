@@ -5,7 +5,8 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
-import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
+import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
+import { storage } from '@/sync/domains/state/storage';
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -18,12 +19,18 @@ import type { CallerHostedHtmlRuntime } from './HostedHtmlSurfaceAdapter';
 import { createSessionCallerHostedHtmlRequestController } from './sessionCallerHostedHtmlRequestController';
 import { isHostedInlineDocumentFrameAvailable } from './hostedInlineDocumentFrameCapability';
 
+/** Who owns the document this HTML comes from, as its mounting host admitted it. */
+export type CallerHostedHtmlContentOwner =
+    | Readonly<{ kind: 'account'; accountId: string }>
+    | Readonly<{ kind: 'session'; sessionId: string }>;
+
 /** Current viewer adapter for caller-authored HTML; a bound Session retains its read guard. */
 export function useSessionCallerHostedHtmlRuntime(
     serverId: string | null | undefined,
     sessionId: string | undefined,
     pluginRuntime?: PluginUiProjectionCurrentness,
     isSurfaceCurrent?: () => boolean,
+    contentOwner?: CallerHostedHtmlContentOwner,
 ): CallerHostedHtmlRuntime | null {
     const { binding } = useServerCredentialAccountScopeBinding(serverId);
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
@@ -40,6 +47,15 @@ export function useSessionCallerHostedHtmlRuntime(
     sessionCurrentRef.current = sessionCurrent;
     const sessionOwnedRef = React.useRef(session?.access?.role === 'owner');
     sessionOwnedRef.current = session?.access?.role === 'owner';
+    const contentSessionId = contentOwner?.kind === 'session' ? contentOwner.sessionId : null;
+    const contentSessionOwned = storage(state => contentSessionId !== null
+        && selectSessionViewShellSessionForRouteState(state, contentSessionId, serverId)?.access?.role === 'owner');
+    // Someone else owns the containing surface: another Account's surface, or a Session the viewer does not own.
+    // Missing ownership fails closed, as it does for the target Session.
+    const contentForeign = contentOwner?.kind === 'account' ? contentOwner.accountId !== binding?.accountId
+        : contentOwner?.kind === 'session' && !contentSessionOwned;
+    const contentForeignRef = React.useRef(contentForeign);
+    contentForeignRef.current = contentForeign;
     const surfaceCurrentRef = React.useRef(isSurfaceCurrent);
     surfaceCurrentRef.current = isSurfaceCurrent;
     const hostOrigin = resolveHostedFrameHostOrigin();
@@ -99,6 +115,7 @@ export function useSessionCallerHostedHtmlRuntime(
                 isAccountCurrent: isCurrent,
                 isSessionCurrent: () => sessionCurrentRef.current,
                 isSessionOwned: () => sessionOwnedRef.current,
+                isContentForeign: () => contentForeignRef.current,
                 readActionsSettings: async signal => {
                     const account = await captureLazyActionAccountContext(binding.serverId, signal);
                     try {

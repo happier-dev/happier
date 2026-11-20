@@ -12716,11 +12716,11 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
                 subtitle: "受信任的内置和已安装插件均可使用。",
             },
             foreign_session_html: {
-                title: '他人会话中的 HTML',
-                subtitle: '允许代理在不属于你的会话中创建的 HTML 使用此操作。默认关闭。',
+                title: '他人的 HTML',
+                subtitle: '允许他人的 HTML（在其会话中，或在其与你共享的页面上）使用此操作。默认关闭。',
             },
             foreign_session_html_resources: {
-                subtitle: '允许他人会话中的 HTML 读取资源并接收实时更新。默认关闭；不支持审批提示。',
+                subtitle: '允许他人的 HTML 读取资源并接收实时更新。默认关闭；不支持审批提示。',
             },
             contextual_ui: {
                 title: "显示位置",

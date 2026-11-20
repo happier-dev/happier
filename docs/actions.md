@@ -692,10 +692,15 @@ retain their contextual Ask defaults and ordinary waiver behavior. Hosts pass
 those already-admitted consequence facts through the existing approval-policy
 hook; changing a declaration does not erase them.
 
-In unreleased 0.3 source, `foreign_session_html` is a policy audience for agent
-HTML in a Session the viewer does not own. It is not a transport surface: the
-host supplies the class from the Session access projection, never from HTML
-input. The shared Actions policy defaults this audience to Off, returning
+In unreleased 0.3 source, `foreign_session_html` is the policy audience for
+authored HTML that someone other than the viewer owns: HTML in a Session the
+viewer does not own, and HTML widgets on a surface whose Account is not the
+viewer (a shared Home, Project dashboard, Work Board, plugin-page or core-page
+area) or on the Board or companion of a Session the viewer does not own,
+whatever the widget's target. The id keeps its existing spelling. It is not a
+transport surface: the mounting host supplies the class once, from the Session
+access projection or the surface reference its layout read admitted, never from
+HTML input. The shared Actions policy defaults this audience to Off, returning
 `action_disabled` without creating an approval. Own-Session HTML keeps its
 ordinary policy. The existing per-target Settings control and
 `actions.policy.set` let the person choose Allowed, Ask first or Off for host

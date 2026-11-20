@@ -66,8 +66,12 @@ vi.mock('socket.io-client', async importOriginal =>
 
 // The physical browser frame is the platform boundary; the bundle, renderer,
 // viewer runtime, capability admission and bridge remain real.
+const frames = vi.hoisted(() => [] as Record<string, unknown>[]);
 vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
-    BrowserViewFrame: () => React.createElement('BrowserViewFrame', { testID: 'html-copy-frame' }),
+    BrowserViewFrame: (props: Readonly<{ engine?: Record<string, unknown> }>) => {
+        if (props.engine) frames.push(props.engine);
+        return React.createElement('BrowserViewFrame', { testID: 'html-copy-frame' });
+    },
 }));
 
 installDisconnectedServerSocketBoundary();
@@ -938,4 +942,72 @@ it('does not mount native readers while the containing document admission is sus
         await screen.update(body());
         expect(screen.tree.root.findAllByType(ProjectBuiltinWidgetBody)).toHaveLength(1);
     } finally { await screen.unmount(); await connection.dispose(); }
+});
+
+/** The guest side of the shared frame bridge, read from the physical engine the frame received. */
+function readGuestFrame(frame: Record<string, unknown>) {
+    const encoded = String(frame.html).match(/Object\.freeze\((\{.*?\})\),writable:false/)?.[1];
+    if (!encoded) throw new Error('expected_caller_frame_bootstrap');
+    const { identity } = JSON.parse(encoded) as { identity: { instanceId: string; mountNonce: string } };
+    const bridge = frame.webMessageBridge as { onMessage: (event: MessageEvent, receipt: { consumeTransientActivation: () => boolean }) => unknown };
+    let sequence = 0;
+    const send = (kind: string, payload: unknown) => bridge.onMessage(
+        { data: { version: 1, identity, sequence: ++sequence, kind, payload }, origin: 'null' } as MessageEvent,
+        { consumeTransientActivation: () => false });
+    return { identity, send };
+}
+
+it.each([
+    ['HTML on another Account\'s shared surface', 'foreign-account', true],
+    ['HTML on a Board of a Session the viewer does not own', 'foreign-session', true],
+    ['the viewer\'s own HTML on their own surface', 'own-account', false],
+    ['the viewer\'s own HTML on their own Session Board', 'own-session', false],
+] as const)('classifies %s into the foreign-HTML Action audience only when someone else owns it', async (_label, shape, foreign) => {
+    const http = createHomeHubArtifactHttpBoundary('viewer');
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request: http.request });
+    const viewer = getActiveServerAccountScope();
+    if (!viewer) throw new Error('Expected restored viewer Account');
+    const disposeActionLoader = await installRealActionExecutorModuleLoader();
+    storage.setState(state => ({ sessions: { ...state.sessions, board: createSessionFixture({ id: 'board', serverId: viewer.serverId,
+        access: createSessionAccessFixture(shape === 'foreign-session' ? 'edit' : 'owner') }) } }));
+    // Account A's shared Project dashboard, read by viewer B: the layout host admits B and keeps A as the surface Account.
+    const scope: WidgetSurfaceRefV1 = shape === 'foreign-account' ? { serverId: viewer.serverId, accountId: 'owner-a', owner: { kind: 'project', projectId: 'shared' } }
+        : shape === 'own-account' ? { ...viewer, owner: { kind: 'project', projectId: 'mine' } }
+        : { ...viewer, owner: { kind: 'sessionBoard', sessionId: 'board' } };
+    const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'html', name: 'Session reader',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+        provenance: { source: { kind: 'authored' } },
+        body: { kind: 'html', source: artifactHtmlBundleFromBodyV1('<main>Sessions</main>'),
+            requestedCapabilities: { network: 'open', hostMethods: ['context', 'executeAction'], actions: ['session.list'] } } });
+    const instance: WidgetInstanceV1 = { v: 1, id: 'reader', definition: { kind: 'inline', definition }, bindings: {} };
+    const runtime = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current' as const,
+        interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime() };
+    vi.stubGlobal('location', { origin: 'https://app.happier.dev' });
+    frames.length = 0;
+    // Resolve the real guest bootstrap first so a cold transform is not mistaken for a pending frame.
+    await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
+    const screen = await renderScreen(<WidgetSurface scope={scope} admittedViewer={viewer} instance={instance} descriptor={null} providedContext={{}}
+        appRuntime={runtime} presentation="content" recordRevision="reader:1" isCurrent={() => true} testID="html-audience" />);
+    try {
+        await React.act(async () => { await loadPluginUiHostSupport(); });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(frames.length, JSON.stringify(screen.tree.toJSON())).toBeGreaterThan(0);
+        }, { timeout: 10_000 });
+        const guest = readGuestFrame(frames.at(-1)!);
+        let result: unknown;
+        await React.act(async () => {
+            await guest.send('ready', { ready: true });
+            await guest.send('hostApi', { wireVersion: 1, kind: 'negotiate', identity: guest.identity, apiRange: '^1.0.0' });
+            result = await guest.send('hostApi', { wireVersion: 1, kind: 'request', identity: guest.identity, requestId: 'list',
+                method: 'executeAction', payload: { action: 'session.list', input: {} } });
+        });
+        expect(result).toMatchObject({ kind: 'result' });
+        const payload = (result as { payload?: { kind?: string; error?: { code?: string } } }).payload;
+        const refusal = payload?.kind === 'error' ? payload.error?.code ?? null : null;
+        // Default settings: someone else's HTML is refused before execution. The viewer's own HTML keeps its
+        // ordinary policy and reaches the real executor (its unserved Session read fails at the HTTP boundary).
+        if (foreign) expect(refusal).toBe('action_disabled');
+        else expect(['action_disabled', 'approval_required']).not.toContain(refusal);
+    } finally { await screen.unmount(); await connection.dispose(); disposeActionLoader(); vi.unstubAllGlobals(); }
 });
