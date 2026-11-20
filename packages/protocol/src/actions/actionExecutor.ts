@@ -2827,12 +2827,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? deploymentAuthorization.binding.deploymentCandidatePublication?.reviewed : undefined;
     const confirmation = ctx.presentUserConfirmation?.actionId === actionId ? ctx.presentUserConfirmation : undefined;
     const compactRollout = confirmation?.reviewDigest !== undefined && readDeploymentRolloutSemanticInput(actionId, semanticInput);
+    const compactTeardown = confirmation?.reviewDigest !== undefined && actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
+      && !('contentArtifactId' in readRecord(semanticInput));
     let deploymentConfirmation: ReturnType<typeof admitPresentUserConfirmationV1> = null;
     if (!existingAdmission && (authorizedCandidate !== undefined || confirmation?.reviewedDeploymentInput !== undefined || compactRollout)) {
       const reviewed = spec.inputSchema.safeParse(confirmation?.reviewedDeploymentInput);
       const candidate = reviewed.success ? projectDeploymentReviewedCandidateV1(reviewed.data) : undefined;
-      if (!compactRollout || isSharedRequesterActionV1(ctx)
-        || !reviewed.success || !candidate || (deploymentAuthorization && !sameStrictJsonValue(candidate, authorizedCandidate)))
+      if ((!compactRollout && !compactTeardown) || isSharedRequesterActionV1(ctx)
+        || !reviewed.success || (compactRollout && !candidate)
+        || (deploymentAuthorization && !sameStrictJsonValue(candidate ?? null, authorizedCandidate ?? null)))
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
       if (readRecord(reviewed.data).environmentId !== readRecord(semanticInput).environmentId
         || readRecord(reviewed.data).serverId !== readRecord(semanticInput).serverId)
@@ -2840,7 +2843,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       deploymentConfirmation = admitPresentUserConfirmationV1(actionId, semanticInput, ctx);
       if (!deploymentConfirmation)
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
-      admittedInput = reviewed.data;
+      if (compactTeardown) {
+        const requestKey = readRecord(reviewed.data).requestKey;
+        const originalKey = readRecord(semanticInput).requestKey;
+        if (typeof requestKey !== 'string' || (originalKey !== undefined && originalKey !== requestKey))
+          return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+        // Teardown rebuilds its inventory from the original choice. The reviewed
+        // request key carries the identity allocated during the first preparation.
+        admittedInput = { ...readRecord(semanticInput), requestKey };
+      } else admittedInput = reviewed.data;
     }
     if ((!existingAdmission || actionId === 'deployments.templates.instantiate' && !existingAdmission.executeAdmittedAction) && (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
       || actionId === 'deployments.templates.instantiate' && deps.prepareDeploymentTemplateInstantiation && readRecord(admittedInput).mode === 'apply'

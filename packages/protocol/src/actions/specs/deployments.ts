@@ -342,7 +342,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id)
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rollout || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : deploymentActionIds.isDeploymentMembershipActionIdV1(id) || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },

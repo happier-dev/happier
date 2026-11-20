@@ -626,7 +626,7 @@ export async function admitReviewedDeploymentCandidateInTx(tx: Tx, input: Readon
 }>) {
     const { request, original, candidate } = input;
     const publication = original?.deploymentCandidatePublication;
-    if (!original || !publication || publication.reviewed || !deploymentActionIds.isDeploymentRolloutActionIdV1(request.actionId)
+    if (!original || !publication || publication.reviewed || !deploymentActionIds.isDeploymentMembershipActionIdV1(request.actionId)
         || !('authentication' in original) || original.authentication.kind !== 'account'
         || original.sessionActionOrigin !== undefined || original.workflowActionOrigin !== undefined
         || readExternalActionBindingAuthority(original) !== 'present_user' || original.requestId === request.requestId

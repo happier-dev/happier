@@ -447,7 +447,7 @@ import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/pr
 import { resolveSpawnConnectedServicesSelectionInContext, listSpawnConnectedServicesInContext } from './agentInventoryActionDeps';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, isDeploymentActionFailure, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -5247,11 +5247,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         }
       }
       if (!reviewDigest) return executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow,
-        ...(readDeploymentRolloutSemanticInput(actionId, actionInput) ? {
+        ...(isDeploymentMembershipActionIdV1(actionId) ? {
           onDeploymentCandidateAuthorized: token => { originalDeploymentAuthorization = token; },
         } : {}) });
       const candidate = reviewedDeploymentInput === undefined ? undefined : projectDeploymentReviewedCandidateV1(reviewedDeploymentInput);
-      if (reviewedDeploymentInput !== undefined && (!candidate || !originalDeploymentAuthorization)) {
+      if (candidate && !originalDeploymentAuthorization) {
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
       }
       // A Session draft's attempt ID also identifies its reviewed sandbox acquire.

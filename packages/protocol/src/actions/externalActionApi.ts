@@ -43,7 +43,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentRolloutActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReviewedCandidateV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1466,10 +1466,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['requesterOperationRead'], message: 'Requester custody binds only the exact Account operation read' });
   }
   const publication = value.deploymentCandidatePublication;
-  if (publication?.reviewed && (!isDeploymentRolloutActionIdV1(value.actionId)
+  if (publication?.reviewed && (!isDeploymentMembershipActionIdV1(value.actionId)
     || publication.reviewed.contentArtifactId !== publication.contentArtifactId
     || (publication.reviewed.destinationContent !== undefined) !== isDeploymentPromoteActionIdV1(value.actionId))) {
-    context.addIssue({ code: 'custom', path: ['deploymentCandidatePublication'], message: 'Reviewed custody binds only the exact rollout candidate.' });
+    context.addIssue({ code: 'custom', path: ['deploymentCandidatePublication'], message: 'Reviewed custody binds only the exact receipt candidate.' });
   }
   const projectDefaults = value.projectSessionDefaultsAdmission;
   if (projectDefaults ? (value.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1

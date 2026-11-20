@@ -102,6 +102,70 @@ it.each([false, true])('executes only the candidate reviewed for a first Deploy 
     });
 });
 
+it.each([
+    { target: 'own-server', changed: false }, { target: 'own-server', changed: true },
+    { target: 'platform', changed: false }, { target: 'platform', changed: true },
+])('keeps the $target Teardown candidate through review (changed target revision: $changed)', async ({ target, changed }) => {
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { bindPresentUserActionConfirmation } = await import('./presentUserConfirmation');
+    const { DEPLOYMENT_TEARDOWN_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    const { createDeploymentCandidatePublicationV1, projectDeploymentReviewedCandidateV1 } = await import('@happier-dev/protocol/deployments/deploymentCandidatePublicationV1');
+    const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { createActionAutomationPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: target, reason: 'manual' as const };
+    expect(isUiMachineOwnedAdmissionAction(actionId, input)).toBe(true);
+    expect(isUiMachineOwnedAdmissionAction(actionId, { ...input, detachKeepRunning: true })).toBe(false);
+    const reviewFacts = { summary: 'Remove the selected target', target, revision: 1 };
+    const origin = { ...context, serverId: input.serverId, runtimeAccountId: 'owner', interactivePresentation: 'unavailable' as const,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'controller' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+    const publication = createDeploymentCandidatePublicationV1({ ...input, actionId, accountId: 'owner', serverIdentityId: input.serverId,
+        requestId: 'unconfirmed', requestEnvelopeDigest: 'A'.repeat(43), source: { id: 'source', revision: 1 } });
+    const candidate = { ...input, expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'original-key',
+        contentArtifactId: publication.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 3 };
+    const effects: unknown[] = [];
+    let publications = 0;
+    const executor = createActionExecutor({
+        actionAutomations: createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [] }) }),
+        resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: input.environmentId } }),
+        // The native Artifact boundary can publish on the first press and open an exact Home-authorized candidate on Confirm.
+        prepareDeploymentTeardown: async ({ input: operands, context }) => {
+            const authorized = context.externalActionExecutionAuthorization?.binding.deploymentCandidatePublication?.reviewed;
+            const revision = changed && context.actionRequestId === 'confirmed' ? 2 : 1;
+            if (authorized) {
+                expect(authorized).toEqual(projectDeploymentReviewedCandidateV1(candidate));
+                expect(operands).toEqual({ ...input, requestKey: candidate.requestKey });
+                return { input: { ...candidate, expectedTargetLinkRevision: revision }, preview: { ...reviewFacts, revision } };
+            }
+            publications += 1;
+            return { input: { ...candidate, contentArtifactId: publications === 1 ? candidate.contentArtifactId : 'new-candidate' }, preview: reviewFacts };
+        },
+        deploymentAction: async (_actionId, operands) => {
+            effects.push(operands);
+            return { ok: true, environmentId: input.environmentId, revision: 2, deploymentId: 'teardown', deploymentRevision: 1, state: 'succeeded' };
+        },
+    } satisfies Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const result = await executeMachineActionAtDaemon(actionId, input, context, async (operands, digest, reviewed) => {
+        const requestId = digest ? 'confirmed' : 'unconfirmed';
+        const pins = projectDeploymentReviewedCandidateV1(reviewed);
+        const externalActionExecutionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'issued-by-home', binding: {
+            actionId, accountId: 'owner', custodianAccountId: 'owner', machineId: 'controller', installationId: 'installation',
+            authentication: { kind: 'account', tokenEpoch: 1 }, deploymentChildRoot: true,
+            requestId, requestEnvelopeDigest: 'A'.repeat(43), serverIdentityId: input.serverId, target: origin.externalActionTarget,
+            deploymentCandidatePublication: { ...publication, ...(pins ? { reviewed: pins } : {}) },
+        } });
+        const invocation = { ...origin, actionRequestId: requestId };
+        const authorizedInvocation = digest
+            ? bindPresentUserActionConfirmation(actionId, operands, invocation, digest, reviewed) : invocation;
+        const executed = await executor.execute(actionId, operands, { ...authorizedInvocation, externalActionExecutionAuthorization });
+        return executed.ok ? executed.result : executed;
+    }, async () => true);
+    expect(result, JSON.stringify(result)).toMatchObject(changed
+        ? { ok: false, errorCode: 'action_interactive_review_required' } : { ok: true });
+    expect(effects).toEqual(changed ? [] : [candidate]);
+    expect(publications).toBe(1);
+});
+
 it('replays the receiving Machine’s prepared Open destination after confirmation', async () => {
     const actionId = 'projects.open';
     const materialization = { kind: 'clone', destinationParentPath: '/requested', destinationDirectoryName: 'repo',

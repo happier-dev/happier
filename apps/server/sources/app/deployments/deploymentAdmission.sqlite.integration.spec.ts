@@ -26,7 +26,7 @@ import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx, project
 import { requestCancelDeploymentInTx } from './deploymentService';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
 import { isDeploymentCandidatePublicationHttpPurposeInTx, isDeploymentPreparationAuthorizedInTx, isDeploymentPreparationHttpPurposeInTx } from './deploymentPreparationAuthorization';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1,
     createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx } from './deploymentReadService';
@@ -1491,16 +1491,18 @@ describe('current Source deployment authority', () => {
         if (accessLevel === 'admin') {
             const mintInput = { accountId: manager.id, serverIdentityId: serverId, machineId: machine.id, target,
                 authentication: { kind: 'account' as const, tokenEpoch: manager.tokenEpoch },
-                actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, admittedMachineRole: 'manage' as const };
+                actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1 as typeof DEPLOYMENT_DEPLOY_ACTION_ID_V1 | typeof DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+                admittedMachineRole: 'manage' as const };
             const compact = { serverId, environmentId: environment.id, targetLinkId: link.id };
             const mint = (extra: Partial<typeof mintInput> = {}, deploymentReview?: {
                 originalAuthorizationToken: string;
                 candidate: { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
             }) => {
-                const request = { ...envelope, requestId: crypto.randomUUID(), input: compact };
+                const actionInput = extra.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { ...compact, reason: 'manual' as const } : compact;
+                const request = { ...envelope, requestId: crypto.randomUUID(), input: actionInput };
                 return auth.mintExternalActionExecutionAuthorization({ ...mintInput, ...extra,
                     requestId: request.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request),
-                }, { input: compact, ...(deploymentReview ? { deploymentReview } : {}) });
+                }, { input: actionInput, ...(deploymentReview ? { deploymentReview } : {}) });
             };
             const original = await mint();
             const differentRequest = await mint();
@@ -1545,10 +1547,10 @@ describe('current Source deployment authority', () => {
                 expect(await purpose('GET', `/v1/artifacts/${candidate.artifact.id}`)).toBe(false);
                 const signedHeaders = (method: string, path: string, body?: unknown, authorization = confirmation) => ({
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: authorization.binding.actionId,
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, target,
+                        authorizationToken: authorization.token, effectActionId: authorization.binding.actionId, target,
                         installationId: machine.installationId!, requestId: authorization.binding.requestId,
                         method, path, ...(body === undefined ? {} : { body }), privateKey: keys.secretKey }),
                 });
@@ -1570,6 +1572,27 @@ describe('current Source deployment authority', () => {
                 expect(existing).toHaveLength(1);
                 await db.deployment.update({ where: { id: existing[0].id }, data: { state: 'failed', settledAt: new Date() } });
                 deployInput.expectedRevision = receipt.revision;
+
+                const teardownAction = { actionId: DEPLOYMENT_TEARDOWN_ACTION_ID_V1 };
+                const teardown = await mint(teardownAction);
+                const teardownId = teardown.binding.deploymentCandidatePublication?.contentArtifactId;
+                if (!teardownId) throw new Error('Expected a Teardown candidate');
+                const teardownCandidate = await createArtifact({ actorUserId: manager.id, artifactId: teardownId,
+                    kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
+                    header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Reviewed teardown' })),
+                    body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
+                    dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                expect(teardownCandidate.ok).toBe(true);
+                const teardownPins = { contentArtifactId: teardownId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+                await expect(mint(teardownAction, { originalAuthorizationToken: original.token, candidate: teardownPins }))
+                    .rejects.toMatchObject({ code: 'credential_scope_denied' });
+                const confirmedTeardown = await mint(teardownAction, { originalAuthorizationToken: teardown.token, candidate: teardownPins });
+                expect(confirmedTeardown.binding.deploymentCandidatePublication).toMatchObject({ reviewed: teardownPins });
+                const teardownPath = `/v1/artifacts/${teardownId}`;
+                const reopened = await app.inject({ method: 'GET', url: teardownPath,
+                    headers: signedHeaders('GET', teardownPath, undefined, confirmedTeardown) });
+                expect(reopened.statusCode, reopened.body).toBe(200);
+                expect(reopened.json()).toMatchObject({ id: teardownId, headerVersion: 1, bodyVersion: 1 });
             }, { authentication: 'real' });
             await expect(mint({}, carried)).rejects.toMatchObject({ code: 'credential_scope_denied' });
         }

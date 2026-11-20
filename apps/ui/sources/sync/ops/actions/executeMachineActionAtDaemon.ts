@@ -1,12 +1,13 @@
 import { completeActionResult, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec, hasDeclaredActionDaemonIngress } from '@happier-dev/protocol/actions/actionSpecs';
-import { isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { readDeploymentRolloutSemanticInput } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 
 export const readUiAdmittedActionId = (actionId: string, input: unknown) =>
@@ -26,7 +27,8 @@ export function isUiMachineOwnedAdmissionAction(actionId: string, input: unknown
     if (isSessionSpawnNewActionIdV1(parsed.data)) return true;
     if (isDeploymentAccountMachineTransportActionIdV1(parsed.data)) return true;
     const spec = getActionSpec(parsed.data);
-    return spec.executionPlacement === 'machine' && hasDeclaredActionDaemonIngress(spec, 'ui');
+    return hasDeclaredActionDaemonIngress(spec, 'ui')
+        && resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui') === 'machine';
 }
 
 /** Runs the Machine-owned Action; a review digest means the person confirmed the review the Machine carried back. */
@@ -69,11 +71,12 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
     const liveOnly = spec.approvalInputCustody === 'live_only';
     const parsed = spec.inputSchema.safeParse(!liveOnly && actionId === 'projects.open' ? review.actionArgs : input);
     if (!parsed.success) return result;
-    const rollout = readDeploymentRolloutSemanticInput(actionId, parsed.data);
-    const confirmed = await confirm({ actionId, input: liveOnly || rollout ? review.actionArgs : parsed.data, context, preview: review.preview });
+    const compactCandidate = readDeploymentRolloutSemanticInput(actionId, parsed.data)
+        || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('contentArtifactId' in readRecord(parsed.data));
+    const confirmed = await confirm({ actionId, input: liveOnly || compactCandidate ? review.actionArgs : parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
-    const executed = rollout
+    const executed = compactCandidate
         ? await executeConfirmed(parsed.data, review.reviewDigest, review.actionArgs)
         : await executeConfirmed(parsed.data, review.reviewDigest);
     // A first confirmation may precede native destination preparation. Present a

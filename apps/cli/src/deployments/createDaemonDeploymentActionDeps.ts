@@ -748,6 +748,24 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         environment: DeploymentEnvironmentDetailV1; content: DeploymentContentV1; context: ActionExecutorContext;
         assertCurrent(): Promise<void>;
     }>) => {
+            const binding = context.externalActionExecutionAuthorization?.binding;
+            // This preparer also publishes contributed Deploy candidates. Only native
+            // Teardown rebuilds its inventory before reopening the reviewed receipt.
+            const teardown = 'teardown' in content && binding?.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+            const reviewed = teardown ? binding.deploymentCandidatePublication?.reviewed : undefined;
+            if (reviewed) {
+                const opened = readDeploymentReceiptArtifactV1(reviewed,
+                    await open(reviewed.contentArtifactId, context, candidateArtifactAuthorization(context)));
+                if (!opened.ok) return refuse(opened.error);
+                // Only the queued observation timestamp is generated again during provider preparation.
+                const facts = (value: DeploymentContentV1) => value.platform ? { ...value,
+                    platform: { ...value.platform, observation: { ...value.platform.observation, observedAtMs: 0 } } } : value;
+                if (!sameStrictJsonValue(facts(opened.content), facts(content), { omitUndefinedObjectMembers: true }))
+                    return refuse('approval_stale');
+                return reviewed;
+            }
+            if (teardown && context.presentUserConfirmation?.actionId === binding.actionId
+                && context.presentUserConfirmation.reviewedDeploymentInput !== undefined) return refuse('approval_stale');
             const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                 owner: environment.environment.owner, async assertCurrent() {
                     await assertCandidateCurrent();
