@@ -200,7 +200,8 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
   beforeEach(async () => {
     ui = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl,
       addressAnchorUrl: fixture!.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
-    await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machine.target.machineId), { timeoutMs: 60_000 });
+    expect(ui!.serverId).toBe(fixture!.serverId);
+    await waitFor(() => ui!.isAccountReady() && ui!.isMachineControlReady(machine.target.machineId), { timeoutMs: 60_000 });
   }, 0);
 
   afterEach(async () => {
@@ -419,31 +420,26 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     }
   }, 0);
 
-  it('TS.E.githubCredential and TH.J6 keep native custody and reviewed Task Action refusals typed', async () => {
-    const token = `github_pat_TEST_ONLY_TEAM_${randomUUID()}`;
-    const connected = await importToken(token);
-    const ownerId = await fetchAccountId(fixture!.server.baseUrl, account.credentials.token);
-    const personal = await admit({ source: 'connected', selection: 'profile', profileId: connected.accountId });
-    expect(personal.observed, JSON.stringify({ gh: personal.observed.gh, git: personal.observed.git }))
-      .toMatchObject({ tokenFingerprint: fingerprint(token), gh: { code: 0 }, git: { code: 0 } });
-    expect(personal.observed.gh.output).toContain('team-setup-fixture');
+  it('TH.J6 keeps reviewed Task Action refusals typed', async () => {
+    const connected = await importToken(`github_pat_TEST_ONLY_TASK_${randomUUID()}`);
     const source = { pluginId: service.pluginId, localId: 'github-forge' };
-    const configured = await account.execute('action.invoke', { action: TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
+    const taskContext = {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui!.serverId,
+      executionRunTargetMachineId: machine.target.machineId,
+    } satisfies NonNullable<Parameters<NonNullable<typeof ui>['execute']>[2]>;
+    await ui!.waitForPluginAccountAvailability();
+    const configured = await ui!.executeConfirmed('action.invoke', { action: TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
       input: { v: 1, kind: 'create', source, draft: { v: 1, localInstanceKey: 'github.com', keyStability: 'stable',
         binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, account: connected },
         configuration: { v: 1, token: encodeGithubTriageConfiguration({ v: 1,
           scope: { kind: 'repository', repositoryKey: 'octo-org/example-app' } }) },
-        locator: { v: 1, displayLabel: 'Typed Task journey' } } } });
+        locator: { v: 1, displayLabel: 'Typed Task journey' } } } }, taskContext);
     if (!configured.ok) throw new Error(`Task source configuration refused: ${JSON.stringify(configured)}`);
     const configuration = TriageSourceAdministrationActionResultV1Schema.parse(configured.result);
     if (!('sourceInstanceId' in configuration)) throw new Error(`Task source was not configured: ${JSON.stringify(configuration)}`);
     const address = { v: 1, sourceInstanceId: configuration.sourceInstanceId,
       entryRef: { source, kindId: 'issue', collisionScope: `github:${GITHUB_REPOSITORY_RESPONSE.id}`, entryId: '7' },
       lastKnownLocator: { v: 1, routingToken: 'octo-org/example-app' } };
-    const taskContext = {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui!.serverId,
-      executionRunTargetMachineId: machine.target.machineId,
-    } satisfies NonNullable<Parameters<NonNullable<typeof ui>['execute']>[2]>;
     // The Task source's live UI current-intent owner presents its exact review.
     const taskControl = await ui!.execute('action.invoke', {
       action: { pluginId: 'happier.triage', localId: TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1 },
@@ -459,6 +455,16 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       input: { ...address, transitionId: 'not_planned', fieldValues: [] } }, taskContext);
     expect(taskRefusal, JSON.stringify(taskRefusal)).toMatchObject({ ok: true, result: { kind: 'refused', reason: 'state_changed' } });
     expect(github!.entries().slice(beforeRefusal).filter(request => request.method !== 'GET')).toEqual([]);
+  }, 0);
+
+  it('TS.E.githubCredential and TH.J6 keep native custody refusals typed', async () => {
+    const token = `github_pat_TEST_ONLY_TEAM_${randomUUID()}`;
+    const connected = await importToken(token);
+    const ownerId = await fetchAccountId(fixture!.server.baseUrl, account.credentials.token);
+    const personal = await admit({ source: 'connected', selection: 'profile', profileId: connected.accountId });
+    expect(personal.observed, JSON.stringify({ gh: personal.observed.gh, git: personal.observed.git }))
+      .toMatchObject({ tokenFingerprint: fingerprint(token), gh: { code: 0 }, git: { code: 0 } });
+    expect(personal.observed.gh.output).toContain('team-setup-fixture');
     const createdTeam = await account.execute('teams.create', { v: 1, name: 'GitHub CLI acceptance',
       initialOwnerAccountId: ownerId, requestKey: randomUUID() });
     if (!createdTeam.ok) throw new Error(`GitHub Team creation refused (${createdTeam.errorCode})`);
