@@ -9,6 +9,7 @@ import type { AccountSettingsContext } from '@/settings/accountSettings/bootstra
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createRequesterAccountSettingsPublication } from '@/settings/accountSettings/requesterAccountSettingsPublication';
 import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
 import type { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import type { ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -16,6 +17,7 @@ import type { ExecutionRunNativeOfferedModelReader } from '@/agent/runtime/bridg
 
 export type RetainedRequesterAccountCustody = Readonly<{
   isCurrent(): Promise<boolean>;
+  prepareForOperation(): Promise<boolean>;
   savedSecretOperationContext: SavedSecretOperationContextV1;
   refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
   retainCustody(signal?: AbortSignal): RetainedRequesterAccountCustody;
@@ -55,6 +57,11 @@ export type RequesterAccountActionContext = Readonly<{
 }>;
 
 export const requesterActionContext = Symbol('admittedRequesterAccountActionContext');
+
+export function createRequesterAccountContextRetiredError(effectAttempted?: false) {
+  return createActionExecuteFailureError({ ok: false, errorCode: 'requester_account_context_unavailable',
+    error: 'requester_account_context_retired', ...(effectAttempted === false ? { effectAttempted } : {}) });
+}
 
 /** Session issuers already own Account custody without an ingress settings lifetime. */
 export type RequesterAccountActionTransportContext = Pick<RequesterAccountActionContext,
@@ -171,7 +178,7 @@ export function createAdmittedRequesterAccountActionContext(params: Readonly<{
   let ingressReleased = false;
   const release = async () => { if (--references === 0) { live = false; await params.onRetire(); } };
   const retain = () => {
-    if (!live) throw new Error('requester_account_context_retired');
+    if (!live) throw createRequesterAccountContextRetiredError();
     references += 1;
     let released = false;
     return async () => { if (!released) { released = true; await release(); } };
@@ -182,11 +189,12 @@ export function createAdmittedRequesterAccountActionContext(params: Readonly<{
   const retainCustodyFrom = (source: SavedSecretOperationContextV1): (signal?: AbortSignal) => RetainedRequesterAccountCustody => (signal?: AbortSignal) => {
     const isInstalledCurrent = input.isRetainedCustodyCurrent!;
     const snapshot = source.readSnapshot();
-    if (!snapshot) throw new Error('requester_account_context_retired');
+    if (!snapshot) throw createRequesterAccountContextRetiredError();
     const releaseReference = retain();
     let retained = true;
-    const isRetainedCurrent = async () => retained && live && !signal?.aborted && await isInstalledCurrent()
-      && retained && live && !signal?.aborted && observation.isCurrent(currentness);
+    const isLive = () => retained && live && !signal?.aborted;
+    const isInstalledCustodyCurrent = async () => isLive() && await isInstalledCurrent() && isLive();
+    const isRetainedCurrent = async () => await isInstalledCustodyCurrent() && observation.isCurrent(currentness);
     const retainedSecrets = createInvocationSavedSecretOperationContextV1({
       credentials: input.credentials, snapshot, serverHttpBaseUrl: input.serverHttpBaseUrl,
       machineAdmission: source.machineAdmission, isCurrent: isRetainedCurrent,
@@ -196,6 +204,18 @@ export function createAdmittedRequesterAccountActionContext(params: Readonly<{
     });
     return Object.freeze({
       isCurrent: isRetainedCurrent,
+      prepareForOperation: async () => {
+        if (!await isInstalledCustodyCurrent()) return false;
+        if (observation.isCurrent(currentness)) return true;
+        // A missing observation can recover at dispatch. A retired installation
+        // or a different encryption identity cannot lend its private material.
+        try { await observation.read(signal); }
+        catch (error) {
+          if (error instanceof AccountEncryptionCurrentnessUnavailableError) return false;
+          throw error;
+        }
+        return await isRetainedCurrent();
+      },
       savedSecretOperationContext: retainedSecrets,
       refreshAccountSettings: retainedPublication.ensureCurrent,
       retainCustody: retainCustodyFrom(retainedSecrets),

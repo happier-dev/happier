@@ -8,6 +8,7 @@ import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/pu
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema,
   projectDeploymentPreparationAdmissionV1, createDeploymentCandidatePublicationV1, deriveWorkspaceSyncRelationshipId,
@@ -2073,6 +2074,78 @@ describe('admitted requester Action projection', () => {
         phase: 'requester_material_admission', reason: 'requester_account_context_retired',
       } },
     });
+  });
+
+  it('dispatches a prepared Acquire with current receiver custody and refuses a retired receiver before the effect', async () => {
+    const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: currentness };
+      throw new Error(`Unexpected Acquire requester read: ${new URL(url).pathname}`);
+    });
+    const home = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'acquire-root', binding: {
+      accountId: 'bob', custodianAccountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
+      actionId: MANAGED_ACQUIRE_ACTION_ID_V1, requestId: 'acquire-request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } });
+    const input = { selection: { kind: 'preset', homeId: 'stable-home', id: 'prepared-preset', revision: 3 },
+      controller: { machineId: 'machine', installationId: 'installation' } };
+    const prepare = (wire: typeof root, isRetainedCustodyCurrent: () => Promise<boolean>) =>
+      requesterAccountOwner.prepareRequesterAccountActionContext({ authorization: wire,
+        purpose: { kind: 'external_action' }, machineId: 'machine', installationId: 'installation',
+        installationPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31)).secretKey,
+        serverId: 'home-profile', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://requester-home.test',
+        ownCredentials: { token: 'bob-ordinary', encryption: null }, isCurrent: async () => true,
+        isRetainedCustodyCurrent, createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+      });
+    let installed = true;
+    const beforeReload = await prepare(root, async () => installed);
+    if (!beforeReload) throw new Error('Missing admitted Acquire requester before reload');
+    const parsedAfterReload = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(beforeReload.authorization)));
+    expect(requesterAccountOwner.readRequesterAccountActionContext(parsedAfterReload)).toBeNull();
+    const provider = vi.fn(async ({ externalActionExecutionAuthorization }: {
+      externalActionExecutionAuthorization?: typeof root;
+    }) => {
+      expect(await externalActionExecutionAuthorization?.requesterHttpProjection?.isCurrent()).toBe(true);
+      return { ok: true as const, result: { managedId: 'acquired-guest' } };
+    });
+    const run = (authorization: typeof root) => createHostActionOperationRuntime({ machineId: 'machine',
+      resolveAccountId: async () => 'bob', generateOperationId: () => 'prepared-acquire-operation' })
+      .runActionOperation({ actionId: MANAGED_ACQUIRE_ACTION_ID_V1, input,
+        context: { surface: 'cli', authority: 'present_user', actionRequestId: root.binding.requestId,
+          externalActionExecutionAuthorization: authorization }, execute: provider });
+    const unavailable = { errorCode: 'requester_account_context_unavailable',
+      error: 'requester_account_context_retired', effectAttempted: false };
+    let current: Awaited<ReturnType<typeof prepare>> = null;
+    try {
+      installed = false;
+      reads.mockClear();
+      const retired = await run(beforeReload.authorization).catch((error: unknown) => error);
+      expect.soft(retired).toMatchObject(unavailable);
+      expect(provider).not.toHaveBeenCalled();
+      expect(reads.mock.calls).toHaveLength(0);
+      await beforeReload.dispose();
+      home.mockClear();
+      current = await prepare(parsedAfterReload, async () => true);
+      if (!current) throw new Error('Missing admitted Acquire requester after reload');
+      const verifications = home.mock.calls.length;
+      expect(verifications).toBe(1);
+      await channel.pushInvalidCurrentness('bob');
+      reads.mockClear();
+      const result = await run(current.authorization).catch((error: unknown) => error);
+      expect(result).toMatchObject({ ok: true, result: { managedId: 'acquired-guest' } });
+      expect(provider).toHaveBeenCalledTimes(1);
+      expect(home.mock.calls).toHaveLength(verifications);
+      expect(reads.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness'))).toHaveLength(1);
+      // A published change in encryption identity is different from a missing witness.
+      await channel.push('bob', { ...currentness, version: 2, updatedAt: 2 });
+      const changedIdentity = await run(current.authorization).catch((error: unknown) => error);
+      expect(changedIdentity).toMatchObject(unavailable);
+      expect(provider).toHaveBeenCalledTimes(1);
+    } finally { await current?.dispose(); await beforeReload.dispose(); }
   });
 
   it('keeps template operation requester ports usable after its transport is cancelled', async () => {

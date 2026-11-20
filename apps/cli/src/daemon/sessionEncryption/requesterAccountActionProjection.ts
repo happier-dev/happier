@@ -10,7 +10,7 @@ import { readApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCu
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { requesterAccountEncryptionMode, requesterActionContext, rebindRequesterAccountActionContext, createAdmittedRequesterAccountActionContext, createRequesterEncryptionResolver, type RequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { requesterAccountEncryptionMode, requesterActionContext, rebindRequesterAccountActionContext, createAdmittedRequesterAccountActionContext, createRequesterAccountContextRetiredError, createRequesterEncryptionResolver, type RequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
@@ -888,6 +888,10 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         ReturnType<NonNullable<RequesterAccountActionContext['retainForOperation']>> => {
         const custody = source.retainCustody!(signal);
         try {
+          if (!await custody.prepareForOperation()) {
+            signal.throwIfAborted();
+            throw createRequesterAccountContextRetiredError(false);
+          }
           // Reuse the admitted encryption witness and retained installed lifetime;
           // neither the original transport nor a second Home admission owns this work.
           const authorization = await projectAdmittedAccountCustody({ authorization: source.authorization,
@@ -897,7 +901,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
               attribution: { serverId: input.serverId, accountId: root.data.binding.accountId,
                 machineId: root.data.binding.machineId, installationId: root.data.binding.installationId },
             } }, undefined, custody.isCurrent, source.accountEncryptionCurrentness);
-          if (!authorization) throw new Error('requester_account_context_retired');
+          if (!authorization) throw createRequesterAccountContextRetiredError(false);
           const isCurrent = authorization.requesterAccountProjection!.isCurrent;
           const context: RequesterAccountActionContext = Object.freeze({ ...source, authorization, isCurrent,
             ...(source.isCustodyCurrent ? { isCustodyCurrent: isCurrent } : {}),
@@ -907,7 +911,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
             retainCustody: custody.retainCustody,
             retainForOperation: signal => retainOperation(context, signal), dispose: custody.release });
           const prepared = await prepareAuthorization(context, signal, true);
-          if (!prepared) throw new Error('requester_account_context_retired');
+          if (!prepared) throw createRequesterAccountContextRetiredError(false);
           return { authorization: prepared.authorization, dispose: custody.release };
         } catch (error) { await custody.release(); throw error; }
       };
