@@ -19,6 +19,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { hapticsSuccess } from '@/components/ui/theme/haptics';
 import { Typography } from '@/constants/Typography';
+import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 import type { MachineAddArrivalNext } from './useMachineAddFlow';
@@ -64,12 +65,8 @@ function formatElapsed(ms: number): string {
 /** The elapsed time of a wait, ticking in its own leaf so nothing else re-renders each second. */
 function Elapsed(props: Readonly<{ sinceMs: number }>) {
     const styles = stylesheet;
-    const [now, setNow] = React.useState(() => Date.now());
-    React.useEffect(() => {
-        const id = setInterval(() => setNow(Date.now()), 1000);
-        return () => clearInterval(id);
-    }, []);
-    return <Text style={styles.elapsed}>{formatElapsed(now - props.sinceMs)}</Text>;
+    const elapsed = useElapsedTime(props.sinceMs);
+    return <Text style={styles.elapsed}>{formatElapsed(elapsed * 1000)}</Text>;
 }
 
 /**

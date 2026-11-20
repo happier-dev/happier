@@ -13,6 +13,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { t } from '@/text';
 
 export type AgentSignInTerminalHandlers = Readonly<{
@@ -198,19 +199,13 @@ function AuthUrl(props: Readonly<{ url: string; onOpen: (url: string) => void; t
 /** "Waiting for sign-in… 0:37" — the clock ticks in this leaf only. */
 function WaitingLine(props: Readonly<{ startedAtMs: number | null }>) {
     const { theme } = useUnistyles();
-    const [now, setNow] = React.useState(() => Date.now());
-    React.useEffect(() => {
-        if (props.startedAtMs === null) return;
-        const timer = setInterval(() => setNow(Date.now()), 1_000);
-        return () => clearInterval(timer);
-    }, [props.startedAtMs]);
-    const elapsed = props.startedAtMs === null ? null : Math.max(0, Math.floor((now - props.startedAtMs) / 1000));
+    const elapsed = useElapsedTime(props.startedAtMs);
     return (
         <View style={styles.waiting}>
             <View style={[styles.pulse, { backgroundColor: theme.colors.accent.blue }]} />
             <Text style={styles.waitingText}>{t('machineAgents.waitingEllipsis')}</Text>
             <View style={styles.grow} />
-            {elapsed !== null ? <Text style={styles.elapsed}>{`${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`}</Text> : null}
+            {props.startedAtMs !== null ? <Text style={styles.elapsed}>{`${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`}</Text> : null}
         </View>
     );
 }

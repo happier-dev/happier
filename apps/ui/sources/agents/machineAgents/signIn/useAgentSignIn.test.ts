@@ -4,6 +4,7 @@ import * as React from 'react';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import type { DaemonTerminalEnsureResponse } from '@happier-dev/protocol/daemon/terminal';
 import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -183,15 +184,21 @@ describe('shared Agent sign-in', () => {
       }
       return actualReact.useSyncExternalStore(observedSubscribe ?? subscribe, getSnapshot, getServerSnapshot);
     });
+    const timers = installTimerCensus();
     const presenter = await renderHook(() => useAgentSignIn({ serverId, machineId: 'equal-polls', agentId: 'codex' }));
-    await act(async () => { await presenter.getCurrent().start(); });
-    const waiting = presenter.getCurrent().state;
-    expect(notifications).toBeGreaterThan(0);
-    notifications = 0;
-    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-    expect(statusReads).toBe(30);
-    expect(notifications).toBe(0);
-    expect(presenter.getCurrent().state).toBe(waiting);
+    try {
+      await act(async () => { await presenter.getCurrent().start(); });
+      const waiting = presenter.getCurrent().state;
+      expect(notifications).toBeGreaterThan(0);
+      notifications = 0;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(statusReads).toBe(30);
+      expect(notifications).toBe(0);
+      expect(presenter.getCurrent().state).toBe(waiting);
+      expect(timers.readFires().interval).toBe(0);
+    } finally {
+      timers.stop();
+    }
     accountLabel = 'Work account';
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     expect(notifications).toBe(1);

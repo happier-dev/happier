@@ -240,12 +240,6 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
   const readScope = React.useCallback(() => entry && boundTarget?.lifetime.isCurrent()
     ? entry.authentication?.signInScope ?? null : null, [boundTarget, entry]);
   const signInScope = React.useSyncExternalStore(subscribeScope, readScope, readScope);
-  const [now, setNow] = React.useState(Date.now);
-  React.useEffect(() => {
-    if (state.phase !== 'waiting' && state.phase !== 'opening') return;
-    setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, [state.phase, state.startedAtMs]);
   const executeIntent = React.useCallback(async (operation: 'start' | 'status' | 'cancel' | 'restart') => {
     if (!entry || !boundTarget?.lifetime.isCurrent()) return;
     // Cancel/restart address the daemon's acquired process, never a made-up terminal id.
@@ -287,7 +281,7 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     },
   }), [boundTarget, entry, executeIntent]);
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
-    available: Boolean(boundTarget?.lifetime.isCurrent()), elapsedMs: state.startedAtMs === null ? 0 : Math.max(0, now - state.startedAtMs),
+    available: Boolean(boundTarget?.lifetime.isCurrent()),
     accountLabel: entry?.accountLabel ?? null, signInScope, ...actions };
 }
 
