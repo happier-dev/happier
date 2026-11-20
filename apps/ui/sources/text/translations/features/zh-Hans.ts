@@ -11527,6 +11527,7 @@ const nativePasswordTranslations = { 'zh-Hans': {
         protectionE2eeDetail: '只有你的设备可以读取你的数据。请保存恢复密钥：仅重置密码无法恢复数据。',
         checkYourEmail: '请查收邮件',
         resend: '重新发送',
+        resentTitle: '已重新发送',
         resent: '请在一分钟后再次检查邮箱。',
         useDifferentEmail: '换一个邮箱',
         connectTitle: '添加邮箱和密码',

@@ -4,12 +4,17 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { StepFieldGroup, StepFieldHelp, StepFieldLabel } from '@/components/onboarding/unauthShell/StepFormParts';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { StepFieldHelp, StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepActions } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import { StepPrimaryButton, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
+import { useUnauthShellLayout } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import type { TextInput } from '@/components/ui/text/Text';
 import { decodeBase64 } from '@/encryption/base64';
+
+import { RecoveryKeyCells } from './RecoveryKeyCells';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
@@ -20,46 +25,72 @@ export type SecretKeyEntrySubmitResult =
     | Readonly<{ kind: 'cancelled' }>;
 
 export type SecretKeyEntryFormProps = Readonly<{
-    description: string;
+    /** One line under the key saying what it is for, when the host's heading does not already say it. */
+    description?: string;
     submitTitle: string;
     onSubmit: (input: Readonly<{ normalizedKey: string; secret: Uint8Array }>) => Promise<SecretKeyEntrySubmitResult>;
     onBack?: () => void;
-    /** A quieter alternative to entering the key (e.g. scanning instead), rendered with Back's weight. */
-    secondaryAction?: Readonly<{ label: string; onPress: () => void }>;
-    /** Focus the key field on arrival (default). A host offering several ways focuses only the first. */
+    /** A quieter way on, under the actions (Lost your key?, scanning instead). */
+    secondaryAction?: Readonly<{ label: string; onPress: () => void; testID?: string }>;
+    /** Focus the key on arrival (default). A host offering several ways focuses only the first. */
     autoFocus?: boolean;
 }>;
 
-const LABEL_ID = 'restore-manual-secret-label';
+const DESCRIPTION_ID = 'restore-manual-secret-help';
+/** A typed character before the person asks to see the key: the key never reaches the page's text unasked. */
+const MASK = '•';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         width: '100%',
-        gap: theme.space.s16,
+        alignItems: 'center',
+        gap: theme.space.s24,
+    },
+    help: {
+        alignItems: 'center',
     },
     actions: {
-        gap: theme.space.s12,
+        width: '100%',
+        alignItems: 'center',
+        gap: theme.space.s16,
     },
 }));
 
+/**
+ * The one recovery-key entry (lab direction A "Your recovery key"): the key as the printed key's cells, the clipboard
+ * one press away while it is empty (then the choice to show it), the step's Sign in with Back to its left, and a quiet
+ * way on. The key stays masked until the person shows it.
+ */
 export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: SecretKeyEntryFormProps) {
     const styles = stylesheet;
     const inputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
-    const draftRef = React.useRef('');
     const submitInFlightRef = React.useRef(false);
     const mountedRef = React.useRef(true);
     const [secretKey, setSecretKey] = React.useState('');
     const [revealed, setRevealed] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [submitPending, setSubmitPending] = React.useState(false);
+    const compact = useUnauthShellLayout() === 'compact';
+    const onBack = useEventCallback(() => props.onBack?.());
+    useStepBackOverride(props.onBack ? onBack : undefined);
 
     React.useEffect(() => {
         mountedRef.current = true;
         return () => {
             mountedRef.current = false;
-            draftRef.current = '';
         };
     }, []);
+
+    const changeKey = React.useCallback((value: string) => {
+        setSecretKey(value);
+        setError(null);
+    }, []);
+
+    const pasteFromClipboard = React.useCallback(async () => {
+        const pasted = await getClipboardStringTrimmedSafe();
+        if (!mountedRef.current || !pasted) return;
+        changeKey(pasted);
+    }, [changeKey]);
 
     const submit = React.useCallback(async () => {
         if (submitInFlightRef.current) return;
@@ -93,7 +124,6 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
                 secret.fill(0);
             }
             if (result.kind === 'completed') {
-                draftRef.current = '';
                 setSecretKey('');
                 return;
             }
@@ -114,68 +144,66 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
         }
     }, [props, secretKey]);
 
+    const shown = revealed ? secretKey : secretKey.replace(/[^\s-]/gu, MASK);
+    const helpLine = error
+        ? <StepFieldHelp testID="restore-manual-secret-error" nativeID={DESCRIPTION_ID} tone="error">{error}</StepFieldHelp>
+        : props.description
+            ? <StepFieldHelp nativeID={DESCRIPTION_ID}>{props.description}</StepFieldHelp>
+            : null;
+
     return (
         <View style={styles.root}>
-            <StepFieldGroup>
-                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.secretKeyInputLabel')}</StepFieldLabel>
-                <FieldTextInput
-                    ref={inputRef}
-                    testID="restore-manual-secret-input"
-                    accessibilityLabel={t('connect.secretKeyInputLabel')}
-                    accessibilityLabelledBy={LABEL_ID}
-                    placeholder={t('connect.secretKeyPlaceholder')}
-                    value={secretKey}
-                    onChangeText={(value) => {
-                        draftRef.current = value;
-                        setSecretKey(value);
-                        if (error) setError(null);
-                    }}
-                    onSubmitEditing={() => {
-                        void submit();
-                    }}
-                    invalid={error !== null}
-                    secureTextEntry={!revealed}
-                    multiline={false}
-                    autoFocus={props.autoFocus !== false}
-                    autoCapitalize="none"
-                    autoComplete="off"
-                    returnKeyType="go"
-                    monospace
-                    trailing={(
-                        <IconButton
-                            testID="restore-manual-secret-reveal"
-                            accessibilityLabel={revealed ? t('settingsAccount.hideRecoveryKey') : t('settingsAccount.showRecoveryKey')}
-                            iconName={revealed ? 'eye-slash' : 'eye'}
-                            variant="plain"
-                            size={28}
-                            onPress={() => setRevealed((value) => !value)}
-                        />
-                    )}
-                />
-                {error ? (
-                    <StepFieldHelp testID="restore-manual-secret-error" tone="error">{error}</StepFieldHelp>
-                ) : (
-                    <StepFieldHelp>{props.description}</StepFieldHelp>
-                )}
-            </StepFieldGroup>
+            <RecoveryKeyCells
+                ref={inputRef}
+                testID="restore-manual-secret-input"
+                accessibilityLabel={t('connect.secretKeyInputLabel')}
+                accessibilityDescribedBy={helpLine ? DESCRIPTION_ID : undefined}
+                value={secretKey}
+                shown={shown}
+                onChangeText={changeKey}
+                onSubmitEditing={() => { void submit(); }}
+                invalid={error !== null}
+                secureTextEntry={!revealed}
+                autoFocus={props.autoFocus !== false}
+                groupsPerRow={compact ? 2 : 3}
+            />
+            {helpLine ? <View style={styles.help}>{helpLine}</View> : null}
             <View style={styles.actions}>
-                <RoundButton testID="restore-manual-submit" title={props.submitTitle} action={submit} loading={submitPending} />
-                {props.secondaryAction ? (
-                    <RoundButton
-                        testID="restore-manual-secondary"
-                        title={props.secondaryAction.label}
-                        display="inverted"
-                        onPress={props.secondaryAction.onPress}
+                {/* One slot: the clipboard while the key is empty, then the choice to show what was entered. */}
+                {secretKey.length === 0 ? (
+                    <WelcomeActionCard
+                        testID="restore-manual-paste"
+                        presentation="pill"
+                        iconName="clipboard"
+                        title={t('connect.pasteFromClipboard')}
+                        escape
+                        onPress={() => { void pasteFromClipboard(); }}
                     />
-                ) : null}
-                {props.onBack ? (
-                    <RoundButton
-                        testID="restore-manual-back"
-                        title={t('common.back')}
-                        display="inverted"
-                        onPress={props.onBack}
+                ) : (
+                    <WelcomeActionCard
+                        testID="restore-manual-secret-reveal"
+                        presentation="pill"
+                        iconName={revealed ? 'eye-slash' : 'eye'}
+                        title={revealed ? t('settingsAccount.hideRecoveryKey') : t('settingsAccount.showRecoveryKey')}
+                        escape
+                        onPress={() => setRevealed((value) => !value)}
                     />
-                ) : null}
+                )}
+                <StepActions onBack={props.onBack ? onBack : undefined}>
+                    <StepPrimaryButton
+                        testID="restore-manual-submit"
+                        title={props.submitTitle}
+                        onPress={submit}
+                        loading={submitPending}
+                    />
+                    {props.secondaryAction ? (
+                        <StepQuietAction
+                            testID={props.secondaryAction.testID ?? 'restore-manual-secondary'}
+                            label={props.secondaryAction.label}
+                            onPress={props.secondaryAction.onPress}
+                        />
+                    ) : null}
+                </StepActions>
             </View>
         </View>
     );

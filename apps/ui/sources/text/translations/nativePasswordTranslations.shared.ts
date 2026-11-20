@@ -47,6 +47,7 @@ export const nativePasswordTranslationsEnglish = { en: {
         protectionE2eeDetail: 'Only your devices can read your data. Save your recovery key: a password reset alone cannot restore it.',
         checkYourEmail: 'Check your email',
         resend: 'Send it again',
+        resentTitle: 'Sent again',
         resent: 'Check your email again in a minute.',
         useDifferentEmail: 'Use a different email',
         connectTitle: 'Add email and password',

@@ -3522,6 +3522,8 @@ const enConnect = {
   lostAccessConfirmButton: 'Reset and continue',
   secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
   secretKeyInputLabel: 'Recovery key',
+  pasteFromClipboard: "Paste from clipboard",
+  lostYourKey: "Lost your key?",
   linkNewDeviceTitle: 'Link new device',
   linkNewDeviceSubtitle:
     'Scan the QR code shown on your new device to link it to this account',
@@ -19305,8 +19307,8 @@ const enSetupOnboarding = {
   addHomeTitle: 'Add another Home',
   addHomeSubtitle:
     'Scan a QR code to add a Home without leaving your current one',
-  authSecretKeyTitle: 'Sign in with your key',
-  authSecretKeySubtitle: "Paste your recovery key.",
+  authSecretKeyTitle: "Your recovery key",
+  authSecretKeySubtitle: "Paste the key you saved. It stays on this device and only signs a one-time check.",
   authLostAccessTitle: 'Lost access?',
   authLostAccessSubtitle: 'Your options on this Home',
   webRelayHostHandoffTitle: 'Create a Personal Home on your machine',

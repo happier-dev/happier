@@ -538,7 +538,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 }} onAuthenticated={() => {}} />;
             }
         }
-        return <SecretKeyLoginEmbedded />;
+        return <SecretKeyLoginEmbedded onLostKey={params.onOpenLostAccess} />;
     }
 
     if (params.stepId === 'auth_lost_access') {

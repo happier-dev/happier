@@ -299,12 +299,14 @@ describe('RestoreQrView known-target requester QR', () => {
         await act(async () => screen.tree.unmount());
         expect(inFlight?.aborted).toBe(true);
     });
-    it('opens the recovery key and pairing-link entry (with its camera) from the key on the ways row', async () => {
+    it('opens the recovery key step from the key on the ways row, not the pairing-link entry', async () => {
         registered = false;
+        const onOpenSecretKeyLogin = vi.fn();
         const onOpenPairingLinkEntry = vi.fn();
-        const screen = await mount({ onOpenPairingLinkEntry });
+        const screen = await mount({ onOpenSecretKeyLogin, onOpenPairingLinkEntry });
         await screen.pressByTestIdAsync('restore-open-manual');
-        expect(onOpenPairingLinkEntry).toHaveBeenCalledOnce();
+        expect(onOpenSecretKeyLogin).toHaveBeenCalledOnce();
+        expect(onOpenPairingLinkEntry).not.toHaveBeenCalled();
     });
     it('starts a fresh requester invite when the presentation requires a new QR', async () => {
         const screen = await mount();

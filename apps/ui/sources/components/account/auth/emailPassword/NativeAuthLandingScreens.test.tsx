@@ -310,7 +310,7 @@ it('ignores a completed reset mutation after its bearer has been replaced', asyn
 it('shows a specific update-required landing when the exact Home lacks the public reset operation', async () => {
     homes.answer(savedHomeProfileId, RESET_PREVIEW, { status: 404, body: { error: 'not_found' } });
     await mountReset(); await waitForId('native-auth-reset-invalid');
-    expect(screen!.findByTestId('native-auth-reset-invalid')?.props.children).toBe(t('welcome.serverIncompatibleBody', { serverUrl: 'Saved Home' }));
+    expect(screen!.getTextContent()).toContain(t('welcome.serverIncompatibleBody', { serverUrl: 'Saved Home' }));
     expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(0);
 });
 it('signs in to the exact carried Home after a successful reset instead of falling back to the focused Home', async () => {

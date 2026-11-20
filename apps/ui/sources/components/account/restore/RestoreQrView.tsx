@@ -436,8 +436,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                         {!props.targetProfileId && !approvalVisible ? (
                             <TextLinkButton testID="restore-choose-home" label={t('connect.addPhoneChooseHomeTitle')} onPress={() => router.push('/server')} />
                         ) : null}
-                        {/* The ways row (owner 2026-11-19): Back on a computer, the recovery key (with a pairing link
-                            beside it), then the model's ways with "New account" last. Leaving cancels the code. */}
+                        {/* The ways row (owner 2026-11-19): Back on a computer, the recovery key (its own step), the
+                            code's pairing link, then the model's ways with "New account" last. Leaving cancels the code. */}
                         {(() => {
                             const leading = <>
                                 {rowBack ? <StepRowBackButton disabled={approvalVisible} onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
@@ -448,7 +448,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                     tooltip={t('connect.secretKeyInputLabel')}
                                     iconName="key"
                                     disabled={approvalVisible}
-                                    onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
+                                    onPress={openSecretKeyLogin}
                                 />
                                 {/* The link is the code's secret: it goes the moment the code is approved. */}
                                 {pairing.phase === 'ready' ? (

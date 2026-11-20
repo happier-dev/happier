@@ -5,12 +5,13 @@ import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { FlowSurfaceActions, type FlowSurfaceAction } from '@/components/ui/flowSurface';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 import { UnauthenticatedRouteShell } from '../unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
-import { StepBackContext, useStepBackSlot, useStepPrimaryWidth } from '../unauthShell/stepBack';
+import { StepQuietAction } from '../unauthShell/StepFormParts';
+import { StepBackContext, StepPrimaryButton, useStepBackSlot } from '../unauthShell/stepBack';
 import { WizardModalShell } from './WizardModalShell';
 
 export type AuthRouteStepAction = Readonly<{
@@ -18,12 +19,16 @@ export type AuthRouteStepAction = Readonly<{
     onPress: () => void;
     disabled?: boolean;
     testID?: string;
+    /** The primary's mark after its words: the forward arrow by default, another glyph, or `null` for none. */
+    iconName?: IconName | null;
 }>;
 
 type RouteStepProps = Readonly<{
     testID: string;
     title: string;
     subtitle?: string;
+    /** The subtitle's test id when it is the state's own sentence (signed out). */
+    subtitleTestID?: string;
     /** One quiet line naming what the step acts on (the Home being recovered), above the heading. */
     context?: React.ReactNode;
     /** Omitted when the step has no way back (an OAuth return finishing its sign-in). */
@@ -40,10 +45,6 @@ type RouteStepProps = Readonly<{
     mark?: React.ReactNode;
     children?: React.ReactNode;
 }>;
-
-function toFlowAction(action: AuthRouteStepAction): FlowSurfaceAction {
-    return { label: action.label, onPress: action.onPress, disabled: action.disabled, testID: action.testID };
-}
 
 /**
  * One standalone step in the welcome split's workflow pane: heading, purpose, body, then its
@@ -66,15 +67,24 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
 }>) {
     // A lone quiet action (Cancel while a sign-in can still be stopped) stays quiet: it is a
     // text action on the column, never promoted to the step's filled primary.
-    const primaryWidth = useStepPrimaryWidth();
     const actions = props.primary ? (
-        <View style={{ width: primaryWidth }}>
-            <FlowSurfaceActions
-                placement="column"
-                primary={toFlowAction(props.primary)}
-                secondary={props.secondary ? toFlowAction(props.secondary) : undefined}
+        <>
+            <StepPrimaryButton
+                testID={props.primary.testID}
+                title={props.primary.label}
+                onPress={props.primary.onPress}
+                disabled={props.primary.disabled}
+                iconName={props.primary.iconName}
             />
-        </View>
+            {props.secondary ? (
+                <StepQuietAction
+                    testID={props.secondary.testID}
+                    label={props.secondary.label}
+                    onPress={props.secondary.onPress}
+                    disabled={props.secondary.disabled}
+                />
+            ) : null}
+        </>
     ) : props.secondary ? (
         <TextLinkButton
             testID={props.secondary.testID}
@@ -94,6 +104,7 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
             testID={props.testID}
             title={props.title}
             subtitle={props.subtitle}
+            subtitleTestID={props.subtitleTestID}
             context={props.context}
             mark={props.mark}
             // A dead end with nothing left to do here leaves through the pill; one with its own action keeps Back,
@@ -156,6 +167,7 @@ export function AuthRouteStepFrame(props: AuthRouteStepFrameProps) {
                 stepId={props.stepId}
                 title={props.title}
                 subtitle={props.subtitle}
+                subtitleTestID={props.subtitleTestID}
                 context={props.context}
                 onBack={onBack}
                 backDisabled={props.backDisabled}

@@ -22,8 +22,20 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { ActiveRelaySummary } from '@/components/onboarding/ui/ActiveRelaySummary';
-import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
-import { StepFieldGroup, StepFieldHelp, StepFieldLabel, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepActions, UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import {
+    StepFieldGroup,
+    StepFieldHelp,
+    StepFieldLabel,
+    StepForm,
+    StepOrDivider,
+    StepQuietAction,
+    stepFieldLabelStyle,
+} from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { StepPrimaryButton, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
@@ -440,6 +452,252 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         />
     ) : null;
 
+    // The email, password and protection fields of sign-in and create, shared by both presentations.
+    const credentialFields = (provisioning: boolean, collectsCredentials: boolean) => (
+        <>
+    {emailField(
+        provisioning ? 'email' : 'username',
+        collectsCredentials ? undefined : submitProvision,
+        // Without a password here, the field's own line says what happens to the address.
+        collectsCredentials ? undefined : (
+            <StepFieldHelp testID="email-password-verify-first">
+                {t('settingsAccount.nativePassword.verifyReturnToCreate')}
+            </StepFieldHelp>
+        ),
+    )}
+    {collectsCredentials ? (
+    <ListPresentationProvider value="page">
+    <PasswordField
+        testID="email-password-password"
+        inputRef={passwordRef}
+        label={t('settingsAccount.nativePassword.password')}
+        labelStyle={stepFieldLabelStyle()}
+        value={draft.password}
+        onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
+        autoComplete={provisioning ? 'new-password' : 'current-password'}
+        supportingText={provisioning ? t('settingsAccount.nativePassword.passwordRequirements') : undefined}
+        error={problem?.field === 'password' ? problemMessage : null}
+        editable={!busy}
+        returnKeyType={provisioning ? 'next' : 'go'}
+        onSubmitEditing={provisioning ? () => confirmRef.current?.focus() : submitLogin}
+    />
+    </ListPresentationProvider>
+    ) : null}
+    {provisioning && collectsCredentials ? (
+        <ListPresentationProvider value="page">
+        <PasswordField
+            testID="email-password-confirm"
+            inputRef={confirmRef}
+            label={t('settingsAccount.nativePassword.confirmPassword')}
+            labelStyle={stepFieldLabelStyle()}
+            value={draft.confirmPassword}
+            onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
+            autoComplete="new-password"
+            error={problem?.field === 'confirmPassword' ? problemMessage : null}
+            editable={!busy}
+            returnKeyType="go"
+            onSubmitEditing={submitProvision}
+        />
+        </ListPresentationProvider>
+    ) : null}
+    {provisioning && collectsCredentials && permittedModes.length > 1 ? (
+        <FieldItem
+            label={t('settingsAccount.nativePassword.accountProtection')}
+            labelStyle={stepFieldLabelStyle()}
+        >
+            {/* A protection is a choice, not a command: option F cards, each saying what it means. */}
+            <SelectionTiles
+                variant="card"
+                accessibilityLabel={t('settingsAccount.nativePassword.accountProtection')}
+                testIdPrefix="email-password-protection"
+                options={permittedModes.map((candidate) => ({
+                    id: candidate,
+                    testID: `email-password-protection-${candidate}`,
+                    title: candidate === 'e2ee'
+                        ? tLoose('settingsAccount.nativePassword.protectionE2ee')
+                        : t('settingsAccount.nativePassword.protectionPlain'),
+                    subtitle: candidate === 'e2ee'
+                        ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
+                        : t('settingsAccount.nativePassword.protectionPlainDetail'),
+                    icon: candidate === 'e2ee' ? 'lock' as const : 'cloud' as const,
+                }))}
+                value={accountMode}
+                onChange={(next) => { if (next) setAccountMode(next); }}
+                maximumColumns={1}
+            />
+        </FieldItem>
+    ) : provisioning && collectsCredentials ? (
+        <Text testID="email-password-protection-fixed" style={styles.hint}>
+            {permittedModes[0] === 'e2ee'
+                ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
+                : t('settingsAccount.nativePassword.protectionPlainDetail')}
+        </Text>
+    ) : null}
+        </>
+    );
+    // The signed-out Welcome's step (lab direction A): each view is one step with its mark, centred heading and the
+    // step's own actions; Back from a sub-view returns to the form it came from through the shell's one Back.
+    const stepPresentation = props.presentation === 'step';
+    const subViewBack = view.kind === 'forgot'
+        ? (props.initialView === 'forgot' ? undefined : () => setView({ kind: props.action }))
+        : view.kind === 'reset_requested'
+            ? () => setView({ kind: 'forgot' })
+            : view.kind === 'verification_sent'
+                ? () => setView({ kind: 'provision' })
+                : undefined;
+    useStepBackOverride(stepPresentation ? subViewBack : undefined);
+    // Outside the signed-out shell (no shell Back to route through), the step draws its own Back.
+    const stepBack = subViewBack ?? props.onBack;
+    const openRecoveryKey = () => {
+        // Leave the current auth surface so a modal cannot cover recovery.
+        props.onBack?.();
+        router.push({
+            pathname: '/auth/password/recover',
+            params: { target: props.recoveryTarget },
+        });
+    };
+    const stepPrimary = (testID: string, title: string, onPress: () => Promise<void> | void, iconName?: IconName | null) => (
+        <StepPrimaryButton
+            testID={testID}
+            title={title}
+            iconName={iconName}
+            loading={pendingActionId === testID}
+            disabled={pendingActionId !== null && pendingActionId !== testID}
+            onPress={() => { void actionAdmission.run(testID, onPress); }}
+        />
+    );
+
+    if (stepPresentation) {
+        const stepHeading = (title: string, extra?: Readonly<{ mark?: IconName; subtitle?: string }>) => (
+            <UnauthenticatedStepHeading
+                title={title}
+                subtitle={extra?.subtitle}
+                context={homeChip}
+                mark={extra?.mark ? <StepMark iconName={extra.mark} /> : undefined}
+            />
+        );
+        let content: React.ReactNode;
+        if (view.kind === 'verification_sent' || view.kind === 'reset_requested') {
+            const sent = view;
+            content = <>
+                {stepHeading(t('settingsAccount.nativePassword.checkYourEmail'), {
+                    mark: 'envelope',
+                    subtitle: sent.kind === 'verification_sent'
+                        ? t('settingsAccount.nativePassword.verificationSent', { email: sent.email })
+                        : t('settingsAccount.nativePassword.resetInstructionsSent', { email: sent.email }),
+                })}
+                {resent ? (
+                    <SurfaceStateCard
+                        testID="email-password-resent"
+                        size="line"
+                        lineLayout="notice"
+                        kind="empty"
+                        iconName="info"
+                        title={t('settingsAccount.nativePassword.resentTitle')}
+                        reason={t('settingsAccount.nativePassword.resent')}
+                        accessibilitySemantics="status"
+                    />
+                ) : null}
+                {formProblem}
+                {progressNotice}
+                <View style={styles.stepActions}>
+                    <WelcomeActionCard
+                        testID="email-password-resend"
+                        presentation="pill"
+                        title={t('settingsAccount.nativePassword.resend')}
+                        onPress={() => (sent.kind === 'verification_sent' ? submitProvision() : submitResetRequest())}
+                    />
+                    <StepQuietAction
+                        testID="email-password-change-email"
+                        label={t('settingsAccount.nativePassword.useDifferentEmail')}
+                        onPress={() => setView({ kind: sent.kind === 'verification_sent' ? 'provision' : 'forgot' })}
+                    />
+                </View>
+            </>;
+        } else if (view.kind === 'connect') {
+            content = <>
+                {stepHeading(t('settingsAccount.nativePassword.connectTitle'), {
+                    subtitle: t('settingsAccount.nativePassword.connectFromSecurity'),
+                })}
+                <StepActions onBack={stepBack}>
+                    {stepPrimary('email-password-connect-sign-in', t('settingsAccount.nativePassword.signInFirst'), () => setView({ kind: 'login' }))}
+                </StepActions>
+            </>;
+        } else if (view.kind === 'forgot') {
+            const emailReset = props.passwordReset === 'email';
+            content = <>
+                {stepHeading(t('settingsAccount.nativePassword.forgotTitle'), {
+                    mark: 'lifebuoy',
+                    subtitle: emailReset ? t('settingsAccount.nativePassword.forgotExplanation') : undefined,
+                })}
+                {emailReset ? <StepForm>{emailField('email', submitResetRequest)}</StepForm> : null}
+                {formProblem}
+                {progressNotice}
+                <View style={styles.stepActions}>
+                    <StepActions onBack={stepBack}>
+                        {emailReset
+                            ? stepPrimary('email-password-request-reset', t('settingsAccount.nativePassword.emailResetInstructions'), submitResetRequest)
+                            : stepPrimary('email-password-use-recovery-key', t('settingsAccount.nativePassword.useRecoveryKey'), openRecoveryKey, 'key')}
+                    </StepActions>
+                    {emailReset ? (
+                        <>
+                            <StepOrDivider label={t('common.or')} />
+                            <WelcomeActionCard
+                                testID="email-password-use-recovery-key"
+                                presentation="pill"
+                                iconName="key"
+                                title={t('settingsAccount.nativePassword.useRecoveryKey')}
+                                escape
+                                onPress={openRecoveryKey}
+                            />
+                        </>
+                    ) : null}
+                </View>
+            </>;
+        } else {
+            const provisioningStep = view.kind === 'provision';
+            const collectsStepCredentials = !provisioningStep || !mailboxProofFirst;
+            content = <>
+                {stepHeading(provisioningStep ? t('settingsAccount.nativePassword.createTitle') : t('settingsAccount.nativePassword.title'))}
+                <StepForm>{credentialFields(provisioningStep, collectsStepCredentials)}</StepForm>
+                {formProblem}
+                {progressNotice}
+                <View style={styles.stepActions}>
+                    <StepActions onBack={stepBack}>
+                        {stepPrimary(
+                            provisioningStep ? 'email-password-create' : 'email-password-submit',
+                            provisioningStep
+                                ? collectsStepCredentials
+                                    ? t('settingsAccount.nativePassword.createAccount')
+                                    : t('settingsAccount.nativePassword.sendVerification')
+                                : t('settingsAccount.nativePassword.signIn'),
+                            provisioningStep ? submitProvision : submitLogin,
+                        )}
+                        {!provisioningStep ? (
+                            <StepQuietAction
+                                testID="email-password-forgot"
+                                label={t('settingsAccount.nativePassword.forgotPassword')}
+                                onPress={() => setView({ kind: 'forgot' })}
+                            />
+                        ) : null}
+                        {!provisioningStep && props.onOpenEmailProvision ? (
+                            <StepQuietAction
+                                testID="email-password-open-provision"
+                                label={t('settingsAccount.nativePassword.signUpWithEmail')}
+                                onPress={() => { void props.onOpenEmailProvision?.(); }}
+                            />
+                        ) : null}
+                    </StepActions>
+                </View>
+            </>;
+        }
+        return (
+            <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
+                <View style={styles.stepRoot}>{content}</View>
+            </WelcomeActionAdmissionContext.Provider>
+        );
+    }
+
     if (view.kind === 'verification_sent' || view.kind === 'reset_requested') {
         const sent = view;
         return (
@@ -559,84 +817,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         <WelcomeActionAdmissionContext.Provider value={actionAdmission}>
         <View style={styles.root}>
             {heading(provisioning ? t('settingsAccount.nativePassword.createTitle') : t('settingsAccount.nativePassword.title'))}
-            {emailField(
-                provisioning ? 'email' : 'username',
-                collectsCredentials ? undefined : submitProvision,
-                // Without a password here, the field's own line says what happens to the address.
-                collectsCredentials ? undefined : (
-                    <StepFieldHelp testID="email-password-verify-first">
-                        {t('settingsAccount.nativePassword.verifyReturnToCreate')}
-                    </StepFieldHelp>
-                ),
-            )}
-            {collectsCredentials ? (
-            <ListPresentationProvider value="page">
-            <PasswordField
-                testID="email-password-password"
-                inputRef={passwordRef}
-                label={t('settingsAccount.nativePassword.password')}
-                labelStyle={stepFieldLabelStyle()}
-                value={draft.password}
-                onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
-                autoComplete={provisioning ? 'new-password' : 'current-password'}
-                supportingText={provisioning ? t('settingsAccount.nativePassword.passwordRequirements') : undefined}
-                error={problem?.field === 'password' ? problemMessage : null}
-                editable={!busy}
-                returnKeyType={provisioning ? 'next' : 'go'}
-                onSubmitEditing={provisioning ? () => confirmRef.current?.focus() : submitLogin}
-            />
-            </ListPresentationProvider>
-            ) : null}
-            {provisioning && collectsCredentials ? (
-                <ListPresentationProvider value="page">
-                <PasswordField
-                    testID="email-password-confirm"
-                    inputRef={confirmRef}
-                    label={t('settingsAccount.nativePassword.confirmPassword')}
-                    labelStyle={stepFieldLabelStyle()}
-                    value={draft.confirmPassword}
-                    onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
-                    autoComplete="new-password"
-                    error={problem?.field === 'confirmPassword' ? problemMessage : null}
-                    editable={!busy}
-                    returnKeyType="go"
-                    onSubmitEditing={submitProvision}
-                />
-                </ListPresentationProvider>
-            ) : null}
-            {provisioning && collectsCredentials && permittedModes.length > 1 ? (
-                <FieldItem
-                    label={t('settingsAccount.nativePassword.accountProtection')}
-                    labelStyle={stepFieldLabelStyle()}
-                >
-                    {/* A protection is a choice, not a command: option F cards, each saying what it means. */}
-                    <SelectionTiles
-                        variant="card"
-                        accessibilityLabel={t('settingsAccount.nativePassword.accountProtection')}
-                        testIdPrefix="email-password-protection"
-                        options={permittedModes.map((candidate) => ({
-                            id: candidate,
-                            testID: `email-password-protection-${candidate}`,
-                            title: candidate === 'e2ee'
-                                ? tLoose('settingsAccount.nativePassword.protectionE2ee')
-                                : t('settingsAccount.nativePassword.protectionPlain'),
-                            subtitle: candidate === 'e2ee'
-                                ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
-                                : t('settingsAccount.nativePassword.protectionPlainDetail'),
-                            icon: candidate === 'e2ee' ? 'lock' as const : 'cloud' as const,
-                        }))}
-                        value={accountMode}
-                        onChange={(next) => { if (next) setAccountMode(next); }}
-                        maximumColumns={1}
-                    />
-                </FieldItem>
-            ) : provisioning && collectsCredentials ? (
-                <Text testID="email-password-protection-fixed" style={styles.hint}>
-                    {permittedModes[0] === 'e2ee'
-                        ? tLoose('settingsAccount.nativePassword.protectionE2eeDetail')
-                        : t('settingsAccount.nativePassword.protectionPlainDetail')}
-                </Text>
-            ) : null}
+            {credentialFields(provisioning, collectsCredentials)}
             {formProblem}
             {progressNotice}
             <WelcomeActionCard
@@ -678,6 +859,9 @@ const EMAIL_LABEL_ID = 'email-password-email-label';
 const styles = StyleSheet.create((theme) => ({
     // Groups stand a section apart; a field's own label, box and line sit close (StepFieldGroup).
     root: { width: '100%', gap: theme.space.s16 },
+    // Direction A rhythm: heading, fields and actions a section apart; fields a group apart.
+    stepRoot: { width: '100%', gap: theme.space.s24 },
+    stepActions: { width: '100%', alignItems: 'center', gap: theme.space.s16 },
     inlineHeading: { gap: theme.space.s4 },
     title: { ...Typography.variant('title'), color: theme.colors.text.primary },
     hint: { ...Typography.variant('body'), color: theme.colors.text.secondary },

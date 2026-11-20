@@ -11645,6 +11645,7 @@ const nativePasswordTranslations = { de: {
         protectionE2eeDetail: 'Nur deine Geräte können deine Daten lesen. Sichere deinen Wiederherstellungsschlüssel: Ein Passwort-Reset allein stellt sie nicht wieder her.',
         checkYourEmail: 'Sieh in deinen E-Mails nach',
         resend: 'Erneut senden',
+        resentTitle: 'Erneut gesendet',
         resent: 'Sieh in einer Minute noch einmal in deinen E-Mails nach.',
         useDifferentEmail: 'Andere E-Mail verwenden',
         connectTitle: 'E-Mail und Passwort hinzufügen',

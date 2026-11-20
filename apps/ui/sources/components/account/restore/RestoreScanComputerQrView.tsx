@@ -1247,13 +1247,13 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         // then the same ways row as Approve, with this view's own ways leading it.
         const leading = <>
             {rowBack ? <StepRowBackButton onPress={rowBack} /> : null}
-            {/* The key's view also takes a pairing link and offers this device's own code (as Approve's key does). */}
+            {/* The recovery key opens its own step (lab direction A), as Approve's key does. */}
             <StepRowWayButton
                 testID="restore-open-manual"
                 accessibilityLabel={t('connect.secretKeyInputLabel')}
                 tooltip={t('connect.secretKeyInputLabel')}
                 iconName="key"
-                onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
+                onPress={openSecretKeyLogin}
             />
         </>;
         return (

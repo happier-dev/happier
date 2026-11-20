@@ -51,10 +51,11 @@ it('lets the real authentication panel own its visible heading across login and 
     expect(headingCount('settingsAccount.nativePassword.forgotTitle')).toBe(1);
     expect(headingCount('settingsAccount.nativePassword.title')).toBe(0);
     expect(screen.findByTestId('email-password-request-reset')).not.toBeNull();
-    await screen.pressByTestIdAsync('email-password-forgot-back');
+    // One Back per step: from the forgot view it returns to sign-in, from sign-in it leaves the step.
+    await screen.pressByTestIdAsync('unauth-shell-back-chevron');
     expect(headingCount('settingsAccount.nativePassword.title')).toBe(1);
     expect(onClose).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync('email-password-back');
+    await screen.pressByTestIdAsync('unauth-shell-back-chevron');
     expect(onClose).toHaveBeenCalledOnce();
     onClose.mockClear();
     await screen.pressByTestIdAsync('email-password-forgot');

@@ -2,7 +2,6 @@ import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
@@ -14,6 +13,9 @@ import { SecretKeyEntryForm, type SecretKeyEntrySubmitResult } from '@/component
 import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarget';
 import { Text } from '@/components/ui/text/Text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepForm, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -286,18 +288,28 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
 
     if (targetState.kind !== 'ready') {
         const retryTarget = targetState.kind === 'unavailable' ? targetState.retry : undefined;
+        // The Home has not answered yet: a door-width notice (with Try again once it failed) above the next step,
+        // which waits until the Home is ready (lab direction A "Recover · Home unavailable").
         return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
             progress={{ index: 0, count: 2 }}
             onBack={() => router.back()}
+            mark={<StepMark iconName="lifebuoy" />}
             title={t('settingsAccount.nativePassword.forgotTitle')}
-            primary={retryTarget ? { label: t('common.retry'), onPress: retryTarget } : undefined}
+            primary={{ label: t('settingsAccount.nativePassword.useRecoveryKey'), onPress: () => {}, disabled: true, iconName: 'key' }}
         >
-            <Text testID="e2ee-password-recovery-target-state" accessibilityRole={targetState.kind === 'unavailable' ? 'alert' : undefined}>
-                {targetState.kind === 'loading'
+            <SurfaceStateCard
+                testID="e2ee-password-recovery-target-state"
+                size="line"
+                lineLayout="notice"
+                kind={targetState.kind === 'loading' ? 'loading' : 'warning'}
+                title={targetState.kind === 'loading'
                     ? t('settingsAccount.nativePassword.working')
                     : t('settingsAccount.nativePassword.serverUnavailable')}
-            </Text>
+                accessibilitySemantics={targetState.kind === 'unavailable' ? 'alert' : 'status'}
+                actionGlyph={retryTarget ? 'retry' : undefined}
+                action={retryTarget ? { testID: 'e2ee-password-recovery-retry', label: t('common.retry'), onPress: retryTarget } : undefined}
+            />
         </AuthRouteStepFrame>;
     }
 
@@ -307,10 +319,10 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
             progress={{ index: 0, count: 2 }}
             onBack={() => router.back()}
             title={t('settingsAccount.nativePassword.useRecoveryKey')}
+            subtitle={t('connect.restoreWithSecretKeyDescription')}
             context={homeContext}
         >
             <SecretKeyEntryForm
-                description={t('connect.restoreWithSecretKeyDescription')}
                 submitTitle={t('settingsAccount.nativePassword.continue')}
                 onSubmit={handleKey}
             />
@@ -335,10 +347,11 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
             disabled: busy,
         }}
     >
-        <View style={styles.fields}>
+        <StepForm>
             <PasswordField
                 testID="e2ee-password-recovery-password"
                 label={t('settingsAccount.nativePassword.newPassword')}
+                labelStyle={stepFieldLabelStyle()}
                 value={draft.password}
                 onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
                 autoComplete="new-password"
@@ -352,6 +365,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
             <PasswordField
                 testID="e2ee-password-recovery-confirm"
                 label={t('settingsAccount.nativePassword.confirmPassword')}
+                labelStyle={stepFieldLabelStyle()}
                 value={draft.confirmPassword}
                 onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
                 autoComplete="new-password"
@@ -367,11 +381,10 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
                 </Text>
             ) : null}
             {busy ? <Text accessibilityLiveRegion="polite">{t('settingsAccount.nativePassword.working')}</Text> : null}
-        </View>
+        </StepForm>
     </AuthRouteStepFrame>;
 });
 
 const styles = StyleSheet.create((theme) => ({
-    fields: { gap: theme.space.s16 },
     error: { color: theme.colors.status.error },
 }));

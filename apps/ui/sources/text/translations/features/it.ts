@@ -11641,6 +11641,7 @@ const nativePasswordTranslations = { it: {
         protectionE2eeDetail: 'Solo i tuoi dispositivi possono leggere i tuoi dati. Conserva la chiave di recupero: reimpostare la password da sola non li ripristina.',
         checkYourEmail: 'Controlla la tua email',
         resend: 'Invia di nuovo',
+        resentTitle: 'Inviata di nuovo',
         resent: 'Controlla di nuovo la tua email tra un minuto.',
         useDifferentEmail: 'Usa un’altra email',
         connectTitle: 'Aggiungi email e password',

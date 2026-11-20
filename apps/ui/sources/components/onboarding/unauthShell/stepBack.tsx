@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 import { useUnauthShellLayout } from './useUnauthShellLayout';
@@ -116,13 +118,45 @@ export function StepRowBack() {
     return back ? <StepRowBackButton onPress={back} /> : null;
 }
 
-/** A step's one primary on a computer (lab direction A: 240 px, centred); on a phone it spans the column. */
-const STEP_PRIMARY_WIDTH_PX = 240;
+/** A step's one primary on a computer (lab direction A: at least 240 px, centred); on a phone it spans the column. */
+const STEP_PRIMARY_MIN_WIDTH_PX = 240;
 
-/** The width of a signed-out step's primary action, decided once for every step. */
-export function useStepPrimaryWidth(): number | '100%' {
-  return useUnauthShellLayout() === 'compact' ? '100%' : STEP_PRIMARY_WIDTH_PX;
+/**
+ * A signed-out step's one primary (lab direction A `.r3-primary`): the large button, at least 240 px wide on a computer
+ * and the column's width on a phone, its words followed by a forward arrow unless the step names another mark (`null`
+ * for none, e.g. Try again). Every step's Continue is this one object.
+ */
+export function StepPrimaryButton(props: Readonly<{
+  title: React.ReactNode;
+  onPress?: () => unknown;
+  loading?: boolean;
+  disabled?: boolean;
+  iconName?: IconName | null;
+  testID?: string;
+}>) {
+  const { theme } = useUnistyles();
+  const compact = useUnauthShellLayout() === 'compact';
+  const iconName = props.iconName === undefined ? 'arrow-right' : props.iconName;
+  return (
+    <View style={compact ? stepPrimaryStyles.compact : stepPrimaryStyles.desktop}>
+      <RoundButton
+        testID={props.testID}
+        size="large"
+        title={props.title}
+        // A press that settles later (a sign-in, a reset request) holds the button busy until it does.
+        action={async () => { await props.onPress?.(); }}
+        loading={props.loading}
+        disabled={props.disabled}
+        trailing={iconName ? <Icon name={iconName} size={ICON_SIZE.sm} color={theme.colors.button.primary.tint} /> : undefined}
+      />
+    </View>
+  );
 }
+
+const stepPrimaryStyles = StyleSheet.create({
+  desktop: { minWidth: STEP_PRIMARY_MIN_WIDTH_PX },
+  compact: { alignSelf: 'stretch' },
+});
 
 /** A choice step's column (lab "Where should your Home live?"): two option cards side by side at a readable width. */
 export const WIDE_STEP_COLUMN_PX = 680;

@@ -11529,6 +11529,7 @@ const nativePasswordTranslations = { es: {
         protectionE2eeDetail: 'Solo tus dispositivos pueden leer tus datos. Guarda tu clave de recuperación: restablecer la contraseña no basta para recuperarlos.',
         checkYourEmail: 'Revisa tu correo',
         resend: 'Enviar de nuevo',
+        resentTitle: 'Enviado de nuevo',
         resent: 'Vuelve a revisar tu correo dentro de un minuto.',
         useDifferentEmail: 'Usar otro correo',
         connectTitle: 'Añadir correo y contraseña',

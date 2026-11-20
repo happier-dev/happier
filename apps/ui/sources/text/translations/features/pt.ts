@@ -11628,6 +11628,7 @@ const nativePasswordTranslations = { pt: {
         protectionE2eeDetail: 'Só os seus dispositivos podem ler seus dados. Guarde sua chave de recuperação: redefinir a senha sozinha não os restaura.',
         checkYourEmail: 'Verifique seu e-mail',
         resend: 'Enviar novamente',
+        resentTitle: 'Reenviado',
         resent: 'Volta a verificar o teu email daqui a um minuto.',
         useDifferentEmail: 'Usar outro e-mail',
         connectTitle: 'Adicionar e-mail e senha',

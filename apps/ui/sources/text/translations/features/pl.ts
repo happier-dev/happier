@@ -11664,6 +11664,7 @@ const nativePasswordTranslations = { pl: {
         protectionE2eeDetail: 'Tylko Twoje urządzenia mogą odczytać Twoje dane. Zapisz klucz odzyskiwania: samo zresetowanie hasła ich nie przywróci.',
         checkYourEmail: 'Sprawdź swoją skrzynkę',
         resend: 'Wyślij ponownie',
+        resentTitle: 'Wysłano ponownie',
         resent: 'Sprawdź ponownie pocztę za minutę.',
         useDifferentEmail: 'Użyj innego adresu',
         connectTitle: 'Dodaj e-mail i hasło',

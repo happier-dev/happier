@@ -7,7 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
-import { useStepPrimaryWidth } from '../unauthShell/stepBack';
+import { StepPrimaryButton } from '../unauthShell/stepBack';
 import { ActiveRelaySummary } from '../ui/ActiveRelaySummary';
 import { WizardLogotype } from '../ui/WizardLogotype';
 import { WizardModalShell } from '../ui/WizardModalShell';
@@ -96,8 +96,6 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
     useUnistyles();
     const styles = bareStylesheet;
     const controller = props.controller;
-    // Direction A: one centred Continue, Back to its left on a computer (the step frame's footer).
-    const primaryWidth = useStepPrimaryWidth();
 
     if (controller.stepId === 'welcome') {
         return controller.body;
@@ -125,17 +123,14 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
             footer={hasFooter ? (
                 <>
                     {controller.onPrimary ? (
-                        <View style={{ width: primaryWidth }}>
-                            <RoundButton
-                                testID={`${props.testID}-primary`}
-                                size="large"
-                                title={controller.primaryLabel}
-                                disabled={controller.primaryDisabled}
-                                onPress={() => {
-                                    void controller.onPrimary?.();
-                                }}
-                            />
-                        </View>
+                        <StepPrimaryButton
+                            testID={`${props.testID}-primary`}
+                            title={controller.primaryLabel}
+                            disabled={controller.primaryDisabled}
+                            onPress={() => {
+                                void controller.onPrimary?.();
+                            }}
+                        />
                     ) : null}
                     {canShowSkip ? (
                         <View style={styles.skipButton}>

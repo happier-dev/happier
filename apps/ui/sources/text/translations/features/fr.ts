@@ -11650,6 +11650,7 @@ const nativePasswordTranslations = { fr: {
         protectionE2eeDetail: 'Seuls tes appareils peuvent lire tes données. Conserve ta clé de récupération : réinitialiser le mot de passe ne suffit pas à les restaurer.',
         checkYourEmail: 'Consulte ta boîte mail',
         resend: 'Renvoyer',
+        resentTitle: 'Renvoyé',
         resent: 'Consulte à nouveau ta boîte mail dans une minute.',
         useDifferentEmail: 'Utiliser une autre adresse',
         connectTitle: 'Ajouter e-mail et mot de passe',

@@ -4,6 +4,8 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 
+import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+
 import { SecretKeyEntryForm } from './SecretKeyEntryForm';
 import { t } from '@/text';
 
@@ -45,25 +47,27 @@ it('keeps keyboard focus and the invalid draft after Enter submits the real web 
     }
 });
 
-it('gives the secret input an accessible name that is also visible in the form', async () => {
+it('gives the key an accessible name that the step heading shows (the cells draw no label of their own)', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
     try {
         await act(async () => {
             root.render(
-                <SecretKeyEntryForm
-                    description="Account key"
-                    submitTitle="Continue"
-                    onSubmit={async () => ({ kind: 'completed' })}
-                />,
+                <>
+                    <UnauthenticatedStepHeading title={t('setupOnboarding.authSecretKeyTitle')} />
+                    <SecretKeyEntryForm
+                        submitTitle="Continue"
+                        onSubmit={async () => ({ kind: 'completed' })}
+                    />
+                </>,
             );
         });
 
         const input = container.querySelector<HTMLInputElement>('[data-testid="restore-manual-secret-input"]')!;
         const accessibleName = input.getAttribute('aria-label');
         expect(accessibleName).toBeTruthy();
-        expect(container.textContent).toContain(accessibleName);
+        expect(container.textContent?.toLowerCase()).toContain(accessibleName!.toLowerCase());
     } finally {
         await act(async () => { root.unmount(); });
         container.remove();
@@ -82,12 +86,13 @@ it('uses a password input with autocomplete disabled until the user explicitly r
             );
         });
         const input = container.querySelector<HTMLInputElement>('[data-testid="restore-manual-secret-input"]')!;
-        const reveal = container.querySelector<HTMLButtonElement>('[data-testid="restore-manual-secret-reveal"]')!;
         const syntheticKey = 'synthetic-recovery-key-for-secure-entry';
         await act(async () => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, syntheticKey);
             input.dispatchEvent(new Event('input', { bubbles: true }));
         });
+        // Showing the key is offered once there is a key to show.
+        const reveal = container.querySelector<HTMLElement>('[data-testid="restore-manual-secret-reveal"]')!;
 
         expect(input.tagName).toBe('INPUT');
         expect(input.type).toBe('password');

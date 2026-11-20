@@ -12,7 +12,7 @@ import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 import { useUnauthShellLayout } from './useUnauthShellLayout';
-import { STEP_ROW_BUTTON_PX, StepRowBackButton, UNAUTH_LEAVE_TEST_ID, useStepLeave, useStepRowBack } from './stepBack';
+import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_LEAVE_TEST_ID, useStepLeave, useStepRowBack } from './stepBack';
 
 /** A dead end's way out, drawn as the page's pill: its own exit, or the shell's Back when it has none. */
 export type StepLeaveAction = Readonly<{ label: string; onPress?: () => void; testID?: string }>;
@@ -21,6 +21,8 @@ export type UnauthenticatedStepProps = Readonly<{
   /** The step's page heading. Omit when the body owns its own heading (a form with sub-views). */
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
+  /** The subtitle's test id, when the subtitle is the state's own sentence (a dead link, a done change). */
+  subtitleTestID?: string;
   /** One quiet line above the heading naming what the step acts on (the Home being signed in to). */
   context?: React.ReactNode;
   /** A round mark over the heading naming what the step is about ({@link StepMark}). */
@@ -52,6 +54,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
   context?: React.ReactNode;
   mark?: React.ReactNode;
   testID?: string;
+  subtitleTestID?: string;
 }>) {
   useUnistyles();
   const styles = stylesheet;
@@ -63,7 +66,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
       <Text ref={headingRef} testID={props.testID} accessibilityRole="header" style={styles.title}>
         {props.title}
       </Text>
-      {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
+      {props.subtitle ? <Text testID={props.subtitleTestID} style={styles.subtitle}>{props.subtitle}</Text> : null}
     </View>
   );
 }
@@ -86,6 +89,7 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
           <UnauthenticatedStepHeading
             title={props.title}
             subtitle={props.subtitle}
+            subtitleTestID={props.subtitleTestID}
             context={props.context}
             mark={props.mark}
             testID={props.testID ? `${props.testID}-title` : undefined}
@@ -107,13 +111,20 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
 function UnauthenticatedStepFooter(props: Readonly<{ children?: React.ReactNode; leave?: StepLeaveAction }>) {
   return props.leave
     ? <LeaveStepFooter leave={props.leave}>{props.children}</LeaveStepFooter>
-    : <RowBackStepFooter>{props.children}</RowBackStepFooter>;
+    : <StepActions>{props.children}</StepActions>;
 }
 
-function RowBackStepFooter(props: Readonly<{ children?: React.ReactNode }>) {
+/**
+ * A step's centred actions with Back to their left on a computer, for a body that draws its own actions (a form with
+ * sub-views). `onBack` is the body's own way back, used where no signed-out shell provides one (a signed-in card);
+ * inside the shell the body routes its Back through the shell (`useStepBackOverride`).
+ */
+export function StepActions(props: Readonly<{ children?: React.ReactNode; onBack?: () => void }>) {
   useUnistyles();
   const styles = stylesheet;
-  const back = useStepRowBack();
+  const slot = React.useContext(StepBackContext);
+  const rowBack = useStepRowBack();
+  const back = rowBack ?? (slot ? null : props.onBack ?? null);
   const compact = useUnauthShellLayout() === 'compact';
   return (
     <View style={styles.footer}>

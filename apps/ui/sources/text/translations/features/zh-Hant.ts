@@ -11527,6 +11527,7 @@ const nativePasswordTranslations = { 'zh-Hant': {
         protectionE2eeDetail: '只有你的裝置可以讀取你的資料。請保存復原金鑰：僅重設密碼無法復原資料。',
         checkYourEmail: '請查收電子郵件',
         resend: '重新傳送',
+        resentTitle: '已重新傳送',
         resent: '請在一分鐘後再次檢查信箱。',
         useDifferentEmail: '改用其他電子郵件',
         connectTitle: '新增電子郵件和密碼',

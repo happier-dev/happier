@@ -31,7 +31,13 @@ import {
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
-import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { AuthRouteStepFrame, type AuthRouteStepAction } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
+import { StepForm, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Typography } from '@/constants/Typography';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -151,7 +157,21 @@ function moveLandingStep(kind: 'step' | 'back', commit: () => void) {
     runStepMove({ kind, layer: 'workflow', commit });
 }
 
-function LandingShell(props: Readonly<{ title: string; homeLabel?: string; children: React.ReactNode; testID: string; stepId?: string }>) {
+function LandingShell(props: Readonly<{
+    title: string;
+    homeLabel?: string;
+    children: React.ReactNode;
+    testID: string;
+    stepId?: string;
+    /** The step's purpose under its title (lab direction A). */
+    subtitle?: string;
+    subtitleTestID?: string;
+    /** The round mark naming what the step is about (a dead link, a done change). */
+    mark?: IconName;
+    /** The step's one action and its quiet second way, drawn by the step frame. */
+    primary?: AuthRouteStepAction;
+    secondary?: AuthRouteStepAction;
+}>) {
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const activeActionRef = React.useRef<string | null>(null);
     const mountedRef = React.useRef(true);
@@ -179,7 +199,13 @@ function LandingShell(props: Readonly<{ title: string; homeLabel?: string; child
     // pane like every other standalone auth route, signed in it takes the same focused card.
     return (
         <AuthRouteStepFrame testID={props.testID} stepId={props.stepId} title={props.title}
-            context={props.homeLabel ? <Text style={styles.body}>{props.homeLabel}</Text> : undefined}>
+            subtitle={props.subtitle}
+            subtitleTestID={props.subtitleTestID}
+            mark={props.mark ? <StepMark iconName={props.mark} /> : undefined}
+            primary={props.primary}
+            secondary={props.secondary}
+            // The link's Home, so a reset link for another Home reads as such (security S6).
+            context={props.homeLabel ? <HomeContextLine testID={`${props.testID}-home`} label={props.homeLabel} /> : undefined}>
             <WelcomeActionList admission={admission}>
                 <View style={styles.card}>{props.children}</View>
             </WelcomeActionList>
@@ -778,8 +804,9 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
 
     const emailLogin = loginActions?.find(({ execution }) => execution.kind === 'email_password')?.execution;
     if (state.kind === 'invalid' && retryForgotOpen && landingTarget.kind === 'ready' && emailLogin?.kind === 'email_password') {
-        return <LandingShell homeLabel={landingTarget.homeLabel} testID="native-auth-reset" stepId="reset-request" title={t('settingsAccount.nativePassword.forgotTitle')}>
+        return <LandingShell testID="native-auth-reset" stepId="reset-request" title="">
             <EmailPasswordAuthPanel
+                presentation="step"
                 target={landingTarget.authenticationTarget}
                 recoveryTarget={landingTarget.homeServerIdentityId}
                 homeLabel={landingTarget.homeLabel}
@@ -794,30 +821,43 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
     }
 
     if (state.kind === 'invalid' || state.kind === 'unavailable') {
+        const retry = landingTarget.kind === 'unavailable' && landingTarget.retry
+            ? { testID: 'native-auth-reset-retry-home', onPress: landingTarget.retry }
+            : state.kind === 'unavailable' && landingTarget.kind === 'ready'
+                ? { testID: 'native-auth-reset-retry', onPress: previewRead.retry }
+                : null;
+        const returnToSignIn = { testID: 'native-auth-reset-return', label: t('settingsAccount.nativePassword.returnToSignIn'), onPress: () => router.replace('/') };
+        const emailReset = emailLogin?.kind === 'email_password' && emailLogin.passwordReset === 'email';
+        // A dead link says so in its title and offers the next step (lab direction A "Reset link · expired or used").
+        if (state.kind === 'invalid') {
+            return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset"
+                mark="link"
+                title={t('settingsAccount.nativePassword.resetLinkInvalidTitle')}
+                subtitle={t('settingsAccount.nativePassword.linkExpired')}
+                subtitleTestID="native-auth-reset-invalid"
+                primary={emailLogin?.kind === 'email_password' ? {
+                    testID: 'native-auth-reset-request-new-link',
+                    label: t(emailReset ? 'settingsAccount.nativePassword.requestNewLink' : 'settingsAccount.nativePassword.useRecoveryKey'),
+                    iconName: emailReset ? undefined : 'key',
+                    onPress: () => moveLandingStep('step', () => setRetryForgotOpen(true)),
+                } : returnToSignIn}
+                secondary={emailLogin?.kind === 'email_password' ? returnToSignIn : undefined}>
+                {retry ? <LandingRetryAction testID={retry.testID} onPress={retry.onPress} /> : null}
+            </LandingShell>;
+        }
         return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset"
-            title={t(state.kind === 'invalid' ? 'settingsAccount.nativePassword.resetLinkInvalidTitle' : 'settingsAccount.nativePassword.resetLinkUnavailableTitle')}>
-            <Text testID="native-auth-reset-invalid" accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
-                {state.kind === 'invalid' ? t('settingsAccount.nativePassword.linkExpired') : problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
-            </Text>
-            {landingTarget.kind === 'unavailable' && landingTarget.retry ? (
-                <LandingRetryAction testID="native-auth-reset-retry-home" onPress={landingTarget.retry} />
-            ) : state.kind === 'unavailable' && landingTarget.kind === 'ready' ? (
-                <LandingRetryAction testID="native-auth-reset-retry" onPress={previewRead.retry} />
-            ) : null}
-            {state.kind === 'invalid' && emailLogin?.kind === 'email_password' ? (
-                <WelcomeActionCard
-                    testID="native-auth-reset-request-new-link"
-                    title={t(emailLogin.passwordReset === 'email'
-                        ? 'settingsAccount.nativePassword.requestNewLink' : 'settingsAccount.nativePassword.useRecoveryKey')}
-                    iconName={emailLogin.passwordReset === 'email' ? 'envelope-simple' : 'key'}
-                    onPress={() => moveLandingStep('step', () => setRetryForgotOpen(true))}
-                />
-            ) : null}
-            <WelcomeActionCard
-                testID="native-auth-reset-return"
-                title={t('settingsAccount.nativePassword.returnToSignIn')}
-                iconName="arrow-left"
-                onPress={() => router.replace('/')}
+            mark="link"
+            title={t('settingsAccount.nativePassword.resetLinkUnavailableTitle')}
+            secondary={returnToSignIn}>
+            <SurfaceStateCard
+                testID="native-auth-reset-invalid"
+                size="line"
+                lineLayout="notice"
+                kind="warning"
+                title={problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
+                accessibilitySemantics="alert"
+                actionGlyph={retry ? 'retry' : undefined}
+                action={retry ? { testID: retry.testID, label: t('common.retry'), onPress: retry.onPress } : undefined}
             />
         </LandingShell>;
     }
@@ -862,72 +902,80 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
                 />
             </LandingShell>;
         }
-        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetCompleteTitle')}>
-            <Text testID="native-auth-reset-done" style={styles.body}>{t('settingsAccount.nativePassword.resetComplete')}</Text>
-            {landingTarget.kind === 'ready' && loginActions && loginActions.length > 0 ? (
-                <WelcomeActionCard
-                    testID="native-auth-reset-sign-in"
-                    title={t('settingsAccount.nativePassword.returnToSignIn')}
-                    iconName="sign-in"
-                    primary
-                    onPress={() => moveLandingStep('step', () => setAuthenticationOpen(true))}
-                />
-            ) : (
-                <Text accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
-                    {loginActions === undefined
+        const canSignIn = landingTarget.kind === 'ready' && loginActions && loginActions.length > 0;
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset"
+            mark="check"
+            title={t('settingsAccount.nativePassword.resetCompleteTitle')}
+            subtitle={t('settingsAccount.nativePassword.resetComplete')}
+            subtitleTestID="native-auth-reset-done"
+            primary={canSignIn ? {
+                testID: 'native-auth-reset-sign-in',
+                label: t('settingsAccount.nativePassword.returnToSignIn'),
+                onPress: () => moveLandingStep('step', () => setAuthenticationOpen(true)),
+            } : undefined}>
+            {canSignIn ? null : (
+                <SurfaceStateCard
+                    testID="native-auth-reset-auth-state"
+                    size="line"
+                    lineLayout="notice"
+                    kind={loginActions === undefined ? 'loading' : 'warning'}
+                    title={loginActions === undefined
                         ? t('settingsAccount.nativePassword.working')
                         : t('settingsAccount.nativePassword.serverUnavailable')}
-                </Text>
+                    accessibilitySemantics={loginActions === undefined ? 'status' : 'alert'}
+                    actionGlyph={loginActions === null && landingTarget.kind === 'ready' ? 'retry' : undefined}
+                    action={loginActions === null && landingTarget.kind === 'ready'
+                        ? { testID: 'native-auth-reset-retry-auth', label: t('common.retry'), onPress: authenticationRead.retry }
+                        : undefined}
+                />
             )}
-            {loginActions === null && landingTarget.kind === 'ready' ? (
-                <LandingRetryAction testID="native-auth-reset-retry-auth" onPress={authenticationRead.retry} />
-            ) : null}
         </LandingShell>;
     }
 
-    return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
-        <Text style={styles.body}>{t('settingsAccount.nativePassword.resetChooseNew')}</Text>
-        <PasswordField
-            testID="native-auth-reset-password"
-            inputRef={passwordRef}
-            label={t('settingsAccount.nativePassword.newPassword')}
-            value={draft.password}
-            onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
-            autoComplete="new-password"
-            supportingText={t('settingsAccount.nativePassword.passwordRequirements')}
-            error={problem?.field === 'password' ? problemMessage : null}
-            editable={!busy}
-            returnKeyType="next"
-            onSubmitEditing={() => confirmRef.current?.focus()}
-        />
-        <PasswordField
-            testID="native-auth-reset-confirm"
-            inputRef={confirmRef}
-            label={t('settingsAccount.nativePassword.confirmPassword')}
-            value={draft.confirmPassword}
-            onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
-            autoComplete="new-password"
-            error={problem?.field === 'confirmPassword' ? problemMessage : null}
-            editable={!busy}
-            returnKeyType="go"
-            onSubmitEditing={submit}
-        />
-        {problem?.field === 'form' && problemMessage ? (
-            <Text testID="native-auth-reset-error" accessibilityRole="alert" accessibilityLiveRegion="polite"
-                style={[styles.body, { color: theme.colors.status.error }]}>{problemMessage}</Text>
-        ) : null}
-        <Text style={styles.body}>{t('settingsAccount.nativePassword.resetSignsOutOtherDevices')}</Text>
-        <WelcomeActionCard
-            testID="native-auth-reset-submit"
-            title={t('settingsAccount.nativePassword.setNewPassword')}
-            iconName="check"
-            primary
-            onPress={submit}
-        />
+    return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset"
+        title={t('settingsAccount.nativePassword.resetTitle')}
+        subtitle={t('settingsAccount.nativePassword.resetChooseNew')}
+        primary={{ testID: 'native-auth-reset-submit', label: t('settingsAccount.nativePassword.setNewPassword'), onPress: () => { void submit(); }, disabled: busy }}>
+        <StepForm>
+            <PasswordField
+                testID="native-auth-reset-password"
+                inputRef={passwordRef}
+                label={t('settingsAccount.nativePassword.newPassword')}
+                labelStyle={stepFieldLabelStyle()}
+                value={draft.password}
+                onChangeText={(password) => setDraft((current) => ({ ...current, password }))}
+                autoComplete="new-password"
+                supportingText={t('settingsAccount.nativePassword.passwordRequirements')}
+                error={problem?.field === 'password' ? problemMessage : null}
+                editable={!busy}
+                returnKeyType="next"
+                onSubmitEditing={() => confirmRef.current?.focus()}
+            />
+            <PasswordField
+                testID="native-auth-reset-confirm"
+                inputRef={confirmRef}
+                label={t('settingsAccount.nativePassword.confirmPassword')}
+                labelStyle={stepFieldLabelStyle()}
+                value={draft.confirmPassword}
+                onChangeText={(confirmPassword) => setDraft((current) => ({ ...current, confirmPassword }))}
+                autoComplete="new-password"
+                error={problem?.field === 'confirmPassword' ? problemMessage : null}
+                editable={!busy}
+                returnKeyType="go"
+                onSubmitEditing={submit}
+            />
+            {problem?.field === 'form' && problemMessage ? (
+                <Text testID="native-auth-reset-error" accessibilityRole="alert" accessibilityLiveRegion="polite"
+                    style={[styles.body, { color: theme.colors.status.error }]}>{problemMessage}</Text>
+            ) : null}
+        </StepForm>
+        {/* The consequence stands right above the button it belongs to (lab direction A). */}
+        <Text style={styles.consequence}>{t('settingsAccount.nativePassword.resetSignsOutOtherDevices')}</Text>
     </LandingShell>;
 });
 
 const styles = StyleSheet.create((theme) => ({
     card: { gap: 14, width: '100%' },
     body: { fontSize: 14, color: theme.colors.text.secondary },
+    consequence: { ...Typography.variant('meta'), color: theme.colors.text.secondary, textAlign: 'center' },
 }));

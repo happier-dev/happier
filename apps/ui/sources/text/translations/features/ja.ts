@@ -11587,6 +11587,7 @@ const nativePasswordTranslations = { ja: {
         protectionE2eeDetail: 'データを読めるのはあなたのデバイスだけです。リカバリーキーを保管してください。パスワードの再設定だけでは復元できません。',
         checkYourEmail: 'メールをご確認ください',
         resend: 'もう一度送信',
+        resentTitle: '再送しました',
         resent: '1分ほど待ってから、もう一度メールを確認してください。',
         useDifferentEmail: '別のメールアドレスを使う',
         connectTitle: 'メールとパスワードを追加',

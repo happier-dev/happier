@@ -11634,6 +11634,7 @@ const nativePasswordTranslations = { ca: {
         protectionE2eeDetail: 'Només els teus dispositius poden llegir les teves dades. Desa la clau de recuperació: restablir la contrasenya sola no les recupera.',
         checkYourEmail: 'Comprova el teu correu',
         resend: 'Torna-ho a enviar',
+        resentTitle: 'Enviat de nou',
         resent: 'Torna a comprovar el teu correu d’aquí a un minut.',
         useDifferentEmail: 'Fes servir un altre correu',
         connectTitle: 'Afegeix correu i contrasenya',
