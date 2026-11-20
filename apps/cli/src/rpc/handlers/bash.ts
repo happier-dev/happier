@@ -10,7 +10,7 @@ import { mergeProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
-import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { canExecuteRequesterWorkspaceOnDaemonForHost, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { authorizeResolvedProjectExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
@@ -124,6 +124,7 @@ export function registerBashHandler(
     workingDirectory: string,
     opts?: Readonly<{ accessPolicy?: FilesystemAccessPolicy; executionBudgetRegistry?: ExecutionBudgetRegistry; admissionDrain?: DaemonAdmissionDrain;
         nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation'>;
+        readAgentIsolation?: Parameters<typeof canExecuteRequesterWorkspaceOnDaemonForHost>[1];
         resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null> }>,
 ): void {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
@@ -139,7 +140,7 @@ export function registerBashHandler(
             if (context?.signal.aborted) return cancelled;
             if (opts?.resolveHostHomeServerIdentityId && !hostHomeServerIdentityId) return unavailable;
             const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId });
-            if (!isHostRequesterUnrestrictedOwner(identity)) {
+            if (!canExecuteRequesterWorkspaceOnDaemonForHost(identity, opts?.readAgentIsolation)) {
                 if (identity.kind !== 'isolated' || !opts?.nativeOperationRuntime || !context) return unavailable;
                 nativeRequester = identity;
             }

@@ -161,6 +161,7 @@ export function registerSessionHandlers(
         executionBudgetRegistry?: ExecutionBudgetRegistry;
         admissionDrain?: DaemonAdmissionDrain;
         nativeOperationRuntime?: NonNullable<Parameters<typeof registerBashHandler>[2]>['nativeOperationRuntime'];
+        readAgentIsolation?: NonNullable<Parameters<typeof registerBashHandler>[2]>['readAgentIsolation'];
         resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
         transcriptActionExecutor?: RpcActionExecutor | null;
         workspaceFileReplaceActionExecutor?: RpcActionExecutor;
@@ -247,6 +248,7 @@ export function registerSessionHandlers(
 
     registerBashHandler(rpcHandlerManager, workingDirectory, { accessPolicy, executionBudgetRegistry: opts?.executionBudgetRegistry, admissionDrain: opts?.admissionDrain,
         nativeOperationRuntime: opts?.nativeOperationRuntime,
+        readAgentIsolation: opts?.readAgentIsolation,
         resolveHostHomeServerIdentityId: opts?.resolveHostHomeServerIdentityId });
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager, {

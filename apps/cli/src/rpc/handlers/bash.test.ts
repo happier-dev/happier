@@ -122,6 +122,19 @@ describe('registerBashHandler', () => {
         } finally { await rm(directory, { recursive: true, force: true }); }
     });
 
+    it('runs admitted custodian Agent commands on the daemon when Machine isolation is disabled', async () => {
+        const { handlers, registrar } = createRegistrar();
+        const placement = { readAgentIsolation: () => ({ enabled: false }) };
+        registerBashHandler(registrar, process.cwd(), { ...placement });
+        const context: RpcHandlerContext = { ...ownerContext(), callerAuthority: 'account_automation',
+            localActionContext: { authority: 'account_automation' },
+            sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+                callerPermissionMode: 'default', sourceTurnId: 'agent-turn', requestId: 'agent-request' } };
+        await expect(handlers.get(RPC_METHODS.BASH)!({
+            argv: [process.execPath, '-e', "process.stdout.write('custodian-agent-effect')"], timeout: 0,
+        }, context)).resolves.toMatchObject({ success: true, stdout: 'custodian-agent-effect', exitCode: 0 });
+    });
+
     it('preserves cancellation while owner Home admission is pending', async () => {
         const { handlers, registrar } = createRegistrar();
         const controller = new AbortController();

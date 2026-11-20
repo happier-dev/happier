@@ -1965,6 +1965,7 @@ export class ApiMachineClient {
             // The devices Machine role owns these families here (`replaceDevicesRoleRoutes`).
             registerDeviceFamilies: false,
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
+            readAgentIsolation: () => this.getAgentIsolationSnapshot(),
             resolveHostHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
             filesystemEffectAdmission: this.filesystemEffectAdmission,
             workspaceFileReplaceMachineId: this.machine.id,
