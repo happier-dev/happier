@@ -123,6 +123,8 @@ describe("registerSessionServerStartRpcHandler", () => {
         { outcome: 'permission_denied', includePlacement: false },
         { outcome: 'caller_depth_unavailable', includePlacement: false },
         { outcome: 'private_details', includePlacement: false },
+        { outcome: 'spawn_failed', includePlacement: false },
+        { outcome: 'credential_read_failed', includePlacement: false },
         { outcome: 'success', includePlacement: false },
         { outcome: 'success', includePlacement: true },
     ] as const)('retains the public Action $outcome at the real Machine server-start binding (placement=$includePlacement)', async ({ outcome, includePlacement }) => {
@@ -130,13 +132,17 @@ describe("registerSessionServerStartRpcHandler", () => {
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' as const } };
         const requests: string[] = [];
+        const failureCause = { phase: 'session.target_preparation', errorClass: 'Error',
+            errorCode: 'credential_scope_denied', httpStatus: null } as const;
         const refusal = outcome === 'caller_depth_unavailable'
             ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
                 details: WorkflowTargetUnavailableDetailsV1Schema.parse({ code: 'target_unavailable', reason: outcome }) }
             : outcome === 'private_details'
                 ? { ok: false, errorCode: 'target_unavailable', error: 'PRIVATE_UPSTREAM_TEXT',
                     details: { code: 'target_unavailable', reason: 'caller_depth_unavailable', secret: 'PRIVATE_REFUSAL_PAYLOAD' } }
-                : { ok: false, errorCode: outcome, error: outcome };
+                : outcome === 'spawn_failed'
+                    ? { ok: false, errorCode: outcome, error: 'PRIVATE_UPSTREAM_TEXT', failureCause }
+                    : { ok: false, errorCode: outcome, error: outcome };
         // Only the external Home Action endpoint is substituted. The reserved
         // registration, credentialed executor, HTTP client and strict result parser run.
         const home = createServer(async (incoming, response) => {
@@ -161,7 +167,12 @@ describe("registerSessionServerStartRpcHandler", () => {
                 const token = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
                 registerMachineSessionServerStartRpcHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
                     machineId: 'machine-1', token,
-                    readCredentials: async () => ({ token, encryption: null, credentialProvenance: 'api_token' }),
+                    readCredentials: async () => {
+                        if (outcome === 'credential_read_failed') {
+                            throw Object.assign(new Error('PRIVATE_CREDENTIAL_STORE_PATH'), { code: 'EACCES' });
+                        }
+                        return { token, encryption: null, credentialProvenance: 'api_token' };
+                    },
                     resolveAccountId: async () => 'account-1', resolveInstallationId: () => 'installation-1',
                     resolveAccountEncryptionCurrentness: async () => plainCurrentness,
                     spawnLifecycleHandler: async () => { throw new Error('The public Action owns this start'); },
@@ -173,8 +184,18 @@ describe("registerSessionServerStartRpcHandler", () => {
                     requestEnvelope: { t: 'plain' as const,
                         v: includePlacement ? validatedPlainSpawnInput : withoutPlacement } } };
                 const result = await handler(startRequest);
+                if (outcome === 'credential_read_failed') {
+                    expect(result).toEqual({ type: 'error', code: 'spawn_failed', retryable: true,
+                        failureCause: { phase: 'session.target_preparation', errorClass: 'Error',
+                            errorCode: 'EACCES', httpStatus: null } });
+                    expect(requests).toHaveLength(0);
+                    return;
+                }
                 if (!includePlacement) expect(requests).toHaveLength(1);
-                expect(result).toEqual(outcome === 'success' ? publicResult
+                if (outcome === 'spawn_failed') {
+                    expect(result).toMatchObject({ type: 'error', code: outcome, failureCause });
+                    expect(JSON.stringify(result)).not.toContain('PRIVATE_UPSTREAM_TEXT');
+                } else expect(result).toEqual(outcome === 'success' ? publicResult
                     : outcome === 'caller_depth_unavailable' ? { type: 'error', code: 'spawn_failed', retryable: false,
                         launchError: { kind: 'launch_error', code: outcome, message: outcome } }
                     : { type: 'error', code: outcome === 'private_details' ? 'target_unavailable' : outcome, retryable: false });

@@ -9,6 +9,12 @@ individual Session. Older local end responses without a cause retain their exit
 code. A missing admitted runner source names
 `RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING` at `client_start`.
 
+In 0.3 development, the Machine Session-start binding for Automation preserves
+the Action's content-free `failureCause` in the existing Session creation
+result. A credential-store read exception returns `spawn_failed` with its
+sanitized cause. Missing or mismatched Machine credentials still return
+`permission_denied`.
+
 Hosted Sessions bind physical Stop to the runtime's ordinary Stop callback before native construction. A native-open refusal can therefore keep serving Pending input and still stop through its existing cleanup owner. Caller-owned child runtimes retain their caller's Stop binding; ending one Session never signals the shared host.
 
 Restart eligibility and runtime status read a hosted Session's own launch mode,

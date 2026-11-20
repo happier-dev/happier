@@ -3,7 +3,7 @@ import { SessionServerStartDispatchResultV1Schema } from '@happier-dev/protocol/
 import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema,
     readSessionSpawnNewActionResultV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import {
     createAutomationAccountEncryptionMaterialSnapshotV1,
@@ -25,27 +25,28 @@ import { createMachineSessionDirectTargetTransport } from './sessionServerStartL
 
 /** The reserved API consumes creation results while its delegate speaks Action vocabulary. */
 function projectActionFailure(failure: ActionExecuteFailure): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
+    const cause = failure.failureCause ? { failureCause: failure.failureCause } : {};
     const typed = SessionSpawnNewResultV1Schema.safeParse(failure.details);
-    if (typed.success && typed.data.type === 'error') return typed.data;
+    if (typed.success && typed.data.type === 'error') return { ...cause, ...typed.data };
     const unavailable = failure.errorCode === 'target_unavailable'
         ? WorkflowTargetUnavailableDetailsV1Schema.safeParse(failure.details) : null;
     if (unavailable?.success) {
         const { reason } = unavailable.data;
-        return { type: 'error', code: 'spawn_failed', retryable: false,
+        return { type: 'error', code: 'spawn_failed', retryable: false, ...cause,
             launchError: { kind: 'launch_error', code: reason, message: reason } };
     }
     const code = failure.errorCode === 'invalid_parameters' ? 'invalid_input' : failure.errorCode;
     const accessFailure = projectSessionInitialAccessEnvelopeHostErrorResult({ code });
-    if (accessFailure) return accessFailure;
+    if (accessFailure) return { ...cause, ...accessFailure };
     // Unknown Action codes retain the existing launch owner and a code-only
     // preview. Arbitrary Action prose cannot become a launch diagnostic.
     const launchFailure = projectSessionSpawnFailure({ errorCode: code, errorMessage: code });
     const permanent = code === 'invalid_input' || code === 'target_required' || code === 'target_unavailable'
         || code === 'incompatible_target' || code === 'organization_invalid' || code === 'creation_conflict'
         || code === 'permission_denied';
-    const direct = SessionSpawnNewResultV1Schema.safeParse({ type: 'error', code,
+    const direct = SessionSpawnNewResultV1Schema.safeParse({ type: 'error', code, ...cause,
         retryable: permanent ? false : launchFailure.retryable });
-    return direct.success && direct.data.type === 'error' ? direct.data : launchFailure;
+    return direct.success && direct.data.type === 'error' ? direct.data : { ...cause, ...launchFailure };
 }
 
 export type MachineSessionServerStartRpcRegistrationOptions = Readonly<{
@@ -103,8 +104,11 @@ export function registerMachineSessionServerStartRpcHandler(
             let credentials: StoredCredentials | null;
             try {
                 credentials = await options.readCredentials();
-            } catch {
-                credentials = null;
+            } catch (error) {
+                return context.signal.aborted
+                    ? { type: 'error', code: 'cancelled', retryable: true }
+                    : { type: 'error', code: 'spawn_failed', retryable: true,
+                        failureCause: projectActionFailureCauseV1(error, 'session.target_preparation') };
             }
             if (!credentials || credentials.token !== options.token) {
                 return { type: 'error', code: 'permission_denied', retryable: false };
