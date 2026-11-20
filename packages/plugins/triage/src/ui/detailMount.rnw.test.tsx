@@ -53,8 +53,7 @@ import type { PluginUiContextEnrichmentV1, PluginUiPageNavigationV1 } from '@hap
 import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import { TriageEditTaskActionInputV1Schema, TriageTaskDraftV1Schema } from '../actions/tasksProtocol.js';
-import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, type TriageTaskOriginErrorV1Schema } from '../actions/taskOriginProtocol.js';
-import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1 } from '../actions/taskReviewProtocol.js';
+import { TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1, type TriageTaskOriginErrorV1Schema } from '../actions/taskOriginProtocol.js';
 import { unlinkEntryFromSession } from '../sessions/entrySessionLinks.js';
 import { TriageUnlinkEntryFromSessionActionInputV1Schema, TriageUnlinkEntryFromSessionActionResultV1Schema } from '../actions/entrySessionProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
@@ -1098,15 +1097,14 @@ async function mountShell(
                 notify: async (notification) => { options.onNotification?.(notification); },
                 diagnostic: ({ data }) => { options.onDiagnostic?.(data); },
                 publishCurrentUiContext: ({ enrichment }) => options.publishCurrentUiContext?.(enrichment),
+                readResource: async ({ resource }) => {
+                    if (resource !== TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1) throw new Error(`Unexpected Resource ${resource}`);
+                    // The host Resource transport is the boundary; corpus-backed origin coverage lives in taskOrigin.rnw.
+                    return { contentType: 'application/json', digest: `sha256:${'1'.repeat(64)}`,
+                        bytes: new TextEncoder().encode(JSON.stringify({ v: 1, originError: options.taskOrigin ?? null, originReview: null })) };
+                },
                 executeAction: async (request): Promise<JsonValue> => {
                     const { action, input } = request;
-                    // The persisted relationship Action is the genuine host transport boundary.
-                    if (action === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1 && options.taskOrigin !== undefined) {
-                        return { v: 1, originError: options.taskOrigin };
-                    }
-                    if (action === TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1 && options.taskOrigin !== undefined) {
-                        return { v: 1, originReview: null };
-                    }
                     if (action === 'tasks/open-create-v1' && options.onTaskDraft !== undefined) {
                         options.onTaskDraft(input);
                         return { status: 'applied' };
