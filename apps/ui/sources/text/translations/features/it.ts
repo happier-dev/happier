@@ -12407,6 +12407,8 @@ const pluginSettingsPresentationTranslations = { it: {
             projectScopeOnly: ({ projects }: { projects: string }) => `Solo in ${projects}`,
             projectScopeCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'progetto' : 'progetti'}`,
             installOnTitle: 'Installa su',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `Installare ${name} su ${machine}?`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `Installare ${name}?`,
             listingRunsIn: 'Eseguito in',
             listingPlatforms: 'Piattaforme',
             listingSource: 'Fonte',

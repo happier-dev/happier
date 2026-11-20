@@ -35,6 +35,8 @@ const boundary = vi.hoisted(() => ({
     alert: vi.fn<IModal['alert']>(),
     push: vi.fn(),
 }));
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // This is the machine network boundary; capability parsing, selection, caches and the hook stay real.
@@ -476,6 +478,37 @@ describe('Plugin install/update originating approval state', () => {
         expect(hook.getCurrent().canRunDiscoverActions).toBe(true);
         expect(censusReads).toHaveLength(0);
         await act(async () => hook.getCurrent().runCatalogAction({ method: 'install', pluginId: 'example.compute', sourceId: catalog.source.id }));
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
+            target: { kind: 'machine', machineId: 'controller-1' },
+            input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
+        } });
+        expect(censusReads).toHaveLength(0);
+    });
+
+    it('opens a Browse quick install review without submitting and installs the pinned release on consent', async () => {
+        const { storage, catalog, actionRequests, censusReads } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true, management: false,
+        });
+        storage.setState({ localSettings: { ...storage.getState().localSettings,
+            pluginsCollectionViewV1: { installed: 'list', discover: 'list' } } });
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { PluginSettingsHomeScreen } = await import('../PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(DestinationInstanceHost, {
+            tabId: 'store', ref: { kind: 'plugins', params: { view: 'browse', source: catalog.source.id } },
+            pathname: '/plugins', focused: true, visible: true,
+            navigation: { push: boundary.push, pushRetainingCurrent: boundary.push, replace: boundary.push,
+                back: () => {}, setParams: () => {} },
+            children: React.createElement(AppPaneProvider, null, React.createElement(PluginSettingsHomeScreen)),
+        }));
+        const plus = `settings.plugins.marketplace.action.install.${catalog.source.id}.example.compute`;
+        await waitForControl(screen, plus);
+        await vi.waitFor(() => expect(screen.findByTestId(plus)?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(plus);
+        expect(actionRequests).toHaveLength(0);
+
+        await waitForControl(screen, `${plus}.confirm`);
+        await screen.pressByTestIdAsync(`${plus}.confirm`);
         await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
         expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
             target: { kind: 'machine', machineId: 'controller-1' },

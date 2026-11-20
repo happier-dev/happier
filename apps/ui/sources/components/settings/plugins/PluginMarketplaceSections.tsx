@@ -27,6 +27,8 @@ import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/compone
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Popover } from '@/components/ui/popover';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -57,7 +59,7 @@ import { listOpenPluginApprovalArtifactsForMachine } from '@/sync/domains/artifa
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { InstalledPluginActionId, PluginRoutineOperationSettlement } from './model/usePluginSettingsScreenState';
+import type { InstalledPluginActionId, PluginQuickInstallReview, PluginRoutineOperationSettlement, PluginSettingsScreenState } from './model/usePluginSettingsScreenState';
 import {
     catalogReviewStatusLabel,
     projectBrowseSections,
@@ -70,7 +72,6 @@ import {
     type DevelopmentPluginEntry,
     type InstalledPluginEntry,
     type PendingPluginChangeListing,
-    type PluginMarketplaceActionRequest,
 } from './model/pluginMarketplaceModel';
 import type { DevelopmentStartUnavailableReason } from './development/developmentStartAvailability';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -1180,11 +1181,12 @@ export function DiscoverListingsSection(props: Readonly<{
     /** Listings of installed plugins that contribute an Agent show that Agent's logo. */
     projectionByPluginId?: PluginProjectionFactsById;
     machineId?: string | null;
+    machineName?: string | null;
     serverId?: string | null;
     canRunActions: boolean;
     installDisabledReason?: string | null;
     isPluginActionInFlight: (pluginId: string) => boolean;
-    onAction: (request: PluginMarketplaceActionRequest) => void;
+    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
     onLoadMore: () => void;
     onNavigateToPlugin: (pluginId: string) => void;
     onOpenListing: (entry: PluginMarketplaceCatalogEntry) => void;
@@ -1288,37 +1290,117 @@ function useDiscoverListingRowActions(item: DiscoverListingItem): CollectionRowA
 
 type DiscoverListingActionInputs = Readonly<{
     machineId?: string | null;
+    machineName?: string | null;
     serverId?: string | null;
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     canRunActions: boolean;
     installDisabledReason?: string | null;
     loading: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
-    onAction: (request: PluginMarketplaceActionRequest) => void;
+    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
     onNavigateToPlugin: (pluginId: string) => void;
 }>;
 
-/**
- * A listing's one quick action: "+" installs on the Machine named in the header (pressing it is the consent, as on the
- * listing). Installed listings have no action: "Installed" is their status, and the card opens the listing, which
- * leads to its management. "Installed" never turns into an uninstall affordance.
- */
 function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: DiscoverListingActionInputs): React.ReactNode {
     if (props.installedPluginById.has(entry.id) || !entry.installable) return null;
-    const installDisabled = !props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading;
+    return <DiscoverQuickInstall
+        key={JSON.stringify([props.serverId, props.machineId, entry.sourceId, entry.id, entry.itemId, entry.version])}
+        entry={entry}
+        machineName={props.machineName}
+        disabled={!props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading}
+        disabledReason={props.installDisabledReason ?? undefined}
+        prepareQuickInstall={props.prepareQuickInstall}
+    />;
+}
+
+/**
+ * Browse’s plus opens the compact Quick install confirmation anchored to it (lab ideas-1118-platform round 4, "Quick
+ * install"; a sheet on a phone): the plugin, who made it and where it is listed, one line of what it adds and where it
+ * goes, then Cancel or Install & Trust. The person has not seen the listing here, so this press is the consent; the
+ * listing's own Install & Trust needs no second step.
+ */
+function DiscoverQuickInstall({ entry, machineName, disabled, disabledReason, prepareQuickInstall }: Readonly<{
+    entry: PluginMarketplaceCatalogEntry;
+    machineName?: string | null;
+    disabled: boolean;
+    disabledReason?: string;
+    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
+}>) {
+    const [review, setReview] = React.useState<PluginQuickInstallReview | null>(null);
+    const open = review !== null;
+    const anchorRef = React.useRef<View>(null);
+    const testID = `settings.plugins.marketplace.action.install.${entry.sourceId}.${entry.id}`;
+    const installLabel = t('settingsPlugins.installAndTrust');
+    const close = React.useCallback(() => setReview(null), []);
+    const contents = pluginListingAdds(entry.contributions).map((add) => add.title);
+    const uses = [
+        contents.join(', '),
+        machineName ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: machineName }) : null,
+    ].filter(Boolean).join('. ');
     return (
-        <IconButton
-            testID={`settings.plugins.marketplace.action.install.${entry.sourceId}.${entry.id}`}
-            iconName="plus"
-            variant="plain"
-            tooltip={t('settingsPlugins.installAndTrust')}
-            disabledReason={props.installDisabledReason ?? undefined}
-            accessibilityLabel={buildActionRowAccessibilityLabel([t('settingsPlugins.installAndTrust'), entry.title, entry.sourceTitle])
-                ?? t('settingsPlugins.installAndTrust')}
-            accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
-            disabled={installDisabled}
-            onPress={() => props.onAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
-        />
+        <>
+            <View ref={anchorRef} collapsable={false}>
+                <IconButton
+                    testID={testID}
+                    iconName="plus"
+                    variant="plain"
+                    tooltip={installLabel}
+                    disabledReason={disabledReason}
+                    accessibilityLabel={buildActionRowAccessibilityLabel([installLabel, entry.title, entry.sourceTitle]) ?? installLabel}
+                    accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
+                    disabled={disabled}
+                    expanded={open}
+                    hasPopup="dialog"
+                    onPress={() => setReview(open ? null : prepareQuickInstall({ pluginId: entry.id, sourceId: entry.sourceId }))}
+                />
+            </View>
+            {open ? (
+                <Popover
+                    open
+                    anchorRef={anchorRef}
+                    boundaryRef={null}
+                    placement="auto-vertical"
+                    phonePresentation="sheet"
+                    sheetHeader="none"
+                    accessibilityLabel={installLabel}
+                    edgePadding={{ horizontal: 12, vertical: 12 }}
+                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
+                    maxWidthCap={360}
+                    onRequestClose={close}
+                >
+                    {({ maxHeight, maxWidth }) => (
+                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" containerStyle={{ width: Math.min(maxWidth, 360) }}>
+                            <View testID={`${testID}.quickInstall`} style={sectionStylesheet.quickInstall}>
+                                <View style={sectionStylesheet.quickInstallHeader}>
+                                    <PluginMark title={entry.title} pluginId={entry.id} size="row" />
+                                    <View style={sectionStylesheet.quickInstallTitles}>
+                                        <Text variant="body" emphasis="semiBold">
+                                            {machineName
+                                                ? t('settingsPlugins.surfaces.quickInstallTitle', { name: entry.title, machine: machineName })
+                                                : t('settingsPlugins.surfaces.quickInstallTitleNoMachine', { name: entry.title })}
+                                        </Text>
+                                        <Text variant="meta" style={sectionStylesheet.quickInstallMeta}>
+                                            {[entry.publisher.displayName, entry.sourceTitle].filter(Boolean).join(' · ')}
+                                        </Text>
+                                    </View>
+                                </View>
+                                {uses ? <Text variant="body" style={sectionStylesheet.quickInstallMeta}>{uses}</Text> : null}
+                                <View style={sectionStylesheet.quickInstallFooter}>
+                                    <RoundButton testID={`${testID}.cancel`} size="small" display="secondary"
+                                        title={t('common.cancel')} onPress={close} />
+                                    <RoundButton testID={`${testID}.confirm`} size="small" title={installLabel}
+                                        disabled={disabled} onPress={() => {
+                                            if (disabled || !review) return;
+                                            close();
+                                            review.confirm();
+                                        }} />
+                                </View>
+                            </View>
+                        </FloatingOverlay>
+                    )}
+                </Popover>
+            ) : null}
+        </>
     );
 }
 
@@ -1412,6 +1494,11 @@ const sectionStylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
     },
+    quickInstall: { padding: theme.space.s16, gap: theme.space.s12 },
+    quickInstallHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s10 },
+    quickInstallTitles: { flex: 1, minWidth: 0, gap: theme.space.s2 },
+    quickInstallMeta: { color: theme.colors.text.secondary },
+    quickInstallFooter: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: theme.space.s8 },
     loadMore: {
         width: '100%',
         alignSelf: 'center',

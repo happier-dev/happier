@@ -12351,6 +12351,8 @@ const pluginSettingsPresentationTranslations = { ja: {
             projectScopeOnly: ({ projects }: { projects: string }) => `${projects} のみ`,
             projectScopeCount: ({ count }: { count: number }) => `${count} プロジェクト`,
             installOnTitle: 'インストール先',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `${name} を ${machine} にインストールしますか？`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `${name} をインストールしますか？`,
             listingRunsIn: '実行場所',
             listingPlatforms: 'プラットフォーム',
             listingSource: 'ソース',

@@ -12400,6 +12400,8 @@ const pluginSettingsPresentationTranslations = { ca: {
             projectScopeOnly: ({ projects }: { projects: string }) => `Només a ${projects}`,
             projectScopeCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'projecte' : 'projectes'}`,
             installOnTitle: 'Instal·la a',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `Instal·lar ${name} a ${machine}?`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `Instal·lar ${name}?`,
             listingRunsIn: 'S’executa a',
             listingPlatforms: 'Plataformes',
             listingSource: 'Font',

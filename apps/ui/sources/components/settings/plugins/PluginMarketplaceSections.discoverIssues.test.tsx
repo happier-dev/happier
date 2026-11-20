@@ -5,6 +5,8 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 import type { PluginMarketplaceCatalogEntry, PluginMarketplaceDiscoverSourceStatus } from './readPluginMarketplaceCatalog';
 
 installSettingsViewCommonModuleMocks();
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 const { DiscoverListingsSection, DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
 
 const unreachable: PluginMarketplaceDiscoverSourceStatus = {
@@ -82,7 +84,7 @@ describe('Browse source issues', () => {
             entries={[entry]} presentation={presentation} loading={false} loadingMore={false} canLoadMore={false}
             installedPluginById={new Map()} canRunActions={canRunActions} isPluginActionInFlight={() => false}
             installDisabledReason={canRunActions ? null : 'Choose a connected machine'}
-            onAction={onAction} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={onOpenListing}
+            prepareQuickInstall={(listing) => ({ confirm: () => onAction(listing) })} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={onOpenListing}
         /></ListPresentationProvider>);
         await measureMountedCollections(screen);
         if (presentation === 'grid') {
@@ -100,7 +102,13 @@ describe('Browse source issues', () => {
         expect(onAction).not.toHaveBeenCalled();
         onOpenListing.mockClear();
         await screen.pressByTestIdAsync(actionTestID);
-        expect(onAction).toHaveBeenCalledWith({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId });
+        expect(onAction).not.toHaveBeenCalled();
+        const confirm = `${actionTestID}.confirm`;
+        await vi.waitFor(() => expect(screen.findByTestId(confirm)).not.toBeNull());
+        await screen.pressByTestIdAsync(confirm);
+        await vi.waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith({
+            pluginId: entry.id, sourceId: entry.sourceId,
+        }));
         expect(onOpenListing).not.toHaveBeenCalled();
     });
 });

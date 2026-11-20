@@ -94,6 +94,8 @@ export type InstalledPluginActionId =
 
 function pluginActionKey(scopeKey: string, pluginId: string): string { return JSON.stringify([scopeKey, pluginId]); }
 
+export type PluginQuickInstallReview = Readonly<{ confirm: () => void }>;
+
 export type PluginRoutineOperationSettlement = Readonly<{
     scope: 'installed' | 'discover' | 'pending' | 'development';
     message: string;
@@ -226,6 +228,7 @@ export type PluginSettingsScreenState = Readonly<{
             : readonly []
         : readonly [];
     runCatalogAction: (params: PluginMarketplaceActionRequest) => void;
+    prepareQuickInstall: (listing: Readonly<{ pluginId: string; sourceId: string }>) => PluginQuickInstallReview | null;
     runDevelopmentCreate: (params: Readonly<{
         targetDir: string;
         displayName: string;
@@ -471,7 +474,10 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             && selectedMachineScopeKeyRef.current === selectedMachineScopeKey;
     }, [installedExecution.isCurrent, selectedMachineScopeKey]);
 
-    const runCatalogAction = React.useCallback((params: PluginMarketplaceActionRequest) => {
+    const runCatalogAction = React.useCallback((
+        params: PluginMarketplaceActionRequest,
+        reviewedInstallEntry?: PluginMarketplaceCatalogEntry,
+    ) => {
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         const isAuthorityCurrent = captureMutationPublication();
         if (
@@ -486,7 +492,9 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         // Only an exact catalog install is answerable from a listing. An update is
         // answered by the installed record at its canonical owner, so the listing
         // never becomes that action's authority or its success target.
-        const exactInstallEntry = params.method === 'install' ? catalog.resolveInstallEntry(params) : null;
+        const exactInstallEntry = params.method === 'install'
+            ? reviewedInstallEntry ?? catalog.resolveInstallEntry(params)
+            : null;
         if (
             params.method === 'rollback'
             && installedBefore?.rollbackAvailability !== 'available'
@@ -579,7 +587,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             if (!actionInput) return { supported: true as const, response: {
                                 ok: false as const, error: { code: 'install_unavailable', message: t('common.unavailable') },
                             } };
-                            // The listing press consents to this exact release and Machine.
+                            // Listing Install and the quick review's Install both consent to this exact release and Machine.
                             // Installed updates leave scope review to the receiver.
                             const execution = await installedExecution.execute('plugins.install', actionInput,
                                 params.method === 'install' ? { confirmed: true } : undefined);
@@ -690,6 +698,18 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             }
         })();
     }, [administrationTargetSelection, daemonAdministrationAvailable, catalog.resolveInstallEntry, executionTarget, installedExecution.execute, captureMutationPublication, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, reportUnknownMutation, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
+
+    const prepareQuickInstall = React.useCallback((listing: Readonly<{ pluginId: string; sourceId: string }>): PluginQuickInstallReview | null => {
+        if (!canRunDiscoverActions) return null;
+        const entry = catalog.resolveInstallEntry(listing);
+        if (!entry) return null;
+        const isCurrent = captureMutationPublication();
+        return {
+            confirm: () => {
+                if (isCurrent()) runCatalogAction({ method: 'install', ...listing }, entry);
+            },
+        };
+    }, [canRunDiscoverActions, captureMutationPublication, catalog.resolveInstallEntry, runCatalogAction]);
 
     const runInstalledPluginAction = React.useCallback((
         action: InstalledPluginActionId,
@@ -1008,6 +1028,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         installedPluginsRead,
         registryDiagnostics,
         runCatalogAction,
+        prepareQuickInstall,
         runDevelopmentCreate,
         resolveDevelopmentEditTarget,
         runDevelopmentSourceInstall,

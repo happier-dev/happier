@@ -78,6 +78,8 @@ export const english = {
         projectScopeOnly: ({ projects }: { projects: string }) => `Only in ${projects}`,
         projectScopeCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'project' : 'projects'}`,
         installOnTitle: 'Install on',
+        quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `Install ${name} on ${machine}?`,
+        quickInstallTitleNoMachine: ({ name }: { name: string }) => `Install ${name}?`,
         listingRunsIn: 'Runs in',
         listingPlatforms: 'Platforms',
         listingSource: 'Source',

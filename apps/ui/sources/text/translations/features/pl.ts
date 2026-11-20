@@ -12428,6 +12428,8 @@ const pluginSettingsPresentationTranslations = { pl: {
             projectScopeOnly: ({ projects }: { projects: string }) => `Tylko w ${projects}`,
             projectScopeCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'projekt' : 'projekty'}`,
             installOnTitle: 'Zainstaluj na',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `Zainstalować ${name} na ${machine}?`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `Zainstalować ${name}?`,
             listingRunsIn: 'Działa w',
             listingPlatforms: 'Platformy',
             listingSource: 'Źródło',

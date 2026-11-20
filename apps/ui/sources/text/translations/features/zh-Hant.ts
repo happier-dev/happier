@@ -12291,6 +12291,8 @@ const pluginSettingsPresentationTranslations = { 'zh-Hant': {
             projectScopeOnly: ({ projects }: { projects: string }) => `僅限 ${projects}`,
             projectScopeCount: ({ count }: { count: number }) => `${count}個專案`,
             installOnTitle: '安裝到',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上安裝 ${name}？`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `安裝 ${name}？`,
             listingRunsIn: '執行於',
             listingPlatforms: '平台',
             listingSource: '來源',

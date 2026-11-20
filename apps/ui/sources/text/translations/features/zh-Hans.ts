@@ -12291,6 +12291,8 @@ const pluginSettingsPresentationTranslations = { 'zh-Hans': {
             projectScopeOnly: ({ projects }: { projects: string }) => `仅限 ${projects}`,
             projectScopeCount: ({ count }: { count: number }) => `${count}个项目`,
             installOnTitle: '安装到',
+            quickInstallTitle: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上安装 ${name}？`,
+            quickInstallTitleNoMachine: ({ name }: { name: string }) => `安装 ${name}？`,
             listingRunsIn: '运行于',
             listingPlatforms: '平台',
             listingSource: '来源',
