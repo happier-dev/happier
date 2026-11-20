@@ -102,6 +102,37 @@ function createEvent(overrides: Partial<BrowserDiagnosticEventV1> = {}): Browser
 }
 
 describe('daemon browser diagnostics store', () => {
+    it('retains producer-normalized payloads without traversing their content again', async () => {
+        const { createBrowserDiagnosticsDaemonStore } = await import('./store');
+        const { mapSidecarCdpDiagnosticEvent } = await import('../sidecar/diagnostics/mapEvents');
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine' });
+        const keys = ['theme', 'workspace', 'filters'];
+        let contentVisits = 0;
+        for (let ordinal = 1; ordinal <= 3; ordinal++) {
+            const event = mapSidecarCdpDiagnosticEvent({
+                browserSessionId: 'browser', viewId: 'view', navigationGeneration: 1,
+                capturedAtMs: ordinal, eventOrdinal: ordinal,
+                event: { kind: 'storage.keyInventory', storageType: 'localStorage', keys: [...keys] },
+            });
+            const normalizedKeys = event.data.keys;
+            if (!Array.isArray(normalizedKeys)) throw new Error('Storage mapper did not produce its key inventory');
+            // Transparent profiling of the real mapper output; values and store logic stay real.
+            for (const index of keys.keys()) {
+                const key = normalizedKeys[index];
+                Object.defineProperty(normalizedKeys, index, {
+                    get() { contentVisits++; return key; },
+                });
+            }
+            expect(store.publishEvent(event)).toEqual({ status: 'accepted' });
+        }
+        expect(contentVisits).toBe(0);
+        const events = store.getViewSnapshot({ browserSessionId: 'browser', viewId: 'view' }).events;
+        expect(events).toHaveLength(3);
+        expect(events.map(event => event.data.keys)).toEqual([keys, keys, keys]);
+        expect(store.publishRawEvent({ ...events[0], data: { headers: { Authorization: 'Bearer synthetic' } } }))
+            .toEqual({ status: 'rejected', reason: 'invalid_event' });
+        expect(store.getViewSnapshot({ browserSessionId: 'browser', viewId: 'view' }).events).toHaveLength(3);
+    });
     it('retains the latest explanation for each rejection reason without a duplicate-history cutoff', async () => {
         const { createBrowserDiagnosticsDaemonStore } = await import('./store');
         let now = 0;

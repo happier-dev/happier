@@ -39,6 +39,8 @@ export type BrowserDiagnosticsDaemonPublishResult =
     | Readonly<{ status: 'rejected'; reason: 'invalid_event' | 'stale_navigation' }>;
 
 export type BrowserDiagnosticsDaemonStore = Readonly<{
+    /** Accepts a mapper-produced event, already parsed by `BrowserDiagnosticEventV1Schema`
+     * (egress refusal included); external input uses `publishRawEvent`. */
     publishEvent(event: BrowserDiagnosticEventV1, privateRequest?: BrowserDiagnosticsPrivateNetworkRequest): BrowserDiagnosticsDaemonPublishResult;
     publishRawEvent(event: unknown): BrowserDiagnosticsDaemonPublishResult;
     clearView(input: Readonly<{ browserSessionId: string; viewId: string }>): void;
@@ -131,8 +133,10 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
             appendDiagnostic('invalid_event');
             return { status: 'rejected', reason: 'invalid_event' };
         }
+        return publishEvent(parsed.data, privateRequest);
+    }
 
-        const event = parsed.data;
+    function publishEvent(event: BrowserDiagnosticEventV1, privateRequest?: BrowserDiagnosticsPrivateNetworkRequest): BrowserDiagnosticsDaemonPublishResult {
         const key = browserViewKey(event);
         const existing = viewsByKey.get(key);
         if (existing && event.navigationGeneration < existing.navigationGeneration) {
@@ -167,7 +171,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
     }
 
     return {
-        publishEvent: publishRawEvent,
+        publishEvent,
         publishRawEvent,
         getNetworkRequest(request) {
             const view = viewsByKey.get(browserViewKey(request));
