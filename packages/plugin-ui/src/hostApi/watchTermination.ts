@@ -30,10 +30,10 @@ export function settleResourceWatchTermination(input: Readonly<{
     ...(event.diagnostics.length > 0 ? { diagnostics: Object.freeze([...event.diagnostics]) } : {}),
     message: event.diagnostics.join(', ') || 'Plugin UI resource watch ended.',
   });
-  if (event.code === 'expired_resource' && input.established && input.demanded) {
-    // Only a previously admitted watch can recover a replacement. Expiry
-    // before acknowledgement ends that opening; its late handle is released
-    // by the same aborted-controller path as disposal during establishment.
+  if (event.code === 'expired_resource' && input.demanded
+    && (input.established || event.diagnostics.includes('plugin_read_authority_retired'))) {
+    // A producer can withdraw read authority before the host acknowledges the
+    // watch. Readmission uses the same path as withdrawal of a live watch.
     input.replace(error);
     return;
   }

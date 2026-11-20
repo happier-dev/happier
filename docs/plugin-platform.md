@@ -2740,23 +2740,22 @@ version or schema-version remedy. A plugin can surface the update code once;
 it must not infer a version from it. These are source contracts, not loaded
 runtime verification.
 
-When an observed Action's admitted source or credential authority retires, the
-host withdraws the affected Resource bytes through the existing
-`expired_resource` watch failure. For an established watch, the shared client
-store clears both raw content and typed reconciliation baselines before freshly
-admitting the still-demanded read and watch. Expiry before watch acknowledgement
-settles that opening as ended and releases its late physical handle; it does not
-reopen automatically. A refused replacement stays unavailable. Ordinary dependency
-invalidation retains the admitted value while refreshing. For revisioned
-selected credentials, metadata-only Connected Account updates do not retire
-credential authority.
+When an observed Action's admitted source or credential authority retires, or
+an Account storage rebind withdraws it, the host uses the existing
+`expired_resource` event with the `plugin_read_authority_retired` diagnostic.
+The shared client clears raw content and typed reconciliation baselines before
+readmitting the still-demanded read and watch, even if the event arrives before
+watch acknowledgement. Other expiry events replace established watches and end
+unacknowledged openings. A late handle is released, and a refused replacement
+stays unavailable. Ordinary dependency invalidation retains the admitted value
+while refreshing. For revisioned selected credentials, metadata-only Connected
+Account updates preserve credential authority.
 
 Natural reads of a retained, settled `expired_resource` acquire again through the
-existing Resource entry loader. An already-pending replacement is joined rather
-than queued again. Established-watch expiry withdraws raw content and typed
-baselines immediately, but leaves replacement pending until fresh admission or
-refusal settles it; dependent reads do not settle the transient expiry. Permanent
-refusals remain settled, with no automatic retry or consumer fallback.
+existing Resource entry loader. Concurrent reads join a pending replacement.
+After expiry, replacement remains pending until fresh admission or refusal
+settles it. Dependent reads wait for that result. Permanent refusals remain
+settled without automatic retry or consumer fallback.
 
 The observer's `PluginActionReadInvalidation` is callable for ordinary refresh
 and exposes `invalidate.retire()` for loss of the authority behind an admitted

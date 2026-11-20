@@ -445,7 +445,8 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             const endExpiredResourceWatch = (): void => {
                 const watch = boundWatch;
                 if (!watch) return;
-                releaseWatch(watch, { status: 'event', event: terminalErrorEvent(watch.subscriptionId, 'expired_resource', []) });
+                releaseWatch(watch, { status: 'event', event: terminalErrorEvent(watch.subscriptionId,
+                    'expired_resource', ['plugin_read_authority_retired']) });
             };
             let service: Awaited<ReturnType<StablePluginResourcesOwner['bindForResource']>>;
             try {

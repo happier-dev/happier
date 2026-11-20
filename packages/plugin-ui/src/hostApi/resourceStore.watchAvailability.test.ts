@@ -284,19 +284,60 @@ describe('plugin UI Resource watch availability', () => {
     const store = createPluginUiResourceStore({ client, pluginId: 'acme.preview' });
     const entry = store.getEntry('review-summary');
     const observed: string[] = [];
+    const errors: (string | undefined)[] = [];
     const unsubscribe = entry.subscribe(() => {
       observed.push(entry.getSnapshot().subscription);
+      errors.push(entry.getSnapshot().error?.code);
     }, true);
 
     await vi.waitFor(() => {
       expect(disposeWatch).toHaveBeenCalledTimes(1);
     });
     expect(entry.getSnapshot().subscription).toBe('ended');
+    expect(errors).toContain('expired_resource');
     expect(observed).not.toContain('live');
     expect(api.watchResource).toHaveBeenCalledTimes(1);
 
     unsubscribe();
     store.dispose();
+  });
+
+  it('replaces a watch whose read authority retires before acknowledgement and publishes fresh data', async () => {
+    let deliverFirst!: (event: ResourceSubscriptionEvent) => void;
+    let acknowledgeFirst!: (watch: Disposable) => void;
+    const firstWatch = new Promise<Disposable>(resolve => { acknowledgeFirst = resolve; });
+    const disposeFirst = vi.fn();
+    const disposeReplacement = vi.fn();
+    let current = onlineValue;
+    const watchResource = vi.fn<(resource: unknown, listener: (event: ResourceSubscriptionEvent) => void) => Promise<Disposable>>()
+      .mockImplementationOnce((_resource, listener) => {
+        deliverFirst = listener;
+        return firstWatch;
+      })
+      .mockResolvedValue({ dispose: disposeReplacement });
+    const store = createPluginUiResourceStore({ client: { readResource: async () => current, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const unsubscribe = entry.subscribe(() => {}, true);
+    const retired: ResourceSubscriptionEvent = { version: 1, subscriptionId: 'sub-1', kind: 'error',
+      code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] };
+    try {
+      await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ value: onlineValue, subscription: 'establishing' }));
+      current = refreshedValue;
+      deliverFirst(retired);
+      expect(entry.getSnapshot().value).toBeUndefined();
+      deliverFirst(retired);
+      acknowledgeFirst({ dispose: disposeFirst });
+
+      await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+        value: refreshedValue, freshness: 'fresh', pending: 'idle', subscription: 'live',
+      }));
+      expect(entry.getSnapshot().error).toBeUndefined();
+      expect(disposeFirst).toHaveBeenCalledTimes(1);
+      expect(watchResource).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      store.dispose();
+    }
   });
 
   it('replaces an established expired watch and delivers replacement data to the same consumer', async () => {

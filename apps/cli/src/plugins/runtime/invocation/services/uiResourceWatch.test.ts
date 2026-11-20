@@ -375,7 +375,8 @@ describe('daemon plugin UI resource invalidation transport (EU-4b)', () => {
             pending = deferred<string>();
             retireAuthority();
             expect(await watches.next({ callerPluginId: CALLER, subscriptionId: 'authority-watch', waitMs: 1 }))
-                .toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource' } });
+                .toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource',
+                    diagnostics: ['plugin_read_authority_retired'] } });
             await expect(watches.next({ callerPluginId: CALLER, subscriptionId: 'authority-watch', waitMs: 1 }))
                 .rejects.toMatchObject({ code: 'plugin_resource_subscription_unknown' });
         } finally {

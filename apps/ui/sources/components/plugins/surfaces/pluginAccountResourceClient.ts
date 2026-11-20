@@ -201,7 +201,7 @@ export function createPluginAccountResourceClient(input: Readonly<{
                 closed = true;
                 try {
                     listener({ version: 1, subscriptionId: input.declaration.id,
-                        kind: 'error', code: 'expired_resource', diagnostics: [] });
+                        kind: 'error', code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] });
                 } finally {
                     try { void Promise.resolve(dispose()).catch(() => {}); }
                     catch { /* The existing Resource event already withdrew this read authority. */ }
