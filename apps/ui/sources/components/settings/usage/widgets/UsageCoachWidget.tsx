@@ -58,7 +58,7 @@ import {
   type UsageCoachController,
   type UsageCoachSnapshot,
 } from './usageCoachController';
-import { projectUsageCoachFindings, readUsageCoachState } from './usageCoachPresentation';
+import { projectUsageCoachFindings, readUsageCoachFailureMessage, readUsageCoachState } from './usageCoachPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useUsageDisclosureCommand } from './usageMountedControls';
 
@@ -792,10 +792,7 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
           <CoachNotice
             kind="error"
             testID={`${props.testID}.error`}
-            message={error.actionId === 'usage.coach.undo' &&
-            error.failure.errorCode.endsWith('conflict')
-              ? t('usage.board.coach.undoConflict')
-              : t('usage.board.coach.actionFailed')}
+            message={t(readUsageCoachFailureMessage(error))}
           />
         ) : null}
         {wide ? null : <View style={styles.actionsBelow}>{action}</View>}

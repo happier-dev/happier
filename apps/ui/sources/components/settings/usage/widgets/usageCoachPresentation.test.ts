@@ -1,7 +1,24 @@
 import { expect, it } from 'vitest';
 import type { UsageCoachFinding } from '@happier-dev/protocol/usage/coach/coachFinding';
-import { projectUsageCoachFindings } from './usageCoachPresentation';
+import { projectUsageCoachFindings, readUsageCoachFailureMessage } from './usageCoachPresentation';
 import type { UsageCoachSnapshot } from './usageCoachController';
+import { McpRulesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/capabilityRules';
+
+it('presents the mutation owner conflict carried by Coach Undo, without calling a refused Apply an undo conflict', () => {
+  // The public Coach Action preserves MCP's typed refusal in details.
+  const failure = { ok: false, errorCode: 'coach_owner_refused', error: 'coach_owner_refused',
+    details: McpRulesSetOutputV1Schema.parse({ ok: false, code: 'conflict' }) } as const;
+  expect(readUsageCoachFailureMessage({ evidenceKey: 'mcp', actionId: 'usage.coach.undo', failure }))
+    .toBe('usage.board.coach.undoConflict');
+  expect(readUsageCoachFailureMessage({ evidenceKey: 'mcp', actionId: 'usage.coach.apply', failure }))
+    .toBe('usage.board.coach.actionFailed');
+  expect(readUsageCoachFailureMessage({ evidenceKey: 'setting', actionId: 'usage.coach.undo',
+    failure: { ok: false, errorCode: 'account_settings_mutation_conflict', error: 'account_settings_mutation_conflict' } }))
+    .toBe('usage.board.coach.undoConflict');
+  expect(readUsageCoachFailureMessage({ evidenceKey: 'mcp', actionId: 'usage.coach.undo',
+    failure: { ...failure, details: McpRulesSetOutputV1Schema.parse({ ok: false, code: 'catalog_unavailable' }) } }))
+    .toBe('usage.board.coach.actionFailed');
+});
 
 it('lets canonical snooze expiry and external restore govern mounted finding rows', () => {
   const evidenceKey = 'evidence';

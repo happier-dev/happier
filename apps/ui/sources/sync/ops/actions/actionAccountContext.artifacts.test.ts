@@ -60,9 +60,14 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 
 // HTTP, device credential storage and the native theme runtime are substituted boundaries.
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = { runtimeFetch: (...args: unknown[]) => runtimeFetch(...args),
+    resetRuntimeFetch: () => runtimeFetch.mockReset(),
     get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+};
+    return mocked;
+});
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
@@ -1682,6 +1687,40 @@ describe('scoped Account workflow Artifact operations', () => {
             await expect(context.mutateRawSettings(current => ({ ...current, showLineNumbers: false }), { signal: operation.signal }))
                 .resolves.toMatchObject({ status: 'applied', settingsVersion: 5 });
             expect(raw).toEqual({ futureSibling: { retained: true }, showLineNumbers: false });
+            expect(storage.getState().settingsScope).toEqual(replacementScope);
+            expect(storage.getState().settingsVersion).toBe(77);
+        } finally { context.dispose(); storage.setState(previous); }
+    });
+
+    it('preserves an acknowledged Coach suppression after its Account retires without publishing into the replacement', async () => {
+        const previous = storage.getState();
+        const home = await upsertAndActivateServer({ serverUrl: 'https://coach-receipt-retirement.test', scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const kv = createAccountKvHttpFixture();
+        const replacementScope = { serverId: home.id, accountId: 'replacement-account' };
+        runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
+            const url = new URL(String(input));
+            const response = await kv.handleFetch(url, init);
+            if (response) {
+                if (url.pathname !== '/v1/kv' || init?.method !== 'POST') return response;
+                const receipt: unknown = await response.json();
+                // The KV boundary committed; retire the Account before its held acknowledgement is consumed.
+                return Object.assign(json(receipt), { json: async () => {
+                    storage.setState({ settingsScope: replacementScope, settingsVersion: 77 });
+                    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token: 'replacement-account' });
+                    return receipt;
+                } });
+            }
+            if (url.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (url.pathname === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
+            return json({});
+        });
+        const context = await captureLazyActionAccountContext(home.id);
+        try {
+            await expect(createUiCoachSuppressionPort(context).edit({ evidenceKey: 'retired-finding', dismissed: true })).resolves.toBeUndefined();
+            expect(kv.read(USAGE_COACH_SUPPRESSIONS_KV_KEY)).toBeDefined();
+            expect(context.accountLifetime.isCurrent()).toBe(false);
             expect(storage.getState().settingsScope).toEqual(replacementScope);
             expect(storage.getState().settingsVersion).toBe(77);
         } finally { context.dispose(); storage.setState(previous); }

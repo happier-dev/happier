@@ -31,6 +31,7 @@ export function createUsageCoachSuppressionPort(input: Readonly<{
         compareAndSet(value: unknown, version: number): Promise<Readonly<{ success: true; version: number }>
             | Readonly<{ success: false; value: unknown | null; version: number }>>;
     };
+    onEdited?(state: UsageCoachSuppressionStateV1): void;
 }>): UsageCoachSuppressionPort {
     const read = async () => {
         const row = await input.transport.read();
@@ -52,7 +53,9 @@ export function createUsageCoachSuppressionPort(input: Readonly<{
             if ('dismissed' in request && request.dismissed) suppressions.push({ kind: 'dismissed', evidenceKey: request.evidenceKey });
             if ('untilMs' in request && request.untilMs !== null)
                 suppressions.push({ kind: 'snoozed', evidenceKey: request.evidenceKey, untilMs: request.untilMs });
-            await write({ v: 1, suppressions }, row.version);
+            const state: UsageCoachSuppressionStateV1 = { v: 1, suppressions };
+            await write(state, row.version);
+            input.onEdited?.(state);
         },
     };
 }

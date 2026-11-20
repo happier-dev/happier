@@ -27,3 +27,7 @@ export function isUsageActionIdV1(value: string): value is UsageActionId {
 
 export const USAGE_COACH_ACTION_IDS = ['usage.coach.apply', 'usage.coach.undo', 'usage.coach.dismiss', 'usage.coach.snooze'] as const;
 export type UsageCoachActionId = typeof USAGE_COACH_ACTION_IDS[number];
+
+export function isUsageCoachUndoActionIdV1(value: string): value is 'usage.coach.undo' {
+  return value === 'usage.coach.undo';
+}

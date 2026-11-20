@@ -1514,7 +1514,6 @@ export async function readUiUsageQueryBatch(
             ...(retained?.asOfMs === undefined ? {} : { asOfMs: retained.asOfMs }) } satisfies UsageAccountingSourceSnapshot] as const;
     }));
     const evidenceQueries = queries.filter(query => query.includeAccounting && query.includeSessionEvidence);
-    let coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     let work: readonly UsageWorkSourceSnapshot[] = queries.map(query => ({ query, status: query.includeAccounting && query.includeWorkEvidence ? 'pending' : 'not_loaded' }));
     const sessionWorkReads = new Map<string, Promise<SessionWorkSourceResult>>();
     const readWorkMachine = createUsageWorkMachineReader(context, signal);
@@ -1562,7 +1561,8 @@ export async function readUiUsageQueryBatch(
                 if (answer) answer.prepared = prepared;
                 return prepared;
             },
-            work, howYouWork, howYouWorkSourcesByQuery, settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog, coachSuppressions,
+            work, howYouWork, howYouWorkSourcesByQuery, settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog,
+            coachSuppressions: accountOwner.coachSuppressions,
             sourceLocations: Object.values(readOpenedQuotaScope(context)?.state.machines ?? {}).flatMap(machine => {
                 const displayLocation = readMachineName(machine);
                 return displayLocation ? [{ machineId: machine.id, displayLocation }] : [];
@@ -1633,9 +1633,12 @@ export async function readUiUsageQueryBatch(
         await Promise.all([
         (async () => {
             if (!evidenceQueries.some(query => query.includeCoach !== false)) return;
-            coachSuppressions = await createUiCoachSuppressionPort(context, signal,
-                async () => (await readSessionCurrentness()).read()).read();
-            requireCurrent(context, signal);
+            await accountOwner.readCoachSuppressions(async () => {
+                const state = await createUiCoachSuppressionPort(context, signal,
+                    async () => (await readSessionCurrentness()).read()).read();
+                requireCurrent(context, signal);
+                return state;
+            });
             publish();
         })(),
         ...accountingTasks.values(),
@@ -1788,6 +1791,7 @@ function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
     withCaller: <T>(callerContext: ActionExecutorContext | undefined, admitted: boolean, acquire: () => T) => T,
     requestFresh: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => void,
     isAllowanceReadPending: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean,
+    hasReusableAdmission: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean,
     createPresentationReadiness: (reference: Parameters<PluginUiResourceStore['getEntry']>[0],
         entry: PluginUiResourceEntry) => () => boolean): UsageQueryResourceStore {
     return Object.freeze<UsageQueryResourceStore>({
@@ -1817,7 +1821,8 @@ function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
                 refresh,
                 acquire(context) {
                     initialCaller = undefined;
-                    return withCaller(context, true, () => entry.refresh({ supersede: false }));
+                    return withCaller(context, true, () => hasReusableAdmission(reference)
+                        ? Promise.resolve(entry.getSnapshot()) : entry.refresh({ supersede: false }));
                 },
                 isAllowanceReadPending: () => entry.getSnapshot().pending !== 'idle' && isAllowanceReadPending(reference),
                 isPresentationReady: () => (presentationReady ??= createPresentationReadiness(reference, entry))(),
@@ -1842,6 +1847,9 @@ type UsageAccountingAnswer = {
     prepared?: PreparedUsageAccountingSnapshot;
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]): void; readSessionInput: SessionInputReader;
+    coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
+    readCoachSuppressions(read: () => Promise<UsageCoachSuppressionStateV1>): Promise<void>;
+    publishCoachSuppressions(state: UsageCoachSuppressionStateV1): void;
     readSessionSelection: SessionInputSelectionReader;
     projectSessionSelection: SessionInputSelectionProjector;
     retrySessionInputFailures: ReturnType<typeof createUsageQuerySessionInputs>['retryFailures'];
@@ -1950,6 +1958,14 @@ export function invalidateUsageQueryResources(lifetime = captureActiveServerAcco
     accountStores.get(ownerLifetime)?.invalidate();
 }
 
+/** The acknowledged Coach write is a source operand of this same Account Resource. */
+export function publishUiUsageCoachSuppressions(context: UsageQueryAccountContext, state: UsageCoachSuppressionStateV1): void {
+    // An admitted mutation keeps its acknowledgement after retirement, but cannot publish into a replacement Account.
+    if (!context.accountLifetime.isCurrent()) return;
+    getUsageQueryResourceStore(context);
+    accountStores.get(resolveUsageOwnerLifetime(context))!.publishCoachSuppressions(state);
+}
+
 /** Mounted host widgets and admitted plugin host reads acquire this exact store. */
 export function getUsageQueryResourceStore(context: UsageQueryAccountContext): UsageQueryResourceStore {
     requireCurrent(context);
@@ -1972,6 +1988,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     let admittedAccounting: { nowMs: number; answers: Map<string, UsageAccountingAnswer> } | undefined;
     // Retain admissions across closed views; observation follows live demand.
     let resourceInputs = {};
+    let coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     // Closed accounting views do not consume Session/private input changes.
     // Private views retain their own input identity and refresh when reopened.
     let sessionEvidenceInputs = resourceInputs;
@@ -2074,6 +2091,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // its retained identity so establishment converges after its mandatory read,
     // without scheduling a second read of those same admitted inputs.
     const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
+        unwatchState?.reconcile();
         if (!retainedCurrentness.isCurrent()) replaceAccounting();
         // Watching can name the first input before the initial cursor is ready.
         // Only an admitted read anchors its window. Established windows still
@@ -2102,6 +2120,20 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
     const owner: AccountResourceOwner = {
+        get coachSuppressions() { return coachSuppressions; },
+        async readCoachSuppressions(read) {
+            const inputs = resourceInputs;
+            const previous = coachSuppressions;
+            const state = await read();
+            // Acknowledgement replaces both the operand and its Resource input.
+            // Unrelated projection changes keep a still-current source answer.
+            if (resourceInputs === inputs || coachSuppressions === previous) coachSuppressions = state;
+        },
+        publishCoachSuppressions(state) {
+            if (sameStrictJsonValue(coachSuppressions, state)) return;
+            coachSuppressions = state;
+            owner.invalidate('projection-inputs');
+        },
         projectionDocuments,
         history,
         retrySessionInputFailures: sessionInputs.retryFailures,
@@ -2233,7 +2265,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 if (readDemand.some(demand => demand.authorityChanged)) replaceAccounting();
                 const retained = readUsageAdmission(reference, queries);
                 const { readInputs, nowMs, admission, quotaClockCurrent } = retained;
-                if (retained.content && readDemand.length > 0 && readDemand.every(demand => demand.unchanged)) return retained.content;
+                if (retained.reusable && retained.content && (readDemand.length === 0 || readDemand.every(demand => demand.unchanged))) return retained.content;
                 // Keep the admitted facts, not the superseded serialized bytes,
                 // in this async frame while unrelated source reads are pending.
                 const { value: ownPrevious, reproject: previousReproject } = (() => {
@@ -2385,9 +2417,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 let result: UsageQueryBatchResult;
                 // Reuse the admitted source snapshots for a presentation wake;
                 // an explicit refresh or coalesced acquisition always wins.
+                const missedProjectionOnly = readDemand.length === 0 && retained.sourcesCurrent && admission?.reusable
+                    && readResourceInputChanges(admission.inputs[0]!)?.length === 0;
                 if (previousReproject && (!admission || quotaClockCurrent)
-                    && readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly)) {
-                    projectionIsCurrent = () => readDemand.every(demand => demand.isCurrent());
+                    && (missedProjectionOnly || readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly))) {
+                    projectionIsCurrent = () => readDemand.length > 0
+                        ? readDemand.every(demand => demand.isCurrent()) : retainedCurrentness.isCurrent();
                     assertProjectionCurrent();
                     reproject = previousReproject;
                     settledRead = true;
@@ -2566,17 +2601,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // read's lifetime. Let that read settle as stale instead of
                     // feeding an endless chain of queued replacement reads.
                     if (!accountModeChanged && accountingWake && activeReadDemand) return;
-                    // Presentation inputs keep the admitted source facts fresh.
-                    // The same-process invalidation keeps the store's existing
-                    // continuity hint without materializing transport bytes.
-                    const content = projectionOnly === true && event.kind === 'invalidated'
-                        ? owner.store.getEntry(reference).getSnapshot().value : undefined;
                     // A reconnect recovers an interrupted transport, so it cannot
                     // wait behind the pre-reconnect read it is meant to replace.
                     const notification = typeof change === 'object' && change.source === 'connected'
                         ? { kind: 'invalidated' as const, supersede: true as const }
-                        : content && event.kind === 'invalidated'
-                            ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
+                        : event;
                     if (!accountModeChanged && accountingWake) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
@@ -2678,7 +2707,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 if (resourceKey(watched.reference) === key) watched.requestAllowanceRead();
             }
         }, reference => [...listeners.values()].some(watched => resourceKey(watched.reference) === resourceKey(reference)
-            && watched.isAllowanceReadPending()), (reference, entry) => {
+            && watched.isAllowanceReadPending()), reference => typeof reference !== 'string' && 'hostRead' in reference
+                && reference.hostRead === 'usage.query'
+                && readUsageAdmission(reference, normalizeUsageQueryBatchInput(reference.input).queries).reusable, (reference, entry) => {
             if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return usagePresentationReady;
             const queries = normalizeUsageQueryBatchInput(reference.input).queries;
             const { readInputs, reusable } = readUsageAdmission(reference, queries);
@@ -2758,7 +2789,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     accountingReads.invalidate(affected);
                 }
             } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
-            else if (quotaChange || typeof homeChange === 'string') replaceResourceInputs(homeChange === 'quota-inputs' ? quotaRecordIds
+            else if (quotaChange || typeof homeChange === 'string') replaceResourceInputs(homeChange === 'projection-inputs' ? [] : homeChange === 'quota-inputs' ? quotaRecordIds
                 : typeof homeChange === 'object' ? readUsageQuotaChangedRecordIds(homeChange) : undefined);
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange, quotaRecordIds);
         },

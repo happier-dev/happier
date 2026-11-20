@@ -7646,6 +7646,11 @@ describe('usage query captured Resource adapter', () => {
   });
 
   it.each([{}, { projects: ['project'] }, { sources: ['runtime'] }])('opens aggregate composition and accepted delivery within scope %j', async filters => {
+    const suppressionsKv = createAccountKvHttpFixture();
+    const suppressionReadStarted = createDeferred<void>();
+    const releaseSuppressionRead = createDeferred<void>();
+    let holdSuppressionRead = false;
+    let olderRead: ReturnType<typeof readUiUsageQueryBatch> | undefined;
     const coachSession = createPlainSessionCurrentProjectionRecordFixture({
       id: 'coach-session', createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
       metadataVersion: 1, metadata: { name: 'Opened', path: '/workspace/project', host: 'host', machineId: 'machine',
@@ -7657,7 +7662,7 @@ describe('usage query captured Resource adapter', () => {
       components: ['a', 'c'].map(source => ({ sourceId: source.repeat(64), digest: 'b'.repeat(64),
         kind: 'instructions', location: 'user', byteLength: 200, tokenCount: null, tokenizerId: null,
         cacheClass: 'unknown', overlap: 'none' })), nativePrefix: null, contextWindowTokens: null };
-    const captured = await context(request => {
+    const captured = await context(async request => {
       if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [
         { ...workContribution, sessionId: 'coach-session', projectKey: 'project', source: 'runtime' },
       ] });
@@ -7689,7 +7694,16 @@ describe('usage query captured Resource adapter', () => {
             ] } },
           } } } }] : [])] : [], hasMore: false });
       }
-      return undefined;
+      const kvResponse = await suppressionsKv.handleFetch(request.url, { method: request.method,
+        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+      if (kvResponse && holdSuppressionRead && request.path === '/v1/kv/bulk'
+        && request.body !== null && typeof request.body === 'object' && 'keys' in request.body
+        && Array.isArray(request.body.keys) && request.body.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY)) {
+        holdSuppressionRead = false;
+        suppressionReadStarted.resolve();
+        await releaseSuppressionRead.promise;
+      }
+      return kvResponse ?? undefined;
     });
     const result = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({
       ...filters, period: { startMs: 0, endMs: 1000 },
@@ -7721,8 +7735,13 @@ describe('usage query captured Resource adapter', () => {
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [result.results[0]!.requestedQuery] }) });
     const release = entry.subscribe(() => {}, true);
+    const sibling = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [result.results[0]!.requestedQuery,
+        normalizeUsageQuery({ ...result.results[0]!.requestedQuery, metric: 'cost' })] }) });
+    const releaseSibling = sibling.subscribe(() => {}, true);
     try {
       await entry.refresh();
+      await sibling.refresh({ supersede: false });
       await flushHookEffects({ cycles: 30 });
       const mountedFinding = () => {
         const content = entry.getSnapshot().value;
@@ -7737,11 +7756,75 @@ describe('usage query captured Resource adapter', () => {
         throw new Error(JSON.stringify({ pending: entry.getSnapshot().pending,
           coach: slice?.coach, sources: slice?.sources }), { cause: error });
       }
+      const staticQueries = [normalizeUsageQuery({ ...result.results[0]!.requestedQuery, metric: 'cost' }), result.results[0]!.requestedQuery];
+      const staticEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: staticQueries }) });
+      await staticEntry.refresh({ supersede: false });
+      expect(decodeUsageQueryResource(staticEntry.getSnapshot().value!).results[1]?.coach?.findings
+        .find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
+      holdSuppressionRead = true;
+      olderRead = readUiUsageQueryBatch(captured, { queries: [result.results[0]!.requestedQuery] });
+      await suppressionReadStarted.promise;
+      await flushHookEffects({ cycles: 30 });
       const beforeProjection = home!.httpRequests.length;
       const projectionAccountingReads = () => home!.httpRequests.slice(beforeProjection)
         .filter(request => request.path === '/v2/usage/query' || request.path === '/v2/usage/query-batch');
       const preferencesBeforeRestore = storage.getState().settings.usageCoachPreferencesV1;
-      await createUiCoachSuppressionPort(captured).edit({ evidenceKey: finding.evidenceKey, dismissed: false });
+      const sourceReadsBeforeRestore = () => home!.httpRequests.filter(request => /^\/v[12]\/sessions\//.test(request.path)
+        || request.path.startsWith('/v4/connect/') || request.path.startsWith('/v2/usage/')).length;
+      const sourceReads = sourceReadsBeforeRestore();
+      const suppressionReads = () => home!.requests.filter(request => {
+        const body = request.body;
+        return request.path === '/v1/kv/bulk' && body !== null && typeof body === 'object' && 'keys' in body
+          && Array.isArray(body.keys) && body.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY);
+      }).length;
+      const suppressionReadsBefore = suppressionReads();
+      const siblingFinding = () => {
+        const content = sibling.getSnapshot().value;
+        return content ? decodeUsageQueryResource(content).results.find(slice => slice.key === result.results[0]!.key)?.coach?.findings
+          .find(row => row.evidenceKey === finding.evidenceKey) : undefined;
+      };
+      await expect.poll(() => siblingFinding()?.state.dismissed).toBe(true);
+      await expect.poll(() => entry.getSnapshot().subscription).toBe('live');
+      await expect.poll(() => sibling.getSnapshot().subscription).toBe('live');
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      await expect.poll(() => sibling.getSnapshot().pending).toBe('idle');
+      const account = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+      try {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+        const query = result.results[0]!.requestedQuery;
+        const actionContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+        const restore = await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: false }, actionContext);
+        expect(restore.ok, JSON.stringify(restore)).toBe(true);
+        const restored = await executor.execute('usage.query', { queries: [query] }, actionContext);
+        expect(restored.ok, JSON.stringify(restored)).toBe(true);
+        expect.soft(UsageQueryBatchResultSchema.parse(restored.ok ? restored.result : undefined).results[0]?.coach?.findings
+          .find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
+        const staticRestored = await executor.execute('usage.query', { queries: staticQueries }, actionContext);
+        expect(staticRestored.ok, JSON.stringify(staticRestored)).toBe(true);
+        expect.soft(UsageQueryBatchResultSchema.parse(staticRestored.ok ? staticRestored.result : undefined).results[1]?.coach?.findings
+          .find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
+        await expect.poll(() => [mountedFinding()?.state.dismissed, siblingFinding()?.state.dismissed]).toEqual([false, false]);
+        releaseSuppressionRead.resolve();
+        expect.soft((await olderRead).results[0]?.coach?.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed,
+          'an older source read cannot replace the acknowledged suppression operand').toBe(false);
+        const untilMs = Date.now() + 60_000;
+        const snooze = await executor.execute('usage.coach.snooze', { query, evidenceKey: finding.evidenceKey, untilMs }, actionContext);
+        expect(snooze.ok, JSON.stringify(snooze)).toBe(true);
+        const snoozed = await executor.execute('usage.query', { queries: [query] }, actionContext);
+        expect(snoozed.ok, JSON.stringify(snoozed)).toBe(true);
+        expect(UsageQueryBatchResultSchema.parse(snoozed.ok ? snoozed.result : undefined).results[0]?.coach?.findings
+          .find(row => row.evidenceKey === finding.evidenceKey)?.state.snoozedUntilMs).toBe(untilMs);
+        await expect.poll(() => siblingFinding()?.state.snoozedUntilMs).toBe(untilMs);
+        const unsnooze = await executor.execute('usage.coach.snooze', { query, evidenceKey: finding.evidenceKey, untilMs: null }, actionContext);
+        expect(unsnooze.ok, JSON.stringify(unsnooze)).toBe(true);
+        const unsnoozed = await executor.execute('usage.query', { queries: [query] }, actionContext);
+        expect(unsnoozed.ok, JSON.stringify(unsnoozed)).toBe(true);
+        expect(UsageQueryBatchResultSchema.parse(unsnoozed.ok ? unsnoozed.result : undefined).results[0]?.coach?.findings
+          .find(row => row.evidenceKey === finding.evidenceKey)?.state).toMatchObject({ dismissed: false, snoozedUntilMs: null });
+        await expect.poll(() => siblingFinding()?.state.snoozedUntilMs).toBe(null);
+        expect(suppressionReads(), 'each edit reads once at admission; Resource projections consume the acknowledged value').toBe(suppressionReadsBefore + 3);
+      } finally { account.dispose(); }
       const changes: ApiChangeEntry[] = [{ kind: 'kv', entityId: USAGE_COACH_SUPPRESSIONS_KV_KEY, cursor: 2, changedAt: 1 }];
       const planned = planSyncActionsFromChanges(changes, { afterCursor: 1, isSessionListMember: () => false });
       publishHomeAccountChange(captured.accountLifetime.scope.serverId, changes.map(change => change.entityId), {
@@ -7751,17 +7834,33 @@ describe('usage query captured Resource adapter', () => {
       await flushHookEffects({ cycles: 30 });
       await expect.poll(() => mountedFinding()?.state.dismissed).toBe(false);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      await expect.poll(() => sibling.getSnapshot().pending).toBe('idle');
+      expect(sourceReadsBeforeRestore(), 'local suppression changes and their pushed echo retain accounting, private evidence and quota').toBe(sourceReads);
       expect(storage.getState().settings.usageCoachPreferencesV1).toEqual(preferencesBeforeRestore);
       expect(projectionAccountingReads(), 'restoring a finding reprojects admitted facts without reacquiring accounting').toEqual([]);
-      storage.getState().applySettingsLocal({ usageCoachPreferencesV1: {
-        ...storage.getState().settings.usageCoachPreferencesV1, disabledChecks: ['duplicated_instructions'],
-      } });
-      await expect.poll(() => mountedFinding()).toBeUndefined();
-      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      const preferenceAccount = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+      try {
+        const preferenceExecutor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(preferenceAccount) }));
+        for (const disabled of [true, false]) {
+          storage.getState().applySettingsLocal({ usageCoachPreferencesV1: {
+            ...preferencesBeforeRestore, disabledChecks: disabled ? ['duplicated_instructions'] : preferencesBeforeRestore.disabledChecks,
+          } });
+          for (const queries of [[result.results[0]!.requestedQuery], staticQueries]) {
+            const answer = await preferenceExecutor.execute('usage.query', { queries },
+              { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+            expect(answer.ok, JSON.stringify(answer)).toBe(true);
+            expect(UsageQueryBatchResultSchema.parse(answer.ok ? answer.result : undefined).results
+              .find(slice => slice.key === result.results[0]!.key)?.coach?.evaluations
+              .find(row => row.detectorId === 'duplicated_instructions')?.status).toBe(disabled ? 'disabled' : 'finding');
+          }
+          await expect.poll(() => mountedFinding()?.state.dismissed).toBe(disabled ? undefined : false);
+          await expect.poll(() => siblingFinding()?.state.dismissed).toBe(disabled ? undefined : false);
+          await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+          await expect.poll(() => sibling.getSnapshot().pending).toBe('idle');
+        }
+      } finally { preferenceAccount.dispose(); }
       expect(projectionAccountingReads(), 'changing Coach preferences must not acquire accounting').toEqual([]);
-      const configured = entry.getSnapshot().value;
-      expect(configured && decodeUsageQueryResource(configured).results[0]?.coach?.evaluations
-        .find(row => row.detectorId === 'duplicated_instructions')?.status).toBe('disabled');
+      expect(sourceReadsBeforeRestore(), 'Coach preference projections retain admitted private evidence and quota').toBe(sourceReads);
       const privateReads = () => sessionRequests().filter(request => /^\/v[12]\/sessions\//.test(request.path)).length;
       const privateBefore = privateReads();
       const slice = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
@@ -7784,7 +7883,31 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => home!.requests.filter(request => request.path === '/v2/usage/query').length).toBeGreaterThan(beforeAuthority);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(privateReads(), 'Authority withdrawal still reacquires Session admission').toBeGreaterThan(privateBefore);
-    } finally { release(); }
+      releaseSibling();
+      release();
+      await staticEntry.refresh({ supersede: false });
+      const closedRequests = home!.httpRequests.length;
+      const closedAccount = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+      try {
+        const closedExecutor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(closedAccount) }));
+        for (const disabled of [true, false]) {
+          storage.getState().applySettingsLocal({ usageCoachPreferencesV1: {
+            ...preferencesBeforeRestore, disabledChecks: disabled ? ['duplicated_instructions'] : preferencesBeforeRestore.disabledChecks,
+          } });
+          const answer = await closedExecutor.execute('usage.query', { queries: staticQueries },
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+          expect(answer.ok, JSON.stringify(answer)).toBe(true);
+          expect.soft(UsageQueryBatchResultSchema.parse(answer.ok ? answer.result : undefined).results
+            .find(row => row.key === result.results[0]!.key)?.coach?.evaluations
+            .find(row => row.detectorId === 'duplicated_instructions')?.status).toBe(disabled ? 'disabled' : 'finding');
+        }
+      } finally { closedAccount.dispose(); }
+      expect(home!.httpRequests.length, 'closed Action preference admission reprojects without HTTP').toBe(closedRequests);
+    } finally {
+      releaseSuppressionRead.resolve();
+      if (olderRead) await Promise.allSettled([olderRead]);
+      releaseSibling(); release();
+    }
   });
   it('keeps a failed pinned slice independent from available accounting in the same page batch', async () => {
     const captured = await context(request => {

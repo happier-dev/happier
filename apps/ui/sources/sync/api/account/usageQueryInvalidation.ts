@@ -203,7 +203,7 @@ export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-pool-inputs' |
 /** State invalidation for the Account-owned Usage Resource; not a second data reader. */
 export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation) => void,
     readMachineConsumers: (machines: Readonly<Record<string, Machine>>) => UsageQueryMachineConsumers = () => NO_MACHINE_CONSUMERS,
-    observe: (attach: () => () => void) => () => void = attach => attach()): (() => void) | null {
+    observe: (attach: () => () => void) => () => void = attach => attach()): ((() => void) & Readonly<{ reconcile(): void }>) | null {
     const readInputs = () => {
         const state = readRegisteredStorageState();
         return [state?.profileScope, state?.profile.connectedAccountsV4, state?.profile.connectedAccountGroupsV4,
@@ -270,9 +270,10 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
             : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
-    return observe(() => {
+    const reconcileMissedInputs = () => reconcile(readMachineRequestReachabilityRevision() !== detachedReachabilityRevision);
+    const dispose = observe(() => {
         // Detect observations missed while no view was subscribed.
-        reconcile(readMachineRequestReachabilityRevision() !== detachedReachabilityRevision);
+        reconcileMissedInputs();
         const unwatchState = subscribeRegisteredStorageState(() => reconcile(), {
             profileScope: true, profile: ['connectedAccountsV4', 'connectedAccountGroupsV4'], machines: true, settingsScope: true,
             settings: ['experiments', 'featureToggles', 'usagePacingTargetsV1', 'usageCoachPreferencesV1', 'usageNightHoursV1', 'usageModelPriceOverridesV1'],
@@ -309,4 +310,5 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             detachedReachabilityRevision = readMachineRequestReachabilityRevision();
         };
     });
+    return Object.assign(dispose, { reconcile: reconcileMissedInputs });
 }

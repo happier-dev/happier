@@ -171,7 +171,7 @@ export function createUsageCoachController(
       }
       publish({ ...next, pending: [...operations.values()],
         approval: next.approval?.evidenceKey === operation.evidenceKey ? null : next.approval });
-      options.onSettled?.();
+      if (!UsageCoachPreferenceResultSchema.safeParse(value).success) options.onSettled?.();
       return true;
     };
     try {

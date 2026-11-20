@@ -155,9 +155,9 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
           // Join ordinary admission, retaining its terminal result even when
           // the Resource is retired. A user's explicit Refresh replaces Account
           // accounting; a one-shot query must not request that replacement.
-          const baseline = entry.getSnapshot().value ? undefined : entry.acquire(context);
+          const baseline = entry.acquire(context);
           release = entry.subscribe(inspect, false);
-          void baseline?.then(snapshot => {
+          void baseline.then(snapshot => {
             if (snapshot.error) reject(new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details }));
             else inspect();
           }, reject);

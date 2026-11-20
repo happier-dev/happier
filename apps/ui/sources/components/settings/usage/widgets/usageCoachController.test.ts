@@ -73,7 +73,7 @@ function lifetimeHarness() {
  * The Home's usage read and the Account settings store are the substituted boundaries; the Action
  * front door, Coach orchestration and approval policy below the controller are the real owners.
  */
-function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: boolean }> = {}) {
+function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: boolean; onSettled?: () => void }> = {}) {
   const scope = lifetimeHarness();
   const store = new Map<string, unknown>([
     [ANCHOR, false],
@@ -177,6 +177,7 @@ function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: bo
   const executor = createActionExecutor(createActionExecutorBoundaryFixture(deps));
   const controller = createUsageCoachController({
     lifetime: scope.lifetime,
+    onSettled: options.onSettled,
     // The substituted host ingress supplies the authenticated human identity;
     // production gets this from the front door, never from the Coach caller.
     executor: { execute: (id, input, context) => executor.execute(id, input,
@@ -282,7 +283,8 @@ describe('Usage Coach widget controller', () => {
   });
 
   it('dismisses and snoozes exact evidence through Account KV without changing settings', async () => {
-    const { controller, store } = harness();
+    let refreshes = 0;
+    const { controller, store } = harness({ onSettled: () => { refreshes += 1; } });
     const state = () => applyUsageCoachPreferences(evaluation,
       UsageCoachSuppressionStateV1Schema.parse(store.get(COACH_STATE)), Date.now()).findings[0]!.state;
     expect((await controller.dismiss(query, finding.evidenceKey)).ok).toBe(
@@ -303,6 +305,7 @@ describe('Usage Coach widget controller', () => {
     expect((await controller.dismiss(query, finding.evidenceKey, false)).ok).toBe(true);
     expect(store.get(COACH_STATE)).toMatchObject({ suppressions: [] });
     expect(store.get(PREFERENCES)).toEqual({ v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
+    expect(refreshes, 'the suppression write owner publishes its value; the controller does not refetch').toBe(0);
   });
 
   it('drops a late result once the captured Account retires', async () => {
