@@ -41,12 +41,10 @@ import {
     resolveCanonicalNativeModelSelectionRef,
 } from '@/sync/domains/models/modelOptions';
 import {
-    favoriteModelSelectionMatchesBackend,
-    getFavoriteModelRef,
-    isFavoriteModelRefSelectable,
     toggleFavoriteModelSelection,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
+import { projectFavoriteModelEntries } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { t } from '@/text';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
@@ -127,29 +125,11 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         && props.onFavoriteModelSelectionsChange,
     );
 
-    const favoriteEntries = React.useMemo<readonly SessionModelPickerFavoriteEntry[]>(() => {
-        if (!props.selectedBackendEntry) return [];
-        const backend = buildFavoriteBackendIdentity(props.selectedBackendEntry);
-        const seen = new Set<string>();
-        return (props.favoriteModelSelections ?? []).flatMap((favorite) => {
-            if (!favoriteModelSelectionMatchesBackend(favorite, backend)) return [];
-            const ref = getFavoriteModelRef(favorite);
-            const key = sessionModelSelectionKey(ref);
-            if (!isFavoriteModelRefSelectable(ref) || seen.has(key)) return [];
-            seen.add(key);
-            const providerSnapshot = favorite.providerDisplaySnapshot;
-            return [{
-                ref,
-                label: favorite.modelLabel || ref.modelId,
-                description: favorite.backendLabel || t('agentInput.model.configureInCli'),
-                accessibilityLabel: [
-                    providerSnapshot?.providerName,
-                    providerSnapshot?.connectionName,
-                    favorite.modelLabel || ref.modelId,
-                ].filter(Boolean).join(', ') || favorite.modelLabel || ref.modelId,
-            }];
-        });
-    }, [props.favoriteModelSelections, props.selectedBackendEntry]);
+    const favoriteEntries = React.useMemo<readonly SessionModelPickerFavoriteEntry[]>(() => (
+        props.selectedBackendEntry
+            ? projectFavoriteModelEntries(props.favoriteModelSelections ?? [], buildFavoriteBackendIdentity(props.selectedBackendEntry))
+            : []
+    ), [props.favoriteModelSelections, props.selectedBackendEntry]);
     const favoriteKeys = React.useMemo(
         () => new Set(favoriteEntries.map((entry) => sessionModelSelectionKey(entry.ref))),
         [favoriteEntries],
