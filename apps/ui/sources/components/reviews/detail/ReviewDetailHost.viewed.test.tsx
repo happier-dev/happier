@@ -245,3 +245,17 @@ it('says what Hide viewed hid when it hid every file, instead of an empty list',
     await screen.unmount();
   }
 });
+
+it('draws no empty second line for a reviewers group with nobody to name', async () => {
+  const screen = await renderReview();
+  const { Item } = await import('@/components/ui/lists/Item');
+  try {
+    await vi.waitFor(() => expect(screen.findAllByType(Item)
+      .some((item) => item.props.testID === 'review-detail:group:reviewers')).toBe(true));
+    const reviewers = screen.findAllByType(Item).find((item) => item.props.testID === 'review-detail:group:reviewers');
+    // Reviewer ids carry no labels yet, so the group has no participants and no bottom line.
+    expect(reviewers?.props.bottomElement).toBeUndefined();
+  } finally {
+    await screen.unmount();
+  }
+});

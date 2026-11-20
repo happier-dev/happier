@@ -29,6 +29,8 @@ import {
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 export type ReviewDetailTabId = 'findings' | 'changes' | 'runs' | 'activity';
@@ -279,10 +281,13 @@ function ReviewDetailRoundSection(props: Readonly<{
                         </Text>
                     ) : undefined}
                     bottomElementInset="text"
-                    bottomElement={(
+                    // A group with nobody to name (reviewer ids without labels) draws no empty second line.
+                    bottomElement={group.participants.length === 0 ? undefined : (
                         <View style={styles.participants}>
                             {group.participants.map(participant => (
-                                <View key={participant.id} testID={`review-detail:participant:${participant.id}`}>
+                                // A participant with a verdict comment takes the row's width, so the comment wraps inside the sheet.
+                                <View key={participant.id} testID={`review-detail:participant:${participant.id}`}
+                                    style={participant.body ? styles.participantWithBody : undefined}>
                                   <View style={styles.participant}>
                                     {participant.mark}
                                     <Text variant="body" emphasis="medium" style={styles.participantName} numberOfLines={1}>{participant.label}</Text>
@@ -293,7 +298,7 @@ function ReviewDetailRoundSection(props: Readonly<{
                                         </Text>
                                     ) : null}
                                   </View>
-                                  {participant.body ? <MarkdownView markdown={participant.body} /> : null}
+                                  {participant.body ? <MarkdownView markdown={participant.body} textStyle={styles.participantBody} /> : null}
                                 </View>
                             ))}
                         </View>
@@ -360,6 +365,9 @@ const styles = StyleSheet.create((theme) => ({
     groupDetail: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
     participants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
     participant: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0 },
+    participantWithBody: { flexBasis: '100%', maxWidth: '100%', minWidth: 0, gap: theme.space.s2 },
+    // The verdict comment reads at the row's description role, under the person who wrote it.
+    participantBody: { ...Typography.default('regular'), ...ITEM_SUBTITLE_TEXT_METRICS.comfortable, color: theme.colors.text.secondary },
     participantName: { color: theme.colors.text.primary, flexShrink: 1 },
     participantQuiet: { color: theme.colors.text.secondary },
     tabs: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.default, paddingBottom: theme.space.s8,
