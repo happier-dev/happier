@@ -264,9 +264,12 @@ describe("usageQueryService scoped aggregation", () => {
             const prepared = prepareUsageAnalyticsSnapshot(captured, query);
             expect(prepared.rows.map(row => row.id).sort(), 'hydrate the whole selected subject after commit, including its outside/native competitor')
                 .toEqual(['demand-selected-0', 'demand-selected-1', 'demand-selected-2']);
-            expect(JSON.stringify(projectUsageAnalytics(captured, query))).toBe(JSON.stringify(projectUsageAnalytics(baseline, query)));
-            if (query.filters?.modelIds?.includes('unknown')) {
-                expect(projectUsageAnalytics(captured, query).totals.tokens.total).toBe(25);
+            const projected = projectUsageAnalytics(captured, query);
+            expect(JSON.stringify(projected)).toBe(JSON.stringify(projectUsageAnalytics(baseline, query)));
+            const model = query.filters?.modelIds?.[0];
+            if (model !== undefined) {
+                // Complete cumulative evidence attributes the admitted residual to its witnessed model.
+                expect(projected.totals.tokens.total).toBe(model === 'new-model' ? 25 : 0);
             }
             expect(prepared.evidenceRows?.length, 'thin historical coverage remains available').toBe(893);
         }
