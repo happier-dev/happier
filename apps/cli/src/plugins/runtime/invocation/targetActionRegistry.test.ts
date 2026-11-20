@@ -1236,10 +1236,7 @@ describe('target action invocation registry', () => {
         const adapter = createTargetActionCurrentIntentAdapter({
             now: () => 1,
             create: async request => { requests.push(StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)))); return { artifactId: `triage-${surface}` }; },
-            read: async () => {
-                const request = requests.at(-1);
-                return request ? { ...request, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } } : null;
-            },
+            read: async () => requests.at(-1) ?? null,
         });
         const declaration = action({ dangerLevel: 'writesLocal', confirmation: { title: 'Start session' },
             surfaces: ['ui', 'agent', 'mcp', 'cli'], inputSchema: TriageStartEntrySessionInputV1Schema.jsonSchema,
@@ -1265,11 +1262,24 @@ describe('target action invocation registry', () => {
             expect(requests[0]!.approvalInputCustody).toBeUndefined();
             expect(resolveApprovalRequestApproveAdmission(requests[0]!)).toMatchObject({ status: 'available' });
             expect(JSON.stringify(resolveApprovalRequestApproveAdmission(requests[0]!).presentation)).toContain('account-1');
-            const approved = requests[0]!;
-            await expect(registry.invoke({
+            const stored = requests[0]!;
+            const replay = {
                 pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
-                input: approved.input, surface, requireCurrentIntent: true,
-                approvalContext: reviewedActionContext('happier.triage', TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, approved.input),
+                input: stored.input, surface, requireCurrentIntent: true,
+                approvalContext: reviewedActionContext('happier.triage', TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1, stored.input),
+            } satisfies Parameters<typeof registry.invoke>[0];
+            await expect(registry.invoke(replay)).resolves.toMatchObject({
+                status: 'unavailable', code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted',
+            });
+            expect(applied).toBeUndefined();
+
+            // Durable replay is available to the delegated surfaces. UI needs its mounted confirmation.
+            if (surface === 'ui') return;
+            await expect(registry.invoke({
+                ...replay,
+                requestCurrentIntent: async () => ({
+                    status: 'approved', fingerprint: stored.subjectFingerprint, artifactId: `triage-${surface}`,
+                }),
             })).resolves.toEqual({ status: 'executed', value: null });
             expect(applied).toEqual(input);
         } finally { registry.dispose(); }
@@ -1328,6 +1338,9 @@ describe('target action invocation registry', () => {
                     pluginId: 'acme.alpha', localId: 'run', input: saved.input,
                     surface: 'cli', invocationSurface: 'api', replayPlacement, requireCurrentIntent: true,
                     approvalContext: reviewedActionContext('acme.alpha', 'run', saved.input),
+                    requestCurrentIntent: async () => ({
+                        status: 'approved', fingerprint: saved.subjectFingerprint, artifactId: 'approval-development-replay',
+                    }),
                 });
                 expect(result).toEqual({ status: 'executed', value: { echoed: version } });
                 expect(appliedVersion).toBe(version);
@@ -1351,11 +1364,21 @@ describe('target action invocation registry', () => {
             expect(saved?.action.input).toEqual({ value: 'approved-normalized' });
             expect(applied).toBeUndefined();
             const approved = saved!;
-            await expect(registry.invoke({
+            const replay = {
                 pluginId: 'acme.alpha', localId: 'run', input: approved.action.input, surface: 'cli', invocationSurface: 'api',
                 requireCurrentIntent: true,
                 approvalContext: reviewedActionContext('acme.alpha', 'run', approved.action.input),
-            })).resolves.toEqual({ status: 'executed', value: { echoed: 'approved-normalized' } });
+                requestCurrentIntent: async () => ({
+                    status: 'approved', fingerprint: approved.fingerprint, artifactId: 'approval-api-normalized',
+                }),
+            } satisfies Parameters<typeof registry.invoke>[0];
+            await expect(registry.invoke({ ...replay, input: { value: 'different-normalized' } })).resolves.toMatchObject({
+                status: 'unavailable', code: 'plugin_action_current_intent_mismatch', actionHandlerInvocation: 'notStarted',
+            });
+            expect(applied).toBeUndefined();
+            await expect(registry.invoke(replay)).resolves.toEqual({
+                status: 'executed', value: { echoed: 'approved-normalized' },
+            });
             expect(applied).toEqual(approved.action.input);
         } finally { registry.dispose(); }
     });
@@ -2062,6 +2085,11 @@ describe('target action invocation registry', () => {
                                         });
                                         continue;
                                     }
+                                    if (memberPath === 'managedServices.observeWorkload') {
+                                        await expect(context.services.managedServices.observeWorkload({ serviceId: 'unadmitted' }))
+                                            .resolves.toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+                                        continue;
+                                    }
                                     try {
                                         const returned = member();
                                         if (returned instanceof Promise) {
@@ -2093,6 +2121,11 @@ describe('target action invocation registry', () => {
                                 await assertUnavailableLeaves(member as Readonly<Record<string, unknown>>, memberPath);
                             }
                         };
+                        if (serviceId === 'interactions') {
+                            // Confirmation above exercises the typed unavailable result.
+                            expect(Object.isFrozen(context.services.interactions.approvals)).toBe(true);
+                            continue;
+                        }
                         if (serviceId === 'settings') {
                             const scoped = context.services.settings.forScope({ kind: 'daemon' });
                             expect(Object.keys(scoped).sort()).toEqual([
