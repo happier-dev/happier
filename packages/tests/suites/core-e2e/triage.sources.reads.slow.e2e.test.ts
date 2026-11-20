@@ -277,12 +277,15 @@ it('reads five external sources with exact Account bindings and pages a 500+3 so
     cleanup.push(() => dispatcher.close());
     const originalFetch = globalThis.fetch;
     const originalUndiciFetch = undici.fetch;
-    const external = (input: Parameters<typeof fetch>[0]) => providerHosts.includes(new URL(
-      typeof input === 'object' && 'url' in input ? input.url : String(input)).hostname);
-    const proxyFetch = (input: RequestInfo | URL, init?: RequestInit) => originalUndiciFetch(input instanceof URL ? input.href : input,
-      { ...init, dispatcher } as RequestInit); // Undici's public dispatcher extends the platform RequestInit.
-    globalThis.fetch = (input, init) => external(input) ? proxyFetch(input, init) : originalFetch(input, init);
-    undici.fetch = (input, init) => external(input) ? proxyFetch(input, init) : originalUndiciFetch(input, init);
+    const routeFetch = (fetchWithoutProxy: typeof fetch): typeof fetch => (input, init) => {
+      const request = typeof input === 'string' || 'url' in input ? input : input.href;
+      const url = new URL(typeof request === 'string' ? request : request.url);
+      if (!providerHosts.includes(url.hostname)) return fetchWithoutProxy(request, init);
+      const proxyInit = { ...init, dispatcher };
+      return originalUndiciFetch(request, proxyInit);
+    };
+    globalThis.fetch = routeFetch(originalFetch);
+    undici.fetch = routeFetch(originalUndiciFetch);
     cleanup.push(() => { globalThis.fetch = originalFetch; undici.fetch = originalUndiciFetch; });
     const preloadPath = join(testDir, 'provider-tls-preload.mjs');
     await writeFile(preloadPath, `import { readFile } from 'node:fs/promises';
