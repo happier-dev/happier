@@ -839,7 +839,7 @@ if (project !== 'tsconfig.json') {
     stall: { ...stall, worker: 'test-worker' } });
 });
 
-async function controllerDeclarationFixture(t) {
+async function controllerDeclarationFixture(t, { lockfile } = {}) {
   const { repo, commit } = await workspace(t);
   const state = join(repo, '.git/controller-typecheck');
   const tsDir = dirname(createRequire(import.meta.url).resolve('typescript/package.json'));
@@ -850,6 +850,10 @@ async function controllerDeclarationFixture(t) {
   };
   await write('package.json', JSON.stringify({ name: 'fixture', workspaces: ['packages/*'] }));
   await write('packages/protocol/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
+  if (lockfile) {
+    await write('pnpm-workspace.yaml', 'packages:\n  - packages/*\n');
+    await write('pnpm-lock.yaml', lockfile);
+  }
   const entry = fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url));
   await write('apps/stack/bin/hstack-exec', `#!/bin/sh
 case "$1" in --execution-workers*) exit 0;; esac
@@ -875,6 +879,10 @@ if (process.env.TEST_DECLARATION_COMPILER === 'wait') {
 const comparison = resolve(process.cwd(), '../../../..');
 if (readdirSync(comparison).length !== 1) throw new Error('parent and candidate trees occupy disk at the same time');
 if (source.includes('= 99')) process.exit(97);
+if (source.includes('from-new-workspace')) {
+  const selected = readFileSync('node_modules/@happier-dev/new-package/src/index.ts', 'utf8');
+  if (!selected.includes('= 41')) process.exit(94);
+}
 if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
   console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
   process.exitCode = 2;
@@ -887,6 +895,7 @@ if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 
   await write('packages/protocol/src/index.ts', 'export const value = 99;\n');
   await mkdir(join(repo, 'node_modules'));
   await symlink(tsDir, join(repo, 'node_modules/typescript'), 'dir');
+  if (lockfile) await write('node_modules/.pnpm/lock.yaml', lockfile);
   const { installIdentity } = await inspectDependencyRefresh({ installDir: repo });
   await publishDependencyRefreshMarker({ installDir: repo, identity: installIdentity });
   const scratch = join(repo, 'comparison-scratch');
@@ -896,7 +905,7 @@ if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 
     HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
   // This gate starts directly, outside the routed test runner's placement.
   for (const marker of ['HAPPIER_HSTACK_EXECUTION', 'HAPPIER_DEV_TARGET_EXECUTION', 'HAPPIER_TYPECHECK_DISPATCHED', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN']) delete env[marker];
-  return { repo, candidate, scratch, env, git };
+  return { repo, candidate, scratch, env, git, write };
 }
 
 test('the controller declaration gate admits and judges both Git trees with its installed toolchain', { skip: process.platform === 'win32' }, async t => {
@@ -907,6 +916,67 @@ test('the controller declaration gate admits and judges both Git trees with its 
   const trees = [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)];
   assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${trees.join(',')}`));
   assert.deepEqual(await readdir(scratch), []);
+});
+
+test('the declaration gate links a newly added workspace and counts its diagnostics against an empty parent', { skip: process.platform === 'win32' }, async t => {
+  const lock = "lockfileVersion: '9.0'\nimporters:\n  .: {}\n";
+  const { candidate: base, repo, env, git, write } = await controllerDeclarationFixture(t, { lockfile: lock });
+  await write('pnpm-workspace.yaml', 'packages:\n  - packages/*\n  - packages/new-package\n');
+  await write('pnpm-lock.yaml', lock + "  packages/protocol:\n    dependencies:\n      '@happier-dev/new-package':\n        specifier: workspace:*\n        version: link:../new-package\n  packages/new-package: {}\n");
+  await write('packages/protocol/package.json', JSON.stringify({
+    name: '@x/protocol', scripts: { typecheck: 'tsc' }, dependencies: { '@happier-dev/new-package': 'workspace:*' },
+  }));
+  await write('packages/protocol/src/index.ts', 'export const probe = "from-new-workspace";\n');
+  await write('packages/new-package/package.json', JSON.stringify({ name: '@happier-dev/new-package', scripts: { typecheck: 'tsc' } }));
+  await write('packages/new-package/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
+  await write('packages/new-package/src/index.ts', 'export const added = 41;\n');
+  git('add', '-A');
+  git('commit', '-qm', 'add workspace');
+  const tree = git('rev-parse', 'HEAD');
+  await write('packages/new-package/src/index.ts', 'export const added = 99;\n');
+  const result = await commitGateTypecheck({ repo, base, tree, env, packages: ['packages/protocol', 'packages/new-package'] });
+  assert.deepEqual(result.incomplete, []);
+  assert.deepEqual(result.unavailable, []);
+  assert.deepEqual(result.fresh.map(row => [row.package, row.code]), [['packages/new-package', 9007]]);
+});
+
+test('the declaration gate reuses only the published external dependency closure', { skip: process.platform === 'win32' }, async t => {
+  const lock = `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      probe:
+        specifier: 1.0.0
+        version: 1.0.0
+packages:
+  probe@1.0.0:
+    resolution: {integrity: fixture-probe}
+  child@1.0.0:
+    resolution: {integrity: fixture-child}
+  unrelated@1.0.0:
+    resolution: {integrity: fixture-unrelated}
+snapshots:
+  probe@1.0.0:
+    dependencies:
+      child: 1.0.0
+  child@1.0.0: {}
+  unrelated@1.0.0: {}
+`;
+  const { candidate: base, repo, env, git, write } = await controllerDeclarationFixture(t, { lockfile: lock });
+  await write('pnpm-lock.yaml', lock.replace('fixture-unrelated', 'changed-unrelated'));
+  git('add', 'pnpm-lock.yaml');
+  git('commit', '-qm', 'unrelated resolution');
+  const unrelatedTree = git('rev-parse', 'HEAD');
+  const unaffected = await commitGateTypecheck({ repo, base, tree: unrelatedTree, env, packages: ['packages/protocol'] });
+  assert.deepEqual([unaffected.incomplete, unaffected.unavailable], [[], []]);
+  assert.deepEqual(unaffected.fresh, []);
+
+  await write('pnpm-lock.yaml', lock.replace('fixture-child', 'changed-child'));
+  git('add', 'pnpm-lock.yaml');
+  git('commit', '-qm', 'changed transitive resolution');
+  const changedTree = git('rev-parse', 'HEAD');
+  const changed = await commitGateTypecheck({ repo, base, tree: changedTree, env, packages: ['packages/protocol'] });
+  assert.deepEqual(changed.unavailable, ['packages/protocol']);
 });
 
 test('the controller compiler accepts a queued request without a scratch path and removes its own scratch', { skip: process.platform === 'win32' }, async t => {

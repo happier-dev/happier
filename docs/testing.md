@@ -747,10 +747,13 @@ and leaves the ref at the winning commit.
 
 For Protocol and Plugin SDK declarations, the controller admits the original
 comparison, materializing one exact Git tree at a time. The dispatcher removes
-its scratch and compiler output after success, failure or cancellation. Both
-trees borrow the same published installation, which must match the selected
-dependency closure, root inputs and lockfile. When the controller cannot judge the scope, the gate
-can use the exact-tree workers. Workers receive the judged Git objects and
+the scratch, including compiler emit output, after success, failure or
+cancellation. It links workspace packages from each judged tree. A newly added
+package has no parent diagnostics. The controller can reuse the published
+installation when its pnpm lockfile supplies the selected packages' external
+dependency closure. Workspace changes and unrelated importers can reuse that
+installation. When the external closure differs, the gate uses the exact-tree
+worker's dependency preparation. Workers receive the judged Git objects and
 committed tooling, prepare the selected tree's dependencies and load the
 TypeScript API from that installation. A busy worker yields to the next worker.
 If no worker can judge, the gate returns `declaration-comparison-incomplete`.

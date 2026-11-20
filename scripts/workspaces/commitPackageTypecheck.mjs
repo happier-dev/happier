@@ -35,7 +35,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, join, posix, relative, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
@@ -448,14 +449,20 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       return null;
     }
   };
-  const rowsAt = (treeId, packages, side = treeId.slice(0, 10)) => {
+  const rowsAndMissing = (treeId, packages, side) => {
     const rows = new Map();
     const missing = [];
-    for (const dir of packages) {
-      const cached = readCachedRows(treeId, dir, side);
+    const manifests = readBlobs(repo, packages.map(dir => `${treeId}:${dir}/package.json`));
+    for (const [index, dir] of packages.entries()) {
+      // A package introduced by the candidate has an empty parent baseline.
+      const cached = manifests[index] === undefined ? [] : readCachedRows(treeId, dir, side);
       if (cached) rows.set(dir, cached);
       else missing.push(dir);
     }
+    return { treeId, side, rows, missing };
+  };
+  const rowsAt = (treeId, packages, side = treeId.slice(0, 10)) => {
+    const { rows, missing } = rowsAndMissing(treeId, packages, side);
     if (!missing.length) return rows;
     const store = (dir, compiled) => {
       const path = resultCachePath(state, treeId, dir);
@@ -514,16 +521,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
    * admission: about 70 s of dispatch per request on nl1, 2026-11-18, against a 10-30 s Protocol compile). */
   const rowsAtMany = async (requests, { cachedOnly = false } = {}) => {
     if (!remote && !cachedOnly) return requests.map(({ treeId, packages, side }) => rowsAt(treeId, packages, side));
-    const cached = requests.map(({ treeId, packages, side }) => {
-      const rows = new Map();
-      const missing = [];
-      for (const dir of packages) {
-        const cachedRows = readCachedRows(treeId, dir, side);
-        if (cachedRows) rows.set(dir, cachedRows);
-        else missing.push(dir);
-      }
-      return { treeId, side, rows, missing };
-    });
+    const cached = requests.map(({ treeId, packages, side }) => rowsAndMissing(treeId, packages, side));
     const pending = cached.filter(entry => entry.missing.length);
     if (pending.length && !cachedOnly) {
       const started = Date.now();
@@ -627,7 +625,8 @@ export function commitPackageTypecheckCached({ repo, base, tree, env = process.e
   const { packages } = commitTypecheckPackages({ repo, base, tree });
   return [base, tree].every(rev => {
     const treeId = git(['rev-parse', `${rev}^{tree}`]).trim();
-    return packages.every(dir => existsSync(resultCachePath(state, treeId, dir)));
+    const manifests = readBlobs(repo, packages.map(dir => `${treeId}:${dir}/package.json`));
+    return packages.every((dir, index) => manifests[index] === undefined || existsSync(resultCachePath(state, treeId, dir)));
   });
 }
 
@@ -1195,10 +1194,62 @@ function controllerDeclarationRows({ repo, env, log }) {
   };
 }
 
+// Use pnpm's installed graph, which stays pinned to the publication even when
+// the moving checkout has already edited its own manifests and lockfile.
+function readPnpmDependencyGraph(path) {
+  if (!existsSync(path)) return null;
+  const { parseAllDocuments } = createRequire(import.meta.url)('yaml');
+  const documents = parseAllDocuments(readFileSync(path, 'utf8'));
+  if (documents.some(doc => doc.errors.length)) return null;
+  // pnpm writes its package-manager configuration in an earlier YAML document.
+  const graph = documents.at(-1)?.toJS();
+  return String(graph?.lockfileVersion) === '9.0' && graph.importers ? graph : null;
+}
+
+function externalImporterDependencies(importers, dir) {
+  const importer = importers[dir === '' ? '.' : dir];
+  return Object.fromEntries(['dependencies', 'optionalDependencies', 'devDependencies'].flatMap(section => {
+    const resolutions = Object.entries(importer?.[section] ?? {}).flatMap(([name, dependency]) => {
+      const version = dependency?.version;
+      // Workspace links are supplied by the judged tree. A file link outside
+      // the package's workspace graph still needs the canonical exact install.
+      return typeof version === 'string' && version.startsWith('link:')
+        && Object.hasOwn(importers, posix.normalize(posix.join(dir, version.slice(5))))
+        ? [] : [[name, version]];
+    });
+    return resolutions.length ? [[section, Object.fromEntries(resolutions)]] : [];
+  }));
+}
+
+function canMountPublishedDependencies(selected, installed, dirs) {
+  if (!selected || !installed) return false;
+  const { importers, packages = {}, snapshots = {} } = selected;
+  const { importers: installedImporters, packages: installedPackages = {}, snapshots: installedSnapshots = {} } = installed;
+  const pending = [];
+  for (const dir of ['', ...dirs]) {
+    const required = externalImporterDependencies(importers, dir);
+    if (!isDeepStrictEqual(required, externalImporterDependencies(installedImporters, dir))) return false;
+    for (const section of Object.values(required)) pending.push(...Object.entries(section));
+  }
+  const checked = new Set();
+  for (const [name, version] of pending) {
+    if (typeof version !== 'string') return false;
+    const key = Object.hasOwn(snapshots, version) ? version : `${name}@${version}`;
+    if (checked.has(key)) continue;
+    checked.add(key);
+    const snapshot = snapshots[key];
+    const packageKey = key.split('(')[0];
+    if (!snapshot || !packages[packageKey] || !isDeepStrictEqual(snapshot, installedSnapshots[key])
+      || !isDeepStrictEqual(packages[packageKey], installedPackages[packageKey])) return false;
+    pending.push(...Object.entries(snapshot.dependencies ?? {}), ...Object.entries(snapshot.optionalDependencies ?? {}));
+  }
+  return true;
+}
+
 async function compileControllerDeclarations({ repo, trees, packages, sides, scratch }, signal) {
   const { extractRevision } = await import('../../apps/stack/scripts/build/source_revision_install.mjs');
   const { mountCapturedWorkspaceDependencies } = await import('./buildInputConvergence.mjs');
-  const { dependencyInputsIdentity, inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
+  const { inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
   const log = message => console.error(message);
   const byTree = {};
   try {
@@ -1207,7 +1258,7 @@ async function compileControllerDeclarations({ repo, trees, packages, sides, scr
     // the package closure, including root configuration and generated inputs.
     await withDependencyConsumption({ installDir: repo, signal, wait: false }, async admittedEnv => {
       const installed = await readDependencyPublicationState({ installDir: repo });
-      const current = await inspectDependencyRefresh({ installDir: repo });
+      let publishedLock;
       for (const [index, tree] of trees.entries()) {
         signal?.throwIfAborted();
         const side = sides[index];
@@ -1221,18 +1272,16 @@ async function compileControllerDeclarations({ repo, trees, packages, sides, scr
           if (selected.installIdentity !== installed.identity) {
             const roots = [...workspaces].filter(([, workspace]) => packages.includes(workspace.root)).map(([name]) => name);
             const closure = workspaceSourcePackageClosure(workspaces, roots);
-            // Preserve root and lockfile inputs. Manifests outside the closure
-            // may differ between the installed and judged trees.
-            const manifests = new Set([...closure].map(name => `install:${workspaces.get(name).root}/package.json`));
-            const scopedInstallIdentity = ({ dependencyIdentity, inputSnapshot }) => dependencyInputsIdentity(
-              dependencyIdentity, inputSnapshot.filter(({ path }) => !path.endsWith('/package.json') || path.startsWith('install:patches/') || manifests.has(path)),
-            );
-            if (current.installIdentity !== installed.identity || scopedInstallIdentity(selected) !== scopedInstallIdentity(current)) {
-              log(`[commit-package-typecheck] ${side} controller installation does not match the judged declaration closure`);
+            const closureDirs = [...closure].map(name => workspaces.get(name).root);
+            if (publishedLock === undefined) {
+              publishedLock = installed.identity ? readPnpmDependencyGraph(join(repo, 'node_modules', '.pnpm', 'lock.yaml')) : null;
+            }
+            if (!canMountPublishedDependencies(readPnpmDependencyGraph(join(worktree, 'pnpm-lock.yaml')), publishedLock, closureDirs)) {
+              log(`[commit-package-typecheck] ${side} controller installation does not match the judged external dependency closure`);
               continue;
             }
           }
-          const dirs = [...new Set([...packages, ...[...workspaces.values()].map(workspace => workspace.root)])];
+          const dirs = [...workspaces.values()].map(workspace => workspace.root);
           await mountCapturedWorkspaceDependencies({ sourceDir: repo, captureDir: worktree, workspaceDirs: dirs, capturedOnly: true });
           signal?.throwIfAborted();
           // Keep compiler emit directories inside the dispatcher's lifetime as well.
