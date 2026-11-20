@@ -100,7 +100,7 @@ function createReviewActionSpecs(): readonly [
     id: REVIEW_NEW_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
     executionPlacements: ['account', 'session', 'machine'],
     executionPlacementForInput: input => typeof readRecord(input).reviewId === 'string'
-      ? 'account' : resolveReviewExecutionPlacementForInput(input),
+      ? 'account' : typeof readRecord(input).sessionId === 'string' ? 'session' : 'machine',
     title: 'New Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
     description: 'Review current code in the same Review, reusing the accepted workflow or retained native reviewer.',
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },

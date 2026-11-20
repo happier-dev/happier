@@ -916,6 +916,33 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
   });
 
+  it('reaches Home for a Workflow New round without inventing a native Session', async () => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const target = { kind: 'machine', machineId: 'machine-review',
+      project: { machineId: 'machine-review', directory: '/workspace' } } as const;
+    // Home remains the authority for the retained Run's exact Project binding.
+    let received: { path: string; envelope: unknown } | undefined;
+    installPatActionTransportMock((url, init) => {
+      received = { path: url.pathname,
+        envelope: ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body))) };
+      return apiFailure(REVIEW_NEW_ROUND_ACTION_ID_V1, 'target_unavailable', { reason: 'target_binding_mismatch' });
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'machine-review', serverId: 'home', serverApiUrl: patActionEndpoint!,
+    });
+    const result = await executor.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, { runId: 'retained-workflow-run' }, {
+      surface: 'cli', externalActionTarget: target,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+      details: { reason: 'target_binding_mismatch' } });
+    expect(received).toMatchObject({ path: '/v1/actions/review.new_round',
+      envelope: { target, input: { runId: 'retained-workflow-run' } } });
+  });
+
   it('repeats a person-only Review through the public Action transport using its original Machine capture', async () => {
     const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
       '@/api/machine/resolveCurrentAccountMachineTarget',

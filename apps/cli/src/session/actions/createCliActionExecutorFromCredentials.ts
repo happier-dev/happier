@@ -479,11 +479,10 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     return { kind: 'ready', input: request,
       target: capturedTarget ?? { kind: 'machine', machineId: target.machineId } };
   }
-  const workflowProjectTarget = publicActionId.data === 'workflow.run.start'
-    && params.context?.externalActionTarget?.kind === 'machine'
+  const projectTarget = params.context?.externalActionTarget?.kind === 'machine'
     ? params.context.externalActionTarget.project
     : undefined;
-  if (publicActionId.data === 'workflow.run.start' && !workflowProjectTarget) {
+  if (publicActionId.data === 'workflow.run.start' && !projectTarget) {
     return { kind: 'settled', result: actionFailure('target_required') };
   }
   const daemonLocalMachineId = await resolveDaemonLocalActionMachineId(params.serverApiUrl);
@@ -625,7 +624,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   }
 
   if (daemonLocalMachineId) {
-    if (workflowProjectTarget && workflowProjectTarget.machineId !== daemonLocalMachineId) {
+    if (projectTarget && projectTarget.machineId !== daemonLocalMachineId) {
       return { kind: 'settled', result: actionFailure('target_unavailable') };
     }
     const target = encryptedDaemonTarget(params.credentials, daemonLocalMachineId);
@@ -633,9 +632,9 @@ async function resolvePatActionTransportPlan(params: Readonly<{
       kind: 'ready',
       input: params.input,
       ...(target
-        ? { target: { ...target, ...(workflowProjectTarget ? { project: workflowProjectTarget } : {}) } }
-        : workflowProjectTarget
-          ? { target: { kind: 'machine', machineId: daemonLocalMachineId, project: workflowProjectTarget } }
+        ? { target: { ...target, ...(projectTarget ? { project: projectTarget } : {}) } }
+        : projectTarget
+          ? { target: { kind: 'machine', machineId: daemonLocalMachineId, project: projectTarget } }
           : {}),
     };
   }
@@ -648,12 +647,12 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     allowConfiguredMachineTarget: params.allowConfiguredMachineTarget,
   });
   if (!target.ok) return { kind: 'settled', result: actionResolutionFailure(target) };
-  if (workflowProjectTarget && workflowProjectTarget.machineId !== target.machineId) {
+  if (projectTarget && projectTarget.machineId !== target.machineId) {
     return { kind: 'settled', result: actionFailure('target_unavailable') };
   }
   return {
     kind: 'ready',
-    target: { kind: 'machine', machineId: target.machineId, ...(workflowProjectTarget ? { project: workflowProjectTarget } : {}) },
+    target: { kind: 'machine', machineId: target.machineId, ...(projectTarget ? { project: projectTarget } : {}) },
     input: params.input,
   };
 }
