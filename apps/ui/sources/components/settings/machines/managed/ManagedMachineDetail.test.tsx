@@ -3343,7 +3343,7 @@ describe('managed Machine detail', () => {
             expect(operationRpcBoundary.requests).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
-    it.each(['retained', 'arriving', 'opaque-retained', 'manage-retained'] as const)('discovers the exact creator installation question and answers without a running creation continuation (%s)', async mode => {
+    it.each(['retained', 'arriving', 'opaque-retained', 'manage-retained', 'answer-refused'] as const)('discovers the exact creator installation question and answers without a running creation continuation (%s)', async mode => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://creator-installation.test', scope: 'tab' });
         const homeId = 'srv_creator_installation';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -3396,7 +3396,8 @@ describe('managed Machine detail', () => {
             })]);
         }
         const installationBoundary = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl: target.serverUrl,
-            homeId, token, enrollmentAccountId: 'requester', readMachine: () => read, onAnswer: () => { answered = true; } });
+            homeId, token, enrollmentAccountId: 'requester', readMachine: () => read, onAnswer: () => { answered = true; },
+            ...(mode === 'answer-refused' ? { refuseAnswer: 'respond_failed' } : {}) });
         const answers = installationBoundary.answers;
         setRuntimeFetch(async (input, init) => {
             const path = new URL(String(input)).pathname;
@@ -3471,6 +3472,14 @@ describe('managed Machine detail', () => {
             await vi.waitFor(() => expect(answers).toHaveLength(1));
             expect(answers).toContainEqual(expect.objectContaining({ managedId: machine.id, operationId: operation.operationId,
                 taskId: 'requester-task', answer: { approved: true } }));
+            if (mode === 'answer-refused') {
+                // A refused automatic answer leaves the question open, so the member answers it here.
+                await vi.waitFor(() => expect(screen.findByTestId('managed-machine.installation-prompt-approve')).not.toBeNull());
+                await screen.pressByTestIdAsync('managed-machine.installation-prompt-approve');
+                await vi.waitFor(() => expect(answers).toHaveLength(2));
+                expect(answers[1]).toEqual(expect.objectContaining({ taskId: 'requester-task', answer: { approved: true } }));
+                return;
+            }
             expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
             expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
             expect(operationRpcBoundary.requests.filter(request => request.method === ACTION_OPERATION_RPC_METHODS_V2.list

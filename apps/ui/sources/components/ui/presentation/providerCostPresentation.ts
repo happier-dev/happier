@@ -89,14 +89,14 @@ export function formatProviderPrice(price: ProviderPriceFactV1, pricingPage?: st
  */
 export function presentManagedPresetCost(input: Readonly<{
   prices?: ManagedConfigurationFactsV1['prices']; billing?: BillingCapabilitiesV1; provider: string | null; runsOn?: string;
-}>): Readonly<{ value: string; detail?: string }> | null {
+}>): Readonly<{ value?: string; detail?: string }> | null {
   const cost = resolveManagedConfigurationCost({ prices: input.prices, billing: input.billing, provider: input.provider });
   // Unpriced: the owner's short "Provider charges apply" (the offer line already names the provider), never a
   // blank that reads as free and never a figure.
   if (cost.kind === 'unpriced') return { value: presentManagedCost({ kind: 'unpriced', provider: null }).value };
   const headline = presentManagedCost(cost);
-  if (cost.kind === 'local') return { value: headline.value,
-    ...(input.runsOn ? { detail: t('managedMachines.price.runsOn', { computer: input.runsOn }) } : {}) };
+  // A local machine costs nothing, and a healthy free state stays quiet: only the computer it runs on, when named.
+  if (cost.kind === 'local') return input.runsOn ? { detail: t('managedMachines.price.runsOn', { computer: input.runsOn }) } : null;
   return { value: `${headline.value} ${headline.unit}`, detail: formatPriceSource(cost.prices[0], null) };
 }
 

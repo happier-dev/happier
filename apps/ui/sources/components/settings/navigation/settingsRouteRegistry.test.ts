@@ -78,6 +78,10 @@ describe('settingsRouteRegistry', () => {
             .toBe('presets/new');
         expect(resolveSettingsNestedRouteName('machines', '/settings/machines/presets/preset-a'))
             .toBe('presets/[presetId]');
+        // `presets` alone is the Presets index, never a machine id.
+        expect(resolveSettingsNestedRouteName('machines', '/settings/machines/presets')).toBe('presets/index');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/presets/preset-a')).toBe('/settings/machines');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/presets/new')).toBe('/settings/machines');
     });
     it('projects root screen chrome only to routes owned by the actual settings navigator', () => {
         const rootScreens = new Set(listSettingsRootNavigatorScreens());
@@ -295,7 +299,7 @@ describe('settingsRouteRegistry', () => {
     it('keeps the Machines collection, its machine detail, setup and pool editors in one nested navigator', () => {
         const machines = getSettingsStackScreenDefinitions(translate as never, { navigator: 'machines' });
         expect(machines.map((definition) => definition.name)).toEqual([
-            'index', '[id]/index', '[id]/[page]', 'managed/[id]', 'add', 'add/[provisioner]', 'presets/new', 'presets/[presetId]',
+            'index', '[id]/index', '[id]/[page]', 'managed/[id]', 'add', 'add/[provisioner]', 'presets/index', 'presets/new', 'presets/[presetId]',
             // Fleet Updates and Activity live in the Machines destination (/machines/*), not in Settings (RULING 11-14 20:24Z).
             'this-computer', 'defaults', 'pools/[poolId]', 'pools/new',
         ]);

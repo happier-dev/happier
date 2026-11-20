@@ -28,7 +28,9 @@ describe('provider cost presentation', () => {
 
   it('presents local, priced and unpriced managed costs through one owner', () => {
     expect(presentManagedPresetCost({ billing: { location: 'local', stoppedBilling: 'not-billed' }, provider: 'Lima', runsOn: 'Mac' }))
-      .toEqual({ value: 'No bill', detail: 'Runs on Mac' });
+      .toEqual({ detail: 'Runs on Mac' });
+    // A free local machine is quiet: no "No bill", and nothing at all when its computer has no name to show.
+    expect(presentManagedPresetCost({ billing: { location: 'local', stoppedBilling: 'not-billed' }, provider: 'Docker' })).toBeNull();
     expect(presentManagedPresetCost({ prices: [price], provider: 'Vercel' }))
       .toMatchObject({ value: '$5.00 a month' });
     expect(presentManagedPresetCost({ provider: 'Vercel' })?.value).toBeTruthy();

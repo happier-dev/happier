@@ -344,8 +344,8 @@ const presetCostStyles = StyleSheet.create(theme => ({
 }));
 
 /**
- * A preset offer's cost column in the machine picker (lab m-pick): "No bill" and the computer it runs on for a
- * local machine, or the provider's returned price with when it was read. It reads the billing its provisioner
+ * A preset offer's cost column in the machine picker (lab m-pick): the computer a free local machine runs on (by its
+ * name, never an id), or the provider's returned price with when it was read. It reads the billing its provisioner
  * declares through the mark's own read; an unpriced cloud preset draws nothing rather than a guess.
  */
 export function ManagedPresetCost(props: Readonly<{
@@ -365,7 +365,7 @@ export function ManagedPresetCost(props: Readonly<{
     if (!cost) return null;
     return (
         <View style={presetCostStyles.column} testID={props.testID}>
-            <Text variant="body" numberOfLines={1} style={presetCostStyles.value}>{cost.value}</Text>
+            {cost.value ? <Text variant="body" numberOfLines={1} style={presetCostStyles.value}>{cost.value}</Text> : null}
             {cost.detail ? <Text variant="meta" numberOfLines={1} style={presetCostStyles.detail}>{cost.detail}</Text> : null}
         </View>
     );

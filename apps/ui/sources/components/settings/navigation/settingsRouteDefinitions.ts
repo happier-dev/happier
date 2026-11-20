@@ -111,6 +111,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'managed/[id]', navigator: 'machines', titleKey: 'settings.machines' },
     { name: 'add', navigator: 'machines', titleKey: 'settings.addMachine' },
     { name: 'add/[provisioner]', navigator: 'machines', titleKey: 'settings.addMachine' },
+    // `presets` alone opens the Presets index (it is not a machine id); a preset still returns to the collection.
+    { name: 'presets/index', navigator: 'machines', titleKey: 'machinePresets.title' },
     { name: 'presets/new', navigator: 'machines', titleKey: 'machinePresets.newPreset' },
     { name: 'presets/[presetId]', navigator: 'machines', titleKey: 'machinePresets.title' },
     { name: 'this-computer', navigator: 'machines', titleKey: 'settingsMachines.thisComputerTitle' },

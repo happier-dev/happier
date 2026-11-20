@@ -150,6 +150,9 @@ export function resolveSettingsRouteParentHref(
     // the parent of a saved agent, although it is a mounted route.
     if (/^\/settings\/agents\/custom(?:\/[^/]+)?$/.test(normalizedPathname)) return '/settings/agents';
 
+    // A preset is a row of the Machines collection; `presets` alone only forwards to the Presets index.
+    if (/^\/settings\/machines\/presets\/[^/]+$/.test(normalizedPathname)) return '/settings/machines';
+
     const segments = normalizedPathname.slice('/settings/'.length).split('/');
     for (let length = segments.length - 1; length > 0; length -= 1) {
         const ancestor = segments.slice(0, length);

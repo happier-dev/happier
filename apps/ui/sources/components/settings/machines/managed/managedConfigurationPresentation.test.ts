@@ -134,10 +134,10 @@ describe('a preset offered as a new machine in the picker (lab m-pick)', () => {
         expect(describeManagedPresetOffer({ reviewedFacts: { ...reviewedFacts, nativeFacts } })).toBe('CX32 · Falkenstein');
         expect(describeManagedPresetOffer({})).toBeUndefined();
     });
-    it('costs No bill on the computer that runs it, a returned price with when it was read, and says provider charges apply when unpriced', () => {
+    it('names only the computer a free local machine runs on, a returned price with when it was read, and says provider charges apply when unpriced', () => {
         const local = { location: 'local' as const, stoppedBilling: 'not-billed' as const };
         expect(presentManagedPresetCost({ billing: local, provider: 'Lima', runsOn: 'Mac Studio' })).toEqual({
-            value: t('managedMachines.price.noBill'), detail: t('managedMachines.price.runsOn', { computer: 'Mac Studio' }) });
+            detail: t('managedMachines.price.runsOn', { computer: 'Mac Studio' }) });
         const price = reviewedFacts.prices[0]!;
         const headline = presentManagedCost({ kind: 'price', prices: [price] });
         expect(presentManagedPresetCost({ prices: [price], billing: reviewedFacts.billing, provider: 'Hetzner' })).toEqual({

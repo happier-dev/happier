@@ -16,6 +16,7 @@ function resolveMachinesChildRoute(pathname: string): string {
     const rest = pathname.slice(root.length + 1);
     if (rest === 'add' || rest === 'this-computer' || rest === 'defaults' || rest === 'updates' || rest === 'activity' || rest === 'pools/new') return rest;
     if (rest.startsWith('add/')) return 'add/[provisioner]';
+    if (rest === 'presets') return 'presets/index';
     if (rest === 'presets/new') return 'presets/new';
     if (rest.startsWith('presets/')) return 'presets/[presetId]';
     if (rest.startsWith('pools/')) return 'pools/[poolId]';
