@@ -77,6 +77,7 @@ import { WorkStatusRowMark, WorkStatusRowWord } from '@/components/work/status/W
 import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
 import { SessionRowProgressChip, SessionRowReportsDisclosure, describeSessionRowProgress, hasSessionRowProgressChip } from './row/SessionRowReportsChip';
 import { SessionRowLineText } from './row/SessionRowLineText';
+import { SessionRowChangesStat, SessionRowPullRequestChip, describeSessionRowScm } from './row/SessionRowScmDetails';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { CollectionRowBadge, CollectionRowBadges, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 import { WorkflowRunItemBody, type WorkflowRunItemProps } from './row/WorkflowRunItemBody';
@@ -541,6 +542,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         flexShrink: 1,
         minWidth: 0,
+    },
+    // A line's compact details (lab scene 7 `.st-rt`): the count, the pull request, the changes, a plugin's mark.
+    detailLineEnd: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+    },
+    pluginMark: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
     },
 }));
 
@@ -1309,7 +1320,10 @@ const SessionItemContent = React.memo(
             draft?.hasPreview ? t('sessionDrafts.badge') : null,
             nowLine ? [nowLine, noteAgeLabel].filter(Boolean).join(', ') : null,
             !progressChip && runningWorkCount ? t('sessionWork.strip.stillWorking', { count: runningWorkCount }) : null,
-            rowProgress ? describeSessionRowProgress(rowProgress) : null]
+            rowProgress ? describeSessionRowProgress(rowProgress) : null,
+            isSessionIdentityLoading ? null : describeSessionRowScm(rowContext?.pullRequest ?? null, rowContext?.changes ?? null),
+            isSessionIdentityLoading ? null : rowContext?.pluginContext ?? null,
+            isSessionIdentityLoading ? null : rowContext?.pluginMark ?? null]
             .filter((value): value is string => Boolean(value?.trim()))
             .join('. ');
         const shouldEmphasizeTitle = rowPresentation.titleTone === 'emphasized';
@@ -1574,9 +1588,37 @@ const SessionItemContent = React.memo(
         ) : externalSessionIdentity?.rowMetadataLabel ? (
             <SessionRowLineText tone="secondary">{externalSessionIdentity.rowMetadataLabel}</SessionRowLineText>
         ) : null;
-        const checkoutText = contextCheckout ? (
-            <SessionRowLineText testID={`session-list-row-context-checkout-${occurrenceTestId}`} tone="quiet"
-                icon={contextCheckout.kind === 'branch' ? 'git-branch' : 'folder'}>{contextCheckout.label}</SessionRowLineText>
+        // Where it runs, as one text detail: the checkout, the Machine when it differs from the group, a plugin's context.
+        const contextMachine = !isSessionIdentityLoading ? rowContext?.machine ?? null : null;
+        const contextPlugin = !isSessionIdentityLoading ? rowContext?.pluginContext ?? null : null;
+        const checkoutText = contextCheckout || contextMachine || contextPlugin ? (
+            <>
+                {contextCheckout ? (
+                    <SessionRowLineText testID={`session-list-row-context-checkout-${occurrenceTestId}`} tone="quiet"
+                        icon={contextCheckout.kind === 'branch' ? 'git-branch' : 'folder'}>{contextCheckout.label}</SessionRowLineText>
+                ) : null}
+                {contextMachine ? (
+                    <SessionRowLineText testID={`session-list-row-context-machine-${occurrenceTestId}`} tone="quiet" icon="laptop"
+                        afterDot={contextCheckout !== null}>{contextMachine}</SessionRowLineText>
+                ) : null}
+                {contextPlugin ? (
+                    <SessionRowLineText testID={`session-list-row-plugin-context-${occurrenceTestId}`} tone="quiet"
+                        afterDot={contextCheckout !== null || contextMachine !== null}>{contextPlugin}</SessionRowLineText>
+                ) : null}
+            </>
+        ) : null;
+        // Compact details: the pull request and changes only from an SCM value the list already holds for this checkout
+        // (a cold row draws nothing for them), then a plugin's mark.
+        const pullRequestChip = !isSessionIdentityLoading && rowContext?.pullRequest ? (
+            <SessionRowPullRequestChip testID={`session-list-row-pull-request-${occurrenceTestId}`} pullRequest={rowContext.pullRequest} />
+        ) : null;
+        const changesStat = !isSessionIdentityLoading && rowContext?.changes ? (
+            <SessionRowChangesStat testID={`session-list-row-changes-${occurrenceTestId}`} changes={rowContext.changes} />
+        ) : null;
+        const pluginMarkText = !isSessionIdentityLoading && rowContext?.pluginMark ? (
+            <Text testID={`session-list-row-plugin-mark-${occurrenceTestId}`} numberOfLines={1} style={styles.pluginMark}>
+                {rowContext.pluginMark}
+            </Text>
         ) : null;
         const lineTwoText = workText ?? checkoutText;
         const lineTwoStart = contextProjectLabel || lineTwoText ? (
@@ -1592,9 +1634,16 @@ const SessionItemContent = React.memo(
         // when the work took line 2. A row with nothing to say stays one line (D3: rows grow and shrink).
         // Lines 2 and 3 always pass their list (empty when the row has nothing to say), so a line coming or going keeps
         // the row mounted; Lines 1 draws the plain one-line row.
+        // Lines 2 ends with one compact detail (the count, else the pull request, else a plugin's mark); changes wait
+        // for line 3. Lines 3 keeps the count on line 2 and draws the pull request, changes and plugin mark on line 3.
+        const lineTwoEnd = rowLines === 3 ? progressChip : progressChip ?? pullRequestChip ?? pluginMarkText;
+        const lineThreeStart = rowLines === 3 && workText ? checkoutText : null;
+        const lineThreeEnd = rowLines === 3 && (pullRequestChip || changesStat || pluginMarkText) ? (
+            <View style={styles.detailLineEnd}>{pullRequestChip}{changesStat}{pluginMarkText}</View>
+        ) : null;
         const detailLines: HappierCollectionRowContentProps['lines'] = rowLines === 1 ? undefined : [
-            ...(lineTwoStart || progressChip ? [{ key: 'line-2', start: lineTwoStart, end: progressChip }] : []),
-            ...(rowLines === 3 && workText && checkoutText ? [{ key: 'line-3', start: checkoutText }] : []),
+            ...(lineTwoStart || lineTwoEnd ? [{ key: 'line-2', start: lineTwoStart, end: lineTwoEnd }] : []),
+            ...(lineThreeStart || lineThreeEnd ? [{ key: 'line-3', start: lineThreeStart, end: lineThreeEnd }] : []),
         ];
         const itemContent = (
             <CollectionRowContent

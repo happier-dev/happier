@@ -13,7 +13,7 @@ const formatNoteAge = (age: string) => ` · ${t('sessionWork.list.noteAge', { ag
 
 /**
  * One text on a Session row's detail line (lab ideas-1118-shell scene 7): the now line, an external Session's own
- * line, the branch or the Project. The now line reads in secondary ink; quiet details, and a note that waits while
+ * line, the branch, the Machine, a plugin's context or the Project. The now line reads in secondary ink; quiet details, and a note that waits while
  * nothing moves, in tertiary. A note older than the latest turn end says its own age on the shared clock, so a
  * minute turning wakes only that leaf. The row's accessible label carries the same words.
  */
@@ -25,12 +25,15 @@ export const SessionRowLineText = React.memo(function SessionRowLineText(props: 
     ageAt?: number | null;
     /** A leading context (the Project) that the line's text follows after a dot. */
     separated?: boolean;
+    /** A later detail of the same text (the Machine after the branch): a dot first. */
+    afterDot?: boolean;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
     const color = props.tone === 'quiet' ? theme.colors.text.tertiary : theme.colors.text.secondary;
     return (
         <View testID={props.testID} style={[styles.segment, props.separated ? styles.leadingSegment : null]}>
+            {props.afterDot ? <Text style={styles.age}>{' ·'}</Text> : null}
             {props.icon ? <Icon name={props.icon} size={12} color={theme.colors.text.tertiary} /> : null}
             <Text numberOfLines={1} style={[styles.text, { color }]}>{props.children}</Text>
             {typeof props.ageAt === 'number' ? (

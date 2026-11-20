@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionItem } from '@/components/sessions/shell/SessionItem';
 import { createSessionItemRowViewModel } from '@/components/sessions/shell/sessionItemRowViewModelTestFixture';
-import type { SessionListRowViewModel } from '@/components/sessions/shell/sessionListRowViewModels';
+import type { SessionListRowContextPresentation, SessionListRowViewModel } from '@/components/sessions/shell/sessionListRowViewModels';
 import { Text } from '@/components/ui/text/Text';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -29,6 +29,9 @@ type RowState = Readonly<{
     progress?: Readonly<{ done: number; total: number; label?: string; dim: boolean; complete: boolean }>;
     reports?: NonNullable<Session['managedSessions']>;
     branch?: string;
+    machine?: string;
+    pullRequest?: NonNullable<SessionListRowContextPresentation['pullRequest']>;
+    changes?: readonly [number, number];
 }>;
 
 const NOW = Date.now();
@@ -36,12 +39,12 @@ const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
 const STATES: readonly RowState[] = [
-    { id: 'task', name: 'Fix settings modal remount when switching tabs', flavor: 'claude', working: true, nowLine: 'Lift the draft into useSettingsDraft and key the sheet by route', nowLineKind: 'task', progress: { done: 3, total: 7, dim: false, complete: false }, branch: 'fix/settings-remount' },
+    { id: 'task', name: 'Fix settings modal remount when switching tabs', flavor: 'claude', working: true, nowLine: 'Lift the draft into useSettingsDraft and key the sheet by route', nowLineKind: 'task', progress: { done: 3, total: 7, dim: false, complete: false }, branch: 'fix/settings-remount', pullRequest: { number: 2490, state: 'draft', checks: 'pending' }, changes: [118, 21] },
     { id: 'explicit', name: 'QA sweep: checkout flows', flavor: 'codex', working: true, nowLine: 'Scenario 2: guest checkout with a saved card', nowLineKind: 'note', progress: { done: 1, total: 24, label: 'QA', dim: false, complete: false }, branch: 'qa/checkout' },
-    { id: 'needs', name: 'Retry reconnect with exponential backoff', flavor: 'codex', needsYou: true, activityMinutesAgo: 4, nowLine: 'Scenario 7: reset the test account', nowLineKind: 'note', progress: { done: 9, total: 24, label: 'QA', dim: true, complete: false }, branch: 'fix/reconnect-backoff' },
-    { id: 'aged', name: 'Migrate invoices to the new API', flavor: 'claude', activityMinutesAgo: 20, nowLine: 'Waiting on the staging deploy', nowLineKind: 'note', noteSetDaysAgo: 1, progress: { done: 9, total: 24, dim: true, complete: false }, branch: 'feat/invoices-api-v2' },
+    { id: 'needs', name: 'Retry reconnect with exponential backoff', flavor: 'codex', needsYou: true, activityMinutesAgo: 4, nowLine: 'Scenario 7: reset the test account', nowLineKind: 'note', progress: { done: 9, total: 24, label: 'QA', dim: true, complete: false }, branch: 'fix/reconnect-backoff', pullRequest: { number: 2481, state: 'open', checks: 'failure' }, changes: [64, 12] },
+    { id: 'aged', name: 'Migrate invoices to the new API', flavor: 'claude', activityMinutesAgo: 20, nowLine: 'Waiting on the staging deploy', nowLineKind: 'note', noteSetDaysAgo: 1, progress: { done: 9, total: 24, dim: true, complete: false }, branch: 'feat/invoices-api-v2', machine: 'build-box', changes: [342, 97] },
     { id: 'plugin', name: 'Pricing page copy', flavor: 'claude', unread: true, activityMinutesAgo: 12, nowLine: 'Preview ready', nowLineKind: 'note' },
-    { id: 'complete', name: 'Release notes draft for 0.3', flavor: 'claude', unread: true, activityMinutesAgo: 60, progress: { done: 12, total: 12, dim: true, complete: true }, branch: 'docs/release-0.3-notes' },
+    { id: 'complete', name: 'Release notes draft for 0.3', flavor: 'claude', unread: true, activityMinutesAgo: 60, progress: { done: 12, total: 12, dim: true, complete: true }, branch: 'docs/release-0.3-notes', pullRequest: { number: 2466, state: 'merged', checks: 'success' }, changes: [210, 4] },
     { id: 'opened', name: 'Release notes draft', flavor: 'claude', activityMinutesAgo: 60 },
     { id: 'lead', name: 'Ship reconnect backoff', flavor: 'claude', working: true, nowLine: 'Merge the jitter branch into main', nowLineKind: 'task', progress: { done: 3, total: 5, dim: false, complete: false }, reports: { total: 5, finished: 3, working: 1, needsYou: 1, stalled: 0, attentionPrimary: 'permission_required' } },
     { id: 'goal', name: 'Docs search index', flavor: 'gemini', activityMinutesAgo: 35, nowLine: 'rebuild the index without downtime', nowLineKind: 'goal' },
@@ -79,7 +82,11 @@ function buildRow(state: RowState): Readonly<{ session: Session; rowViewModel: S
             identityDisplay: 'agentLogo',
             rowContext: state.branch ? {
                 leadingMark: 'agent', leadingMarkShowsProject: false, projectPlacement: 'none', project: null, projectFaviconSource: null,
-                checkout: { kind: 'branch', label: state.branch }, accessibleLabel: state.branch, statusWords: false,
+                checkout: { kind: 'branch', label: state.branch }, machine: state.machine ?? null,
+                pullRequest: state.pullRequest ?? null,
+                changes: state.changes ? { changedFiles: 1, linesAdded: state.changes[0], linesRemoved: state.changes[1] } : null,
+                pluginContext: null, pluginMark: null,
+                accessibleLabel: [state.branch, state.machine].filter(Boolean).join(', '), statusWords: false,
                 currentWork: true, progress: true,
             } : null,
         },

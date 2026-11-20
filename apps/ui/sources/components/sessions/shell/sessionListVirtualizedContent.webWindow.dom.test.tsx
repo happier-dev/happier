@@ -420,6 +420,107 @@ describe('session list web window while row and header heights change', () => {
     }
   });
 
+  it('draws the Machine, and the pull request and changes on line 3 only from an SCM value already held for the checkout', async () => {
+    vi.useRealTimers();
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
+    const { EMPTY_SCM_CAPABILITIES } = await import('@/scm/core/snapshotMappers');
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+    const previous = storage.getState();
+    await home.reset();
+    await loadSyncSingletonForTests();
+    const serverId = await home.addHome({ name: 'Web row SCM', serverUrl: 'https://web-row-scm.test', accountId: 'u1' });
+    const now = Date.now();
+    const sessionAt = (id: string, path: string, branch: string) => createSessionFixture({ id, serverId, owner: 'u1', seq: 1,
+      projectKey: `scm-${id}`, active: true, activeAt: now, presence: 'online', updatedAt: now,
+      metadata: { host: 'dev', name: id, path, machineId: 'machine-scm', branch, flavor: 'claude' } });
+    const held = sessionAt('scm-held', '/repo/held', 'fix/settings-remount');
+    const cold = sessionAt('scm-cold', '/repo/cold', 'feat/dark-toggle');
+    // Lines 3 with Pull request and Changes on (lab ideas-1118-shell scene 7).
+    const settings = { sessionListLayoutV1: 'projects', sessionListAttentionPlacementV1: 'inPlace',
+      sessionListDensity: 'detailed', sessionListRowContextV1: true, sessionListIdentityDisplay: 'avatar',
+      sessionListStatusWords: false, hideInactiveSessions: false,
+      collectionDisplayPreferencesV1: { sessionWork: { details: { pullRequest: true, changes: true } } } } as const;
+    const http = createHomeHubArtifactHttpBoundary('u1');
+    const account = await restoreServerAccountForTest({ serverUrl: 'https://web-row-scm.test', accountId: 'u1', request: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: settings }, version: 1 });
+      if (path === '/v2/sessions') return Response.json({ sessions: [held, cold].map(session => ({ ...createPlainSessionByIdResponseFixture(session).session,
+        viewer: createSessionOwnerViewerFixture(session) })), nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+      if (['/v2/sessions/active', '/v2/sessions/attention'].includes(path)) return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+      return createEmptyAccountBootstrapHttpResponse(path, init) ?? http.request(input, init);
+    } });
+    const provider = { id: 'scm.github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' } as const;
+    const snapshot = {
+      repo: { isRepo: true, rootPath: '/repo/held', backendId: 'git', mode: '.git' },
+      branch: { head: 'fix/settings-remount', upstream: null, ahead: 0, behind: 0, detached: false },
+      capabilities: EMPTY_SCM_CAPABILITIES, stashCount: 0, hasConflicts: false, fetchedAt: now, projectKey: 'scm-held',
+      entries: [
+        { path: 'src/settings/modal.tsx', kind: 'modified', includeStatus: '.', pendingStatus: 'M', hasPendingDelta: true, stats: { pendingAdded: 80, pendingRemoved: 15, isComplete: true } },
+        { path: 'src/settings/draft.ts', kind: 'modified', includeStatus: '.', pendingStatus: 'M', hasPendingDelta: true, stats: { pendingAdded: 30, pendingRemoved: 6, isComplete: true } },
+        { path: 'src/settings/route.ts', kind: 'modified', includeStatus: '.', pendingStatus: 'M', hasPendingDelta: true, stats: { pendingAdded: 8, pendingRemoved: 0, isComplete: true } },
+      ],
+      totals: { includedFiles: 0, pendingFiles: 3, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 118, pendingRemoved: 21 },
+      pullRequestStatus: { provider, headBranch: 'fix/settings-remount', baseBranch: 'main', authState: 'authenticated', checkedAt: now,
+        openPullRequest: { provider, number: 2490, title: 'Fix settings modal remount', url: 'https://github.com/acme/app/pull/2490',
+          baseBranch: 'main', headBranch: 'fix/settings-remount', state: 'open', isDraft: true, checks: { state: 'pending' } } },
+    } as const;
+    const query = (kind: string, id: string) => Array.from(container.querySelectorAll<HTMLElement>('[data-testid], [testid]'))
+      .find(element => (element.dataset.testid ?? element.getAttribute('testid'))
+        === `${kind}-${buildSessionListIndexNodeId({ type: 'session', serverId, sessionId: id })}`) ?? null;
+    function CurrentList() {
+      const state = useSessionListViewState('all', { pathname: '/' });
+      return <div id="host"><SessionListRowFactsProvider value={state.rowFacts}><SessionListVirtualizedContent nodes={state.nodes} rowHeight={48} safeAreaBottom={0}
+        renderItem={state.renderVirtualizedItem} rowExtraData={state.virtualizedRowExtraData}
+        onStopScrollEventPropagationOnWeb={() => {}} showDrafts={false} showReminders={false} /></SessionListRowFactsProvider></div>;
+    }
+    try {
+      await storage.getState().activateSettingsScope({ serverId, accountId: 'u1' });
+      storage.getState().applySettingsLocal(settings);
+      storage.getState().applySessions([held, cold]);
+      const rows = storage.getState().sessionListRowsByServerId[serverId]!;
+      storage.getState().applyServerScopedSessionListRows(serverId, [rows[held.id]!, rows[cold.id]!], { source: 'ordinary', mode: 'replace' });
+      // The checkout's SCM owner resolves through the Session's Machine (its workspace scope).
+      const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+      storage.getState().applyMachines([createMachineFixture({ id: 'machine-scm', storageMode: 'plain', activeAt: now })], true, { sourceServerId: serverId });
+      storage.getState().updateSessionProjectScmSnapshot(held.id, snapshot, serverId);
+      expect(storage.getState().getSessionProjectScmSnapshot(held.id, serverId)?.pullRequestStatus?.openPullRequest?.number).toBe(2490);
+      vi.useFakeTimers();
+      await act(async () => root.render(<InjectedAuthProvider credentials={account.credentials}>
+        <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><CurrentList /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+      </InjectedAuthProvider>));
+      await settle();
+      const heldRow = query('session-list-item', held.id);
+      const checkout = query('session-list-row-context-checkout', held.id);
+      const pullRequest = query('session-list-row-pull-request', held.id);
+      const changes = query('session-list-row-changes', held.id);
+      expect(checkout?.textContent).toContain('fix/settings-remount');
+      expect(pullRequest?.textContent).toContain('2490');
+      expect(pullRequest!.querySelector('[data-testid$=":checks-running"], [testid$=":checks-running"]')).not.toBeNull();
+      expect(changes?.textContent).toMatch(/118[\s\S]*21/);
+      // Line 2 is the branch (no current work); the pull request and changes sit on line 3 after it.
+      expect(checkout!.parentElement!.parentElement!.contains(pullRequest)).toBe(false);
+      expect(checkout!.compareDocumentPosition(pullRequest!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // The Machine (on by default with row context) follows the branch on the same text detail.
+      const machine = query('session-list-row-context-machine', held.id);
+      expect(machine?.textContent).toContain('·');
+      expect(checkout!.parentElement).toBe(machine!.parentElement);
+      expect(heldRow?.getAttribute('aria-label')).toContain('2490');
+      // A cold checkout says nothing for these details: no placeholder, no spinner.
+      expect(query('session-list-row-context-checkout', cold.id)?.textContent).toContain('feat/dark-toggle');
+      expect(query('session-list-row-pull-request', cold.id)).toBeNull();
+      expect(query('session-list-row-changes', cold.id)).toBeNull();
+    } finally {
+      await act(async () => root.render(null));
+      const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+      await disconnectActiveServerConnection();
+      await account.dispose();
+      storage.setState(previous, true);
+      await home.reset();
+    }
+  });
+
   /** The longest stretch of the viewport, [offset, offset + viewport), that no mounted row covers. */
   function longestUncoveredGap(offset: number): number {
     const spans = Array.from(
