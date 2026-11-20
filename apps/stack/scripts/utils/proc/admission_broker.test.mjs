@@ -556,6 +556,50 @@ test('cold preparers use their completed class CPU observations', linux, async t
   }
 });
 
+test('commit-gate jobs use cold admission charges and learn under their own class', linux, async t => {
+  const { resolveAdmissionCpuCost, resolveAdmissionDiskClass } = await import('../dev_targets/command_resources.mjs');
+  const { resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');
+  const gib = 1024 * 1024;
+  for (const [className, diskClass, script, coldCores, coldGiB] of [
+    ['gate-entry-loads', 'validation', 'commitTreeEntryLoads.mjs', 3, 3],
+    ['gate-package-typecheck', 'compilation', 'commitPackageTypecheck.mjs', 6, 17],
+    ['gate-declaration-comparison', 'compilation', 'commitGateTypecheck.mjs', 6, 17],
+  ]) {
+    await t.test(className, async t => {
+      const { root } = await fixture(t, {
+        readMemory: () => ({ availableMemoryKiB: 64 * gib, totalMemoryKiB: 64 * gib }),
+        admitDisk: () => ({ admitted: true }),
+      });
+      const component = '.';
+      const entry = 'node scripts/workspaces/' + script;
+      const projects = ['packages/protocol'];
+      const identity = { className: diskClass, resourceClass: className, component, entry, projects };
+      const key = name => JSON.stringify([name, component, entry, projects]);
+      // Historical jobs in the disk class do not size this new resource class.
+      await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+        [key(diskClass)]: [12 * gib],
+        [key('@cpu:' + diskClass)]: [9000],
+      }));
+      assert.equal(resolveAdmissionDiskClass(className), diskClass);
+      assert.equal(resolveAdmissionCpuCost(className, ['--singleThreaded']), diskClass === 'compilation' ? 2 : 'host');
+      const floorKiB = resolveHeavyweightMemoryFloorKiB(className);
+      const first = await (await acquire(root, floorKiB, t, identity)).admit();
+      assert.equal(first.admitted.floorKiB, coldGiB * gib);
+      assert.equal(first.admitted.cpuCores, coldCores);
+
+      await first.report({ kind: 'slot-working-set', ...identity, peakKiB: 2.25 * gib });
+      await first.report({ kind: 'slot-completed', status: 0, cpuMilliCores: 5000 });
+      await requestAdmissionSample(root);
+      await first.release();
+      while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+
+      const next = await (await acquire(root, floorKiB, t, identity)).admit();
+      assert.equal(next.admitted.floorKiB, 2.5 * gib);
+      assert.equal(next.admitted.cpuCores, 8);
+    });
+  }
+});
+
 test('small validation jobs stay concurrent on a large host', { ...linux, timeout: 6000 }, async t => {
   const { root } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 8 });
   const waiters = [];

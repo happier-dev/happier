@@ -17,6 +17,8 @@ export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
   'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5327920, roundingKiB: 512 * 1024 }),
 });
 export const SOURCE_RELOAD_ADMISSION_CLASS = 'source-reload';
+const ENTRY_LOAD_MEMORY_KIB = 3 * 1024 * 1024;
+const COMPILATION_COLD_MEMORY_KIB = Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) * 1024 * 1024;
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Owner 2026-11-17: daemon Plugin UI preparation in QA reload #172 waited
   // behind validation. Retain its observed 17 GiB reservation (17825792 KiB)
@@ -40,7 +42,9 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   'focused-validation-cli': { memoryKiB: 2 * 1024 * 1024, cpuCores: 1, diskClass: 'validation', focusedTest: true },
   // 2026-11-04 repeated loaded entry-load runs reached 2,361,852 KiB.
   // validation-floor-sizing-1104/measurements.json; round up without margin.
-  'entry-loads': { memoryKiB: 3 * 1024 * 1024, cpuCores: 'host', diskClass: 'validation' },
+  'entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: 'host', diskClass: 'validation' },
+  // The gate uses the entry-load envelope and learns its exact-tree identity separately.
+  'gate-entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: 'host', diskClass: 'validation' },
   // Fresh Linux source-test processes peaked at 103,824 KiB;
   // SYSTEMIC-DELETE/step10-native-source-test-measurement.log. Only one
   // proven built-in/source-only file receives this class;
@@ -82,7 +86,10 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // No completed general-compilation rows on nl1, nl3 or windows2-linux.
   // Max × 1.5, rounded up to a whole GiB, gives a 17 GiB cold reservation.
   // Evidence: .project/tmp/P03-ADMISSION-4/cold-floor-before-controller.log.
-  compilation: { memoryKiB: Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
+  compilation: { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
+  // Both gate compiler steps have the ordinary cold envelope and independent history.
+  'gate-package-typecheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
+  'gate-declaration-comparison': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
   // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
@@ -133,15 +140,19 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
 // four default TS7 checkers × 1.5 for front-end and runtime work.
 const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
 const TYPESCRIPT_CPU_CORES = 6;
+const ENTRY_LOAD_CPU_CORES = 3;
 export const COLD_ADMISSION_CPU_CORES = Object.freeze({
   [SOURCE_RELOAD_ADMISSION_CLASS]: 3,
   validation: 3,
-  'entry-loads': 3,
+  'entry-loads': ENTRY_LOAD_CPU_CORES,
+  'gate-entry-loads': ENTRY_LOAD_CPU_CORES,
   'source-bundle': 2,
   'dependency-install': 3,
   'package-dist': 3,
   'runtime-build': 4,
   compilation: TYPESCRIPT_CPU_CORES,
+  'gate-package-typecheck': TYPESCRIPT_CPU_CORES,
+  'gate-declaration-comparison': TYPESCRIPT_CPU_CORES,
   'compilation-ui': TYPESCRIPT_CPU_CORES,
   'compilation-ui-tsrs': 17,
   'compilation-cli': TYPESCRIPT_CPU_CORES,

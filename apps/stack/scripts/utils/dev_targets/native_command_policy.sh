@@ -16,6 +16,7 @@ heavyweight_cpu_cores() {
     focused-validation-ui) heavyweight_cpu_cost=1 ;;
     focused-validation-cli) heavyweight_cpu_cost=1 ;;
     entry-loads) heavyweight_cpu_cost=3 ;;
+    gate-entry-loads) heavyweight_cpu_cost=3 ;;
     native-source-test) heavyweight_cpu_cost=1 ;;
     native-custody) heavyweight_cpu_cost=1 ;;
     source-asset) heavyweight_cpu_cost=1 ;;
@@ -25,6 +26,8 @@ heavyweight_cpu_cores() {
     package-dist) heavyweight_cpu_cost=3 ;;
     runtime-build) heavyweight_cpu_cost=4 ;;
     compilation) heavyweight_cpu_cost=6 ;;
+    gate-package-typecheck) heavyweight_cpu_cost=6 ;;
+    gate-declaration-comparison) heavyweight_cpu_cost=6 ;;
     compilation-ui) heavyweight_cpu_cost=6 ;;
     compilation-ui-tsrs) heavyweight_cpu_cost=17 ;;
     compilation-cli) heavyweight_cpu_cost=6 ;;
@@ -71,6 +74,7 @@ heavyweight_memory_floor_kib() {
     focused-validation-ui) heavyweight_policy_floor='3145728' ;;
     focused-validation-cli) heavyweight_policy_floor='2097152' ;;
     entry-loads) heavyweight_policy_floor='3145728' ;;
+    gate-entry-loads) heavyweight_policy_floor='3145728' ;;
     native-source-test) heavyweight_policy_floor='1048576' ;;
     native-custody) heavyweight_policy_floor='1048576' ;;
     source-asset) heavyweight_policy_floor='1048576' ;;
@@ -80,6 +84,8 @@ heavyweight_memory_floor_kib() {
     package-dist) heavyweight_policy_floor='5767168' ;;
     runtime-build) heavyweight_policy_floor='18874368' ;;
     compilation) heavyweight_policy_floor='17825792' ;;
+    gate-package-typecheck) heavyweight_policy_floor='17825792' ;;
+    gate-declaration-comparison) heavyweight_policy_floor='17825792' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
     compilation-ui-tsrs) heavyweight_policy_floor='10485760' ;;
     compilation-cli) heavyweight_policy_floor='15728640' ;;
@@ -579,6 +585,9 @@ native_command_policy_finish() {
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'entry-loads' ]; }; then
     policy_heavyClass='entry-loads'
   fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'gate-entry-loads' ]; }; then
+    policy_heavyClass='gate-entry-loads'
+  fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'native-source-test' ]; }; then
     policy_heavyClass='native-source-test'
   fi
@@ -605,6 +614,12 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'compilation' ]; }; then
     policy_heavyClass='compilation'
+  fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'gate-package-typecheck' ]; }; then
+    policy_heavyClass='gate-package-typecheck'
+  fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'gate-declaration-comparison' ]; }; then
+    policy_heavyClass='gate-declaration-comparison'
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'compilation-ui' ]; }; then
     policy_heavyClass='compilation-ui'
