@@ -338,6 +338,9 @@ describe('resolveCliTestLaunchSpec', () => {
 
     try {
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
+      const runtimeAsset = resolve(repoRoot, 'apps', 'cli', 'assets', 'bundled-plugin-manifests', 'fixture.json');
+      mkdirSync(dirname(runtimeAsset), { recursive: true });
+      writeFileSync(runtimeAsset, '{"fixture":"before"}', 'utf8');
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'scripts'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'tools'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'bin'), { recursive: true });
@@ -467,6 +470,11 @@ describe('resolveCliTestLaunchSpec', () => {
 
       const publishedSnapshotDir = resolveSourceSnapshotDir(spec);
       expectCanonicalPublishedSourceSnapshotDir(publishedSnapshotDir, snapshotDir);
+      const publishedAsset = resolve(publishedSnapshotDir, 'assets', 'bundled-plugin-manifests', 'fixture.json');
+      expect(readFileSync(publishedAsset, 'utf8')).toBe('{"fixture":"before"}');
+      expect(lstatSync(resolve(publishedSnapshotDir, 'assets')).isSymbolicLink()).toBe(false);
+      writeFileSync(runtimeAsset, '{"fixture":"after"}', 'utf8');
+      expect(readFileSync(publishedAsset, 'utf8')).toBe('{"fixture":"before"}');
       const publishedPackageDir = resolve(
         publishedSnapshotDir,
         'node_modules',
@@ -920,6 +928,9 @@ describe('resolveCliTestLaunchSpec', () => {
 
     try {
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'src'), { recursive: true });
+      const runtimeAsset = resolve(repoRoot, 'apps', 'cli', 'assets', 'bundled-plugin-manifests', 'fixture.json');
+      mkdirSync(dirname(runtimeAsset), { recursive: true });
+      writeFileSync(runtimeAsset, '{"fixture":true}', 'utf8');
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'scripts'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'tools'), { recursive: true });
       mkdirSync(resolve(repoRoot, 'apps', 'cli', 'bin'), { recursive: true });
@@ -950,6 +961,7 @@ describe('resolveCliTestLaunchSpec', () => {
 
       expect(spec.command).toBe(process.execPath);
       expect(spec.args).toContain(resolve(snapshotDir, 'src', 'index.ts'));
+      expect(readFileSync(resolve(snapshotDir, 'assets', 'bundled-plugin-manifests', 'fixture.json'), 'utf8')).toBe('{"fixture":true}');
       expect(spec.env?.NODE_OPTIONS).toContain('packages/cli-common/registerSourceRuntime.mjs');
       expect(lstatSync(resolve(snapshotDir, 'node_modules')).isDirectory()).toBe(true);
       expect(existsSync(resolve(snapshotDir, 'scripts', 'claude_launcher_runtime.cjs'))).toBe(true);

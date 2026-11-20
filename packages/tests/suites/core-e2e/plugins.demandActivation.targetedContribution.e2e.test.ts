@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
-import { resolveAdmittedTargetedContributions } from '../../../../apps/cli/src/plugins/projection/registry/targetedContributions';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { projectTargetedContributionActionDefinition, resolveAdmittedTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
 
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import {
@@ -229,36 +230,27 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
   });
 
   it('uses a canonically rehydratable target protocol in the cold manifests', () => {
-    const targetContributes = asRecord(targetManifest().contributes);
-    const points = targetContributes?.pluginContributionPoints;
-    const point = Array.isArray(points) ? asRecord(points[0]) : null;
-    const protocols = point?.protocols;
-    const candidate = Array.isArray(protocols) ? protocols[0] : null;
-    expect(rehydratePluginContributionPointSemanticsV1(candidate as never)).not.toBeNull();
+    const targetContributes = PluginManifestV2Schema.parse(targetManifest()).contributes;
+    const contributorContributes = PluginManifestV2Schema.parse(contributorManifest()).contributes;
+    const point = targetContributes.pluginContributionPoints[0];
+    expect(rehydratePluginContributionPointSemanticsV1(point.protocols[0])).not.toBeNull();
 
-    const contributorContributes = asRecord(contributorManifest().contributes);
-    const contributions = contributorContributes?.targetedPluginContributions;
-    const contribution = Array.isArray(contributions) ? contributions[0] : null;
-    const actions = contributorContributes?.actions;
-    const action = Array.isArray(actions) ? actions[0] : null;
-    const normalizedAction = asRecord(action);
     const admission = resolveAdmittedTargetedContributions({
       pluginContributionPoints: [{ pluginId: TARGET_PLUGIN_ID, definition: point }],
-      targetedPluginContributions: [{ pluginId: CONTRIBUTOR_PLUGIN_ID, definition: contribution }],
-      actions: [{
+      targetedPluginContributions: contributorContributes.targetedPluginContributions.map(definition => ({
         pluginId: CONTRIBUTOR_PLUGIN_ID,
-        definition: {
-          ...normalizedAction,
-          outputSchema: normalizedAction?.resultSchema,
-          contributionSurfaces: normalizedAction?.surfaces,
-        },
-      }],
+        definition,
+      })),
+      actions: contributorContributes.actions.map(definition => ({
+        pluginId: CONTRIBUTOR_PLUGIN_ID,
+        definition: projectTargetedContributionActionDefinition(definition),
+      })),
       uiRenderersV2: [],
-      immutableGenerationIdsByPluginId: {
-        [TARGET_PLUGIN_ID]: 'target-generation',
-        [CONTRIBUTOR_PLUGIN_ID]: 'contributor-generation',
+      occurrenceIdsByPluginId: {
+        [TARGET_PLUGIN_ID]: 'target-occurrence',
+        [CONTRIBUTOR_PLUGIN_ID]: 'contributor-occurrence',
       },
-    } as never);
+    });
     expect(admission.diagnosticsByPluginId).toEqual({});
     expect(admission.read({
       targetPluginId: TARGET_PLUGIN_ID,

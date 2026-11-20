@@ -100,7 +100,7 @@ function materializeCliSourceSnapshot(
 ): void {
   mkdirSync(snapshotDir, { recursive: true });
 
-  const linkTargets = ['src', 'scripts', 'tools', 'bin'];
+  const linkTargets = ['src', 'scripts', 'tools', 'bin', 'assets'];
   for (const relPath of linkTargets) {
     const target = resolve(rootDir, 'apps', 'cli', relPath);
     if (!existsSync(target)) continue;
@@ -332,7 +332,7 @@ function hasNoSymlinkEntries(rootPath: string): boolean {
 }
 
 function publishCliSourceSnapshotAdmission(snapshotDir: string, rootDir: string): void {
-  for (const relativePath of ['src', 'scripts', 'tools', 'bin', 'package.json', 'tsconfig.json']) {
+  for (const relativePath of ['src', 'scripts', 'tools', 'bin', 'assets', 'package.json', 'tsconfig.json']) {
     const candidatePath = resolve(snapshotDir, relativePath);
     if (!hasNoSymlinkEntries(candidatePath)) {
       throw new Error(`CLI source copy snapshot aliases live source/config: ${candidatePath}`);
