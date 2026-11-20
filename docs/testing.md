@@ -626,10 +626,13 @@ that queue and each slot's lifetime with memory. The broker reads the OS's
 available logical-core count once at startup. Each offer pass subtracts held
 reservations and the current Linux runnable count, excluding the sampling broker
 and runnable threads attributed to admitted job scopes. This counts work outside
-admission, such as database and stack activity. When the broker has no active slot
-or outstanding offer, the queue head can start if its memory and physical CPU
-requirements fit even when outside pressure uses the remaining CPU budget. That
-offer reserves memory and CPU immediately. Further offers subtract outside pressure.
+admission, such as database and stack activity. The queue head can ignore outside
+CPU pressure when the host has no active slot or the head has waited through its
+reservation delay. It still needs enough unreserved memory and physical cores.
+When an aged head fits memory, it has priority for the next CPU release that can
+fit it. Each host allows one pressure-exempt offer or active slot at a time.
+That slot reserves memory and CPU immediately, and the exemption survives broker
+succession on the existing lifetime socket. Other offers count outside pressure.
 Existing slot and resource events wake CPU waiters. The resource catch-up also
 checks external CPU pressure while it blocks a waiter and refreshes memory before
 making an offer.

@@ -851,15 +851,32 @@ export function createAdmissionBroker({ root,
   function projectedHeadStartAt(head, now) {
     return now + simulateServiceOrder(now, 0)(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB);
   }
+  // Only the actual service head may bypass outside CPU pressure. Keep
+  // counting live CPU reservations, and carry ownership in the slot address.
+  function cpuPressureHead(now) {
+    if (cpuPressureCores === 0) return;
+    const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
+      && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
+      && minimumCpuCores(item) <= totalCpuCores);
+    if (head && (slots.size === 0 || overdue(head, now))) return head;
+  }
+  function hasCpuPressureExemption() {
+    return [...slots.values()].some(slot => slot.pressureExempt);
+  }
   async function drain({ memoryObserved = false, newArrival } = {}) {
     cpuPressureCores = readCpuPressureForOffer();
-    const cpuHeadroom = slotResourceBudget().unreservedCpuCores;
+    orderWaiting();
+    const initialBudget = slotResourceBudget();
+    const initialPressureHead = cpuPressureHead(Date.now());
+    const canRefreshForException = initialPressureHead && !hasCpuPressureExemption()
+      && minimumCpuCores(initialPressureHead) <= totalCpuCores - initialBudget.reservedCpuCores;
     // A capacity-only wake is cheap. Before it can offer work, refresh memory
     // if the arrival or CPU-blocked request skipped its normal observation.
-    if (!memoryObserved && waiting.some(item => !item.slot && !item.blocked
-      && (item === newArrival || item.waitingForCpu) && (slots.size === 0 || minimumCpuCores(item) <= cpuHeadroom))) {
+    if (!memoryObserved && (canRefreshForException || waiting.some(item => !item.slot && !item.blocked
+      && (item === newArrival || item.waitingForCpu) && minimumCpuCores(item) <= initialBudget.unreservedCpuCores))) {
       await observe();
       cpuPressureCores = readCpuPressureForOffer();
+      orderWaiting();
     }
     // Capacity already free when a request becomes head remains available to
     // backfill; releases are held only after that head reaches the wait bound.
@@ -867,21 +884,23 @@ export function createAdmissionBroker({ root,
     const budget = slotResourceBudget(now);
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
+    let cpuCoresWithoutPressure = totalCpuCores - budget.reservedCpuCores;
     let head;
     let lendableKiB = 0;
     let headStartAt;
-    orderWaiting();
-    // Outside runnable pressure can persist indefinitely. Only the eligible
-    // queue head can start without CPU headroom, and only with no live offer.
-    const idleHead = slots.size === 0 ? waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
-      && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
-      && minimumCpuCores(item) <= totalCpuCores) : undefined;
+    const pressureHead = cpuPressureHead(now);
+    const hasExemption = hasCpuPressureExemption();
+    // Once the aged head fits memory, the next CPU release belongs to it.
+    // The host-bound backfill shortcut must also honor that order.
+    const protectPressureHead = pressureHead && overdue(pressureHead, now)
+      && (pressureHead.floorOptions?.at(-1).floorKiB ?? pressureHead.floorKiB) <= availableMemoryKiB
+      && minimumCpuCores(pressureHead) > availableCpuCores;
     const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
     // cannot move hosts. Let fitting ones use a relocatable head's pledge first.
     // Reorder only this pass, never the arrival queue or the retained pledge.
-    const hostBoundFirst = new Set(pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
+    const hostBoundFirst = new Set(!protectPressureHead && pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
       ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item, budget.memoryWithinBoundKiB, now)
         && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
         && minimumCpuCores(item) <= availableCpuCores) : []);
@@ -909,7 +928,8 @@ export function createAdmissionBroker({ root,
         refuse(item, 'HSTACK_CPU_CAPACITY');
         continue;
       }
-      const offerCpuCores = item === idleHead && slots.size === 0 ? totalCpuCores : availableCpuCores;
+      const offerCpuCores = item === pressureHead && !hasExemption
+        ? Math.max(availableCpuCores, cpuCoresWithoutPressure) : availableCpuCores;
       const fittingFor = cpuCores => item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
         && accountedCpuCores(item, option.workers) <= cpuCores);
       const fitting = fittingFor(availableCpuCores)
@@ -944,7 +964,10 @@ export function createAdmissionBroker({ root,
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else if (!head && canReserveHead(item, budget.memoryWithinBoundKiB, now)) assignHead(item);
+          } else {
+            if (!head && canReserveHead(item, budget.memoryWithinBoundKiB, now)) assignHead(item);
+            if (item === pressureHead && protectPressureHead && !item.waitingForMemory) break;
+          }
         }
         continue;
       }
@@ -957,15 +980,17 @@ export function createAdmissionBroker({ root,
       const resources = readResources(item);
       if (!resources) continue;
       const slotId = randomUUID();
-      const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores);
+      const pressureExempt = cpuCores > availableCpuCores;
+      const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores, pressureExempt);
       const key = identityKey(item);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
         slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: key,
-        memoryWarmupMs: recordedMemoryWarmupMs(key),
+        memoryWarmupMs: recordedMemoryWarmupMs(key), pressureExempt,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       availableCpuCores = Math.max(0, availableCpuCores - cpuCores);
+      cpuCoresWithoutPressure -= cpuCores;
       item.slot = slot;
       if (hostBoundFirst.has(item) && headPledge?.item === pledgingHead) {
         headPledge.lastHostBoundAdmissionKiB = floorKiB;

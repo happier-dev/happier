@@ -448,6 +448,68 @@ test('an idle host starts only its memory-fitting head under outside CPU pressur
   assert.equal((await requestAdmissionSample(root)).waitingCount, 0);
 });
 
+test('an aged head can use the sole CPU-pressure exception on a busy host across succession', { ...linux, timeout: 6000 }, async t => {
+  const clock = captureRecoveryClock(t);
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let pressure = 0;
+  let availableMemoryKiB = 100;
+  const readCpuPressure = () => pressure;
+  const { root, broker, sampleResources } = await fixture(t, {
+    cpuCores: 8, readCpuPressure,
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
+  });
+  const acquireDist = (floorKiB, requestedCpuCores, arrivedAt = now) =>
+    acquire(root, floorKiB, t, { className: 'package-dist', cpuCost: requestedCpuCores, arrivedAt });
+  await (await acquireDist(20, 2)).admit();
+  const releasing = await (await acquireDist(10, 3)).admit();
+  pressure = 12;
+  const arrivedAt = now;
+  const head = await acquire(root, 40, t, { className: 'source-bundle', cpuCost: 4, arrivedAt });
+  await acquireDist(10, 1);
+  now += headReservationDelayMs - 1;
+  await clock.tick();
+  assert.equal((await requestAdmissionSample(root)).activeCount, 2, 'fresh head remains subject to outside pressure');
+
+  // Memory changed since the last sample: age alone cannot grant the head.
+  availableMemoryKiB = 65;
+  now += 1;
+  await clock.tick();
+  const memoryBlocked = await requestAdmissionSample(root);
+  assert.equal(memoryBlocked.activeCount, 2, 'the aged head must still fit current memory');
+  assert.equal(memoryBlocked.waitingCount, 2, 'the smaller second waiter cannot take its place');
+
+  availableMemoryKiB = 100;
+  pressure = 2;
+  await clock.tick();
+  const blockedByReservations = await requestAdmissionSample(root);
+  assert.equal(blockedByReservations.activeCount, 2, 'a smaller job must not backfill while the aged head fits memory');
+  assert.equal(blockedByReservations.waitingCount, 2);
+
+  pressure = 12;
+  await releasing.release();
+  const offered = await requestAdmissionSample(root);
+  assert.equal(offered.activeCount, 2, 'the aged head must start alongside the original slot under excess outside pressure');
+  assert.equal(offered.reservedCpuCores, 6);
+  assert.equal(offered.waitingCount, 1, 'the pending offer already consumes the exception');
+  const held = await head.admit();
+
+  await broker.close();
+  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'),
+    sampleResources, readCpuCapacity: () => 8, readCpuPressure });
+  t.after(() => successor.close());
+  await successor.start();
+  const second = await acquireDist(10, 1, arrivedAt);
+  const retained = await requestAdmissionSample(root);
+  assert.equal(retained.activeCount, 2, 'a successor must not offer a second exception');
+  assert.equal(retained.waitingCount, 1);
+  await held.release();
+  await second.admit();
+  const next = await requestAdmissionSample(root);
+  assert.equal(next.activeCount, 2, 'the aged waiter can borrow the exception after release');
+  assert.equal(next.waitingCount, 0);
+});
+
 test('admitted scope runnable threads leave remaining cores available', linux, async t => {
   const uid = process.getuid();
   const scope = `/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice/happier-jobs-${process.pid}-fixture.scope`;
