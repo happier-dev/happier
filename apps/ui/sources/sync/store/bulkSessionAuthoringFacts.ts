@@ -13,7 +13,11 @@ import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/s
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
-export type BulkSessionAuthoringHydration = Readonly<{ session: Session | null; errorCode: string | null }>;
+export type BulkSessionAuthoringHydration = Readonly<{
+    session: Session | null;
+    errorCode: string | null;
+    resumeOptions?: ResumeCapabilityOptions;
+}>;
 
 export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1, session: Session | null,
     resumeOptions?: ResumeCapabilityOptions, hydrationErrorCode: string | null = null) {

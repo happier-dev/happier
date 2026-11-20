@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionAddressV1';
-import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { projectBulkSessionAuthoringFact, type BulkSessionAuthoringHydration } from '@/sync/store/bulkSessionAuthoringFacts';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
@@ -8,16 +7,15 @@ import { readSessionListRowForServerId } from '@/sync/domains/session/listing/se
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { readBulkSessionAuthoringSnapshots } from './bulkSessionAuthoringHydration';
 
-export function useHydratedBulkSessionAuthoringFacts(targets: readonly ActionSessionAddressV1[],
-    resumeOptionsByTarget?: ReadonlyMap<string, ResumeCapabilityOptions>) {
+export function useHydratedBulkSessionAuthoringFacts(targets: readonly ActionSessionAddressV1[]) {
     const store = getStorage();
     const loaded = React.useRef<ReadonlyMap<string, BulkSessionAuthoringHydration>>(new Map());
     const project = React.useCallback((snapshots: ReadonlyMap<string, BulkSessionAuthoringHydration>) => targets.map(target => {
         const key = sessionAddressKey(target);
         const snapshot = snapshots.get(key);
         return projectBulkSessionAuthoringFact(target, snapshot?.session ?? null,
-            resumeOptionsByTarget?.get(key), snapshot?.errorCode ?? null);
-    }), [resumeOptionsByTarget, targets]);
+            snapshot?.resumeOptions, snapshot?.errorCode ?? null);
+    }), [targets]);
     const [facts, setFacts] = React.useState(() => project(loaded.current));
     const published = React.useRef(facts);
     const [revision, setRevision] = React.useState(0);
