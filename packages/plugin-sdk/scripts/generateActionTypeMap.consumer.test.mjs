@@ -251,6 +251,37 @@ test('current published Action DTO closure emits portable declarations and recur
   assert.equal(projection.inputKeys.length, projection.resultKeys.length);
 });
 
+test('plugins can emit an inferred schema combining Project execution and Action approval', (t) => {
+  const root = mkdtempSync(resolve(tmpdir(), 'happier-project-execution-consumer-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageScope = resolve(root, 'node_modules/@happier-dev');
+  mkdirSync(packageScope, { recursive: true });
+  symlinkSync(fileURLToPath(new URL('..', import.meta.url)), resolve(packageScope, 'plugin-sdk'), 'junction');
+  writeFileSync(resolve(root, 'consumer.ts'), `
+    export type { PluginJsonValueV2 } from '@happier-dev/plugin-sdk';
+    export type { ActionApprovalRequestCreatedResult } from '@happier-dev/plugin-sdk/actions';
+    import {
+      defineProtocolUnion,
+      ProtocolActionApprovalRequestCreatedResultSchema,
+      ProtocolProjectComputeExecResultV1Schema,
+    } from '@happier-dev/plugin-sdk/protocol';
+    export const result = defineProtocolUnion([
+      ProtocolProjectComputeExecResultV1Schema,
+      ProtocolActionApprovalRequestCreatedResultSchema,
+    ]);
+  `);
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd(), invocationKind: 'build' });
+  const emitted = spawnSync(invocation.command, [...invocation.argsPrefix,
+    '--ignoreConfig', '--strict', '--skipLibCheck', '--target', 'ES2022',
+    '--module', 'ESNext', '--moduleResolution', 'Bundler',
+    '--declaration', '--emitDeclarationOnly', '--outDir', 'declarations', 'consumer.ts',
+  ], { cwd: root, encoding: 'utf8' });
+  assert.equal(emitted.status, 0, emitted.error?.message ?? emitted.stdout + emitted.stderr);
+  const declaration = readFileSync(resolve(root, 'declarations/consumer.d.ts'), 'utf8');
+  assert.match(declaration, /\bProjectComputeExecAcceptedResultV1\b/u);
+  assert.doesNotMatch(declaration, /node_modules|plugin-sdk\/dist|@happier-dev\/protocol/u);
+});
+
 test('SDK declarative aliases and neutral DTOs remain equivalent in a declaration consumer', (t) => {
   const root = mkdtempSync(resolve(tmpdir(), 'happier-action-ui-dto-consumer-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

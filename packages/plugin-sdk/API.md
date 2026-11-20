@@ -2608,6 +2608,7 @@
 | `./protocol` | `PluginUiActionOperationHostReadResultV1ProtocolSchema` | value | any |
 | `./protocol` | `PluginUiResourceIntentV1` | type | any |
 | `./protocol` | `PluginUiResourceIntentV1Schema` | value | any |
+| `./protocol` | `ProjectComputeExecAcceptedResultV1` | type | any |
 | `./protocol` | `ProjectExecutionOperationRefV1ProtocolSchema` | value | any |
 | `./protocol` | `ProjectSetupConsentRequiredV1` | type | any |
 | `./protocol` | `ProtocolActionApprovalRequestCreatedResultSchema` | value | any |

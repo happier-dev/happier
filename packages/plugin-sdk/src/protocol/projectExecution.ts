@@ -36,8 +36,16 @@ export const ProtocolWorkspaceExecutionConfigAddressV1Schema: ProtocolComposable
 export const ProtocolWorkspaceWorkerPreferenceSetInputV1Schema: ProtocolComposableSchema<PluginActionInputById['projects.worker.preferences.set']> = WorkspaceWorkerPreferenceSetInputV1ProtocolSchema;
 export const ProtocolWorkspaceWorkerPreferenceReadResultV1Schema: ProtocolComposableSchema<PluginActionResultById['projects.worker.preferences.get']> = WorkspaceWorkerPreferenceReadResultV1ProtocolSchema;
 export const ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema: ProtocolComposableSchema<PluginActionResultById['projects.worker.preferences.set']> = WorkspaceWorkerPreferenceMutationResultV1ProtocolSchema;
+
+type ProjectComputeExecActionResult = PluginActionResultById['projects.compute.exec'];
+
+/** A public object type keeps composed declarations from expanding the operation payload. */
+export interface ProjectComputeExecAcceptedResultV1 extends Extract<ProjectComputeExecActionResult, { operation: unknown }> {}
+
+type ProjectComputeExecResultV1 = ProjectComputeExecAcceptedResultV1 | Exclude<ProjectComputeExecActionResult, { operation: unknown }>;
+
 /** A setup hold and an accepted operation retain their distinct canonical arms. */
 export const ProtocolProjectComputeExecResultV1Schema: ProtocolComposableSchema<
-    PluginActionResultById['projects.compute.exec'],
-    PluginActionResultById['projects.compute.exec'] & ProtocolJsonValue
+    ProjectComputeExecResultV1,
+    ProjectComputeExecResultV1 & ProtocolJsonValue
 > = ProjectComputeExecResultV1ProtocolSchema;

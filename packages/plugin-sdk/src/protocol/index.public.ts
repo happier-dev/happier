@@ -168,6 +168,7 @@ export { ProtocolAutomationTriggerRevisionV1Schema } from './automationTriggerId
 export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
 export { ProtocolFailureActionPlacementReasonV1Schema } from './failureActionPlacement.js';
 /** Project admission and preference values remain owned by the host's existing Actions. */
+export type { ProjectComputeExecAcceptedResultV1 } from './projectExecution.js';
 export {
     ProtocolWorkspaceAddressV1Schema,
     ProtocolSecretReferenceOverlayV1Schema,
