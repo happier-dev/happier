@@ -3,6 +3,7 @@ import {
     type PluginUiJsonValueV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { describeApprovalRequestFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -133,7 +134,7 @@ function createMountedSurface(isCurrent?: () => boolean, dangerLevel: PluginProj
         handleRequest: host.handleRequest,
         installedMethods: host.installedMethods,
     });
-    return { host, adapter };
+    return { host, adapter, action };
 }
 
 /**
@@ -480,6 +481,7 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                                 'acme.publish.title': 'Publish this preview?',
                                 'acme.publish.body': 'It becomes visible to your team.',
                                 'acme.publish.verb': 'Publish',
+                                'acme.publish.previous': 'Previous preview',
                             },
                         },
                     },
@@ -502,10 +504,11 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                 confirmation: {
                     title: { key: 'acme.publish.title', fallback: 'Publish?' },
                     body: { key: 'acme.publish.body', fallback: 'Are you sure?' },
+                    inputFields: [{ path: 'previous', title: { key: 'acme.publish.previous', fallback: 'Previous' } }],
                 },
             } as never,
             fingerprint: 'publish-1',
-            input: {},
+            input: { previous: null },
             surface: 'ui',
             invocationSurface: 'ui',
         });
@@ -513,13 +516,13 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
 
         expect(modalHarness.readConfig().chrome?.title).toBe('Publish this preview?');
         expect(modalHarness.show.mock.calls[0]?.[0]).toMatchObject({
-            props: { description: 'It becomes visible to your team.', confirmLabel: 'Publish' },
+            props: { description: 'It becomes visible to your team.\n\nPrevious preview: null', confirmLabel: 'Publish' },
         });
         modalHarness.readConfig().props.onConfirm();
         await expect(pending).resolves.toMatchObject({ status: 'approved' });
     });
 
-    it('shows exact reviewed input labels in the single host confirmation and omits absent operands', async () => {
+    it('shows exact reviewed input labels and omits absent and confidential operands', async () => {
         const { host, adapter } = createMountedSurface(undefined, 'writesLocal', 'merge', undefined, {
             inputHints: { fields: [{ path: 'privateToken', title: 'Token', widget: 'secret' }] },
             confirmation: { title: 'Merge?', body: 'This cannot be undone.', inputFields: [
@@ -531,7 +534,7 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
             let previous: ReturnType<typeof modalHarness.readConfig> | undefined;
             for (const [input, description] of [
                 [{ skippedRequirements: [{ id: 'ci', label: 'CI / Linux' }, { id: 'review', label: 'Required review' }], privateToken: 'never-disclose' },
-                    'This cannot be undone.\n\nSkipping: CI / Linux, Required review\nToken: [REDACTED]'],
+                    'This cannot be undone.\n\nSkipping: CI / Linux, Required review'],
                 [{}, 'This cannot be undone.'],
             ] satisfies ReadonlyArray<readonly [PluginUiJsonValueV1, string]>) {
                 const pending = adapter.api.admitAction('merge', input);
@@ -542,6 +545,34 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                 await expect(pending).resolves.toBe(true);
             }
             expect(modalHarness.show).toHaveBeenCalledTimes(2);
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
+    });
+
+    it('discloses the same explicit null and array in mounted and retained reviews', async () => {
+        const { host, adapter, action } = createMountedSurface(undefined, 'writesLocal', 'update', undefined, {
+            confirmation: { title: 'Update?', body: 'Review the preview changes.', inputFields: [
+                { path: 'previous', title: 'Previous preview' },
+                { path: 'targets', title: 'Targets' },
+            ] },
+        });
+        try {
+            const input = { previous: null, targets: ['Linux, macOS', 'Windows'] };
+            const retained = describeApprovalRequestFields({
+                kind: 'plugin_target_action', input, inputFields: action.confirmation?.inputFields, secretInputPaths: [],
+            });
+            const retainedRows = retained.rows.flatMap(row =>
+                row.kind === 'value' && !row.technical ? [`${row.title}: ${row.value}`] : []);
+            expect(retainedRows).toEqual(['Previous preview: null', 'Targets: ["Linux, macOS","Windows"]']);
+
+            const pending = adapter.api.admitAction('update', input);
+            await openedDialog();
+            const mountedRows = modalHarness.readConfig().props.description?.split('\n\n')[1]?.split('\n');
+            modalHarness.readConfig().props.onConfirm();
+            await expect(pending).resolves.toBe(true);
+            expect(mountedRows).toEqual(retainedRows);
         } finally {
             adapter.dispose();
             host.dispose?.();

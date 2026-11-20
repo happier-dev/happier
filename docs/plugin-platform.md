@@ -3016,8 +3016,9 @@ In 0.3 development source, `confirmation.inputFields` declares reviewed
 must resolve in the declared input schema; conditional union operands may be
 absent. Client fingerprint custody and daemon request custody pass the exact
 invocation input to the existing native/hosted Action confirmation owner. That owner
-uses approval review's field traversal, formatting and confidential-input
-projection, then appends only the declared operands to the static consequence.
+uses the same declared operand projection as Inbox Details for tap and spoken
+review. Explicit nulls and array structure stay visible after confidential
+input redaction.
 Titles are statically localized declarations; plugins supply neither executable
 text templates nor a second dialog. Missing operands add no line. The manifest
 and each nested field remain closed declarations; older unsupported strict

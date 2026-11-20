@@ -1,5 +1,5 @@
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
-import { formatApprovalFieldValues, getApprovalFieldValues, projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type {
     InteractionTransientRequesterV1} from '@happier-dev/protocol/plugins/interactions/transientV1';
 import type {
@@ -156,10 +156,10 @@ export async function preparePluginActionConfirmation(input: Readonly<{
     const fields = request.action.confirmation?.inputFields ?? [];
     const reviewedInput = fields.length ? projectTargetActionApprovalInput(request.input,
         request.action.inputHints?.fields.filter(field => field.widget === 'secret').map(field => field.path) ?? []) : null;
-    const operands = fields.flatMap(field => {
-        const value = reviewedInput ? formatApprovalFieldValues(getApprovalFieldValues(reviewedInput.input, field.path)) : null;
-        return value === null ? [] : [`${readConfirmationText(field.title)}: ${value}`];
-    });
+    const operands = reviewedInput
+        ? projectTargetActionApprovalOperandRows(reviewedInput, fields, readConfirmationText)
+            .map(row => `${row.title}: ${row.value}`)
+        : [];
     const message = operands.length ? `${body}\n\n${operands.join('\n')}` : body;
     scoped?.dispose();
     return { title, message, confirmLabel };

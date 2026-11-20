@@ -1346,6 +1346,30 @@ export function projectTargetActionApprovalInput(input: unknown, secretInputPath
   return { input: redacted, confidentialPaths };
 }
 
+type TargetActionApprovalInputField = NonNullable<TargetActionApprovalRequestV1['inputFields']>[number];
+
+/** Declared operands shared by immediate confirmations and retained target Action reviews. */
+export function projectTargetActionApprovalOperandRows(
+  projection: NonNullable<ReturnType<typeof projectTargetActionApprovalInput>>,
+  fields: readonly TargetActionApprovalInputField[],
+  resolveTitle: (title: TargetActionApprovalInputField['title']) => string = resolvePluginLocalizedStringV2Text,
+): readonly Extract<ApprovalActionFieldRow, { kind: 'value' }>[] {
+  return fields.flatMap(field => {
+    const segments = field.path.split('.');
+    if (projection.confidentialPaths.some(path => {
+      const concealed = path ? path.split('.') : [];
+      return concealed.length <= segments.length
+        && matchesConfidentialInputPath(segments.slice(0, concealed.length), concealed);
+    })) return [];
+    const values: unknown[] = [];
+    visitSegments(projection.input, segments, 0, values);
+    const literal = formatApprovalFieldValues(values, { preserveStructuredValues: true });
+    return literal === null ? [] : [{
+      kind: 'value', path: `input.${field.path}`, title: resolveTitle(field.title), value: literal,
+    }];
+  });
+}
+
 function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsRequest): ApprovalActionFieldsPresentation {
   const unavailable = (): ApprovalActionFieldsPresentation => {
     const details = { path: 'input', reason: 'missing_required_context' as const };
@@ -1361,7 +1385,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
       ? request.secretInputLabels[declared] : undefined)
       ?? (path ? humanizeApprovalKey(path) : 'Arguments');
   };
-  const rows: ApprovalActionFieldRow[] = confidentialPaths.map(path => ({
+  const confidentialRows: ApprovalActionFieldRow[] = confidentialPaths.map(path => ({
     kind: 'value', path: path ? `input.${path}` : 'input', title: confidentialTitle(path),
     value: '', valueFormat: 'confidential',
   }));
@@ -1369,20 +1393,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
     ? Object.entries(redacted).map(([key, value]) => ({ key, value }))
     : [{ key: '', value: redacted }];
   try {
-    for (const field of request.inputFields ?? []) {
-      const segments = field.path.split('.');
-      if (confidentialPaths.some(path => {
-        const concealed = path ? path.split('.') : [];
-        return concealed.length <= segments.length
-          && matchesConfidentialInputPath(segments.slice(0, concealed.length), concealed);
-      })) continue;
-      const values: unknown[] = [];
-      visitSegments(redacted, segments, 0, values);
-      const literal = formatApprovalFieldValues(values, { preserveStructuredValues: true });
-      if (literal === null) continue;
-      rows.push({ kind: 'value', path: `input.${field.path}`, title: resolvePluginLocalizedStringV2Text(field.title),
-        value: literal });
-    }
+    const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection, request.inputFields ?? []));
     for (const { key, value } of fields) {
       if (confidentialPaths.includes('') || confidentialPaths.includes(key)) continue;
       // The built-in formatter deliberately trims and joins values. Arbitrary
@@ -1393,14 +1404,14 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
         title: key ? humanizeApprovalKey(key) : 'Arguments', value: literal,
         ...(request.inputFields?.length ? { technical: true as const } : {}) });
     }
+    // Only the original admitted invocation can supply the hidden operands.
+    return { rows, unrepresentable: confidentialPaths.length && request.approvalInputCustody !== 'live_only'
+      ? { path: 'input', reason: 'missing_required_context' } : null };
   } catch {
     // JSON admission has no depth quota. If this platform cannot serialize the
     // complete value for its reader, partial disclosure cannot authorize it.
     return unavailable();
   }
-  // Only the original admitted invocation can supply the hidden operands.
-  return { rows, unrepresentable: confidentialPaths.length && request.approvalInputCustody !== 'live_only'
-    ? { path: 'input', reason: 'missing_required_context' } : null };
 }
 
 type TargetActionApprovalFieldsRequest = Readonly<{
