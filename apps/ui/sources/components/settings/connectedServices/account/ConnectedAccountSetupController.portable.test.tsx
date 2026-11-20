@@ -731,6 +731,29 @@ it('explains the typed Cloudflare web placement refusal after describing a fresh
     } finally { await screen.unmount(); }
 });
 
+it('opens a browser-restricted account detail without a React state-update warning', () => withPortableSheetBrowser(async () => {
+    const fixture = await restorePortableFixture(cloudflare);
+    const ref = { service: cloudflare, accountId: 'browser-restricted-cloudflare' };
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+        ref, authenticationModeId: 'oauth', revisionSemantics: 'revisioned', status: 'connected',
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true, configurationRevision: null,
+    });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [profile] });
+    homes.answer(fixture.serverId, '/v4/connect/qualified/accounts', { body: { service: cloudflare, accounts: [profile] } });
+    route.params = { ...cloudflare, accountId: ref.accountId };
+    const consoleError = vi.spyOn(console, 'error');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={fixture.credentials}>
+        <AppShellPluginUiProjectionProvider><ConnectedAccountServiceView /></AppShellPluginUiProjectionProvider>
+    </InjectedAuthProvider>);
+    try {
+        await vi.waitFor(() => expect(fixture.paths).toContain('/v4/connect/qualified/accounts'));
+        await flushHookEffects();
+        expect(screen.findHostByTestId('qualified-account-detail')).not.toBeNull();
+        expect(consoleError.mock.calls.flat()).not.toContainEqual(expect.stringContaining('second callback argument'));
+    } finally { await screen.unmount(); consoleError.mockRestore(); }
+}));
+
 it.each([false, true])('configures Cloudflare browser OAuth on a native HTTP host before continuing without a Machine (Home client: %s)', async homeClient => {
     // Cloudflare declares browserReachability: unreachable; native HTTP keeps this flow Account-local.
     await useNativeAccountHttpHost();

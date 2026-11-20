@@ -99,6 +99,7 @@ import { sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { scopedPluginAccountSecretSettingsAdapter, eraseCurrentAccountPluginSecretBindings, resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import { resolveAccountSettingsPluginSecretBinding } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 // Refresh settles foreground material demand; legacy import/history finishes separately.
 async function refreshCatalogAndWaitForLegacyImport(scope: ServerAccountScope) {
@@ -218,6 +219,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     expect(tryWriteServerEnabledBitInPlace(features, 'teams', options.teams ?? true)).toBe(true);
     expect(tryWriteServerEnabledBitInPlace(features, 'teams.credentialResources', true)).toBe(true);
     let effect: ((path: string, body: unknown) => Promise<Response> | Response) | undefined;
+    let credentialRequest: ((url: URL, method: string) => Response) | undefined;
     const sourceContent = () => {
         if (persistedMode === 'plain') return { t: 'plain', v: raw };
         const material = resolveAccountScopedCryptoMaterialFromCredentials(serverCredentials);
@@ -227,7 +229,11 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     connection = await restoreServerAccountForTest({ serverUrl: `https://saved-secret-operations-${mode}${home}.test`,
         serverIdentityId: `srv_secret_operations_${mode}${home}`, accountId, credentials,
         request: async (rawUrl, init) => {
-            const path = new URL(String(rawUrl)).pathname;
+            const url = new URL(String(rawUrl));
+            const path = url.pathname;
+            if (path === '/v4/connect/qualified/credential' && credentialRequest) {
+                return credentialRequest(url, init?.method ?? 'GET');
+            }
             if (path === '/v1/machines/read-batch') {
                 const machine = createMachineFixture({ id: 'vault-machine', activeAt: Date.now() });
                 const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
@@ -417,7 +423,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         readHistoryContent: () => historyContent,
         rotateServerContentKey() { serverCredentials = { ...serverCredentials, secret: encodeBase64(new Uint8Array(32).fill(25), 'base64url') }; },
         setPersistedMode(value: 'plain' | 'e2ee') { persistedMode = value; },
-        setEffect(value: typeof effect) { effect = value; } };
+        setEffect(value: typeof effect) { effect = value; }, setCredentialRequest(value: typeof credentialRequest) { credentialRequest = value; } };
 }
 
 function createTeamSecretRecipient() {
@@ -3827,6 +3833,54 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(inUse ? 0 : 1);
         if (!inUse) expect(account.writes[0]!.body).toMatchObject({ resourceId: 'resource-a', expectedRevision: 3,
             expectedSettingsVersion: 7, referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 3, rows: [] } } });
+    });
+
+    it('removes a pasted token resource through the Home action despite a stale credential profile', async () => {
+        const account = await openAccount('plain');
+        const { createUiConnectedServiceAction } = await import('@/sync/ops/actions/connectedServiceActionDeps');
+        const ref = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel' }, accountId: 'vercel-fixture' };
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        const resourceId = 'connection-created';
+        const independentId = 'independent';
+        const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+            ref, authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision,
+            configurationRevision: 'fixture-configuration', metadata: { scopes: [] },
+            content: { t: 'plain', v: { v: 1, values: {} } }, createdSavedSecretResourceIds: [resourceId],
+        });
+        const content = { v: 1 as const, name: 'Key', kind: 'token' as const, value: 'synthetic-token' };
+        for (const id of [resourceId, independentId]) {
+            account.materialRow(id, 'plain', sealSavedSecretResourceStoredContentV1({ resourceId: id, mode: 'plain', content }));
+        }
+        storage.getState().applyProfile(AccountProfileSchema.parse({ ...storage.getState().profile, connectedAccountsV4: [{
+            ref, authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned', credentialRevision,
+            configurationReady: true, configurationRevision: 'fixture-configuration', savedSecretResourceIds: [resourceId],
+        }] }));
+        let revoked = false;
+        account.setCredentialRequest((url, method) => {
+            if (method === 'DELETE') {
+                expect(url.searchParams.get('expectedCredentialRevision')).toBe(credentialRevision);
+                revoked = true;
+                return Response.json({ success: true });
+            }
+            expect(revoked).toBe(false);
+            return Response.json(snapshot);
+        });
+        account.setEffect((path, body) => {
+            expect(path).toBe(SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete']);
+            const input = SharedSavedSecretDeleteInputV1Schema.parse(body);
+            expect(revoked).toBe(true);
+            expect(input).toMatchObject({ resourceId, onlyIfUnshared: true });
+            account.resources.delete(input.resourceId);
+            return Response.json({ resourceId: input.resourceId });
+        });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const result = await createUiConnectedServiceAction(context)({ actionId: 'connectedServices.accounts.revoke',
+                input: { account: ref, expectedCredentialRevision: credentialRevision, cleanupGroupReferences: false },
+                context: { surface: 'ui', authority: 'present_user' } });
+            expect(result).toMatchObject({ status: 'revoked', account: ref });
+            expect([...account.resources.keys()]).toEqual([independentId]);
+        } finally { context.dispose(); }
     });
 
     it('keeps uncertain audience replacement visible for read-back recovery', async () => {

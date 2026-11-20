@@ -29,6 +29,10 @@ import { resolveLegacyServiceAccountTokenIdentityFields } from "./identity";
 import { createConnectedAccountCredentialSettlement } from '../../../../../../../../packages/cli-common/src/connectedAccounts/credentialSettlement';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerSavedSecretResourceRoutes } from '../../account/registerSavedSecretResourceRoutes';
+import { SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 const service = {
     pluginId: "example.connected-accounts",
@@ -126,6 +130,56 @@ describe("qualified Connected Account V4 credential routes", () => {
         accountId = ownerId;
         expect((await app.inject({ method: 'DELETE', url: deleteUrl })).json()).toEqual({ success: true });
         expect((await readQualifiedConnectedServiceCredential({ accountId: ownerId, ref })).status).toBe('not_found');
+    });
+
+    it('publishes pasted Vercel token provenance and admits deletion after the credential is revoked', async () => {
+        const app = createAuthenticatedTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        registerSavedSecretResourceRoutes(app);
+        const headers = { 'x-test-user-id': accountId };
+        const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel' }, accountId: 'vercel-fixture' };
+        const resourceId = 'b1a3016f-c866-410e-b7ef-5f64aff9c701';
+        const promotion = await app.inject({
+            method: 'POST', url: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote'], headers,
+            payload: {
+                resourceId, displayName: 'Access token', kind: 'apiKey', encryptionMode: 'plain',
+                storedContent: { t: 'plain', v: { v: 1, name: 'Access token', kind: 'apiKey', value: 'synthetic-token' } },
+                nextSettings: null, profileMutations: [], referenceCensus: { scope: 'catalogs', accountMode: 'plain', catalogs: {} },
+                connectedAccountCredentialMutation: {
+                    ref: account, authenticationModeId: 'token', expectedCredentialRevision: null, metadata: { scopes: [], kind: 'token' },
+                    savedSecretResourceIds: [resourceId],
+                    content: { t: 'plain', v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } } },
+                    initialConfiguration: { expectedConfigurationRevision: null,
+                        replacementContentEnvelope: { t: 'plain', v: { values: { teamId: 'team_fixture' }, secretRefs: {} } } },
+                },
+            },
+        });
+        expect(promotion.statusCode).toBe(200);
+        const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, account));
+        const readUrl = `/v4/connect/qualified/credential?ref=${encoded}`;
+        const read = await app.inject({ method: 'GET', url: readUrl, headers });
+        expect(read.statusCode).toBe(200);
+        const credential = read.json();
+        expect(credential).toMatchObject({ ref: account, createdSavedSecretResourceIds: [resourceId],
+            configurationRevision: expect.any(String) });
+        const { credentialRevision } = credential;
+        const revoke = await app.inject({
+            method: 'DELETE', url: `${readUrl}&expectedCredentialRevision=${credentialRevision}&cleanupGroupReferences=false`, headers,
+        });
+        expect(revoke.statusCode).toBe(200);
+        const deletion = await app.inject({
+            method: 'POST', url: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete'], headers,
+            payload: {
+                resourceId, expectedRevision: 1, expectedSettingsVersion: 0, onlyIfUnshared: true,
+                referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] },
+                    catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent',
+                        connectedPurposes: 'absent', registrySources: 'absent' } },
+            },
+        });
+        expect(deletion.json()).toEqual({ resourceId });
+        const catalog = await app.inject({ method: 'GET', url: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.list'], headers });
+        expect(catalog.json()).toEqual({ resources: [] });
     });
 
     it('replaces stored device material including refresh token and sign-in provenance on reconnect', async () => {

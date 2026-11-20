@@ -2191,6 +2191,7 @@ export function ConnectedAccountServiceView() {
         [connectedServicesRegistry.entries, params],
     );
     const [machineRequired, setMachineRequired] = React.useState(false);
+    const onMachineRequirementChange = React.useCallback((required: boolean) => setMachineRequired(required), []);
     const targetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
         { enabled: machineRequired || focusedRoute?.focus?.kind === 'account' },
@@ -2235,7 +2236,7 @@ export function ConnectedAccountServiceView() {
             connectedServicesRegistry={connectedServicesRegistry}
             activeServer={activeServer}
             targetSelection={targetSelection}
-            onMachineRequirementChange={setMachineRequired}
+            onMachineRequirementChange={onMachineRequirementChange}
             localizePluginText={localizePluginText}
             navigation={navigation}
         />
