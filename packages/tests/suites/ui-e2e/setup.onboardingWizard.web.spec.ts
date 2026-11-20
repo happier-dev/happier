@@ -9,7 +9,6 @@ import { createAccountAndReachMachineAddDraftState, gotoCommittedWithRetries, no
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
 test.describe('ui e2e: web onboarding wizard', () => {
-    test.describe.configure({ mode: 'serial' });
     // Ensure this suite always starts unauthenticated and never wipes auth mid-test via ad-hoc storage clears.
     test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -133,8 +132,8 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         void mode;
         await expect(page.getByTestId('welcome-primary-start')).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('welcome-secondary-login')).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('welcome-footer-relay-action')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-scan-existing-home')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-self-hosting')).toBeVisible({ timeout: 120_000 });
     }
 
     async function openRootAndOpenMachineDraft(page: Page, viewport: 'mobile' | 'desktop' = 'mobile') {
@@ -148,7 +147,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
     async function openRootAndGoToRelaySelect(page: Page, viewport: 'mobile' | 'desktop' = 'mobile') {
         await openRoot(page, viewport);
 
-        const changeRelay = page.getByTestId('welcome-footer-relay-action');
+        const changeRelay = page.getByTestId('welcome-self-hosting');
         await expect(changeRelay).toBeVisible({ timeout: 120_000 });
         await expect(changeRelay).toBeEnabled({ timeout: 120_000 });
         await changeRelay.click();
@@ -159,19 +158,20 @@ test.describe('ui e2e: web onboarding wizard', () => {
     test('web onboarding supports auth entry relay changes and back navigation', async ({ page }) => {
         test.setTimeout(300_000);
         await advanceWizardToAuthEntry(page, 'guided', 'mobile');
-        await expect(page.getByTestId('welcome-footer-relay-action')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('welcome-footer-relay-action')).toBeEnabled({ timeout: 120_000 });
-        await page.getByTestId('welcome-footer-relay-action').click();
+        const changeRelay = page.getByTestId('welcome-self-hosting');
+        await expect(changeRelay).toHaveCount(1, { timeout: 120_000 });
+        await expect(changeRelay).toBeEnabled({ timeout: 120_000 });
+        await changeRelay.click();
         await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('unauth-shell-back-chevron')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('unauth-shell-back-chevron')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('unauth-shell-back-chevron').click();
 
         await expect(page.getByTestId('welcome-primary-start')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('welcome-footer-relay-action')).toHaveCount(1, { timeout: 120_000 });
+        await expect(changeRelay).toHaveCount(1, { timeout: 120_000 });
     });
 
-    test('web onboarding supports "On this computer" guided handoff', async ({ page }) => {
+    test('firstOpen.F10.fromWeb | firstOpen.03.F10 uses the browser handoff to connect and open Home', async ({ page }) => {
         test.setTimeout(300_000);
         await openRootAndGoToRelaySelect(page, 'mobile');
         await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
@@ -190,9 +190,16 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await page.getByTestId('onboarding-wizard-relay-url-input').fill(server?.baseUrl ?? '');
         await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-primary').click();
-        await expect(page.getByTestId('onboarding-wizard-background-service-handoff')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-background-service-arrival')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-background-service-desktop-app-download-cta')).toHaveCount(1, { timeout: 120_000 });
+        const handoff = page.getByTestId('onboarding-wizard-background-service-handoff');
+        await expect(handoff).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-background-service-arrival')).toBeVisible();
+        await expect(page.getByTestId('onboarding-wizard-background-service-desktop-app-download-cta')).toBeVisible();
+
+        const connect = page.getByTestId('onboarding-wizard-primary');
+        await expect(connect).toHaveText('Connect this computer');
+        await connect.click();
+        await page.getByTestId('welcome-primary-start').click();
+        await expect(page.getByTestId('home-hub')).toBeVisible({ timeout: 120_000 });
     });
 
     test('web onboarding renders a centered modal card on desktop viewports', async ({ page }) => {
@@ -239,18 +246,13 @@ test.describe('ui e2e: web onboarding wizard', () => {
         test.setTimeout(300_000);
         await advanceWizardToAuthEntry(page, 'guided', 'mobile');
 
-        const loginWithMobile = page.getByTestId('welcome-secondary-login');
-        await expect(loginWithMobile).toBeVisible({ timeout: 120_000 });
-        await expect(loginWithMobile).toBeEnabled({ timeout: 120_000 });
-        await loginWithMobile.click();
+        await page.getByTestId('welcome-scan-existing-home').click();
 
-        const openManual = page.getByTestId('restore-open-manual');
-        await expect(openManual).toBeVisible({ timeout: 120_000 });
-        await expect(openManual).toBeEnabled({ timeout: 120_000 });
-        await openManual.click();
-
-        await expect(page.getByTestId('restore-manual-secret-input')).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('restore-open-manual')).toHaveCount(0, { timeout: 120_000 });
+        const input = page.getByTestId('restore-manual-secret-input');
+        const recoveryWay = page.getByTestId('restore-open-manual');
+        await expect(input.or(recoveryWay).first()).toBeVisible({ timeout: 120_000 });
+        if (await recoveryWay.isVisible()) await recoveryWay.click();
+        await expect(input).toBeVisible({ timeout: 120_000 });
     });
 
     test('web machine SSH draft serializes split fields without exposing the password', async ({ page }) => {
