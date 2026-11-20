@@ -118,7 +118,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
       { scope: 'child', kind: 'mount', title: 'Workspace', details: ['A separate named volume at /workspace for this Machine; retained when rebuilding or deleting its container. Its root is assigned to the image user; existing file ownership is retained.'] },
       { scope: 'child', kind: 'lifecycle', title: 'Container startup', details: ['The image entrypoint and command are replaced by an idle shell; Dev Containers metadata hooks are not evaluated.'] },
     ];
-    if (source.setupScript) effects.push({ scope: 'child', kind: 'lifecycle', title: 'Setup script', details: [source.setupScript] });
+    if (source.setupScript) effects.push({ scope: 'child', kind: 'lifecycle', title: 'Container script', details: [source.setupScript] });
     if (strings(imageConfig.User).length) effects.push({ scope: 'child', kind: 'user', title: 'Image user', details: strings(imageConfig.User) });
     const keys = strings(imageConfig.Env).map(value => value.split('=', 1)[0]!).filter(Boolean);
     if (keys.length) effects.push({ scope: 'child', kind: 'environment', title: 'Image environment', details: keys });
