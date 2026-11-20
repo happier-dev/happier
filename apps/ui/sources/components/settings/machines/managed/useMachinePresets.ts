@@ -165,12 +165,13 @@ export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: 
     serverId: string; homeId: string | null; presetId?: string; binding: ServerCredentialAccountScopeBinding | null;
     resolution: ServerCredentialAccountScopeResolution;
     read: ((options: MachinePresetCollectionOptions<T>) => Promise<MachinePresetCollectionSettledResult<T>>) | null;
+    includeManagedHistory?: boolean;
     refreshRevision?: number;
     onApprovalPending?: (approval: ActionApprovalRegistration) => void;
     onAccessLost?: (code: string) => void;
     onInvalidated?: () => void;
 }>) {
-    const { serverId, homeId, presetId, binding, resolution, read, refreshRevision } = input;
+    const { serverId, homeId, presetId, binding, resolution, read, refreshRevision, includeManagedHistory = false } = input;
     const presented = useLayoutPresentationActive();
     // Credential revisions cancel custody; only the exact Home/Account identifies retained presentation.
     const queryKey = JSON.stringify([serverId, homeId, resolution.kind === 'bound' ? resolution.scope : null, presetId]);
@@ -227,6 +228,8 @@ export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: 
     const selectedPreset = retainedValue && ('preset' in retainedValue ? retainedValue.preset : retainedValue);
     React.useEffect(() => presented ? subscribeHomeAccountChange(event => {
         if (event.machineResourcesAffect === false) return;
+        // History can gain a new row for this preset even when none of its existing ids changed.
+        if (event.managedMachineRowsOnly && !includeManagedHistory) return;
         if (!presetId || !areServerProfileIdentifiersEquivalent(serverId, event.serverId)) return;
         // Only this preset's controller contributes live availability; unknown and recovery wakes still refresh.
         if (selectedPreset && event.source === 'socket' && event.changeKinds?.length
@@ -237,7 +240,7 @@ export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: 
         pendingRead.current?.abort();
         callbacks.current.onInvalidated?.();
         refresh();
-    }, { reconnect: 'refresh' }) : undefined, [presented, serverId, presetId, selectedPreset]);
+    }, { reconnect: 'refresh' }) : undefined, [presented, serverId, presetId, selectedPreset, includeManagedHistory]);
     const sameScope = resolution.kind === 'bound' && state.queryKey === queryKey;
     return { sameScope, state: !homeId
         ? { queryKey, value: null, loading: false, error: 'server_identity_unavailable' }
@@ -500,7 +503,8 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
         [binding, homeId]);
     const read = React.useMemo(() => client ? (options: MachinePresetCollectionOptions<MachinePresetHistoryData>) => client.detail(presetId, options) : null,
         [client, presetId]);
-    const { state, setState, queryKey, refresh, refreshRevision } = useMachinePresetQuery({ serverId, homeId, presetId, binding, resolution, read, onApprovalPending });
+    const { state, setState, queryKey, refresh, refreshRevision } = useMachinePresetQuery({ serverId, homeId, presetId, binding, resolution,
+        read, onApprovalPending, includeManagedHistory: true });
 
     // Archive, restore and the page's in-place edits are one reviewed write of the visible revision.
     const mutate = React.useCallback(async (request: (preset: OpenedManagedMachinePresetV1, homeId: string) => PresetDetailMutation): Promise<MachinePresetCollectionResult<PresetMutationResultV1>> => {

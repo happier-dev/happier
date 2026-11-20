@@ -111,6 +111,8 @@ export type HomeAccountChangeEvent = Readonly<{
     managedMachineInventoryAffect?: boolean;
     /** Canonical planner row ids; absent remains a full inventory recovery. */
     managedMachineChangedIds?: readonly string[];
+    /** Every reported change is an addressed managed row, with no preset or authority changes mixed in. */
+    managedMachineRowsOnly?: true;
     /** Exact producer domain fact; absence retains Discussion access/recovery revalidation. */
     discussionAffects?: boolean;
     /** Exact resource/source/access producer fact; absence stays conservative. */
@@ -532,6 +534,10 @@ export function publishHomeAccountChangeForRouting(
     const definitionsAffect = details?.source === 'connected' || details?.source === 'snapshot'
         || (!disclosureOnly && (coarse
             || (workflowDefinitionsAffect ?? accountChangeKindsAffectWorkflowDefinitions(changeKinds))));
+    const managedMachineChangedIds = details?.source !== 'connected' && details?.source !== 'snapshot' && !unknownKinds
+        && details?.managedMachineChangedIds !== undefined ? new Set(details.managedMachineChangedIds) : undefined;
+    const managedMachineRowsOnly = managedMachineChangedIds?.size && rawKinds?.length && rawKinds.every(kind => kind === 'account')
+        && entityIds?.length && entityIds.every(id => managedMachineChangedIds.has(id));
     const event = Object.freeze({
         serverId,
         publicProfileAffects,
@@ -579,9 +585,8 @@ export function publishHomeAccountChangeForRouting(
             // The managed list is a Machine resource: a producer that rules Machine resources out rules it out too.
             || (details?.managedMachineInventoryAffect ?? (details?.machineResourcesAffect === false ? false
                 : accountChangeKindsAffectManagedMachineInventory(rawKinds, entityIds))),
-        ...(details?.source !== 'connected' && details?.source !== 'snapshot' && !unknownKinds
-            && details?.managedMachineChangedIds !== undefined
-            ? { managedMachineChangedIds: Object.freeze([...new Set(details.managedMachineChangedIds)]) } : {}),
+        ...(managedMachineChangedIds ? { managedMachineChangedIds: Object.freeze([...managedMachineChangedIds]) } : {}),
+        ...(managedMachineRowsOnly ? { managedMachineRowsOnly: true as const } : {}),
         // Preserve the producer's exact non-Discussion fact even when other
         // Account consumers still need a conservative, content-free wake.
         ...(details?.discussionAffects !== undefined ? { discussionAffects: details.discussionAffects }

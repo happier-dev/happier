@@ -500,6 +500,36 @@ describe('preset collection and history through Actions', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('skips exact preset reads for managed-row-only pages and refreshes mixed and recovery changes', async () => {
+        const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const answer = (revision: number) => harness.answer(serverId, '/v1/machines/presets/get',
+            { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture({ ...preset, revision }) } });
+        answer(preset.revision);
+        const hook = await renderHook(() => useMachinePreset(serverId, preset.id));
+        const reads = () => harness.requestsFor('/v1/machines/presets/get').length;
+        const rowId = 'another-managed-machine';
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().state.value?.revision).toBe(preset.revision));
+
+            await act(async () => publishHomeAccountChange(serverId, [rowId], {
+                feedPageConsumed: true, changeKinds: ['account'], managedMachineChangedIds: [rowId],
+            }));
+            await flushHookEffects({ cycles: 30 });
+            expect(reads()).toBe(1);
+
+            answer(preset.revision + 1);
+            await act(async () => publishHomeAccountChange(serverId, [rowId, MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], {
+                feedPageConsumed: true, changeKinds: ['account'], managedMachineChangedIds: [rowId],
+            }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().state.value?.revision).toBe(preset.revision + 1));
+            expect(reads()).toBe(2);
+
+            await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected' }));
+            await waitForHomeGovernance(() => expect(reads()).toBe(3));
+        } finally { await hook.unmount(); }
+    });
+
     it('refreshes the saved controller label on a title-only content edit while keeping toggles independent', async () => {
         const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
