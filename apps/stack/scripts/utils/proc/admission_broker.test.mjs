@@ -1097,6 +1097,18 @@ const priorityIdentity = (root, kind) => ({
     component: 'packages/iroh-native', entry: 'cargo build' },
   claimedPreparation: { className: 'compilation', preparesClass: 'focused-validation-cli', component: '.', entry: 'node scripts/build.mjs' },
 })[kind];
+// Use GiB-sized fixtures so the modeled web export remains a viable producer
+// when testing priority separately from capacity.
+const priorityMemory = units => units * 256 * 1024;
+async function priorityFixture(t) {
+  const memory = { availableMemoryKiB: priorityMemory(100), totalMemoryKiB: priorityMemory(100) };
+  const result = await fixture(t, { readMemory: () => memory });
+  const { className, component, entry } = priorityIdentity(result.root, 'export');
+  const key = JSON.stringify([className, component, entry, []]);
+  await writeFile(join(result.root, 'identity-kernel-peaks.json'), JSON.stringify({ [key]: [priorityMemory(60)] }));
+  return result;
+}
+
 for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
   ['rolling HEAD typecheck before an earlier ordinary job', 'ordinary', 'rolling', true],
@@ -1117,21 +1129,21 @@ for (const [scenario, earlier, later, laterFirst] of [
   ['only a preparation class takes the rank of the run it prepares', 'ordinary', 'claimedPreparation', false],
 ]) {
   test(`head priority: ${scenario}`, linux, async t => {
-    const { root } = await fixture(t);
-    const large = await (await acquire(root, 70, t)).admit();
-    const small = await (await acquire(root, 30, t)).admit();
-    const first = await acquire(root, 60, t, priorityIdentity(root, earlier));
-    const second = await acquire(root, 60, t, priorityIdentity(root, later));
+    const { root } = await priorityFixture(t);
+    const large = await (await acquire(root, priorityMemory(70), t)).admit();
+    const small = await (await acquire(root, priorityMemory(30), t)).admit();
+    const first = await acquire(root, priorityMemory(60), t, priorityIdentity(root, earlier));
+    const second = await acquire(root, priorityMemory(60), t, priorityIdentity(root, later));
     const pledging = laterFirst || earlier !== 'ordinary';
     await small.release();
     const pledged = await requestAdmissionSample(root);
     assert.equal(pledged.head.headPriority > 0, pledging, 'the sample names a priority head');
     assert.equal(pledged.head.reservationActive, pledging, 'a priority head pledges releases at once, without the aging bound');
     const producerHead = ['producer', 'export', 'devUi', 'reload', 'gate'].includes(laterFirst ? later : earlier);
-    assert.equal(pledged.head.reservationKiB, !pledging ? 0 : producerHead ? 60 : 30,
+    assert.equal(pledged.head.reservationKiB, priorityMemory(!pledging ? 0 : producerHead ? 60 : 30),
       'a producer head holds its whole floor; other priority heads hold released memory');
     assert.equal(pledged.waitingCount, 2, 'floors still apply: neither 60-unit waiter starts in 30 free units');
-    const follower = await acquire(root, 5, t, { noWait: true });
+    const follower = await acquire(root, priorityMemory(5), t, { noWait: true });
     if (pledging) assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY', 'ordinary backfills cannot spend the priority pledge');
     else await follower.admit();
     await large.release();
@@ -1163,12 +1175,12 @@ test('a waiter past the reservation bound heads the queue ahead of later priorit
   // so rank-0 package-dist and native-custody waiters sat 2.5 h behind them and never
   // reserved. Owner 2026-11-13: once a waiter has waited past the bound it gets a
   // guaranteed start; within the bound ranks still order the queue.
-  const { root } = await fixture(t);
-  const holder = await (await acquire(root, 100, t)).admit();
-  const overdue = await acquire(root, 60, t, { ...priorityIdentity(root, 'ordinary'), arrivedAt: Date.now() - headReservationDelayMs });
-  const focused = await acquire(root, 60, t, priorityIdentity(root, 'focused'));
+  const { root } = await priorityFixture(t);
+  const holder = await (await acquire(root, priorityMemory(100), t)).admit();
+  const overdue = await acquire(root, priorityMemory(60), t, { ...priorityIdentity(root, 'ordinary'), arrivedAt: Date.now() - headReservationDelayMs });
+  const focused = await acquire(root, priorityMemory(60), t, priorityIdentity(root, 'focused'));
   // A relocatable producer (source bundles are host-bound and may use any pledge first).
-  const producer = await acquire(root, 60, t, priorityIdentity(root, 'export'));
+  const producer = await acquire(root, priorityMemory(60), t, priorityIdentity(root, 'export'));
   const sample = await requestAdmissionSample(root);
   assert.equal(sample.head.headPriority, 0, 'the overdue ordinary waiter is the head');
   assert.equal(sample.head.reservationActive, true);
