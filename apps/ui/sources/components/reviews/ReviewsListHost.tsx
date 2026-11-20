@@ -27,9 +27,9 @@ import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionE
 import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
+import { reviewStateLabel } from './list/reviewStateLabel';
 import {
     reviewSpaceTakesMembers,
-    reviewStateLabel,
     reviewSubjectLabel,
     useReviewSpaceMembership,
     useReviewsCollectionView,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { reviewStateLabel } from './reviewStateLabel';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
 import { createDefaultCollectionSpaceV1, type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import type {
@@ -82,21 +83,6 @@ export function reviewRowWords(item: ReviewListItemV1, title: string | null | un
     reviewSubjectLabel(item.subjectKind),
     reviewStateLabel(item.state),
   ].join(' ');
-}
-
-export function reviewStateLabel(state: ReviewListItemV1['state']): string {
-  switch (state) {
-    case 'running':
-      return t('reviewWalkthrough.collection.stateRunning');
-    case 'partial':
-      return t('reviewWalkthrough.collection.statePartial');
-    case 'failed':
-      return t('reviewWalkthrough.collection.stateFailed');
-    case 'cancelled':
-      return t('reviewWalkthrough.collection.stateCancelled');
-    case 'completed':
-      return t('reviewWalkthrough.collection.stateCompleted');
-  }
 }
 
 /**

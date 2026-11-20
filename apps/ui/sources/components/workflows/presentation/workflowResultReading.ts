@@ -1,6 +1,9 @@
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { t } from '@/text';
+import { ReviewGetResponseV1Schema, type ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import { reviewStateLabel } from '@/components/reviews/list/reviewStateLabel';
+import { getPreferredLanguage, t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatWorkflowFieldLabel } from './workflowValuePresentation';
 
 /** One label/value line of a result read as words (lab `run-A_completed` Final output). */
@@ -80,6 +83,22 @@ function readResults(results: JsonObject): string {
     .join('\n');
 }
 
+function readReviewResultRows(review: ReviewListItemV1): readonly WorkflowResultReadingRow[] {
+  const rows = [
+    { key: 'state', label: formatWorkflowFieldLabel('state'), text: reviewStateLabel(review.state) },
+    { key: 'round', label: formatWorkflowFieldLabel('round'), text: String(review.currentRoundOrdinal) },
+    { key: 'findings', label: formatWorkflowFieldLabel('findings'),
+      text: t('reviewWalkthrough.detail.findingsCount', { count: review.counts.total }) },
+  ];
+  for (const key of ['startedAt', 'finishedAt'] as const) {
+    const timestamp = review[key];
+    if (timestamp === null) continue;
+    const text = formatWithCachedDateTimeFormatter(timestamp, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' });
+    rows.push({ key, label: formatWorkflowFieldLabel(key), text });
+  }
+  return rows;
+}
+
 /**
  * A structured result as label/value rows: an object by its fields, a list one row per item (a for-each
  * or parallel result by its item or branch). `null` for a scalar, which reads as itself. Field labels come
@@ -108,6 +127,10 @@ export function readWorkflowResultRows(
     });
   }
   if (!isObject(value)) return null;
+  if (value.review !== undefined && value.human !== undefined) {
+    const review = ReviewGetResponseV1Schema.safeParse(value);
+    if (review.success) return readReviewResultRows(review.data.review);
+  }
   // Authored fields in declaration order, then any additional published values.
   const names = [
     ...new Set([...Object.keys(fieldTitles ?? {}), ...Object.keys(value)]),
