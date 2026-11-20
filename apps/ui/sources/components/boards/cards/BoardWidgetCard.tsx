@@ -18,6 +18,7 @@ import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWi
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { readWidgetSourcePluginName, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntityComposerMention';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -42,6 +43,7 @@ export type BoardWidgetCardProps = Readonly<{
     placement: WorkBoardWidgetPlacementV1;
     /** Runtime routing from the Board's current binding, never its retained placement label. */
     scope: WidgetSurfaceRefV1 | null;
+    admittedViewer?: ServerAccountScope;
     /** The parent's current header projection, shared with Canvas sizing. */
     descriptor: WidgetCandidate | null;
     size: WidgetSizeV1;
@@ -66,7 +68,7 @@ export type BoardWidgetCardProps = Readonly<{
  * through the Board's one WorkBoard intent owner.
  */
 export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardWidgetCardProps) {
-    const { placement, boardId, dispatch } = props;
+    const { placement, boardId, dispatch, admittedViewer } = props;
     const { instance } = placement;
     const appRuntime = useAppShellPluginUiProjectionCurrentness();
     const scope = props.scope;
@@ -83,7 +85,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
     const inputs = useWidgetInputsEditor({
         instance, candidate, scope, context: NO_CONTEXT, audience: 'personal', setInputs, testID: props.testID,
     });
-    const definition = useWidgetDefinitionFlows({ instance, scope, anchorRef: inputs.anchorRef, editInputs: inputs.editInputs, testID: props.testID });
+    const definition = useWidgetDefinitionFlows({ instance, scope, admittedViewer, anchorRef: inputs.anchorRef, editInputs: inputs.editInputs, testID: props.testID });
     const title = resolveWidgetInstanceTitle(instance, candidate);
     const { title: frameTitle, onDefinitionRead } = useWidgetFrameTitle(instance, candidate);
     const rename = useWidgetFrameRename({
@@ -139,6 +141,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
         children: props.active && scope ? (
             <View onLayout={onBodyLayout}><WidgetSurface
                 scope={scope}
+                admittedViewer={admittedViewer}
                 instance={instance}
                 descriptor={candidate}
                 providedContext={NO_CONTEXT}
@@ -151,7 +154,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                 testID={`${props.testID}.widget`}
             /></View>
         ) : <View testID={`${props.testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, onDefinitionRead, props.active, props.testID, scope, size]);
+    }), [admittedViewer, appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, onDefinitionRead, props.active, props.testID, scope, size]);
 
     return (
         <>

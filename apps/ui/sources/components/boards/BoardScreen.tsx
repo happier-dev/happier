@@ -32,6 +32,7 @@ import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { storage } from '@/sync/domains/state/storage';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -304,7 +305,11 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     }, [binding, targetId, getBounds]);
 
     // ---- configured widgets (lab `dashboards` L1, G1): one writer, the Board's widget intents ----
-    const widgetSurface = React.useMemo(() => binding ? workBoardWidgetSurface(binding.scope, board.id) : null, [binding, board.id]);
+    const boardOwnerAccountId = storage(state => state.artifacts[board.id]?.ownerAccountId);
+    const admittedViewer = binding?.scope;
+    const widgetSurface = React.useMemo(() => admittedViewer && boardOwnerAccountId
+        ? workBoardWidgetSurface({ serverId: admittedViewer.serverId, accountId: boardOwnerAccountId }, board.id)
+        : null, [admittedViewer, board.id, boardOwnerAccountId]);
     const widgetInstances = React.useMemo(() => widgets.map(placement => placement.instance), [widgets]);
     /** Copies this device added: their arrival is no news, and only someone else's arrival offers Undo. */
     const ownAdds = React.useRef(new Set<string>());
@@ -337,14 +342,12 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
         placement,
     })), [widgetDescriptors, widgets]);
     const arrivals = useBoardWidgetArrivals(board.id, ownAdds.current, dispatchIntent);
-    const widgetRuntimeScopes = React.useMemo(() => widgets.map(placement => widgetSurface
-        ? { ...placement.ref.surface, serverId: widgetSurface.serverId }
-        : null), [widgets, widgetSurface]);
     const renderWidget = React.useCallback<BoardCanvasWidgetRender>((widget, state) => (
         <BoardWidgetCard
             boardId={board.id}
             placement={widget.placement}
-            scope={widgetRuntimeScopes[widgets.indexOf(widget.placement)] ?? null}
+            scope={widgetSurface}
+            admittedViewer={admittedViewer}
             descriptor={widgetDescriptors[widgets.indexOf(widget.placement)] ?? null}
             size={widget.size!}
             index={widgets.indexOf(widget.placement)}
@@ -355,7 +358,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             fresh={arrivals.arrived.has(widget.placement.instance.id)}
             testID={`board-widget:${widget.placement.instance.id}`}
         />
-    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgetDescriptors, widgetRuntimeScopes, widgets]);
+    ), [admittedViewer, arrivals.arrived, board.id, dispatchIntent, routeFocused, widgetDescriptors, widgetSurface, widgets]);
 
     const onRemoveItem = React.useCallback((ref: BoardItemRefV1) => {
         dispatch({

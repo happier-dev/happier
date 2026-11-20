@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -6,12 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { buildWorkBoardArtifactHeaderV1} from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import { buildWorkBoardItemKeyV1, createWorkBoardV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { WidgetDefinitionV1Schema, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -32,26 +35,34 @@ await import('@/sync/syncEngine');
 
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 let restoreBrowserLocks: ReturnType<typeof installBrowserStorageLockBoundary>;
-beforeEach(() => { restoreBrowserLocks = installBrowserStorageLockBoundary(); });
+beforeEach(async () => {
+    restoreBrowserLocks = installBrowserStorageLockBoundary();
+    await prepareSessionDraftPersistenceStorage();
+});
 afterEach(async () => {
     try { await standardCleanup(); await home?.dispose(); }
     finally { home = undefined; viewport.width = 390; viewport.height = 844; restoreBrowserLocks(); }
 });
 
 async function mountBoard(source?: WorkBoardV1['source'], prepare?: (serverId: string) => void,
-    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>, desktop = false) {
+    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>, desktop = false, sharedWidget?: WidgetDefinitionV1) {
     if (desktop) { viewport.width = 1440; viewport.height = 900; }
     // This fixture admits an Account directly instead of starting unrelated cold Sync
     // acquisitions. All Board reads, codecs, navigation and overlay owners remain real.
-    home = await createPlainArtifactHomeFixture('https://board-phone.test', { accountId: 'owner', ...(handleRequest ? { handleRequest } : {}) });
+    home = await createPlainArtifactHomeFixture('https://board-phone.test', { accountId: sharedWidget ? 'viewer' : 'owner', ...(handleRequest ? { handleRequest } : {}) });
     prepare?.(home.home.id);
     const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'qa43-board', name: 'QA43 Board' }), ...(desktop ? { mode: 'by_status' as const } : {}), ...(source ? { source } : {}) };
+    const storedBoard: WorkBoardV1 = sharedWidget ? { ...board, widgets: [{ kind: 'widget', size: 'medium',
+        ref: { surface: { serverId: home.home.id, accountId: 'owner', owner: { kind: 'workBoard', boardId: board.id } }, instanceId: sharedWidget.id },
+        instance: { v: 1, id: sharedWidget.id, definition: { kind: 'inline', definition: sharedWidget }, bindings: {} },
+    }] } : board;
     home.boundary.replaceStoredRow({
-        id: board.id, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
-        body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }),
+        id: board.id, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(storedBoard)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(storedBoard) }),
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
         seq: 1, createdAt: 1, updatedAt: 1, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
     });
+    if (sharedWidget) home.boundary.seedAccountGrant(board.id, 'viewer', 'edit');
     const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
     const container = document.createElement('div');
     document.body.append(container);
@@ -78,6 +89,24 @@ async function mountBoard(source?: WorkBoardV1['source'], prepare?: (serverId: s
     } };
     return { serverId: home.home.id, find, expectReady, press, measure, navigation, dispose: async () => { await act(async () => root.unmount()); container.remove(); } };
 }
+
+it('renders the shared inline widget inside a Work Board opened by another Account', async () => {
+    const widget = WidgetDefinitionV1Schema.parse({ v: 1, id: 'shared-board-widget', name: 'Shared widget',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] },
+        inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } },
+        body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'The shared body rendered' } } },
+    });
+    const screen = await mountBoard(undefined, undefined, undefined, true, widget);
+    try {
+        const cardId = `board-widget:${widget.id}`;
+        await screen.expectReady(cardId);
+        await screen.measure();
+        await waitForHomeGovernance(async () => {
+            await act(async () => {});
+            expect(screen.find(cardId)?.textContent).toContain('The shared body rendered');
+        });
+    } finally { await screen.dispose(); }
+});
 
 describe('Opening a Board card', () => {
     const sessionRef = (id: string) => ({ kind: 'session' as const, qualifiedId: { serverId: 'https://board-phone.test', id } });
