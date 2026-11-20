@@ -3,7 +3,7 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRenderCommitCounter, createSessionListRenderableSessionFixture, flattenTestStyle, installBrowserStorageLockBoundary, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { HorizontalSafeArea } from '@/components/navigation/safeArea/horizontalSafeAreaGeometry';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -398,12 +398,9 @@ describe('WorkspaceShell retained member layer', () => {
             perSwitch.push({ a: delta('a'), aHost: parkedHostProps() === hostBefore ? 0 : 1, b: delta('b'), c: delta('c'), commits: commits.read().commits });
         }
         stop();
-        // Budget measured on 2026-11-15 (P03-REGRESSION-GUARDS): the parked tab 'a' is neither shown nor hidden by
-        // these switches, so neither its retained host nor its body renders; the shown and hidden bodies render once each (focus/visibility),
-        // in 4 shell commits. Growth in any count is a regression in the retained-tab owner, not noise.
-        // 2026-11-16 (W2, UI refinements ruling 00:44Z): the press commits the strip first and the reveal follows in
-        // its own deferred commits (4 -> 6); each body still renders exactly once per switch.
-        expect(perSwitch).toEqual(Array.from({ length: 4 }, () => ({ a: 0, aHost: 0, b: 1, c: 1, commits: 6 })));
+        // Programmatic activation publishes at transition priority (9389dc83e49). It takes four shell
+        // commits, with one render each for the shown and hidden bodies and zero work for the parked tab.
+        expect(perSwitch).toEqual(Array.from({ length: 4 }, () => ({ a: 0, aHost: 0, b: 1, c: 1, commits: 4 })));
     });
 
     it('paints the pressed tab before the revealed body commits, with the owner current at once', async () => {
@@ -421,7 +418,9 @@ describe('WorkspaceShell retained member layer', () => {
             const shown = screen.root.findAllByType('StatefulRouteBodyProbe').filter(node => node.props.focused).map(node => node.props.tabId);
             frames.push({ strip, shown, owner: stateOf(screen).groups['group:1'].activeTabId });
         });
-        await act(async () => { navigation.activateTab('group:1', 'b'); });
+        // Exercise the strip's real press and registered Action. Direct activateTab instead enters the
+        // transition-priority programmatic path (9389dc83e49).
+        await screen.pressByTestIdAsync('workspace-tab-b');
         await settle(() => { expect(screen.root.findAllByType('StatefulRouteBodyProbe').filter(node => node.props.focused)
             .map(node => node.props.tabId)).toEqual(['b']); });
         stop();
@@ -599,7 +598,9 @@ describe('WorkspaceShell tab scale', () => {
                 const rows = storage.getState().sessionListRowsByServerId;
                 storage.setState({ sessionListRowsByServerId: { ...rows, [home]: { ...rows[home],
                     'scale-0': createSessionListRenderableSessionFixture({ id: 'scale-0', active: true,
-                        activeAt: Date.now(), presence: 'online', latestTurnStatus: 'in_progress' }),
+                        // Authored turns settle through lifecycle updates (84295765005). Only this
+                        // observed thinking signal should expire and wake the strip on its own.
+                        activeAt: Date.now(), presence: 'online', thinking: true, thinkingAt: Date.now() }),
                 } } });
             });
             const changed = readCounts();
@@ -711,6 +712,9 @@ describe('WorkspaceShell', () => {
         expect(minimum().width).toBe(420);
     });
     it('shows the registered split-down shortcut in the tab menu and withdraws it when shortcuts are disabled', async () => {
+        // DropdownMenu shows key hints only on hardware-keyboard surfaces (dc841a167713).
+        vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: fine)' }));
+        onTestFinished(() => { vi.unstubAllGlobals(); });
         const { KeyHint } = await import('@/components/ui/keyboard/KeyHint');
         const screen = await renderWorkspace(initialState());
         const tab = screen.findAllByTestId('workspace-tab-a').find(node => typeof node.props.onLongPress === 'function');
