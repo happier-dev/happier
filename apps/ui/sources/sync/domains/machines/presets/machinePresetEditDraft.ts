@@ -14,7 +14,7 @@ export type MachinePresetCreationDraft = Readonly<{ launch: NonNullable<ManagedM
     & Pick<ManagedMachinePresetV1, 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage' | 'simultaneousLimit'>;
 
 /** Editing intent, not a persisted record or an admitted creation receipt. */
-export type MachinePresetEditDraft = Readonly<Pick<ManagedMachinePresetContentV1, 'name' | 'setup' | 'preparation' | 'projectFiles'> & {
+export type MachinePresetEditDraft = Readonly<Pick<ManagedMachinePresetContentV1, 'name' | 'setup' | 'preparation' | 'projectFiles' | 'credentialBroker'> & {
     /** Undefined deliberately removes creation; the CRUD owner must clear both persisted fields. */
     creation?: MachinePresetCreationDraft;
 }>;
@@ -48,7 +48,9 @@ export function machinePresetEditDraftContent(draft: MachinePresetEditDraft): Pi
             ...(creation ? { launch: creation.launch } : {}),
             ...(draft.setup === undefined ? {} : { setup: draft.setup }),
             ...(draft.preparation === undefined ? {} : { preparation: draft.preparation }),
-            ...(draft.projectFiles === undefined ? {} : { projectFiles: draft.projectFiles }) },
+            ...(draft.projectFiles === undefined ? {} : { projectFiles: draft.projectFiles }),
+            // Opt-in only: omitted and false both leave the new guest without the Credential broker role.
+            ...(draft.credentialBroker === true ? { credentialBroker: true } : {}) },
         ...(creation ? {
             ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId }
                 : creation.controller ? { controller: creation.controller } : {}),
@@ -72,13 +74,14 @@ export function machinePresetEditDraftUpdatePatch(draft: MachinePresetEditDraft)
 }
 
 /** A preset's own choices under a new name, for Duplicate: its setup, image and creation choices, never its id or history. */
-export function machinePresetCopyDraft(preset: Readonly<Pick<ManagedMachinePresetContentV1, 'launch' | 'setup' | 'preparation' | 'projectFiles'>
+export function machinePresetCopyDraft(preset: Readonly<Pick<ManagedMachinePresetContentV1, 'launch' | 'setup' | 'preparation' | 'projectFiles' | 'credentialBroker'>
     & Pick<ManagedMachinePresetV1, 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage' | 'simultaneousLimit'>>,
     name: string): MachinePresetEditDraft {
     return { name,
         ...(preset.setup == null ? {} : { setup: preset.setup }),
         ...(preset.preparation == null ? {} : { preparation: preset.preparation }),
         ...(preset.projectFiles == null ? {} : { projectFiles: preset.projectFiles }),
+        ...(preset.credentialBroker === true ? { credentialBroker: true } : {}),
         ...(preset.launch ? { creation: { launch: preset.launch,
             ...(preset.controllerPoolId ? { controllerPoolId: preset.controllerPoolId }
                 : preset.controller ? { controller: preset.controller } : {}),

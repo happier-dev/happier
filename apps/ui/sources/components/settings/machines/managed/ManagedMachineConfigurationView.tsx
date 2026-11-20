@@ -793,7 +793,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     const save = async () => {
         if (!saveLaunch || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
+        // Editing this preset's choices keeps the private content this editor doesn't show (Project files, Credential broker):
+        // the update replaces the whole private body.
+        const kept = draft?.preset && preset?.id === draft.preset.id ? preset : null;
         const saveDraft: MachinePresetEditDraft = { name: saveLaunch.name, setup: draft?.setup,
+            ...(kept?.projectFiles ? { projectFiles: kept.projectFiles } : {}),
+            ...(kept?.credentialBroker === true ? { credentialBroker: true } : {}),
             creation: { launch: saveLaunch, ...(draft?.controllerPoolId ? { controllerPoolId: draft.controllerPoolId }
                 : { controller: props.presetOnly ? draft?.controller : facts?.controller }),
                 ...(reusablePresetRetention ? { retention: reusablePresetRetention } : {}),

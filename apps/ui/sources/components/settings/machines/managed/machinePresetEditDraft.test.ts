@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { machinePresetCopyDraft, machinePresetEditContinuationDraft, machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type MachinePresetEditDraft } from './machinePresetEditDraft';
 
 describe('Preset edit intent', () => {
+    it('carries the Credential broker opt-in through every full edit and Duplicate, and omits it unless chosen', () => {
+        expect(machinePresetEditDraftContent({ name: 'Broker guest', credentialBroker: true }).privateContent)
+            .toEqual({ v: 1, name: 'Broker guest', credentialBroker: true });
+        expect(machinePresetEditDraftContent({ name: 'Plain guest', credentialBroker: false }).privateContent)
+            .toEqual({ v: 1, name: 'Plain guest' });
+        expect(machinePresetCopyDraft({ credentialBroker: true }, 'Broker guest copy')).toMatchObject({ credentialBroker: true });
+    });
+
     it('persists a pool target and clears the previous exact controller when saving the full draft', () => {
         const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1,
             name: 'Guest', choices: { cpu: 2 } };

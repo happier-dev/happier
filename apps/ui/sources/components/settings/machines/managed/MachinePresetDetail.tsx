@@ -99,6 +99,8 @@ export type MachinePresetDetailModel = Readonly<{
   projectFiles?: React.ReactNode;
   /** "Prepare ahead", right after Setup because it bakes that setup; absent unless the preset keeps an image. */
   prepare?: React.ReactNode;
+  /** The owner-approved Credential broker opt-in for each machine this preset makes, after Prepare ahead. */
+  broker?: React.ReactNode;
 }>;
 
 export const MachinePresetDetail = React.memo(function MachinePresetDetail(
@@ -176,6 +178,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
       />
       {model.projectFiles ?? null}
       {model.prepare ?? null}
+      {model.broker ?? null}
       {model.controller ? (
         <ItemGroup
           title={t('managedMachines.config.managedFrom')}

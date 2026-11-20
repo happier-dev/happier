@@ -268,12 +268,16 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const desiredPreparation: PresetPreparation = desiredEdit.privateContent?.preparation ?? preset?.preparation ?? { enabled: false };
     // Project files is private content too: every in-place edit carries both, so one never drops the other.
     const desiredProjectFiles = desiredEdit.privateContent ? desiredEdit.privateContent.projectFiles : preset?.projectFiles;
-    const editContent = (next: Readonly<{ preparation?: PresetPreparation; projectFiles?: SessionProjectFilesV1 }>) => {
+    // The Credential broker opt-in is private content as well, carried by the same full edit.
+    const desiredBroker = (desiredEdit.privateContent ? desiredEdit.privateContent.credentialBroker : preset?.credentialBroker) === true;
+    const editContent = (next: Readonly<{ preparation?: PresetPreparation; projectFiles?: SessionProjectFilesV1; credentialBroker?: boolean }>) => {
         if (!creation) return;
         const projectFiles = next.projectFiles ?? desiredProjectFiles;
+        const credentialBroker = next.credentialBroker ?? desiredBroker;
         const preparation = next.preparation ?? (desiredEdit.privateContent ? desiredEdit.privateContent.preparation : preset?.preparation);
         edit(machinePresetEditDraftUpdatePatch({ name: creation.name, setup: creation.setup,
             ...(preparation ? { preparation } : {}), ...(projectFiles ? { projectFiles } : {}),
+            ...(credentialBroker ? { credentialBroker: true } : {}),
             creation: { launch: creation.launch,
                 ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId } : creation.controller ? { controller: creation.controller } : {}),
                 ...(creation.retention ? { retention: creation.retention } : {}),
@@ -480,6 +484,14 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh}
                 preparation={desiredPreparation} bills={receipt.cost?.kind !== 'local'}
                 {...(canManage && !approval.approvalPending ? { onPreparationChange: (preparation: PresetPreparation) => editContent({ preparation }) } : {})} /> } : {}),
+        // Each machine it makes can lend connected accounts to the person's other machines; off unless chosen (owner 11-20).
+        ...(!archived ? { broker: <ItemGroup testID="machine-preset.broker" title={t('machineDetailPage.roles.title')}>
+            <Item testID="machine-preset.broker.row" title={t('machineDetailPage.roles.broker.title')}
+                subtitle={t('machineDetailPage.roles.broker.description')}
+                rightElement={<Switch testID="machine-preset.broker.switch" accessibilityLabel={t('machineDetailPage.roles.broker.title')}
+                    value={desiredBroker} disabled={!canManage || approval.approvalPending}
+                    onValueChange={next => editContent({ credentialBroker: next })} />} />
+        </ItemGroup> } : {}),
         ...archiveActions,
         archivePending: busy, notice,
     };
