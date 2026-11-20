@@ -68,4 +68,23 @@ describe('DiffViewer (web) while the Pierre renderer loads', () => {
 
     expect(screen.findAllByType(unifiedViewerType)).toHaveLength(0);
   });
+
+  it('lets an inline diff share the list scroller it sits in only when Pierre draws it (QB-81)', async () => {
+    const { useInlineDiffSharesEnclosingScroller } = await import('./DiffViewer.web');
+    const { PierreScrollRootVirtualizerProvider } = await import('./pierre/PierreScrollRootVirtualizerProvider.web');
+    const seen = new Map<string, boolean>();
+    function Probe({ phase }: Readonly<{ phase: string }>) { seen.set(phase, useInlineDiffSharesEnclosingScroller()); return null; }
+    const listScroller = () => document.createElement('div');
+
+    const inList = await renderScreen(<PierreScrollRootVirtualizerProvider getScrollRoot={listScroller}><Probe phase="in list" /></PierreScrollRootVirtualizerProvider>);
+    await inList.unmount();
+    const alone = await renderScreen(<Probe phase="alone" />);
+    await alone.unmount();
+    // The canonical line renderer cannot window against another scroller: it keeps its own bounded list.
+    storage.setState({ settings: { ...storage.getState().settings, filesDiffRendererMode: 'happier' } });
+    const lineRenderer = await renderScreen(<PierreScrollRootVirtualizerProvider getScrollRoot={listScroller}><Probe phase="line renderer" /></PierreScrollRootVirtualizerProvider>);
+    await lineRenderer.unmount();
+
+    expect(Object.fromEntries(seen)).toEqual({ 'in list': true, alone: false, 'line renderer': false });
+  });
 });

@@ -12,7 +12,7 @@ import { hydratePartialDiff, parseDiffFromFile, parsePatchFiles, VirtualizedFile
 import { applyHunks, parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import type { DiffLineAnnotation, FileDiffMetadata, FileDiffOptions, OnDiffLineClickProps, FileDiff as PierreFileDiffInstance, SelectedLineRange } from '@pierre/diffs';
 import { FileDiff, Virtualizer, VirtualizerContext, WorkerPoolContext, useVirtualizer } from '@pierre/diffs/react';
-import { usePierreScrollRootVirtualizer } from './PierreScrollRootVirtualizerProvider.web';
+import { usePierreEnclosingScrollRoot, usePierreScrollRootVirtualizer } from './PierreScrollRootVirtualizerProvider.web';
 import { readPierreDomLine } from './pierreDomLine';
 import { localizePierreSeparatorText } from './pierreSeparatorText.web';
 
@@ -610,10 +610,13 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
     const inheritedVirtualizer = useVirtualizer();
-    const scopedVirtualizer = usePierreScrollRootVirtualizer(props.virtualized === true ? null : () => new PierreVirtualizer());
     // A bounded body scrolls through its own complete diff. The enclosing file list's scroll
     // range includes only this body's viewport, so sharing that range makes later lines unreachable.
-    const sharedVirtualizer = props.virtualized === true ? undefined : scopedVirtualizer ?? inheritedVirtualizer;
+    // Inside a list that hands over its scroller (QB-81) the body is not bounded: it windows its lines
+    // against that one scroller, whose range then holds the whole diff.
+    const bounded = props.virtualized === true && !usePierreEnclosingScrollRoot();
+    const scopedVirtualizer = usePierreScrollRootVirtualizer(bounded ? null : () => new PierreVirtualizer());
+    const sharedVirtualizer = bounded ? undefined : scopedVirtualizer ?? inheritedVirtualizer;
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const lastScrolledLineIdRef = React.useRef<{ key: string; filePath: string | null | undefined } | null>(null);
     const typographyStyle = React.useMemo(() => resolvePierreTypographyStyle(), []);
@@ -1401,7 +1404,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         </>
     );
 
-    const wrapperStyle = props.virtualized
+    const wrapperStyle = bounded
         ? ({
             ...typographyStyle,
             ...selectionStyle,

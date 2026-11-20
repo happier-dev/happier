@@ -17,6 +17,7 @@ import {
     PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt, SessionBotFace,
     ExecutableParticipantPickerPresentation,
 } from './pluginUiPrivateContent';
+import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider';
 import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
 import { usePluginVoiceAttempt, usePluginVoiceReadAloudPhase } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
@@ -505,6 +506,10 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
             ? <ProseDiffViewer mode="text" testID={request.testID} oldText={request.before} newText={request.after} contextLines={0}
                 prose={{ oldLabel: request.beforeLabel, newLabel: request.afterLabel }} />
             : <PluginUiPrivateDiffViewer {...request} />;
+    },
+    renderCollectionScrollRoot({ getScrollNode, children }: Readonly<{ getScrollNode(): unknown; children: React.ReactNode }>) {
+        // A List's own scroller is the one its disclosed diffs window against (QB-81).
+        return <PierreScrollRootVirtualizerProvider getScrollRoot={getScrollNode}>{children}</PierreScrollRootVirtualizerProvider>;
     },
     renderChangedFilesReview(input: HappierChangedFilesReviewRequest) {
         return <PluginUiPrivateChangedFilesReview {...resolveHappierChangedFilesReviewRequest(input)} />;

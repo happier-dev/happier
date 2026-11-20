@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { NATIVE_COLLECTION_VIRTUALIZER } from './nativeCollectionVirtualizer.js';
 import type { CollectionVirtualizerHandle } from './collectionVirtualizer.js';
+import { PluginUiPresentationHostProviderInternal, type PluginUiPresentationHost } from '../../presentationHost/context.js';
 
 // Browser layout and scrolling are the boundary jsdom lacks. RNW's actual
 // FlatList/SectionList, render mask, spacers and window updates remain real.
@@ -154,4 +155,27 @@ it.each(['flat', 'sections'] as const)('keeps the %s mounted window independent 
   expect(profiles[1]?.initial).toBe(profiles[0]?.initial);
   expect(profiles[1]?.scrolled).toBe(profiles[0]?.scrolled);
   console.info('RNW mounted-window characterization', { kind, viewportHeight, rowHeight, profiles });
+});
+
+it.each(['flat', 'sections'] as const)('offers its %s scroller to what its rows disclose, so a disclosed diff nests no scroller of its own', async kind => {
+  // QB-81: the host binds a disclosed diff's line windowing to the node this list hands over.
+  let getScrollNode: (() => unknown) | undefined;
+  const host: PluginUiPresentationHost = {
+    renderMarkdown: () => null, renderCodeBlock: () => null, renderPopover: () => null, renderIcon: () => null,
+    renderCollectionScrollRoot: input => { getScrollNode = input.getScrollNode; return input.children; },
+  };
+  const items = Array.from({ length: 20 }, (_, index) => ({ index }));
+  const view = mountThroughReactNativeWeb(<PluginUiPresentationHostProviderInternal host={host}>
+    {NATIVE_COLLECTION_VIRTUALIZER.render({
+      ...(kind === 'flat' ? { kind, items } : { kind, sections: [{ key: 'rows', data: items }], renderSectionHeader: () => null }),
+      keyForItem: (item: typeof items[number]) => String(item.index),
+      renderItem: (item: typeof items[number]) => <Text>{item.index}</Text>,
+      role: 'list', testID: 'offered-scroller', onHandle: () => {},
+    })}
+  </PluginUiPresentationHostProviderInternal>);
+  try {
+    const scroller = view.container.querySelector('[data-testid="offered-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(getScrollNode?.()).toBe(scroller);
+  } finally { view.unmount(); }
 });

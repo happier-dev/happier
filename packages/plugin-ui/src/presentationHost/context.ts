@@ -396,6 +396,12 @@ export type PluginUiPresentationHost = Readonly<{
   /** Same-realm platform rendering only; List/Collection retain their state and semantics. */
   collectionVirtualizer?: CollectionVirtualizer;
   /**
+   * Same-realm: a List that owns its scroller offers it to what its rows disclose (a diff), so that content windows
+   * its lines against the List's one vertical scroller instead of nesting a capped scroller of its own (QB-81).
+   * `getScrollNode` returns the platform scroll node; the binding stays host-private.
+   */
+  renderCollectionScrollRoot?(input: Readonly<{ getScrollNode(): unknown; children: ReactNode }>): ReactNode;
+  /**
    * The container the surface is mounted in, as Happier's own states size themselves (`pane` in a
    * session sidebar tab, `phone` on a phone surface, `details` in a details drawer). A plugin state
    * that passes no `size` takes this one, so a plugin tab's empty and loading states match the host's

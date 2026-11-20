@@ -15,13 +15,32 @@ import { getLoadedPierreRenderer, loadPierreRenderer } from './pierre/pierreRend
 import { ProseDiffViewer } from './prose/ProseDiffViewer';
 import { useDiffHunkSlots } from './hunks/useDiffHunkSlots';
 import { renderDiffHunkRow } from './hunks/DiffHunkRow';
+import { usePierreEnclosingScrollRoot } from './pierre/PierreScrollRootVirtualizerProvider.web';
 
 const PierreDiffViewer = retryableLazy(async () => ({ default: (await loadPierreRenderer()).PierreDiffViewer }));
+
+/** Whether this diff draws through Pierre. A leading lane is a per-line cell only the canonical line renderer draws. */
+function usePierreAllowed(rendersLeadingLane: boolean): boolean {
+    return useSetting('filesDiffRendererMode') === 'pierre'
+        && !rendersLeadingLane
+        && isPierreDiffKillSwitchEnabled()
+        && supportsPierreRuntime();
+}
+
+/**
+ * A large inline diff in a list that hands over its scroller windows its lines against that one scroller (QB-81),
+ * so its caller draws no capped viewport. Only Pierre can window a body against another scroller; the canonical
+ * line renderer keeps its own bounded list.
+ */
+export function useInlineDiffSharesEnclosingScroller(): boolean {
+    const enclosing = usePierreEnclosingScrollRoot();
+    return usePierreAllowed(false) && enclosing;
+}
 
 const boundedLazyMountStyle: React.CSSProperties = { height: '100%', minHeight: 0, position: 'relative' };
 
 export const DiffViewer = React.memo<DiffViewerProps>((props) => {
-    const rendererMode = useSetting('filesDiffRendererMode');
+    const pierreAllowed = usePierreAllowed(Boolean(props.renderLeadingLane));
     // A body that mounts once the renderer has loaded draws it directly; one mounted earlier keeps its
     // lazy boundary for its lifetime, so the renderer never remounts under it.
     const [loadedPierreViewer] = React.useState(() => getLoadedPierreRenderer()?.PierreDiffViewer ?? null);
@@ -32,15 +51,9 @@ export const DiffViewer = React.memo<DiffViewerProps>((props) => {
     // Prose is its own face on every renderer: a reading layout, not a code diff.
     if (props.mode === 'text' && props.face === 'prose') return <ProseDiffViewer {...props} />;
 
-    const wantsPierre = rendererMode === 'pierre';
     // A leading lane (the File page's blame column) is a per-line cell of the canonical line renderer.
     // Pierre has no per-line gutter slot (only hover utilities and after-line annotations), so a caller
     // that asks for one is served by the renderer that draws it: the same column View shows.
-    const pierreAllowed = wantsPierre
-        && !props.renderLeadingLane
-        && isPierreDiffKillSwitchEnabled()
-        && supportsPierreRuntime();
-
     if (pierreAllowed) {
         // An inline diff (a hunk card, a tool result) shows its code at once with the canonical line
         // renderer while the Pierre chunk and its worker load, so the reserved body is never an empty

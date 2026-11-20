@@ -958,6 +958,34 @@ describe('PierreDiffViewer (web)', () => {
         });
     });
 
+    it('windows a large diff against the list scroller it sits in, nesting no scroller of its own (QB-81)', async () => {
+        virtualizerSpy.mockClear();
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+        const { Virtualizer: PierreVirtualizer } = await import('@pierre/diffs');
+        // Browser observers and Pierre's DOM binding are the boundary jsdom lacks; the provider and viewer stay real.
+        const observer = class { observe() {} unobserve() {} disconnect() {} };
+        vi.stubGlobal('IntersectionObserver', observer);
+        vi.stubGlobal('ResizeObserver', observer);
+        const setup = vi.spyOn(PierreVirtualizer.prototype, 'setup').mockImplementation(() => {});
+        const listScroller = document.createElement('div');
+        const patch = ['--- a/long.txt', '+++ b/long.txt', '@@ -0,0 +1,3 @@', '+one', '+two', '+three', ''].join('\n');
+        const screen = await renderScreen(<PierreScrollRootVirtualizerProvider getScrollRoot={() => listScroller}>
+            <PierreDiffViewer mode="unified" filePath="long.txt" unifiedDiff={patch} virtualized />
+        </PierreScrollRootVirtualizerProvider>);
+        try {
+            expect(virtualizerSpy).not.toHaveBeenCalled();
+            const wrapper = screen.findByProps({ 'data-testid': 'pierre-diff-viewer' });
+            expect(wrapper.props.style).not.toHaveProperty('overflow');
+            expect(wrapper.props.style).not.toHaveProperty('position');
+            expect(setup).toHaveBeenCalledWith(listScroller);
+        } finally {
+            await screen.unmount();
+            setup.mockRestore();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('publishes scale-aware diff typography CSS variables', async () => {
         const { resolvePierreTypographyStyle } = await import('./PierreDiffViewer.web');
 

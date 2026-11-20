@@ -8,6 +8,11 @@ import { ProseDiffViewer } from './prose/ProseDiffViewer';
 import { useDiffHunkSlots } from './hunks/useDiffHunkSlots';
 import { renderDiffHunkRow } from './hunks/DiffHunkRow';
 
+/** Native diffs keep their own bounded list: only the web Pierre renderer windows against an enclosing scroller. */
+export function useInlineDiffSharesEnclosingScroller(): boolean {
+    return false;
+}
+
 export const DiffViewer = React.memo<DiffViewerProps>((props) => {
     const wrapLines = useEffectiveDiffWrapLines(props.wrapLines);
     const { renderAfterLine, reviewedLineIds } = useDiffHunkSlots(props, renderDiffHunkRow);

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { FlatList, Platform, SectionList, type FlatListProps, type ListRenderItemInfo, type NativeScrollEvent, type NativeSyntheticEvent, type SectionListRenderItemInfo } from 'react-native';
 
 import { useContainingHappierMaterialRole } from '../layout/Surface.js';
@@ -14,7 +14,9 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const flat = useRef<FlatList<Item> | null>(null);
   const grouped = useRef<SectionList<Item, Readonly<{ key: string }>> | null>(null);
   const sectioned = request.kind === 'sections';
-  const createTracker = useOptionalPluginUiPresentationHost()?.createScrollActivityTracker;
+  const host = useOptionalPluginUiPresentationHost();
+  const createTracker = host?.createScrollActivityTracker;
+  const renderScrollRoot = host?.renderCollectionScrollRoot;
   const inheritedTracker = useOptionalPluginUiScrollActivityTracker();
   const scrollRef = useMemo<RefObject<unknown>>(() => ({
     get current() { return sectioned ? grouped.current?.getScrollResponder() : flat.current?.getScrollResponder(); },
@@ -23,6 +25,7 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   const observesScroll = request.onScroll !== undefined;
   const tracker = useMemo(() => Platform.OS === 'web' || !observesScroll ? null : createTracker?.(scrollRef, false) ?? null,
     [createTracker, observesScroll, scrollRef]);
+  const getScrollNode = useCallback(() => (sectioned ? grouped.current : flat.current)?.getScrollableNode() ?? null, [sectioned]);
   const pendingReveal = useRef<{
     key: string;
     failed: boolean;
@@ -145,7 +148,11 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
       role={request.role} renderItem={renderFlatItem} />
   );
   // Keep the row tree stable when scroll demand changes, preserving the inherited context where it already applied.
-  return <PluginUiScrollActivityProvider tracker={tracker ?? inheritedTracker}>{list}</PluginUiScrollActivityProvider>;
+  const content = <PluginUiScrollActivityProvider tracker={tracker ?? inheritedTracker}>{list}</PluginUiScrollActivityProvider>;
+  // This list is its rows' one vertical scroller: a disclosed diff windows against it (QB-81). A flat/grouped switch
+  // mounts a new scroller, so the scope that binds it is keyed with it.
+  return renderScrollRoot === undefined ? content
+    : <Fragment key={request.kind}>{renderScrollRoot({ getScrollNode, children: content })}</Fragment>;
 }
 
 /** @internal The incumbent RN/RNW fallback, consumed through the same injected interface. */

@@ -6,6 +6,8 @@ import { iterateWebDescendantElements } from '@/components/ui/scroll/resolveWebS
 type PierreScrollRootScope = Readonly<{
     getInstance: (create: () => PierreVirtualizer) => PierreVirtualizer | undefined;
     activate: () => void;
+    /** The scope is a list's own scroller that its rows' diffs window against (see `getScrollRoot`). */
+    enclosing: boolean;
 }>;
 
 const PierreScrollRootContext = React.createContext<PierreScrollRootScope | undefined>(undefined);
@@ -19,6 +21,11 @@ export function usePierreScrollRootVirtualizer(create: (() => PierreVirtualizer)
         if (demanded) scope?.activate();
     }, [demanded, scope]);
     return instance;
+}
+
+/** True inside a list scroller that its rows' diffs window their lines against, instead of each owning a scroller. */
+export function usePierreEnclosingScrollRoot(): boolean {
+    return React.useContext(PierreScrollRootContext)?.enclosing === true;
 }
 
 function canScrollVertically(el: HTMLElement): boolean {
@@ -122,7 +129,17 @@ function untrackedConnect(instance: PierreVirtualizer): PierreVirtualizer['conne
     return UNTRACKED_CONNECT.get(instance) ?? instance.connect;
 }
 
-export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: React.ReactNode }>) {
+export function PierreScrollRootVirtualizerProvider(props: Readonly<{
+    children: React.ReactNode;
+    /**
+     * The list's own scroll node, when the list hands it over (a plugin List whose rows disclose diffs). Its
+     * diffs then window their lines against that one scroller (QB-81) rather than each owning a capped one, and
+     * no anchor is searched or drawn.
+     */
+    getScrollRoot?: () => unknown;
+}>) {
+    const getScrollRootRef = React.useRef(props.getScrollRoot);
+    getScrollRootRef.current = props.getScrollRoot;
     const anchorRef = React.useRef<HTMLDivElement | null>(null);
     const instanceRef = React.useRef<PierreVirtualizer | undefined>(undefined);
     // Pierre forgets every connected (and queued) diff on `cleanUp`, and a diff connects only once, when it
@@ -134,7 +151,8 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
     const activate = React.useCallback(() => {
         if (cleanupRef.current) return;
         const anchor = anchorRef.current;
-        if (!anchor) return;
+        const getScrollRoot = getScrollRootRef.current;
+        if (!anchor && !getScrollRoot) return;
         const instance = instanceRef.current;
         if (!instance) return;
         const connect = untrackedConnect(instance);
@@ -181,8 +199,11 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
 
         const bindToCurrentRoot = () => {
             if (cancelled) return;
-            const { root, waiting } = findOwnedScrollRoot(anchor);
-            if (root !== lastRoot) {
+            const given = getScrollRoot?.();
+            const { root, waiting } = getScrollRoot
+                ? { root: typeof HTMLElement !== 'undefined' && given instanceof HTMLElement ? given : null, waiting: [] }
+                : findOwnedScrollRoot(anchor!);
+            if (root !== null && root !== lastRoot) {
                 try {
                     instance.cleanUp();
                 } catch {
@@ -196,7 +217,7 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
                     //   that scroll root. Pierre infers the content container from the scroll root.
                     // - For document root, the 2nd argument is ignored.
                     if (root instanceof Document) {
-                        instance.setup(root, anchor);
+                        instance.setup(root, anchor!);
                     } else {
                         instance.setup(root);
                     }
@@ -243,6 +264,7 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
             return instanceRef.current ??= trackConnections(create(), connectedRef.current);
         },
         activate,
+        enclosing: props.getScrollRoot !== undefined,
     }));
 
     React.useEffect(() => () => {
@@ -264,6 +286,9 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
         };
     }, []);
 
+    if (scope.enclosing) {
+        return <PierreScrollRootContext.Provider value={scope}>{props.children}</PierreScrollRootContext.Provider>;
+    }
     return (
         <PierreScrollRootContext.Provider value={scope}>
             <div ref={anchorRef} style={rootStyle} data-happier-diff-virtual-root="1">
