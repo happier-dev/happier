@@ -3,7 +3,7 @@ import { glyphDotRadii, type GlyphFrame, type GlyphGrid } from '@happier-dev/bra
 import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
 import { glyphAtlas } from './glyphAtlas.web';
-import { glyphAtlasChars, glyphAtlasColumns, packGlyphAtlas } from './glyphAtlasLayout';
+import { glyphAtlasChars, glyphAtlasColumns, glyphPlanetChars, glyphRampHeight, packGlyphAtlas } from './glyphAtlasLayout';
 
 const spriteVertex = `#version 300 es
 precision highp float;
@@ -89,11 +89,12 @@ function createProgram(gl: WebGL2RenderingContext, vertex: string, fragment: str
 type Atlas = ReturnType<typeof packGlyphAtlas>;
 export async function warmWebGlyphAtlas(grid: GlyphGrid, dpr: number): Promise<Atlas> {
     const [w, h] = grid.cell;
-    const [regular, small] = await Promise.all([
+    const [regular, small, ramp] = await Promise.all([
         glyphAtlas({ w: w / dpr, h: h / dpr, chars: glyphAtlasChars }, dpr),
         glyphAtlas({ w: w * 0.75 / dpr, h: h * 0.625 / dpr, chars: glyphAtlasChars }, dpr),
+        glyphAtlas({ w: w / dpr, h: h * glyphRampHeight / dpr, chars: glyphPlanetChars }, dpr),
     ]);
-    return packGlyphAtlas(grid, regular, small, dpr);
+    return packGlyphAtlas(grid, regular, small, ramp, dpr);
 }
 
 function upload(gl: WebGL2RenderingContext, texture: WebGLTexture | null, unit: number, width: number, height: number, bytes: Uint8Array | Uint8ClampedArray, linear = false) {

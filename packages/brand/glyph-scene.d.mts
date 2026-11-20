@@ -18,6 +18,8 @@ export type PlanetGlyphOptions = Readonly<{
     settle?: Timing;
     gain?: number;
     ring?: Readonly<{ progress: number }>;
+    /** Phone: a sparse share of cells, each nudged and dimmed (the lab's soft planet). */
+    soft?: boolean;
 }>;
 export type MarkGlyphOptions = Readonly<{
     centre: GlyphPoint; size: number; ink: 'sunrise'; retypeS?: number; dissolve?: number; turn?: number; fill?: number;
@@ -60,6 +62,8 @@ export type FieldDotOptions = Readonly<{
     stampTimeS?: number;
     stirs?: readonly FieldInput[];
     ripples?: readonly FieldInput[];
+    /** The planet the field gives way around (css px). */
+    planet?: Readonly<{ cx: number; cy: number; R: number }>;
 }>;
 export type FieldDotLayer = FieldDotOptions & { kind: 'field' };
 export type PlacedGlyphLayer = Readonly<{ kind: 'placed'; cells: Float32Array }>;
@@ -110,4 +114,13 @@ export const glyphFieldTrailLifeS: number;
 export const glyphFieldRippleLifeS: number;
 export function glyphFieldPhase(seconds: number): number;
 export const glyphDotRadii: readonly number[];
+/** The light ramp's glyphs, dimmest first; atlas tiles from `glyphRampFirstTile`. */
+export const glyphRampChars: string;
+export const glyphRampFirstTile: number;
+/** The planet's digits at the ramp's size, `glyphPlanetDigitFirstTile + digit`. */
+export const glyphPlanetDigitFirstTile: number;
+/** The planet's lattice dot tile and its radius in css px. */
+export const glyphLatticeTile: number;
+export const glyphLatticeRadius: number;
+export function homeFieldStrength(intensity: PlanetIntensity, options?: Readonly<{ phone?: boolean }>): number;
 export function fieldDotLayer(options: FieldDotOptions): FieldDotLayer;

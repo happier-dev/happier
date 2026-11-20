@@ -1,6 +1,6 @@
 import type { PublicProfileReadResultV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { createPlanetStatusCell } from '@happier-dev/brand/planet';
-import { glyphFrame, planetGlyphLayer, type GlyphFrame } from '@happier-dev/brand/glyph-scene';
+import { glyphFrame, planetGlyphLayer, type GlyphFrame, glyphLatticeRadius, glyphLatticeTile, glyphRampChars, glyphRampFirstTile } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import * as privacyKit from 'privacy-kit';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
@@ -151,22 +151,36 @@ export async function renderPublicProfilePlanetSceneSvg(frame: GlyphFrame,
     if (!sprites.glyph.length) return disc;
     const font = await readPublicProfilePlanetFont();
     const fontSize = Math.round(grid.cell[1] * 0.94);
-    const atlas = await Promise.all(Array.from('0123456789', text => sharp({ text: {
-        text, font: `IBM Plex Mono ${fontSize}`, fontfile: font.path, rgba: true,
+    // Digits (regular and small cells share one face here), then the planet's light ramp and digits, by Brand's tile vocabulary.
+    const characters = `0123456789${glyphRampChars}0123456789`;
+    const planetFontSize = Math.round(grid.cell[1] * 0.72);
+    const atlas = await Promise.all(Array.from(characters, (text, index) => sharp({ text: {
+        text, font: `IBM Plex Mono ${index < 10 ? fontSize : planetFontSize}`, fontfile: font.path, rgba: true,
     } }).raw().toBuffer({ resolveWithObject: true })));
+    // The planet's lattice dot, drawn as coverage at its radius.
+    const radius = glyphLatticeRadius * frame.width / pane.width, side = Math.ceil(radius * 2 + 2);
+    const dot = { data: Buffer.alloc(side * side), info: { width: side, height: side, channels: 1 } };
+    for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+        dot.data[y * side + x] = Math.round(255 * Math.min(1, Math.max(0, radius + 0.5 - Math.hypot(x + 0.5 - side / 2, y + 0.5 - side / 2))));
+    }
     const rgba = Buffer.alloc(frame.width * frame.height * 4);
     for (let index = 0; index < sprites.glyph.length; index++) {
-        const { data, info } = atlas[sprites.glyph[index] % 10];
+        const tile = sprites.glyph[index];
+        const { data, info } = tile === glyphLatticeTile ? dot : atlas[tile >= glyphRampFirstTile ? 10 + tile - glyphRampFirstTile : tile % 10];
         const left = sprites.at[index * 2] - Math.round(info.width / 2);
         const top = sprites.at[index * 2 + 1] - Math.round(info.height / 2);
         const ink = index * 4;
         for (let y = Math.max(0, -top); y < Math.min(info.height, frame.height - top); y++) {
             for (let x = Math.max(0, -left); x < Math.min(info.width, frame.width - left); x++) {
                 const at = ((top + y) * frame.width + left + x) * 4;
-                rgba[at] = sprites.rgba[ink];
-                rgba[at + 1] = sprites.rgba[ink + 1];
-                rgba[at + 2] = sprites.rgba[ink + 2];
-                rgba[at + 3] = Math.round(data[(y * info.width + x) * info.channels + 3] * sprites.rgba[ink + 3] / 255);
+                // Source-over: a glyph's empty box never erases the lattice dots under it.
+                const alpha = data[(y * info.width + x) * info.channels + info.channels - 1] * sprites.rgba[ink + 3] / 65025;
+                if (alpha <= 0) continue;
+                const under = rgba[at + 3] / 255 * (1 - alpha), total = alpha + under;
+                for (let channel = 0; channel < 3; channel++) {
+                    rgba[at + channel] = Math.round((sprites.rgba[ink + channel] * alpha + rgba[at + channel] * under) / total);
+                }
+                rgba[at + 3] = Math.round(total * 255);
             }
         }
     }

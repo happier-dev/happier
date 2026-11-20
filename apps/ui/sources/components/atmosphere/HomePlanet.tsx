@@ -5,7 +5,7 @@ import { useSessionFinishedRipple } from './homeAtmosphereMoments';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { sessionRippleLayer } from './sessionRipple';
 import { GlyphSurface, type GlyphMotion } from './glyph/GlyphSurface';
-import { glyphFieldDurationS, planetGlyphLayer, type GlyphFieldMode, type GlyphLayer, type GlyphRect, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { glyphFieldDurationS, homeFieldStrength, planetGlyphLayer, type GlyphFieldMode, type GlyphLayer, type GlyphRect, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
 import { HomeFieldPreference, useHomeGlyphField } from './glyph/useHomeGlyphField';
 import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
@@ -93,6 +93,7 @@ export const HomePlanet = React.memo(function HomePlanet(
   const { epoch: fieldEpoch, layer: fieldLayer, readDurationS, settle: settleField } = useHomeGlyphField({
     mode, arriving: !hidden && props.arrive === 'instant',
     quiet: props.fieldQuiet, host: props.fieldHost, nativeTap: props.fieldTap, scrollY: props.fieldScrollY,
+    strength: homeFieldStrength(intensity, { phone: props.phone }), planet: planet ? geometry ?? undefined : undefined,
   });
   const height = homePlanetDrawnHeight(pane.height, fade);
   const [drawn, setDrawn] = React.useState(false);
@@ -121,7 +122,7 @@ export const HomePlanet = React.memo(function HomePlanet(
   const scene = React.useMemo(() => {
     if (!geometry) return [];
     const fade = fadeFrom !== undefined && fadeTo !== undefined ? { from: fadeFrom, to: fadeTo } : undefined;
-    const options = { geometry, intensity, digits, fade };
+    const options = { geometry, intensity, digits, fade, soft: props.phone };
     return (seconds: number) => {
       const layers: GlyphLayer[] = [];
       const field = fieldLayer(seconds);
@@ -134,7 +135,7 @@ export const HomePlanet = React.memo(function HomePlanet(
       layers.push(sessionRippleLayer(options, epoch + seconds * 1000 - answer, { width: pane.width, theme, reducedMotion }));
       return layers;
     };
-  }, [answer, digits, epoch, fadeFrom, fadeTo, fieldLayer, geometry, intensity, pane.width, planet, reducedMotion, theme]);
+  }, [answer, digits, epoch, fadeFrom, fadeTo, fieldLayer, geometry, intensity, pane.width, planet, props.phone, reducedMotion, theme]);
   const motion = React.useMemo<GlyphMotion>(() => {
     if (epoch !== null) return { kind: 'field-calm', epoch, durationS: glyphFieldDurationS, readDurationS: end, onSettled: settle };
     return planet && digits && !reducedMotion && !hidden && !writing && focused === true ? { kind: 'digits' } : null;

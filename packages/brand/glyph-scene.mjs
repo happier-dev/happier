@@ -1,16 +1,22 @@
 import { PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, shadePlanetDot } from './planet.mjs';
 import { orderedFade, rippleRingGeometry } from './atmosphere.mjs';
-import { createGlyphFieldSampler } from './glyph-field.mjs';
+import { createGlyphFieldSampler, glyphDotRadii } from './glyph-field.mjs';
 export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
 import { markSdfAt } from './glyph-mark.mjs';
 
-const { gradient, lightForReveal, REST_SPIN } = PLANET_SAMPLER;
+const { gradient, lightForReveal, REST_SPIN, BAYER } = PLANET_SAMPLER;
 const { sceneHash: cellHash, digitAtStep: digitOf } = PLANET_SCENE_RENDERER;
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const mix = (a, b, progress) => a + (b - a) * progress;
 const smooth = (value) => { const k = clamp(value); return k * k * (3 - 2 * k); };
 const fadeBetween = (value, from, to) => smooth((value - from) / (to - from));
 const intensityLook = { quiet: [0.42, 0.7], calm: [0.66, 0.8], full: [1, 0.95] };
+const homeFieldLook = { quiet: 0.5, calm: 0.7, full: 1 };
+
+/** Home's dot field strength: quieter with the planet's intensity, and quieter again on a phone. */
+export function homeFieldStrength(intensity, { phone = false } = {}) {
+    return homeFieldLook[intensity] * (phone ? 0.5 : 0.6);
+}
 const restLight = lightForReveal(1);
 const glyphPitch = [8, 16];
 const retypeSeconds = 2;
@@ -68,36 +74,120 @@ function planetPresentation(layer, time) {
     };
 }
 
-function planetBody(out, grid, planet, fade, palette, previous) {
-    const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, assembly } = planet;
+// The glyph planet (first-open lab, Home's Horizon): each cell takes a glyph from the light ramp by how much light
+// it holds, in the planet's own ink, over a faint wash of its body colour; the halo keeps its glyphs a little softer.
+// The intensity's `dim` is the whole planet's opacity. A phone keeps a sparse share of cells, each nudged and dimmed.
+export const glyphRampChars = '.\u00b7:-=+*%#@';
+export const glyphRampFirstTile = 21 + glyphDotRadii.length;
+/** The planet's own digits, set at the ramp's size: tiles after the ramp. */
+export const glyphPlanetDigitFirstTile = glyphRampFirstTile + glyphRampChars.length;
+/** The planet's dot lattice under its glyphs: one dot tile after the planet digits, radius in css px. */
+export const glyphLatticeTile = glyphPlanetDigitFirstTile + 10;
+export const glyphLatticeRadius = 1.44;
+const latticePitch = 4;
+const glyphWash = 0.16;
+const haloReach = 1.8;
+const glyphFieldInk = { light: [140, 135, 143], dark: [107, 105, 120] };
+
+/** A cell's glyph ink: dark lifts each colour to full value, light deepens it (the brand's light dot ink). */
+function glyphInk(rgb, theme, background, into) {
+    const peak = Math.max(rgb[0], rgb[1], rgb[2]);
+    const base = glyphFieldInk[theme] ?? glyphFieldInk.dark;
+    if (theme === 'light') {
+        const k = fadeBetween(Math.hypot(rgb[0] - background[0], rgb[1] - background[1], rgb[2] - background[2]) / 255, 0.02, 0.25);
+        for (let c = 0; c < 3; c++) into[c] = Math.round(mix(base[c], clamp(peak - (peak - rgb[c]) * 1.7, 0, 255) * 0.82, k));
+    } else {
+        const k = fadeBetween(peak / 255, 0.08, 0.4);
+        for (let c = 0; c < 3; c++) into[c] = Math.round(mix(base[c], peak > 0 ? rgb[c] * 255 / peak : 0, k));
+    }
+    return into;
+}
+
+function planetBody(out, grid, planet, fade, palette, previous, theme, soft) {
+    const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, assembly, halo } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
-    const rgba = previous?.body.rgba.length === cols * rows * 4 ? previous.body.rgba : new Uint8Array(cols * rows * 4);
+    const size = cols * rows;
+    const reuse = previous?.body.rgba.length === size * 4;
+    const rgba = reuse ? previous.body.rgba : new Uint8Array(size * 4);
+    const perCell = 1 + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch);
+    const reuseCells = reuse && previous.cells.rampGlyph.length === size * perCell;
+    const cells = reuseCells ? previous.cells : { light: new Float32Array(size), ink: new Uint8Array(size * 3), base: new Float32Array(size),
+        inside: new Uint8Array(size), rampAt: new Uint16Array(size * perCell * 2), rampGlyph: new Uint8Array(size * perCell), rampRgba: new Uint8Array(size * perCell * 4), ramp: 0 };
     rgba.fill(0);
+    cells.light.fill(0);
+    cells.ramp = 0;
     const sine = Math.sin(-rotate), cosine = Math.cos(-rotate);
     const sample = { palette, light, reveal, spin, glow, breath: 0, reach: 7, bandStrength: 0.35, detail: 1.4 };
     const edge = Math.hypot(...cell) / (R * dpr);
+    const opacity = clamp(dim * gain);
+    const ink = [0, 0, 0], dot = [0, 0, 0];
+    const faint = soft ? 0.85 : 0.3;
+    const add = (x, y, glyph, colour, alpha) => {
+        const r = cells.ramp++;
+        cells.rampAt[r * 2] = Math.round(x);
+        cells.rampAt[r * 2 + 1] = Math.round(y);
+        cells.rampGlyph[r] = glyph;
+        cells.rampRgba.set(colour, r * 4);
+        cells.rampRgba[r * 4 + 3] = alpha;
+    };
     const lower = Math.min(rows, Math.ceil((fade?.to ?? out.height / dpr) * dpr / cell[1]));
     for (let j = 0; j < lower; j++) {
         const y = (j + 0.5) * cell[1] / dpr;
         const fy = (y - cy) / R;
+        const foot = fade ? 1 - fadeBetween(y, fade.from, fade.to) : 1;
         for (let i = 0; i < cols; i++) {
             const x = (i + 0.5) * cell[0] / dpr;
             const fx = (x - cx) / R;
             const distance = Math.hypot(fx, fy);
-            if (distance > 1 + edge) continue;
+            if (distance > haloReach) continue;
             const decoded = planetDecode(planet, fx, fy, i, j);
             if (decoded === 0) continue;
             const shade = shadePlanetDot(fx * cosine - fy * sine, fx * sine + fy * cosine, i, j, sample);
-            const strength = dim * gain;
-            const appearance = assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2);
-            const n = (j * cols + i) * 4;
-            rgba[n] = Math.round(clamp(mix(palette.background[0], shade.rgb[0], strength), 0, 255));
-            rgba[n + 1] = Math.round(clamp(mix(palette.background[1], shade.rgb[1], strength), 0, 255));
-            rgba[n + 2] = Math.round(clamp(mix(palette.background[2], shade.rgb[2], strength), 0, 255));
-            rgba[n + 3] = Math.round(255 * decoded * appearance * fadeBetween(assembly, 0, 0.12));
+            const appearance = (assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2)) * fadeBetween(assembly, 0, 0.12);
+            const n = j * cols + i;
+            const inside = distance < 1;
+            if (distance <= 1 + edge) {
+                rgba[n * 4] = shade.rgb[0];
+                rgba[n * 4 + 1] = shade.rgb[1];
+                rgba[n * 4 + 2] = shade.rgb[2];
+                rgba[n * 4 + 3] = Math.round(255 * glyphWash * opacity * decoded * appearance);
+            }
+            const sides = inside ? 1 : ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (distance * distance || 1);
+            const amount = shade.light * sides;
+            if (amount < 0.04) continue;
+            glyphInk(shade.rgb, theme, palette.background, ink);
+            const base = opacity * decoded * appearance * foot;
+            cells.light[n] = amount;
+            cells.inside[n] = inside ? 1 : 0;
+            cells.base[n] = base;
+            cells.ink.set(ink, n * 3);
+            // The lattice: dots on a fixed 4 px pitch, each lit when the cell's light passes its ordered dither.
+            const peak = Math.max(shade.rgb[0], shade.rgb[1], shade.rgb[2]);
+            for (let c = 0; c < 3; c++) dot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - shade.rgb[c]) * 1.4, 0, 255)) : shade.rgb[c];
+            const left = i * cell[0] / dpr, top = j * cell[1] / dpr;
+            const dotAlpha = Math.round(255 * clamp(base * faint));
+            if (dotAlpha > 0) {
+                for (let dy = Math.ceil(top / latticePitch - 0.5); (dy + 0.5) * latticePitch < top + cell[1] / dpr; dy++) {
+                    for (let dx = Math.ceil(left / latticePitch - 0.5); (dx + 0.5) * latticePitch < left + cell[0] / dpr; dx++) {
+                        if (BAYER[(dy & 3) * 4 + (dx & 3)] + 0.02 >= amount) continue;
+                        add((dx + 0.5) * latticePitch * dpr, (dy + 0.5) * latticePitch * dpr, glyphLatticeTile, dot, dotAlpha);
+                    }
+                }
+            }
+            const level = Math.floor(amount ** 1.6 * 10.999);
+            if (level < 1) continue;
+            let px = (i + 0.5) * cell[0], py = (j + 0.5) * cell[1], keep = 1;
+            if (soft) {
+                if (cellHash(i + 13, j + 29) >= 0.3) continue;
+                px += (cellHash(i + 3, j + 7) - 0.5) * 0.22 * cell[0];
+                py += (cellHash(i + 11, j + 5) - 0.5) * 0.22 * cell[1];
+                keep = 0.45 + 0.55 * cellHash(i + 19, j + 2);
+            }
+            const alpha = Math.round(255 * clamp(base * keep * (inside ? 1 : 0.8)));
+            if (alpha > 0) add(px, py, glyphRampFirstTile + level - 1, ink, alpha);
         }
     }
     const former = previous?.body;
@@ -105,6 +195,7 @@ function planetBody(out, grid, planet, fade, palette, previous) {
         ? former.fadeMask : makeFadeMask(out, fade) : null;
     return {
         key,
+        cells,
         body: { rgba, cols, rows, disc: { cx: cx * dpr, cy: cy * dpr, R: R * dpr }, fade: fade && { from: fade.from * dpr, to: fade.to * dpr }, fadeMask },
     };
 }
@@ -119,35 +210,32 @@ function makeFadeMask(out, fade) {
 
 function samplePlanet(out, grid, layer, time, theme, palette, previous) {
     const planet = planetPresentation(layer, time);
-    const body = planetBody(out, grid, planet, layer.fade, palette, previous);
+    const body = planetBody(out, grid, planet, layer.fade, palette, previous, theme, layer.soft === true);
+    const { cells } = body;
+    for (let r = 0; r < cells.ramp; r++) {
+        if (out.count >= out.glyph.length) break;
+        const at = out.count++;
+        out.at[at * 2] = cells.rampAt[r * 2];
+        out.at[at * 2 + 1] = cells.rampAt[r * 2 + 1];
+        out.glyph[at] = cells.rampGlyph[r];
+        out.rgba.set(cells.rampRgba.subarray(r * 4, r * 4 + 4), at * 4);
+    }
     if (planet.ring) samplePlanetRing(out, grid, planet, palette, layer.fade);
     if (!layer.digits) return body;
-    const { cx, cy, R, glow, dim, halo, assembly } = planet;
-    const { cell, cols, rows } = grid;
+    // Home's digits: a sparse share of the lit cells in the planet's ink, a share of them retyping each step.
+    const { cell, cols } = grid;
     const step = Math.floor(time / retypeSeconds);
-    const outsideInk = theme === 'dark' ? palette.body[6][1] : palette.body[5][1];
-    const overInk = palette.background;
-    for (let j = 0; j < rows; j++) {
-        const y = (j + 0.5) * cell[1];
-        const cssY = y / out.dpr;
-        if (layer.fade && cssY >= layer.fade.to) break;
-        const fy = (cssY - cy) / R;
-        for (let i = 0; i < cols; i++) {
-            const x = (i + 0.5) * cell[0];
-            const fx = (x / out.dpr - cx) / R;
-            const r = Math.hypot(fx, fy);
-            const inside = r < 1;
-            if ((!inside && r > 2.1) || cellHash(i + 911, j + 77) < 0.07) continue;
-            const reach = ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (r * r || 1);
-            const opacity = inside
-                ? 0.62 * dim * (1 - fadeBetween(r, 0.9, 1))
-                : (0.13 + 0.2 * Math.exp(-(r - 1) * 3)) * glow * reach * fadeBetween(r, 1, 1.05) * (1 - fadeBetween(r, 1, 2.1));
-            const strike = cellHash(i + 401, j + 7) > 0.8 ? 0.45 : 1;
-            const localStep = !inside && cellHash(i + 5, j + 9) < 0.15 ? step : 0;
-            const foot = layer.fade ? 1 - fadeBetween(cssY, layer.fade.from, layer.fade.to) : 1;
-            const alpha = opacity * strike * foot * fadeBetween(assembly, 0, 0.12) * planetDecode(planet, fx, fy, i, j);
-            if (alpha >= 0.012) writeSprite(out, x, y, digitOf(i, j, localStep), inside ? overInk : outsideInk, alpha);
-        }
+    const ink = out.ink;
+    for (let n = 0; n < cells.light.length; n++) {
+        const amount = cells.light[n];
+        if (amount === 0) continue;
+        const i = n % cols, j = (n - i) / cols;
+        if (cellHash(i + 31, j + 7) >= 0.42) continue;
+        const local = cellHash(i + 9, j + 2) < 0.35 ? step : 0;
+        const digit = Math.floor(cellHash(i + local * 7 + 3, j - local * 13) * 10);
+        const alpha = fadeBetween(amount, 0.05, 0.35) * (cells.inside[n] ? 0.55 : 0.8) * cells.base[n];
+        ink[0] = cells.ink[n * 3]; ink[1] = cells.ink[n * 3 + 1]; ink[2] = cells.ink[n * 3 + 2];
+        if (alpha >= 0.012) writeSprite(out, (i + 0.5) * cell[0], (j + 0.5) * cell[1], glyphPlanetDigitFirstTile + digit, ink, alpha);
     }
     return body;
 }
@@ -341,7 +429,8 @@ export function createGlyphFrameSampler() {
             if (layer.kind === 'placed') return sum + layer.cells.length / 7;
             if (layer.kind === 'traveller') return sum + layer.particles.length / 8 * (layer.small && layer.stepMorphProgress !== undefined ? 3 : 1);
             if (layer.kind === 'mark' && layer.cellTimeline) return sum + layer.cellTimeline.length / 4;
-            return sum + cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1);
+            if (layer.kind === 'planet') return sum + cols * rows * ((layer.ring ? 3 : 2) + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch));
+            return sum + cols * rows * (layer.kind === 'front' && layer.cover ? 2 : 1);
         }, 0);
         if (capacity > storage.glyph.length) storage = { at: new Uint16Array(capacity * 2), glyph: new Uint8Array(capacity), rgba: new Uint8Array(capacity * 4) };
         const out = { ...storage, ink, dpr, width, height, count: 0 };

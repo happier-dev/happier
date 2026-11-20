@@ -30,11 +30,14 @@ export function useHomeGlyphField(input: Readonly<{
     mode: GlyphFieldMode;
     arriving: boolean;
     quiet?: readonly GlyphRect[];
+    /** How strongly the field shows (Brand `homeFieldStrength`), and the planet it gives way around. */
+    strength?: number;
+    planet?: Readonly<{ cx: number; cy: number; R: number }>;
     host?: React.RefObject<View | null>;
     nativeTap?: React.RefObject<((x: number, y: number) => void) | null>;
     scrollY?: React.RefObject<number>;
 }>) {
-    const { mode, arriving, quiet, host, nativeTap, scrollY } = input;
+    const { mode, arriving, quiet, host, nativeTap, scrollY, strength, planet } = input;
     const [epoch, setEpoch] = React.useState<number | null>(null);
     const run = React.useRef<FieldRun | null>(null);
     const restingPhase = React.useRef(0);
@@ -104,11 +107,11 @@ export function useHomeGlyphField(input: Readonly<{
     const layer = React.useCallback((seconds: number): FieldDotLayer | null => {
         if (mode === 'off') return null;
         const current = run.current;
-        if (mode === 'still' || !current) return fieldDotLayer({ mode: 'still', quiet, phaseS: restingPhase.current - glyphFieldPhase(glyphFieldDurationS) });
+        if (mode === 'still' || !current) return fieldDotLayer({ mode: 'still', quiet, strength, planet, phaseS: restingPhase.current - glyphFieldPhase(glyphFieldDurationS) });
         const elapsedS = Math.max(0, seconds - current.lastStir);
-        return fieldDotLayer({ mode, quiet, phaseS: current.phase, elapsedS, stampTimeS: seconds,
+        return fieldDotLayer({ mode, quiet, strength, planet, phaseS: current.phase, elapsedS, stampTimeS: seconds,
             stirs: current.stirs, ripples: current.ripples });
-    }, [mode, quiet]);
+    }, [mode, planet, quiet, strength]);
     const readDurationS = React.useCallback(() => (run.current?.lastStir ?? 0) + glyphFieldDurationS, []);
     return { epoch, layer, readDurationS, settle };
 }

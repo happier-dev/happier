@@ -12,5 +12,8 @@ it('types the ring over a planet with Digits off, then returns to the exact rest
   const rest = paint(planetGlyphLayer(options));
   expect(paint(sessionRippleLayer(options, 560, input)).sprites.glyph.length).toBeGreaterThan(0);
   expect(paint(sessionRippleLayer(options, 1600, input))).toEqual(rest);
-  expect(paint(sessionRippleLayer(options, 75, { ...input, reducedMotion: true })).sprites).toEqual(rest.sprites);
+  // Reduced motion only brightens the planet's own cells: no ring is typed (same cells and glyphs as at rest).
+  const reduced = paint(sessionRippleLayer(options, 75, { ...input, reducedMotion: true })).sprites;
+  expect(reduced.glyph).toEqual(rest.sprites.glyph);
+  expect(reduced.at).toEqual(rest.sprites.at);
 });

@@ -154,7 +154,8 @@ export function shadePlanetDot(px, py, dx, dy, { palette, light, reveal, breath,
     const facing = clamp(((px * light[0] + py * light[1]) / r) * 0.8 + 0.35);
     const density = glow * facing * Math.exp(-altitude * reach) * 0.9 * clamp(reveal * 1.4);
     const colour = gradient(palette.halo, clamp((py + 1) / 2 - px * 0.2));
-    return { rgb: mixRgb(palette.background, colour, 0.45 + 0.55 * Math.exp(-altitude * 5)), lit: density > threshold + 0.02 };
+    // `light`: how much light the cell holds (the glyph planet's ramp input); the halo's is its density.
+    return { rgb: mixRgb(palette.background, colour, 0.45 + 0.55 * Math.exp(-altitude * 5)), lit: density > threshold + 0.02, light: clamp(density) };
   }
   const pz = Math.sqrt(1 - distanceSquared);
   const lambert = px * light[0] + py * light[1] + pz * light[2];
@@ -176,7 +177,7 @@ export function shadePlanetDot(px, py, dx, dy, { palette, light, reveal, breath,
   // lab: beyond the product's sizes a surface cell spans several dots, so flecks would cluster; there each fleck is ONE
   // lattice dot, scattered, at the share the product shows at 160 px (a fleck cell drops about half of its dots)
   const fleck = fleckDot ? (hash(dx * 7 + 3, dy * 13 + 5) < fleckShare * 0.5 ? 1 : 0) : (grain < fleckShare ? 0.5 : 0);
-  return { rgb: colour, lit: !(clamp(day * 1.25 + rim * 2 + full * 0.3) - fleck < threshold) };
+  return { rgb: colour, lit: !(clamp(day * 1.25 + rim * 2 + full * 0.3) - fleck < threshold), light: clamp(day * 0.68 * detail + rim * 1.4) };
 }
 
 export function createPlanetFrame(options = {}) {

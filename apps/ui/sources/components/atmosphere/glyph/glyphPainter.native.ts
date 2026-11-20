@@ -3,7 +3,7 @@ import type { SkCanvas, SkColor, SkImage, SkRSXform, SkRect } from '@shopify/rea
 import type { GlyphFrame, GlyphGrid } from '@happier-dev/brand/glyph-scene';
 
 import { glyphAtlas } from './glyphAtlas.native';
-import { glyphAtlasChars, glyphAtlasColumns, packGlyphAtlas } from './glyphAtlasLayout';
+import { glyphAtlasChars, glyphAtlasColumns, glyphPlanetChars, glyphRampHeight, packGlyphAtlas } from './glyphAtlasLayout';
 
 function makeImage(width: number, height: number, rgba: Uint8Array | Uint8ClampedArray) {
     const data = Skia.Data.fromBytes(new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength));
@@ -14,11 +14,12 @@ function makeImage(width: number, height: number, rgba: Uint8Array | Uint8Clampe
 
 export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
     const [w, h] = grid.cell;
-    const [regular, small] = await Promise.all([
+    const [regular, small, ramp] = await Promise.all([
         glyphAtlas({ w: w / dpr, h: h / dpr, chars: glyphAtlasChars }, dpr),
         glyphAtlas({ w: w * 0.75 / dpr, h: h * 0.625 / dpr, chars: glyphAtlasChars }, dpr),
+        glyphAtlas({ w: w / dpr, h: h * glyphRampHeight / dpr, chars: glyphPlanetChars }, dpr),
     ]);
-    const pixels = packGlyphAtlas(grid, regular, small, dpr);
+    const pixels = packGlyphAtlas(grid, regular, small, ramp, dpr);
     const atlas = makeImage(pixels.width, pixels.height, pixels.pixels);
     if (!atlas) throw new Error('Could not create the glyph atlas');
     const glyphRects = Array.from({ length: glyphAtlasColumns }, (_, index) => Skia.XYWHRect(index * w, 0, w, h));
