@@ -140,7 +140,6 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
       actionsLayout={props.actionsLayout}
       metaIdCopy={metaIdCopy}
       renderBack={chrome?.renderBack ?? null}
-      {...(chrome?.columnMaxWidthPx === undefined ? {} : { columnMaxWidthPx: chrome.columnMaxWidthPx })}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     />
     </HappierPageHeadingBindingContext.Provider>

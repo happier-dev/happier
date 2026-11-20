@@ -15,8 +15,7 @@ export function PageLoadingRows(props: PageLoadingRowsProps) {
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion;
   const header = props.header ? <HappierPageHeaderPlaceholder testID={`${props.testID}-header`}
     color={palette?.skeleton ?? theme.colors.control} reducedMotion={reducedMotion}
-    largeTitle={chrome?.largeTitle} showTitle={!chrome?.showsTitle} columnMaxWidthPx={chrome?.columnMaxWidthPx} /> : null;
+    largeTitle={chrome?.largeTitle} showTitle={!chrome?.showsTitle} /> : null;
   return <HappierPageLoadingRows {...props} header={header} theme={theme} reducedMotion={reducedMotion}
-    columnMaxWidthPx={chrome?.columnMaxWidthPx}
     loadingLabel={props.loadingLabel ?? translate('happier.plugin-ui.state.loading', 'Loading')} />;
 }

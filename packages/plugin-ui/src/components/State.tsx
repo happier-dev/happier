@@ -42,7 +42,6 @@ import {
   type HappierSurfaceStateAction,
   type HappierSurfaceStateBindings,
 } from '../presentation/state/SurfaceState.js';
-import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
 import { useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
 import { useHappierUiAnimationActivityInternal, useOptionalHappierUiPalette } from '../environment/context.js';
 import {
@@ -260,7 +259,6 @@ function EmptyStateView(props: EmptyStateProps): ReactElement {
   const { translate, title, description } = useResolvedCopy(props);
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme);
-  const chrome = useHappierPageChrome();
   const resolvedSize = useStateSize(props.size);
   // A line container makes an unplaced state its one quiet line; an explicit layout or size still wins.
   const layout = props.layout ?? (resolvedSize === 'line' ? 'line' : 'centered');
@@ -332,7 +330,7 @@ function EmptyStateView(props: EmptyStateProps): ReactElement {
           testID={props.testID}
           {...resolveHappierStateAnnouncement(props.accessibilitySemantics)}
           style={[
-            { width: '100%', maxWidth: chrome?.columnMaxWidthPx },
+            { width: '100%' },
             HAPPIER_EMPTY_STATE_FRAME.page,
             // On the sheet edge, also inside a column that already draws part of it (a detail's body).
             { marginHorizontal: pageSheetInsetPx },

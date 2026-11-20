@@ -40,7 +40,6 @@ import {
   useHappierPageSection,
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
-import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
 import { useHappierFloatingSurface } from '../presentation/layout/floatingSurface.js';
 import type {
   HappierFocusable,
@@ -2915,17 +2914,17 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
   );
 }
 
+/**
+ * A page section stands in its page's column: the scroll area that lays the page out in the host's column, or the
+ * page's own pane when the page lays itself out there (a workbench beside its rail). It never caps itself to the
+ * host's reading column, which left sections narrowed and centred beside a full-width page (DBW-UI-ACCEPT-1119).
+ */
 function ItemGroupPageColumn({ children, testID, style }: Readonly<{
   children: ReactNode;
   testID?: string;
   style?: HappierStyleProp;
 }>): ReactElement {
-  const pageChrome = useHappierPageChrome();
-  return (
-    <View testID={testID} style={[{ alignItems: 'center' }, style]}>
-      <View style={{ width: '100%', maxWidth: pageChrome?.columnMaxWidthPx }}>{children}</View>
-    </View>
-  );
+  return <View testID={testID} style={style}>{children}</View>;
 }
 
 function ItemGroupPageHeading(props: Readonly<{ title?: string; description?: ReactNode; action?: ReactNode }>): ReactElement {
