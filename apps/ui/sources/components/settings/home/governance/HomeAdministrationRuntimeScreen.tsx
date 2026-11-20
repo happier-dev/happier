@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useHomeSettings } from '@/hooks/home/useHomeSettings';
+import { useHomeSettingsSelection } from '@/hooks/home/useHomeSettingsWithCompanion';
 import { t } from '@/text';
 
 import { useHomeRuntimeExecutor } from '../runtime/homeRuntimeExecutor';
@@ -20,7 +20,7 @@ const RuntimePage = React.memo(function RuntimePage(props: Readonly<{ context: H
     const canView = context.projection.capabilities.viewAdministration;
     const release = useHomeServerRelease(context.scope.serverId, canView);
     const executor = useHomeRuntimeExecutor(context.scope.serverId, release.flavor);
-    const reads = useHomeSettings(context.scope, canView);
+    const reads = useHomeSettingsSelection(context.scope, canView, countPendingRestartChanges);
     const settingsUnknown = reads.loading || reads.failure !== null || reads.settings === null;
 
     if (!canView) {
@@ -51,7 +51,7 @@ const RuntimePage = React.memo(function RuntimePage(props: Readonly<{ context: H
                 context={context}
                 executor={executor}
                 release={release}
-                pendingCount={settingsUnknown ? null : countPendingRestartChanges(reads.settings)}
+                pendingCount={settingsUnknown ? null : reads.settings}
                 onRestarted={reads.reload}
             />
         </>

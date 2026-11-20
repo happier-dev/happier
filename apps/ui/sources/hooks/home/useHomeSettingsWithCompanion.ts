@@ -8,9 +8,9 @@ import { observeHomeSettings, refreshHomeSettings, type HomeSettingsRefreshReaso
 import { adoptHomeSettingsProjection, getHomeSettingsSnapshot, subscribeHomeSettingsAdoptions, subscribeHomeSettingsSnapshots } from '@/sync/store/home/governance/homeSettingsSnapshots';
 import { useHomeSettingsLifetime } from './homeSettingsLifetime';
 
-export type HomeSettingsWithCompanion<TCompanion> = Readonly<{
-    /** Last settings the Home answered; kept through a later failed read. */
-    settings: HomeSettingsProjectionV1 | null;
+export type HomeSettingsWithCompanion<TCompanion, TSettings = HomeSettingsProjectionV1> = Readonly<{
+    /** Selected settings from the last answer, retained after a transient failed read. */
+    settings: TSettings | null;
     /** Last answer of the page's companion read; `null` until it answers. */
     companion: TCompanion | null;
     loading: boolean;
@@ -47,12 +47,50 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     /** `null` for a page whose settings need no companion read (Features, Data). */
     readCompanion: ((scope: ServerAccountScope) => Promise<HomeGovernanceQueryOutcome<TCompanion>>) | null,
 ): HomeSettingsWithCompanion<TCompanion> {
+    return useHomeSettingsReads(scope, enabled, readCompanion, selectAllSettings);
+}
+
+function selectAllSettings(settings: HomeSettingsProjectionV1): HomeSettingsProjectionV1 {
+    return settings;
+}
+
+export function useHomeSettingsSelection<TSettings>(
+    scope: ServerAccountScope | null,
+    enabled: boolean,
+    selectSettings: (settings: HomeSettingsProjectionV1) => TSettings,
+) {
+    return useHomeSettingsReads<never, TSettings>(scope, enabled, null, selectSettings);
+}
+
+function useHomeSettingsReads<TCompanion, TSettings>(
+    scope: ServerAccountScope | null,
+    enabled: boolean,
+    readCompanion: ((scope: ServerAccountScope) => Promise<HomeGovernanceQueryOutcome<TCompanion>>) | null,
+    selectSettings: (settings: HomeSettingsProjectionV1) => TSettings,
+): HomeSettingsWithCompanion<TCompanion, TSettings> {
     const serverId = scope?.serverId ?? '';
     const accountId = scope?.accountId ?? '';
     const capturedScope = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
     const scopeKey = capturedScope ? serverAccountScopeKeySuffix(capturedScope) : '';
     const retain = useHomeSettingsLifetime();
-    const readSettings = React.useCallback(() => capturedScope ? getHomeSettingsSnapshot(capturedScope) : null, [capturedScope]);
+    const readSettings = React.useMemo(() => {
+        let lastSnapshot: ReturnType<typeof getHomeSettingsSnapshot> = null;
+        let selection: Pick<HomeSettingsWithCompanion<TCompanion, TSettings>, 'settings' | 'loading' | 'failure'> = {
+            settings: null, loading: true, failure: null,
+        };
+        return () => {
+            const snapshot = capturedScope ? getHomeSettingsSnapshot(capturedScope) : null;
+            if (snapshot === lastSnapshot) return selection;
+            lastSnapshot = snapshot;
+            const settings = snapshot?.settings ? selectSettings(snapshot.settings) : null;
+            const loading = snapshot?.loading ?? true;
+            const failure = snapshot?.failure ?? null;
+            if (!Object.is(selection.settings, settings) || selection.loading !== loading || selection.failure !== failure) {
+                selection = { settings, loading, failure };
+            }
+            return selection;
+        };
+    }, [capturedScope, selectSettings]);
     const subscribeSettings = React.useCallback((listener: () => void) => (
         enabled && capturedScope ? subscribeHomeSettingsSnapshots(capturedScope, listener) : () => {}
     ), [enabled, capturedScope]);
@@ -121,10 +159,10 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     }, [scopeKey]);
 
     return React.useMemo(() => Object.freeze({
-        settings: settings?.settings ?? null,
+        settings: settings.settings,
         companion: state.scopeKey === scopeKey ? state.companion : null,
-        loading: settings?.loading ?? true,
-        failure: settings?.failure ?? null,
+        loading: settings.loading,
+        failure: settings.failure,
         companionLoading: state.scopeKey === scopeKey ? state.companionLoading : readCompanion !== null,
         companionFailure: state.scopeKey === scopeKey ? state.companionFailure : null,
         reload: load,

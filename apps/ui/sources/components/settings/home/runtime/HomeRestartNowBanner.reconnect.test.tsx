@@ -136,8 +136,9 @@ async function restoreHomeAccount(serverId: string, serverUrl: string,
     return connection;
 }
 
-async function renderRuntime(serverId: string) {
-    const screen = await renderScreen(<modules.runtime.HomeAdministrationRuntimeScreen serverId={serverId} />);
+async function renderRuntime(serverId: string, onRender?: React.ProfilerOnRenderCallback) {
+    const page = <modules.runtime.HomeAdministrationRuntimeScreen serverId={serverId} />;
+    const screen = await renderScreen(onRender ? <React.Profiler id="home-runtime" onRender={onRender}>{page}</React.Profiler> : page);
     await waitForHomeGovernance(() => {
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids.some(id => ['home-runtime-version', 'home-admin-unavailable', 'home-admin-signed-out', 'home-admin-unknown-home'].includes(id))).toBe(true);
@@ -145,6 +146,28 @@ async function renderRuntime(serverId: string) {
     expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-runtime-version');
     return screen;
 }
+
+it('commits no Runtime render when another Home setting changes and the restart count stays the same', async () => {
+    const serverId = await hostingHome();
+    const initial = projection(false);
+    home.answer(serverId, SETTINGS_GET, { body: initial });
+    const commits = vi.fn();
+    const screen = await renderRuntime(serverId, commits);
+    const { context } = screen.tree.findByType(modules.sections.HomeRuntimeRestartSections).props;
+    const { adoptHomeSettingsProjection, getHomeSettingsSnapshot } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
+    await waitForHomeGovernance(() => expect(getHomeSettingsSnapshot(context.scope)?.settings?.revision).toBe(initial.revision));
+    commits.mockClear();
+    await act(async () => adoptHomeSettingsProjection(context.scope, {
+        ...initial,
+        revision: initial.revision + 1,
+        entries: [...initial.entries, homeSettingEntryFixture('HAPPIER_HOME_DISPLAY_NAME', { value: 'Studio' })],
+    }));
+    const unrelatedCommits = commits.mock.calls.length;
+    expect(unrelatedCommits).toBe(0);
+    await act(async () => adoptHomeSettingsProjection(context.scope, { ...projection(true), revision: initial.revision + 2 }));
+    await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-runtime-pending-restart'));
+    expect(commits.mock.calls.length - unrelatedCommits).toBeGreaterThan(0);
+});
 
 function runtimeItem(screen: Awaited<ReturnType<typeof renderRuntime>>, testID: string) {
     const item = screen.tree.findAllByType(modules.items.Item).find(row => row.props.testID === testID);
