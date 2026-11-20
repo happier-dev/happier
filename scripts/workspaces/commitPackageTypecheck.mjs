@@ -402,6 +402,13 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
     const moveStarted = Date.now();
     moveWorktree({ repo, state, log, worktreeRev }, treeId);
     timings.push({ side, step: 'move', ms: Date.now() - moveStarted });
+    // Exact-tree worktrees bypass command-replica preparation. Refresh this
+    // ignored source input from the selected tree before declaration analysis
+    // imports Protocol, including policy-only moves with unchanged dependencies.
+    const policyGenerator = join(worktree, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
+    if (existsSync(policyGenerator)) execFileSync(process.execPath, [policyGenerator], {
+      cwd: worktree, env: compileEnv, stdio: ['ignore', 'ignore', 'pipe'],
+    });
     for (const dir of missing) {
       const compiled = compile(worktree, dir, compileEnv);
       timings.push({ side, step: dir, ms: compiled.ms, complete: Boolean(compiled.rows) });

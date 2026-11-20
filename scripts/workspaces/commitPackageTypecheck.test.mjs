@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { runCommitGate } from './commitGate.mjs';
@@ -573,6 +574,52 @@ test('dependencies are prepared once per dependency generation, outside the comp
   const manifest = await commit('packages/leaf/package.json', JSON.stringify({ name: '@x/leaf', scripts: { typecheck: 'tsc' }, version: '2.0.0' }));
   assert.equal(prepare(tree(manifest)), true, 'a manifest change is a new generation');
   assert.equal(installs.length, 2);
+});
+
+// Exact-tree worktrees do not inherit the normal command replica's ignored source inputs.
+// The compiler boundary imports the real generated module; no TypeScript compiler is needed.
+test('each selected tree prepares its own embedded policy before declaration imports', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-typecheck-policy-'));
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const generator = 'packages/protocol/scripts/generate-embedded-feature-policies.mjs';
+  const generated = 'packages/protocol/src/features/embeddedFeaturePolicies.generated.ts';
+  const write = async (path, content) => {
+    await mkdir(dirname(join(repo, path)), { recursive: true });
+    await writeFile(join(repo, path), content);
+  };
+  await write(generator, readFileSync(new URL('../../packages/protocol/scripts/generate-embedded-feature-policies.mjs', import.meta.url)));
+  await write('.gitignore', `${generated}\nnode_modules/\n`);
+  await write('.github/feature-policy/preview.json', JSON.stringify({ buildPolicy: { allow: ['first-policy'] } }));
+  await write('.github/feature-policy/production.json', JSON.stringify({ buildPolicy: { deny: ['production-policy'] } }));
+  const env = { ...process.env, HAPPIER_REQUIRE_FEATURE_POLICY: '1', HAPPIER_EMBEDDED_POLICY_ENV: 'preview' };
+  const policyAt = worktree => JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e',
+    'const module = await import(process.argv[1]); process.stdout.write(JSON.stringify(module.EMBEDDED_FEATURE_BUILD_POLICY_RAW));',
+    pathToFileURL(join(worktree, generated)).href], { cwd: worktree, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  // Known-good source generation/import proves that a missing-input RED is not fixture setup.
+  execFileSync(process.execPath, [join(repo, generator)], { cwd: repo, env });
+  assert.equal(policyAt(repo).preview.allowRaw, 'first-policy');
+  const first = await commit('packages/sdk/src/index.ts', 'export const value = 2;\n');
+  let installs = 0;
+  const observed = [];
+  const { rowsAt } = treeTypechecker({ repo, state, env, log: () => {},
+    bootstrap: () => { installs += 1; execFileSync(process.execPath, ['-e', 'require("node:fs").mkdirSync("node_modules")'], { cwd: join(state, 'worktree') }); },
+    // The compiler process boundary reads the source input that declaration preparation imports.
+    compile: (worktree, dir) => { observed.push({ dir, policy: policyAt(worktree) }); return { rows: [], ms: 0 }; },
+  });
+  const tree = rev => git('rev-parse', `${rev}^{tree}`);
+  rowsAt(tree(first), ['packages/sdk'], 'base');
+  assert.equal(observed[0].policy.preview.allowRaw, 'first-policy');
+  const second = await commit('.github/feature-policy/preview.json', JSON.stringify({ buildPolicy: { allow: ['second-policy'] } }));
+  rowsAt(tree(second), ['apps/cli'], 'head');
+  assert.equal(observed[1].policy.preview.allowRaw, 'second-policy', 'a policy-only tree move replaces the previous ignored input');
+  assert.equal(observed[1].policy.production.denyRaw, 'production-policy');
+  assert.equal(installs, 1, 'source policy preparation does not reinstall unchanged dependencies');
+  const malformed = await commit('.github/feature-policy/preview.json', '{');
+  assert.throws(() => rowsAt(tree(malformed), ['packages/sdk'], 'invalid'), /invalid JSON for preview/);
+  assert.equal(observed.length, 2, 'failed generation never reaches the compiler');
 });
 
 // 2026-11-18 21:00-21:12Z: one detached report process per landed commit (10 in 12 min) piled up behind the gate lane's
