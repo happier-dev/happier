@@ -15,12 +15,12 @@ export async function archiveSessionOnceInactive(params: Readonly<{
 }>): ReturnType<typeof setSessionArchivedStateById> {
   params.signal?.throwIfAborted();
   const deadlineMs = params.timeoutMs === undefined ? null : Date.now() + params.timeoutMs;
-  const events = openSessionEventSource(params);
+  let events: ReturnType<typeof openSessionEventSource> | undefined;
   let inactiveRetryRevision: number | undefined;
   try {
     while (true) {
       params.signal?.throwIfAborted();
-      const revision = events.currentRevision();
+      const revision = events?.currentRevision();
       try {
         return await setSessionArchivedStateById({
           token: params.token,
@@ -39,6 +39,10 @@ export async function archiveSessionOnceInactive(params: Readonly<{
         }
       }
 
+      // Subscribe before reading activity so the baseline covers a Stop
+      // that completed between the rejected Archive and the subscription.
+      events ??= openSessionEventSource(params);
+      const observedRevision = revision ?? events.currentRevision();
       const rawSession = await fetchSessionByIdCompat({
         reason: 'session-control',
         token: params.token,
@@ -48,17 +52,17 @@ export async function archiveSessionOnceInactive(params: Readonly<{
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       }).catch(() => { params.signal?.throwIfAborted(); return null; });
 
-      if (!rawSession || rawSession.active !== false || inactiveRetryRevision === revision) {
-        if (!(await events.waitForChange(revision, { deadlineMs, signal: params.signal }))) {
+      if (!rawSession || rawSession.active !== false || inactiveRetryRevision === observedRevision) {
+        if (!(await events.waitForChange(observedRevision, { deadlineMs, signal: params.signal }))) {
           params.signal?.throwIfAborted();
           throw Object.assign(new Error('Cannot archive an active session'), { code: 'session_active' });
         }
       } else {
         // Retry once for this freshly observed inactive fact, not repeatedly on a stale snapshot.
-        inactiveRetryRevision = revision;
+        inactiveRetryRevision = observedRevision;
       }
     }
   } finally {
-    await events.close();
+    await events?.close();
   }
 }

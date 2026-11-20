@@ -15,6 +15,20 @@ vi.mock('@/api/session/sockets', () => ({
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+it('archives an inactive Session without opening observation or reading details', async () => {
+  const socket = Object.assign(new EventEmitter(), { connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn() });
+  boundary.create.mockReset().mockReturnValue(socket);
+  const sessionId = 'c' + 'a'.repeat(24);
+  const get = vi.spyOn(axios, 'get');
+  const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true, archivedAt: 123 } });
+
+  await expect(archiveSessionOnceInactive({ token: 'token', sessionId })).resolves.toEqual({ archivedAt: 123 });
+
+  expect(post).toHaveBeenCalledOnce();
+  expect(get).not.toHaveBeenCalled();
+  expect(boundary.create).not.toHaveBeenCalled();
+});
+
 it('keeps observing beyond the former archive cutoff without idle reads or writes, then archives on inactivity', async () => {
   vi.useFakeTimers();
   const socket = Object.assign(new EventEmitter(), { connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn() });
