@@ -39,6 +39,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     reviewScopeKey?: string;
     comparisonChrome?: ReviewProps['comparisonChrome'];
     hideViewed?: boolean;
+    onShowViewed?: () => void;
     maxFiles: number;
     maxChangedLines: number;
     initialCollapsedPaths?: readonly string[] | null;
@@ -133,7 +134,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     const emptyState = unavailableEmpty ? <SurfaceStateCard testID="captured-comparison-unavailable" kind="error"
         title={comparison.inventory.reasons.join(' · ') || t('hunkReview.noticeUnavailable')}
         action={props.onRefresh ? { label: t('common.retry'), onPress: props.onRefresh } : undefined} /> : undefined;
-    const renderReview = (hunkReview?: ReviewProps['hunkReview']) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId} hideViewed={props.hideViewed} fileViewedTotal={props.page?.totalFiles}
+    const renderReview = (hunkReview?: ReviewProps['hunkReview']) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId} hideViewed={props.hideViewed} onShowViewed={props.onShowViewed} fileViewedTotal={props.page?.totalFiles}
             reviewScopeKey={JSON.stringify([props.reviewScopeKey ?? props.sessionId, evidenceKey])}
             snapshot={projected.snapshot} changedFilesViewMode="repository"
             emptyState={emptyState}

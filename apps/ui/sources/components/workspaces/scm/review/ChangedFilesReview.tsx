@@ -222,6 +222,8 @@ type ChangedFilesReviewProps = {
     /** A source's Viewed facts without Keep / Discard (a plugin's pull request); `hunkReview.fileViewed` otherwise. */
     fileViewed?: ScmFileViewedSource | null;
     hideViewed?: boolean;
+    /** Show the viewed files again: the hidden line's Show (the host's own Hide viewed path). */
+    onShowViewed?: () => void;
     fileViewedTotal?: number;
     /** A file on its source (a pull request's file on GitHub), offered in the file's ⋯ beside Copy path. */
     fileSourceLink?: ((path: string) => DiffFileSourceLink | null) | null;
@@ -584,8 +586,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         () => 0,
     );
 
-    const reviewFileEntries = React.useMemo(() => {
+    const { entries: reviewFileEntries, hiddenViewedCount } = React.useMemo(() => {
         const viewed = filterViewed?.getViewedPaths();
+        let hidden = 0;
         const out: Array<{
             key: string;
             sectionKey: string;
@@ -602,8 +605,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             for (const file of section.files) {
                 const path = file?.fullPath;
                 if (!path) continue;
-                if (seen.has(path) || viewed?.has(path)) continue;
+                if (seen.has(path)) continue;
                 seen.add(path);
+                if (viewed?.has(path)) { hidden += 1; continue; }
                 out.push({
                     key: path,
                     sectionKey: section.key,
@@ -616,8 +620,17 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 indexInSection += 1;
             }
         }
-        return out;
+        return { entries: out, hiddenViewedCount: hidden };
     }, [sections, filterViewed, viewedRevision]);
+    // Hide viewed says what it hid, with Show, so a list it emptied never reads as "no changes".
+    const onShowViewed = props.onShowViewed;
+    const hiddenViewedLine = React.useMemo(() => hiddenViewedCount > 0 ? <SurfaceStateCard testID="scm-review-viewed-hidden"
+        kind="empty" size="line" iconName="eye-slash" title={t('hunkReview.viewedHidden', { count: hiddenViewedCount })}
+        action={onShowViewed ? { label: t('hunkReview.viewedShow'), onPress: onShowViewed, testID: 'scm-review-viewed-show' } : undefined} />
+        : null, [hiddenViewedCount, onShowViewed]);
+    const indexFooter = hiddenViewedLine && reviewFileEntries.length > 0 ? <>{hiddenViewedLine}{pagingFooter}</> : pagingFooter;
+    // Hide viewed emptied the list: the hidden line stands in the empty state's place.
+    const emptiedByHideViewed = reviewFileEntries.length === 0 ? hiddenViewedLine : null;
 
     const { reviewListFiles, reviewFileIndex } = React.useMemo(() => {
         const files = reviewFileEntries.map((entry) => entry.file);
@@ -1267,6 +1280,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         {...(comparisonChrome ? { placement: 'comparisonStream' as const, rootPath: comparisonChrome.rootPath ?? snapshot?.repo.rootPath ?? null } : null)}
                     />
                 ) : null}
+                {emptiedByHideViewed}
                 {reviewFiles.length === 0 && !hasMoreFiles && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
                     // Nothing to review is one calm state, like the pane's other empty states, not a caption under a header.
                     props.emptyState ?? <SurfaceStateCard testID="changed-files-review-empty" kind="empty" iconName="git-diff"
@@ -1302,6 +1316,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         coverage.fileCount,
         hasMoreFiles,
         props.emptyState,
+        emptiedByHideViewed,
         setDiffArea,
         theme.colors.border.default,
         theme.colors.surface.inset,
@@ -1718,7 +1733,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         files={indexFiles}
                         totalFiles={coverage.fileCount}
                         onScroll={handleIndexScroll}
-                        listFooter={pagingFooter}
+                        listFooter={indexFooter}
                         activePath={null}
                         commentCountByPath={commentCountByPath}
                         onFocusPath={onIndexFocusPath}
@@ -1770,7 +1785,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         renderCommitToggle={indexRenderCommitToggle}
                         renderRowAccessory={comparisonChrome?.renderIndexAccessory ?? null}
                         rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
-                        listFooter={pagingFooter}
+                        listFooter={indexFooter}
                         menu={barFoldsIntoWidget ? <ChangedFilesReviewMoreMenu interactiveTargetGapPx={SCM_COMPARISON_ACTIONS_GAP_PX}
                             diffArea={diffArea} availableDiffAreas={diffConfig.availableModes} diffAreaLabels={diffAreaLabels}
                             onDiffArea={setDiffArea} leadingSections={comparisonMenuSections.filter((section) => section.id === 'find')} /> : null}
@@ -1779,7 +1794,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 {phoneFileControl ? <Animated.View testID="scm-comparison-file-sticky" onLayout={onPhoneControlLayout}
                     style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }, phoneControlStyle]}>
                     <ChangedFilesReviewPhoneFileControl fileIndex={reviewFileIndex} activePath={activeReviewPath}
-                        totalFiles={coverage.fileCount} listFooter={pagingFooter}
+                        totalFiles={coverage.fileCount} listFooter={indexFooter}
                         findModel={reviewFind}
                         rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
                         commentCountByPath={commentCountByPath} onFocusPath={focusFile} />

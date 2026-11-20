@@ -34,6 +34,9 @@ export type Labels = Readonly<{
   viewedA11y: (params: Name) => string;
   viewedCount: (params: Readonly<{ count: number; total: number }>) => string;
   viewedUnavailable: string;
+  hideViewed: string;
+  viewedHidden: (params: Count) => string;
+  viewedShow: string;
   nextFile: string;
   nextNamed: (params: Name) => string;
   scopeA11y: string;
@@ -117,6 +120,9 @@ export const hunkReviewTranslations = {
     viewedA11y: ({ name }) => `${name}, viewed on GitHub`,
     viewedCount: ({ count, total }) => `${count} of ${total} viewed`,
     viewedUnavailable: 'Viewed unavailable',
+    hideViewed: 'Hide viewed',
+    viewedHidden: ({ count }) => (count === 1 ? '1 viewed file hidden' : `${count} viewed files hidden`),
+    viewedShow: 'Show',
     nextFile: 'Next file',
     nextNamed: ({ name }) => `Next · ${name}`,
     scopeA11y: 'Changes to show',

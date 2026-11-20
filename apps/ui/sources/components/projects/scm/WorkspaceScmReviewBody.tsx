@@ -76,6 +76,8 @@ export type WorkspaceScmReviewBodyProps = Readonly<{
     barActions?: React.ReactNode;
     /** The region a bar action opens (review comments): drawn under the Files bar, above the files. */
     barPanel?: React.ReactNode;
+    /** The host's own switch beside the header's facts (a Review's Hide viewed), after Explain. */
+    headerAccessory?: React.ReactNode;
     /** The same host actions as rows of the Files menu (the bar's ⋯, or the phone header's menu). */
     barMenuSection?: ScmComparisonMenuSection | null;
 }>;
@@ -210,6 +212,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
                     {facts?.viewed ?? null}</>}
                 stacked={stacked} accessory={<>
                     {reading ? <ScmComparisonExplainToggle value={props.explain} onChange={props.onExplainChange} /> : null}
+                    {props.headerAccessory ?? null}
                     {stacked ? <ChangedFilesLayoutSwitch testIDPrefix="scm-comparison-layout" /> : null}
                 </>} />
                 {/* No walkthrough from the session that made these changes: Files offers one (lab p-changes FILES). */}
@@ -232,7 +235,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
     }, [stacked, rail, views, reading, readInWalkthrough, props.hostSwitch, props.view, props.onSelectView,
         props.commitsCount, props.scopeOptions, props.comparison, props.scopeLabel, props.evidenceSessionId,
         props.onSelectComparison, props.fileCount, props.onStartReview, props.proposeCommits, props.onProposeCommits,
-        props.reviewDisabled, props.reviewDisabledReason, props.barMenuSection, props.barActions, props.barPanel,
+        props.reviewDisabled, props.reviewDisabledReason, props.barMenuSection, props.barActions, props.barPanel, props.headerAccessory,
         props.scopeDetail, props.changeCount, props.modelLabel, props.analysisMark, props.marksAvailable,
         props.marksPending, props.explain, props.onExplainChange, props.onExplainDraft, props.rootPath]);
     const context: ScmReviewViewContext = { layout: stacked ? 'phone' : rail ? 'wide' : 'narrow', renderBar, onShowFiles: showFiles };

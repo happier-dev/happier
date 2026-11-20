@@ -160,6 +160,13 @@ export type ReviewWalkthroughTranslations = {
         glanceRunning: string;
         glanceFailed: string;
         glanceToDecide: (params: Count) => string;
+        quality: (params: Readonly<{ score: number }>) => string;
+        qualityOutOf: (params: Readonly<{ score: number }>) => string;
+        qualityLowest: (params: Count) => string;
+        qualityMedian: (params: Count) => string;
+        qualityShowAll: string;
+        qualityShowReason: string;
+        qualityShowLess: string;
         glanceAllDecided: string;
         glanceNoFindings: string;
         findingsCount: (params: Count) => string;
@@ -374,6 +381,13 @@ export const en: ReviewWalkthroughTranslations = {
         glanceRunning: 'Reviewing…',
         glanceFailed: 'The review couldn’t finish',
         glanceToDecide: ({ count }) => count === 1 ? '1 finding to decide' : `${count} findings to decide`,
+        quality: ({ score }) => `Quality ${score}/5`,
+        qualityOutOf: ({ score }) => `${score}/5`,
+        qualityLowest: ({ count }) => (count === 1 ? 'From 1 reviewer' : `Lowest of ${count} reviewers`),
+        qualityMedian: ({ count }) => (count === 1 ? 'From 1 reviewer' : `Median of ${count} reviewers`),
+        qualityShowAll: 'Show all',
+        qualityShowReason: 'Show reason',
+        qualityShowLess: 'Show less',
         glanceAllDecided: 'Every finding is decided',
         glanceNoFindings: 'Nothing to fix',
         findingsCount: ({ count }) => count === 1 ? '1 finding' : `${count} findings`,

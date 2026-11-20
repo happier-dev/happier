@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import {
@@ -156,6 +157,19 @@ const FIXTURES: readonly Fixture[] = [
     reviewers: [{ label: 'Codex', backendId: 'codex' }],
   },
 ];
+
+/** The Host's combined score as it reaches the page (`quality-lowest`, `quality-median`); fixture copy is the lab's. */
+const QUALITY_SCENES: Readonly<Record<string, ReviewRoundQualityV1>> = {
+  'quality-lowest': { aggregation: 'lowest', score: 3, reviewers: [
+    { reviewerId: 'claude', score: 4, rationale: 'Clean backoff with a cap and a give-up path; tests cover the main cases.' },
+    { reviewerId: 'codex', score: 3, rationale: 'The backoff is sound; the jitter clamp is untested and can push the first retry past 2 s.' },
+  ] },
+  'quality-median': { aggregation: 'median', score: 3, reviewers: [
+    { reviewerId: 'claude', score: 4, rationale: 'Clean backoff with a cap and a give-up path; tests cover the main cases.' },
+    { reviewerId: 'codex', score: 3, rationale: 'The backoff is sound; the jitter clamp is untested and can push the first retry past 2 s.' },
+    { reviewerId: 'deepsec', score: 2, rationale: 'The retry loop has no upper bound when the clock jumps backwards.' },
+  ] },
+};
 
 function agentMark(agentId: string) {
   return <AgentIcon agentId={agentId} size={ICON_SIZE.sm} />;
@@ -411,6 +425,7 @@ export function ReviewDetailSpecimen(
           'Verified 4 of 6 by the double-check',
         ],
       }}
+      quality={QUALITY_SCENES[scene] ?? null}
       notice={
         scene === 'round2' ? null : (
           <SurfaceStateCard

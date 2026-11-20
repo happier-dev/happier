@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import type { SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -111,13 +111,29 @@ function webElementOf(node: View | null): HTMLElement | null {
 
 /** Files' Explain: the walkthrough's own notes beside the hunks they explain (lab WT8-F2; key E). */
 export function ScmComparisonExplainToggle(props: Readonly<{ value: boolean; onChange: (next: boolean) => void }>) {
+    return <ScmComparisonHeaderToggle testID="scm-comparison-explain" icon="path" label={t('scmComparison.explain')}
+        accessibilityLabel={t('scmComparison.explainA11y')} value={props.value} onChange={props.onChange} />;
+}
+
+/**
+ * One switch on the comparison header's accessory row (Explain, Hide viewed): the whole pill is the target,
+ * the switch inside only shows its state.
+ */
+export function ScmComparisonHeaderToggle(props: Readonly<{
+    testID: string;
+    icon: IconName;
+    label: string;
+    accessibilityLabel?: string;
+    value: boolean;
+    onChange: (next: boolean) => void;
+}>) {
     const { theme } = useUnistyles();
     return (
         <HappierPressable
-            testID="scm-comparison-explain"
+            testID={props.testID}
             accessibilityRole="switch"
             checked={props.value}
-            accessibilityLabel={t('scmComparison.explainA11y')}
+            accessibilityLabel={props.accessibilityLabel ?? props.label}
             onPress={() => props.onChange(!props.value)}
             style={(state) => [
                 styles.explain,
@@ -125,8 +141,8 @@ export function ScmComparisonExplainToggle(props: Readonly<{ value: boolean; onC
                 focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
             ]}
         >
-            <Icon name="path" size={ICON_SIZE.sm} color={props.value ? theme.colors.accent.blue : theme.colors.text.secondary} />
-            <Text style={styles.explainLabel}>{t('scmComparison.explain')}</Text>
+            <Icon name={props.icon} size={ICON_SIZE.sm} color={props.value ? theme.colors.accent.blue : theme.colors.text.secondary} />
+            <Text style={styles.explainLabel}>{props.label}</Text>
             <View pointerEvents="none">
                 <Switch value={props.value} onValueChange={props.onChange} accessibilityElementsHidden importantForAccessibility="no" />
             </View>

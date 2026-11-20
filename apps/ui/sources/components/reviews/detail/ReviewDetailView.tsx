@@ -4,8 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierReviewGlanceLine, type HappierReviewGlance } from '@happier-dev/plugin-ui/presentation';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 
-import type { ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewRoundQualityV1, ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   PageHeader,
@@ -81,8 +82,8 @@ export type ReviewDetailViewProps = Readonly<{
   primaryAction?: PageHeaderPrimaryAction | null;
   menu: readonly PageHeaderMenuAction[];
   glance: ReviewDetailGlance | null;
-  quality?: import('@happier-dev/protocol/reviews/reviewArtifactV1').ReviewRoundQualityV1 | null;
-  viewedFilter?: Readonly<{ hidden: boolean; onHiddenChange: (hidden: boolean) => void }>;
+  /** The round's reviewer score as the Host aggregated it (lowest or median, the person's setting); `null` when none was recorded. */
+  quality?: ReviewRoundQualityV1 | null;
   /** One line under the glance when part of the round failed or the Home is offline (with its retry). */
   notice?: React.ReactNode;
   rounds: readonly ReviewDetailRound[];
@@ -144,10 +145,11 @@ export function ReviewDetailView(
         testID="review-detail:header"
       />
       <PageContentColumn style={styles.column}>
-        {props.glance || props.notice ? (
+        {props.glance || props.quality || props.notice ? (
           // The glance and its notice stand on the sections' sheet edge, not the column's.
           <View style={styles.lead}>
             {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
+            {props.quality ? <ReviewQualityLines quality={props.quality} /> : null}
             {props.notice ?? null}
           </View>
         ) : null}
@@ -190,6 +192,42 @@ export function ReviewGlanceLine(
   const workTheme = useWorkTheme();
   return <HappierReviewGlanceLine glance={props.glance} testID="review-detail:glance" factsTestID="review-detail:facts"
     theme={workTheme} host={WORK_HOST} />;
+}
+
+/**
+ * The reviewers' change-quality score (ideas-1118-reviews scene 7; UI refinements ruling 2026-11-20): one quiet
+ * facts line under the verdict, the score the Host combined and how ("Lowest of 3 reviewers"); each reviewer's
+ * score and reason one press away. It is the reviewers' judgement, never a gate, so it stays in ink.
+ */
+function ReviewQualityLines(props: Readonly<{ quality: ReviewRoundQualityV1 }>) {
+  const { quality } = props;
+  const [expanded, setExpanded] = React.useState(false);
+  const count = quality.reviewers.length;
+  const basis = count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
+    : 'reviewWalkthrough.detail.qualityLowest', { count }) : null;
+  const disclosure = expanded ? t('reviewWalkthrough.detail.qualityShowLess')
+    : t(count > 1 ? 'reviewWalkthrough.detail.qualityShowAll' : 'reviewWalkthrough.detail.qualityShowReason');
+  return (
+    <View testID="review-detail:quality" style={styles.quality}>
+      <View style={styles.qualityLine}>
+        <Text variant="meta" style={styles.participantQuiet}>
+          <Text testID="review-detail:quality-score">{t('reviewWalkthrough.detail.quality', { score: quality.score })}</Text>
+          {basis ? <>{' · '}<Text testID="review-detail:quality-basis">{basis}</Text></> : null}
+          {' · '}
+        </Text>
+        <TextLinkButton size="meta" testID="review-detail:quality-each" expanded={expanded} label={disclosure}
+          onPress={() => setExpanded(open => !open)} />
+      </View>
+      {expanded ? quality.reviewers.map(reviewer => (
+        <View key={reviewer.reviewerId} style={styles.qualityReviewer} testID={`review-detail:quality-reviewer:${reviewer.reviewerId}`}>
+          <Text variant="meta" emphasis="medium" style={styles.qualityReviewerScore}>
+            {t('reviewWalkthrough.detail.qualityOutOf', { score: reviewer.score })}
+          </Text>
+          <Text variant="meta" style={styles.qualityReviewerReason}>{reviewer.rationale}</Text>
+        </View>
+      )) : null}
+    </View>
+  );
 }
 
 const GROUP_STATUS_ICON: Record<ReviewDetailRoundGroup['status'], IconName> = {
@@ -313,6 +351,11 @@ const CONTENT_INSET_PX = resolveItemGroupContentHorizontalInsetPx();
 const styles = StyleSheet.create((theme) => ({
     column: { gap: theme.space.s16, paddingBottom: theme.space.s32 },
     lead: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX, paddingTop: theme.space.s16 },
+    quality: { gap: theme.space.s4 },
+    qualityLine: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' },
+    qualityReviewer: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, minWidth: 0 },
+    qualityReviewerScore: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'], flexShrink: 0 },
+    qualityReviewerReason: { color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
     inset: { paddingHorizontal: CONTENT_INSET_PX, alignItems: 'flex-start' },
     groupDetail: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
     participants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
