@@ -22,6 +22,36 @@ function parseJsonLines(raw: string): any[] {
 }
 
 describe('fake Claude CLI fixture', () => {
+  it('keeps runtime-continuity controls inside the child shim and gives each launch its own identity', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-continuity-shim-'));
+    try {
+      const releaseFile = join(dir, 'release');
+      await writeFile(releaseFile, 'release');
+      const fixture = await createIsolatedFakeClaudeControlShim({ testDir: dir,
+        captureEnvironmentKeys: [], logFullStdin: true, scenario: 'daemon-runtime-continuity',
+        runtimeContinuityReleaseFile: releaseFile });
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('HAPPIER_E2E_FAKE_CLAUDE_') || key.startsWith('HAPPY_E2E_FAKE_CLAUDE_')) delete env[key];
+      }
+      for (const marker of ['DAEMON_RUNTIME_CONTINUITY_HOLD_FIRST', 'DAEMON_RUNTIME_CONTINUITY_HOLD_SECOND']) {
+        const input = JSON.stringify({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: marker }] } });
+        const result = spawnSync(process.execPath, [fixture.executablePath,
+          '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+          cwd: dir, env, input: `${input}\n`, encoding: 'utf8',
+        });
+        expect(result.status, result.stderr).toBe(0);
+      }
+      const events = parseJsonLines(await readFile(fixture.logPath, 'utf8'));
+      const entered = events.filter(event => event.type === 'runtime_continuity_provider_effect_entered');
+      expect(entered).toHaveLength(2);
+      expect(new Set(entered.map(event => event.invocationId)).size).toBe(2);
+      expect(entered.map(event => event.userTextPreview)).toEqual([
+        'DAEMON_RUNTIME_CONTINUITY_HOLD_FIRST', 'DAEMON_RUNTIME_CONTINUITY_HOLD_SECOND',
+      ]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('publishes the causing assistant model and tool use before executing a Session MCP Action', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-mcp-order-'));
     try {

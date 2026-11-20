@@ -42,10 +42,12 @@ export function fakeClaudeFixturePath(): string {
 
 export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
   testDir: string;
-  invocationId: string;
+  /** Omit to retain the vendor fixture's distinct identity for every process. */
+  invocationId?: string;
   captureEnvironmentKeys: readonly string[];
   logFullStdin: boolean;
   scenario?: string;
+  runtimeContinuityReleaseFile?: string;
   /** Observe the native vendor's startup file before the runtime cleans it up. */
   captureStartupInstructions?: boolean;
 }>): Promise<Readonly<{
@@ -61,10 +63,13 @@ export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
 
   const controlledEnvironment = {
     HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
-    HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: params.invocationId,
+    ...(params.invocationId === undefined ? {} : { HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: params.invocationId }),
     HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: params.logFullStdin ? '1' : '0',
     HAPPIER_E2E_FAKE_CLAUDE_CAPTURE_ENV_KEYS: params.captureEnvironmentKeys.join(','),
     ...(params.scenario === undefined ? {} : { HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: params.scenario }),
+    ...(params.runtimeContinuityReleaseFile === undefined ? {} : {
+      HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE: params.runtimeContinuityReleaseFile,
+    }),
     CLAUDE_CONFIG_DIR: configDir,
   } satisfies Record<string, string>;
   const source = [

@@ -38,7 +38,7 @@ import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testki
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { readFakeClaudeLogEvents } from '../../src/testkit/fakeClaude';
+import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents } from '../../src/testkit/fakeClaude';
 import { connectStdioMcp, parseToolJson, type ExternalMcpClient, type ExternalMcpTransport } from '../../src/testkit/externalMcp';
 import { writeActivatedActionExecutionPluginFixture,
   writeEnabledLocalExtensionPackageState } from '../../src/testkit/extensions/localPackageFixture';
@@ -249,8 +249,11 @@ describe('AE.P02.F8-shared-consent', () => {
 
   it('asks the execution Account before a shared check and keeps the consent row out of ordinary listings', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-f8-'));
-    const agentLogPath = join(testDir, 'actor-agent.jsonl');
     releaseFile = join(testDir, 'release-bot-turn');
+    const agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'actor-agent'),
+      captureEnvironmentKeys: [], logFullStdin: true, scenario: 'daemon-runtime-continuity',
+      runtimeContinuityReleaseFile: releaseFile });
+    const agentLogPath = agent.logPath;
     fixture = await startTeamSetupFFixture({ testDir,
       observeActionRequests: true, serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const author = await fixture.createAccount('author');
@@ -266,9 +269,7 @@ describe('AE.P02.F8-shared-consent', () => {
       markerPath: pluginEffectPath });
     await writeEnabledLocalExtensionPackageState({ happyHomeDir: join(testDir, actor.name, 'home'), pluginRoot, pluginId });
     const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-      HAPPIER_E2E_FAKE_CLAUDE_LOG: agentLogPath, HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
-      HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'daemon-runtime-continuity',
-      HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE: releaseFile } });
+      HAPPIER_CLAUDE_PATH: agent.executablePath } });
     const session = await fixture.assertKnownGoodSessionControl(actor, machine);
     const decidingSession = await fixture.assertKnownGoodSessionControl(actor, machine);
     const reviewTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionEditResultV1Schema,
   WorkflowRunListResultV1Schema, WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -12,7 +13,7 @@ import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workfl
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { readFakeClaudeLogEvents } from '../../src/testkit/fakeClaude';
+import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
 
 describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
@@ -21,7 +22,9 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
 
   it('asks the actor again after a shared child Agent prompt changes while the root revision stays equal', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-shared-child-'));
-    const agentLogPath = join(testDir, 'actor-agent.jsonl');
+    const agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'actor-agent'),
+      captureEnvironmentKeys: [], logFullStdin: true });
+    const agentLogPath = agent.logPath;
     fixture = await startTeamSetupFFixture({ testDir,
       serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const active = fixture;
@@ -29,11 +32,20 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
     const actor = await active.createAccount('actor');
     const actorId = readAccountIdFromToken(actor.credentials.token);
     expect((await active.claimHomeOwner(author)).result.status).toBe('claimed');
+    // Team membership supplies direct-share eligibility; the Artifacts themselves
+    // remain granted only to the actor Account.
+    const createdTeam = await author.executeAsPerson('teams.create', { v: 1, name: 'Shared child reviewers',
+      requestKey: randomUUID(), initialOwnerAccountId: readAccountIdFromToken(author.credentials.token) });
+    expect(createdTeam.ok, JSON.stringify(createdTeam)).toBe(true);
+    if (!createdTeam.ok) throw new Error(createdTeam.errorCode);
+    const teamId = TeamSummaryV1Schema.parse(createdTeam.result).id;
+    const addedMember = await author.executeAsPerson('teams.members.add', { v: 1, teamId,
+      accountId: actorId, role: 'member', historyAccess: 'from_membership' });
+    expect(addedMember, JSON.stringify(addedMember)).toMatchObject({ ok: true });
     const authorMachine = await active.enrollDaemon(author,
       { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const actorMachine = await active.enrollDaemon(actor, { env: {
-      HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_E2E_FAKE_CLAUDE_LOG: agentLogPath,
-      HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
+      HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_CLAUDE_PATH: agent.executablePath,
     } });
     const session = await active.assertKnownGoodSessionControl(actor, actorMachine);
     const createdProfile = await author.executeAsPerson('actions.policy.set', { profileChange: { kind: 'create',
@@ -43,8 +55,9 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
     const profile = ActionPolicyOutputSchemas['actions.policy.set'].parse(createdProfile.result);
     if (!('profileChange' in profile) || profile.profileChange.kind !== 'create') throw new Error('Missing profile');
     const profileId = profile.profileChange.id;
-    expect(await author.executeAsPerson('artifact.access.grants.set', { artifactId: profileId,
-      principal: { kind: 'account', accountId: actorId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+    const grantedProfile = await author.executeAsPerson('artifact.access.grants.set', { artifactId: profileId,
+      principal: { kind: 'account', accountId: actorId }, accessLevel: 'view' });
+    expect(grantedProfile, JSON.stringify(grantedProfile)).toMatchObject({ ok: true });
     const sessionRow = await fetchSessionV2(active.server.baseUrl, actor.credentials.token, session.sessionId);
     expect(await actor.executeAsPerson('session.approval_profile.set', { sessionId: session.sessionId,
       serverId: active.serverId, expectedMetadataRevision: sessionRow.metadataVersion, approvalProfileId: profileId }))
@@ -66,8 +79,9 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
     if (!rootCreated.ok) throw new Error(rootCreated.errorCode);
     const root = WorkflowDefinitionCreateResultV1Schema.parse(rootCreated.result);
     for (const artifactId of [root.definitionId, child.definitionId]) {
-      expect(await author.executeAsPerson('artifact.access.grants.set', { artifactId,
-        principal: { kind: 'account', accountId: actorId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+      const granted = await author.executeAsPerson('artifact.access.grants.set', { artifactId,
+        principal: { kind: 'account', accountId: actorId }, accessLevel: 'view' });
+      expect(granted, JSON.stringify(granted)).toMatchObject({ ok: true });
     }
     const linked = await author.executeAsPerson('workflow.trigger.add', { workflow: root.definitionId,
       project: { machineId: authorMachine.target.machineId, directory: authorMachine.workspaceDir },
