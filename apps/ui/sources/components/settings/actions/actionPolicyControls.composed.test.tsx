@@ -8,6 +8,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { Modal } from '@/modal';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -15,9 +16,6 @@ import { createSessionCallerHostedHtmlRequestController } from '@/components/ui/
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
-import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -49,10 +47,6 @@ afterEach(() => { standardCleanup(); storage.setState(originalState, true); });
 describe('Action policy controls through their canonical Action', () => {
     it('honors foreign HTML Ask for safe Send through the UI approval policy hook', async () => {
         const account = await createSecretSettingsTestHarness({ serverIdentityId: 'srv_g1_safe_send',
-            features: createRootLayoutFeaturesResponse({ capabilities: {
-                serverIdentity: { serverIdentityId: 'srv_g1_safe_send' },
-                session: { ...DEFAULT_SESSION_CAPABILITIES, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
-            } }),
             settings: settingsParse({ memoryUseInNewSessions: false, actionsSettingsV1: { v: 1, actions: {},
                 callerSurfacePolicies: { foreign_session_html: { 'session.message.send': 'ask_first' } },
             } }),
@@ -62,23 +56,11 @@ describe('Action policy controls through their canonical Action', () => {
             metadata: { path: '/repo', host: 'tester.local' } });
         const request = account.request.getMockImplementation();
         if (!request) throw new Error('Expected the Home HTTP boundary');
-        const sent: unknown[] = [];
-        // Only HTTP is synthetic; Session admission, policy, Pending and Artifact clients stay real.
+        // Hosted Send reaches the Machine transport after policy. This Home has no Machine for the fixture Session.
         account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === `/v2/sessions/${sessionId}`) return Response.json({ session });
             if (path === `/v1/sessions/${sessionId}/turns`) return Response.json({ v: 1, sessionId, updatedAt: 1, turns: [] });
-            if (path === `/v2/sessions/${sessionId}/pending` && init?.method === 'POST') {
-                const body: unknown = JSON.parse(String(init.body));
-                if (!body || typeof body !== 'object') throw new Error('Expected Pending enqueue input');
-                sent.push(body);
-                return Response.json({ didWrite: true, pendingCount: sent.length, pendingVersion: sent.length,
-                    requestedAction: Reflect.get(body, 'requestedAction'),
-                    pending: { localId: Reflect.get(body, 'localId'), content: Reflect.get(body, 'content'),
-                        status: 'queued', position: sent.length, createdAt: 1, updatedAt: 1,
-                        discardedAt: null, discardedReason: null, authorAccountId: account.scope.accountId },
-                });
-            }
             return request(input, init);
         }));
         const serverIdentityId = resolveScopedPluginSettingsServerIdentity(account.scope.serverId);
@@ -106,16 +88,12 @@ describe('Action policy controls through their canonical Action', () => {
             const body = account.artifacts.readPlainBody(account.artifacts.list()[0]!.id);
             if (!body) throw new Error('Expected the stored approval request');
             expect(ApprovalRequestV2Schema.parse(JSON.parse(body))).toMatchObject({ status: 'open', actionId: 'session.message.send' });
-            expect(sent).toEqual([]);
             choose('allowed');
-            await expect(send('foreign-allowed')).resolves.toMatchObject({ status: 'accepted', localId: 'foreign-allowed' });
-            expect(sent).toHaveLength(1);
+            await expect(send('foreign-allowed')).resolves.toMatchObject({ code: 'target_unavailable' });
             choose('off');
             await expect(send('foreign-off')).resolves.toMatchObject({ code: 'action_disabled' });
-            expect(sent).toHaveLength(1);
             owned = true;
-            await expect(send('own-send')).resolves.toMatchObject({ status: 'accepted', localId: 'own-send' });
-            expect(sent).toHaveLength(2);
+            await expect(send('own-send')).resolves.toMatchObject({ code: 'target_unavailable' });
             expect(account.artifacts.list()).toHaveLength(1);
         } finally { controller.dispose(); standardCleanup(); await account.dispose(); }
     });
@@ -218,15 +196,16 @@ describe('Action policy controls through their canonical Action', () => {
                         [actionId]: { approvalRequiredSurfaces: ['ui'] },
                     } },
                 })); });
+                const confirm = vi.mocked(Modal.confirm);
+                confirm.mockClear().mockResolvedValueOnce(false);
                 await act(async () => { change(); });
-                await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
+                await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
                 expect(changed()).toBe(false);
-                await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-                expect(changed()).toBe(false);
+                confirm.mockResolvedValueOnce(true);
                 await act(async () => { change(); });
-                await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
-                await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
                 await vi.waitFor(() => expect(changed()).toBe(true));
+                expect(confirm).toHaveBeenCalledTimes(2);
+                expect(account.artifacts.list()).toEqual([]);
                 await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                     actionsSettingsV1: { ...account.persistedSettings.actionsSettingsV1,
                         approvalWaivedSurfaces: { [actionId]: ['ui'] },
@@ -262,15 +241,16 @@ describe('Action policy controls through their canonical Action', () => {
                     'actions.policy.set': { approvalRequiredSurfaces: ['ui'] },
                 } },
             })); });
+            const confirm = vi.mocked(Modal.confirm);
+            confirm.mockClear().mockResolvedValueOnce(false);
             await act(async () => { choose(false); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
+            await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
             expect(account.persistedSettings.actionsSettingsV1.actions['settings.set']?.enabled).not.toBe(false);
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-            expect(account.persistedSettings.actionsSettingsV1.actions['settings.set']?.enabled).not.toBe(false);
+            confirm.mockResolvedValueOnce(true);
             await act(async () => { choose(false); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
             await vi.waitFor(() => expect(account.persistedSettings.actionsSettingsV1.actions['settings.set']?.enabled).toBe(false));
+            expect(confirm).toHaveBeenCalledTimes(2);
+            expect(account.artifacts.list()).toEqual([]);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { ...account.persistedSettings.actionsSettingsV1,
                     approvalWaivedSurfaces: { 'actions.policy.set': ['ui'] },

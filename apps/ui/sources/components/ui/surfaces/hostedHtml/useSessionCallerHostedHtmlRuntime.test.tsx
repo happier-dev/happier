@@ -4,6 +4,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionAccessFixture, createSessionFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    createLegacyAccountEncryptionCurrentnessFixture,
+    createPlainAccountEncryptionCurrentnessFixture,
+} from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createServerAccountConnectionProbeHttpResponse } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { PluginUiHostApiSurfaceContextV1Schema, type PluginHostedWebBridgeEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
@@ -20,6 +25,7 @@ const frameAvailability = vi.hoisted(() => ({ current: true }));
 const credentials = vi.hoisted(() => new Map<string, string>());
 const credentialListeners = vi.hoisted(() => new Set<(event: HomeCredentialMutationEvent) => void>());
 const frames = vi.hoisted(() => [] as Record<string, unknown>[]);
+const homeBSecret = new Uint8Array(32).fill(7);
 
 // The physical browser frame is the platform boundary; keep the runtime,
 // adapter, shared frame host and canonical Host API bridge real.
@@ -43,6 +49,11 @@ vi.mock('react-native', async () => {
     });
 });
 
+// Both platform transports reach the same synthetic Home HTTP boundary.
+vi.mock('expo/fetch', () => ({
+    fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+}));
+
 // Secure credential storage is the external boundary. Account retirement,
 // Session projection, local settings, Front Door and request controllers stay real.
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
@@ -54,6 +65,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
                 const accountId = credentials.get(options?.serverId ?? '');
                 return accountId ? {
                     token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+                    ...(options?.serverId === 'srv_home-b' ? { secret: Buffer.from(homeBSecret).toString('base64url') } : {}),
                 } : null;
             },
         },
@@ -180,9 +192,21 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
         // Only HTTP is replaced: exact-Home account capture, mode parsing and disclosure stay real.
         vi.stubGlobal('fetch', async (input: string | URL | Request) => {
             const url = new URL(input instanceof Request ? input.url : String(input));
-            if (url.pathname !== '/v1/account/encryption') throw new Error(`unexpected_request:${url}`);
-            return new Response(JSON.stringify({ mode: url.hostname.includes('home-b') ? 'e2ee' : 'plain', updatedAt: 1 }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } });
+            const encrypted = url.hostname.includes('home-b');
+            if (url.pathname === '/v1/account/encryption/currentness') {
+                return Response.json(encrypted
+                    ? createLegacyAccountEncryptionCurrentnessFixture({ secret: homeBSecret })
+                    : createPlainAccountEncryptionCurrentnessFixture());
+            }
+            if (url.pathname === '/v1/account/encryption') {
+                return Response.json({ mode: encrypted ? 'e2ee' : 'plain', updatedAt: 1 });
+            }
+            if (url.pathname === '/v2/account/settings' && !encrypted) {
+                const { settings, settingsVersion } = storage.getState();
+                return Response.json({ version: settingsVersion ?? 1, content: { t: 'plain', v: settings } });
+            }
+            return createServerAccountConnectionProbeHttpResponse(url.pathname)
+                ?? Response.json({ error: 'not_found' }, { status: 404 });
         });
         for (const home of ['srv_home-a', 'srv_home-b']) {
             credentials.set(home, `account:${home}`);
@@ -199,9 +223,10 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
     it.each(['fixed', 'auto'] as const)('reserves the declared %s approval height while account mode is pending', async (mode) => {
         let release!: () => void;
         const pending = new Promise<void>(resolve => { release = resolve; });
-        vi.stubGlobal('fetch', async () => {
+        const request = globalThis.fetch;
+        vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
             await pending;
-            return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 });
+            return request(...args);
         });
         const preview = resolveApprovalVisualPreview({ actionId: 'session.board.item.upsert', actionArgs: {
             item: { title: 'Build health', height: mode === 'fixed'
