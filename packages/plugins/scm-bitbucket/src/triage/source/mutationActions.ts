@@ -8,6 +8,7 @@ import {
   type ReviewCommentPublicationResultV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import type {
+  TriageGetResultV1,
   TriageSourceEntryLocalRefV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -472,7 +473,11 @@ export async function mergeBitbucketPullRequestAction(
     });
   }
 
-  const write = await settleAtMostOnceProviderWrite({
+  const write = await settleAtMostOnceProviderWrite<
+    BitbucketWriteOutcomeV1,
+    TriageGetResultV1,
+    Readonly<{ cause: TriageSourceFailureV1; rejected?: true }>
+  >({
     dispatch: () => mergeBitbucketPullRequest({
       client: mutation.client,
       route: mutation.route,
@@ -496,13 +501,13 @@ export async function mergeBitbucketPullRequestAction(
         : null;
       const confirmed = await observeBitbucketEntryWithFacts(mutation);
       if (queuedTask?.kind === 'rejected') {
-        return { kind: 'uncertain' as const, failure: { kind: 'rejected' as const, cause: queuedTask.failure } };
+        return { kind: 'uncertain' as const, failure: { rejected: true, cause: toTriageSourceFailure(queuedTask.failure) } };
       }
       if (confirmed.state === 'MERGED') {
         return { kind: 'applied' as const, observation: confirmed.observation };
       }
       if (confirmed.observation.kind === 'unresolved') {
-        return { kind: 'uncertain' as const, failure: { kind: 'observation' as const, cause: confirmed.observation.failure } };
+        return { kind: 'uncertain' as const, failure: { cause: confirmed.observation.failure } };
       }
       if (dispatched.kind === 'queued' && (confirmed.state === 'OPEN' || queuedTask?.kind === 'failed')) {
         return { kind: 'uncertain' as const, observation: confirmed.observation };
@@ -511,7 +516,7 @@ export async function mergeBitbucketPullRequestAction(
         return {
           kind: 'uncertain' as const,
           observation: confirmed.observation,
-          failure: { kind: 'dispatch' as const, cause: dispatched.failure },
+          failure: { cause: toTriageSourceFailure(dispatched.failure) },
         };
       }
       return { kind: 'unchanged' as const, observation: confirmed.observation };
@@ -528,11 +533,11 @@ export async function mergeBitbucketPullRequestAction(
   if (write.kind === 'unchanged') {
     return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
   }
-  if (write.failure?.kind === 'rejected') {
+  if (write.failure?.rejected === true) {
     return Object.freeze({
       kind: 'rejected' as const,
       reason: 'provider-rejected' as const,
-      failure: toTriageSourceFailure(write.failure.cause),
+      failure: write.failure.cause,
     });
   }
   if (write.failure === undefined && write.observation !== undefined) {
@@ -541,7 +546,7 @@ export async function mergeBitbucketPullRequestAction(
   return Object.freeze({
     kind: 'uncertain' as const,
     ...(write.observation === undefined ? {} : { observation: write.observation }),
-    ...(write.failure === undefined ? {} : { failure: toTriageSourceFailure(write.failure.cause) }),
+    ...(write.failure === undefined ? {} : { failure: write.failure.cause }),
   });
   } finally {
     admitted.dispose();
