@@ -1363,15 +1363,6 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(mounted.findByTestId('actions.confirmation-review.decision-approve')).toBeNull();
     expect(mounted.tree.findAll(node => typeof node.props?.diagnosticCode === 'string')).toEqual([]);
     expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.apply')).toHaveLength(1);
-    // Review uses the held baseline; Apply prepares its effects once. A single
-    // plain check after settlement establishes the finished run's observation.
-    const candidatePreset = { presetId: 'build', presetRevision: 2 };
-    expect(plans).toEqual([
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset },
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources(), exclusions: [] },
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
-    ]);
     const artifacts = harness.artifacts(home);
     expect(artifacts.list()).toHaveLength(0);
     expect(mounted.findByTestId('machine-setup-approval')).toBeNull();
@@ -1384,7 +1375,16 @@ describe('Machine → Setup tab (P-M1)', () => {
     phase = 'operation rows in place';
     await waitForHomeGovernance(() => expect(mounted.findByTestId('machine-setup-operation')).not.toBeNull());
     expect(mounted.findByTestId('machine-setup-review')).toBeNull();
-    expect(plans).toHaveLength(4);
+    // Review uses the held baseline, and Apply prepares its effects once.
+    // The UI checks again when it observes the settled operation.
+    phase = 'post-Apply check';
+    const candidatePreset = { presetId: 'build', presetRevision: 2 };
+    await waitForHomeGovernance(() => expect(plans).toEqual([
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources(), exclusions: [] },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
+    ]));
     expect(applied).toHaveLength(1);
     expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
     await mounted.unmount();
