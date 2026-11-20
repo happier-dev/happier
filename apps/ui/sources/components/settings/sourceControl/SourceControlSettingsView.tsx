@@ -221,6 +221,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
     const [scmGitRepoPreferredBackendQualifiedId] = useSettingMutable('scmGitRepoPreferredBackendQualifiedId');
     const { setSetting } = useSettingActionFeedback();
+    const [reviewQualityAggregation, setReviewQualityAggregation] = useSettingMutable('reviewQualityAggregation');
     const [explainChanges, setExplainChanges] = useSettingMutable('scm.diffSummary.enabled');
     const [prepareAfterTurn] = useSettingMutable('scm.diffSummary.prefetch');
     const [investigateSurroundingFiles] = useSettingMutable('scm.diffSummary.investigateSurroundingFiles');
@@ -406,9 +407,11 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 />
             </ItemGroup>
             </SettingSection>
+            </> : null}
 
             <SettingSection section={SOURCE_CONTROL_SETTINGS.sectionRefs.walkthroughs}>
                 <ItemGroup title={t('walkthroughSettings.title')} description={t('walkthroughSettings.description')}>
+                    {scmWriteOperationsEnabled ? <>
                     <SettingRow setting={SOURCE_CONTROL_SETTINGS.settings.explainChanges} subtitleLines={0} showChevron={false}
                         rightElement={<Switch value={explainChanges !== false} onValueChange={setExplainChanges} />}
                         onPress={() => setExplainChanges(explainChanges === false)} />
@@ -455,9 +458,25 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         machineName={administrationTargetSelection.candidates.find(candidate => candidate.target.machineId === executionTarget?.machine.id)?.displayName ?? routingScopeMachineName ?? ''}
                         prepareAfterTurn={prepareAfterTurn === true}
                         onPrepareAfterTurn={value => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.prepareAfterTurn, value); }} modelAvailable={summaryModelAvailable} />
+                    </> : null}
+                    <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.reviewQualityAggregation}>
+                        <SegmentedChoiceItem
+                            title={t('walkthroughSettings.qualityScoreTitle')}
+                            subtitle={t('walkthroughSettings.qualityScoreDescription')}
+                            subtitleLines={0}
+                            testIDPrefix="settings.sourceControl.reviewQualityAggregation"
+                            options={[
+                                { id: 'lowest', label: t('walkthroughSettings.qualityScoreLowest') },
+                                { id: 'median', label: t('walkthroughSettings.qualityScoreMedian') },
+                            ]}
+                            value={reviewQualityAggregation}
+                            onChange={setReviewQualityAggregation}
+                        />
+                    </SettingAnchor>
                 </ItemGroup>
             </SettingSection>
 
+            {scmWriteOperationsEnabled ? <>
             {/* The layout row exists only with the Pierre renderer; the section (with its Renderer row) answers otherwise. */}
             <SettingSection section={SOURCE_CONTROL_SETTINGS.sectionRefs.files}>
             <ItemGroup

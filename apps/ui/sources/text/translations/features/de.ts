@@ -17797,6 +17797,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { de: copy({
+        qualityScoreTitle: "Qualitätsbewertung im Review",
+        qualityScoreDescription: "Bei mehreren Bewertungen pro Runde den niedrigsten Wert oder den Median verwenden.",
+        qualityScoreLowest: "Niedrigster",
+        qualityScoreMedian: "Median",
         title: 'Rundgänge',
         description: 'Eine von KI erstellte Lesereihenfolge mit Erklärungen direkt neben den jeweiligen Änderungen und optionalen Commit-Vorschlägen. Läuft auf dem Rechner mit dem Code.',
         enabled: 'Änderungen erklären',

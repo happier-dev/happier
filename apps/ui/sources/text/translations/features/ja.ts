@@ -18237,6 +18237,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { ja: copy({
+        qualityScoreTitle: "レビューの品質スコア",
+        qualityScoreDescription: "複数のレビュアーが同じラウンドを採点した場合に、最低値または中央値を使います。",
+        qualityScoreLowest: "最低値",
+        qualityScoreMedian: "中央値",
         title: 'ウォークスルー',
         description: 'AIが読む順序を提案し、該当する変更箇所に説明を添えます。必要に応じてコミット案も作成します。コードのあるマシンで実行されます。',
         enabled: '変更を説明',

@@ -18239,6 +18239,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { es: copy({
+        qualityScoreTitle: "Puntuación de calidad de la revisión",
+        qualityScoreDescription: "Usa la puntuación más baja o la mediana cuando varios revisores puntúan una ronda.",
+        qualityScoreLowest: "Más baja",
+        qualityScoreMedian: "Mediana",
         title: 'Recorridos',
         description: 'Un orden de lectura creado con IA, con explicaciones junto a los cambios exactos y propuestas de commits opcionales. Se ejecuta en la máquina que tiene el código.',
         enabled: 'Explicar cambios',

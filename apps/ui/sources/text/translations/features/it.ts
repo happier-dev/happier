@@ -18303,6 +18303,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { it: copy({
+        qualityScoreTitle: "Punteggio di qualità della revisione",
+        qualityScoreDescription: "Usa il punteggio più basso o la mediana quando più revisori valutano un ciclo.",
+        qualityScoreLowest: "Più basso",
+        qualityScoreMedian: "Mediana",
         title: 'Percorsi',
         description: 'Un ordine di lettura creato dall’IA, con spiegazioni accanto alle modifiche esatte e proposte di commit facoltative. Viene eseguito sulla macchina che contiene il codice.',
         enabled: 'Spiega le modifiche',

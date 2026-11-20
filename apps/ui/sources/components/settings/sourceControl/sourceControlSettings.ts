@@ -25,6 +25,7 @@ export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
                 prepareAfterTurn: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.prefetch),  },
                 investigateSurroundingFiles: { storage: scmDiffSummarySettingBinding(SCM_DIFF_SUMMARY_SETTING_KEYS.investigateSurroundingFiles) },
                 savedWalkthroughs: {},
+                reviewQualityAggregation: {},
             },
         },
         commits: {

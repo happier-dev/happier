@@ -18327,6 +18327,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { pl: copy({
+        qualityScoreTitle: "Ocena jakości przeglądu",
+        qualityScoreDescription: "Użyj najniższej oceny lub mediany, gdy rundę ocenia kilku recenzentów.",
+        qualityScoreLowest: "Najniższa",
+        qualityScoreMedian: "Mediana",
         title: 'Przewodniki',
         description: 'Kolejność czytania przygotowana przez AI, z wyjaśnieniami przy konkretnych zmianach i opcjonalnymi propozycjami commitów. Działa na maszynie z kodem.',
         enabled: 'Wyjaśniaj zmiany',

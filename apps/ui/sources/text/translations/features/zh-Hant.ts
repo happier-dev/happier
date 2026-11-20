@@ -18177,6 +18177,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { 'zh-Hant': copy({
+        qualityScoreTitle: "審查品質評分",
+        qualityScoreDescription: "多位審查者為同一輪評分時，使用最低分或中位數。",
+        qualityScoreLowest: "最低分",
+        qualityScoreMedian: "中位數",
         title: '變更導覽',
         description: '由 AI 編寫的閱讀順序，在具體變更旁提供說明，並可選擇產生提交建議。在存有程式碼的機器上執行。',
         enabled: '解釋變更',

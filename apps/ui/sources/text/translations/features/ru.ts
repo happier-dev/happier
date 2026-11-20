@@ -18328,6 +18328,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { ru: copy({
+        qualityScoreTitle: "Оценка качества проверки",
+        qualityScoreDescription: "Используйте минимальную оценку или медиану, если раунд оценивают несколько рецензентов.",
+        qualityScoreLowest: "Минимум",
+        qualityScoreMedian: "Медиана",
         title: 'Обзоры изменений',
         description: 'ИИ предлагает порядок чтения, добавляет объяснения рядом с конкретными изменениями и при необходимости предлагает коммиты. Выполняется на машине, где находится код.',
         enabled: 'Объяснять изменения',

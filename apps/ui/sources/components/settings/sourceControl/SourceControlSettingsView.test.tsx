@@ -11,6 +11,7 @@ import { renderSettingsView as renderSettingsScreen } from '@/dev/testkit/harnes
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { createPluginUiResourceProjection } from '@/dev/testkit/fixtures/pluginUiResourceProjection';
 import type { ImageBackgroundByKind } from '@/sync/domains/settings/registry/local/localSettingDefinitions.files';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 const COMMIT_MESSAGE_RUNNER = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna' } } satisfies LlmTaskRunnerConfigV1;
 const HOME_IDENTITY = 'srv_source_control_target';
@@ -145,6 +146,47 @@ const { AgentInputChipPickerPopover } = await import('@/components/sessions/agen
 const { LLM_TASK_RUNNER_AUTO_OPTION_ID } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
 
 describe('SourceControlSettingsView', () => {
+    it('discovers the Review quality preference through the Settings Action', async () => {
+        await restoreViewAccount();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const scope = storage.getState().settingsScope!;
+        const result = await createDefaultActionExecutor().execute('settings.list', {
+            pageId: 'sourceControl',
+        }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId });
+        expect(result).toMatchObject({ ok: true, result: { items: expect.arrayContaining([
+            expect.objectContaining({ anchor: 'sourceControl.reviewQualityAggregation', readable: true, writable: true,
+                allowedValues: ['lowest', 'median'] }),
+        ]) } });
+    });
+
+    it('changes the open Review Host from the lowest score to the median through the mounted Settings control', async () => {
+        const [{ ReviewDetailHost }, { ReviewDetailView }] = await Promise.all([
+            import('@/components/reviews/detail/ReviewDetailHost'),
+            import('@/components/reviews/detail/ReviewDetailView'),
+        ]);
+        const artifact: DecryptedArtifact = {
+            id: 'quality-review', title: 'Quality Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId: 'quality-review', title: 'Quality Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['a', 'b'], runs: [], reviewerQuality: [
+                    { reviewerId: 'a', score: 1, rationale: 'Problems remain' },
+                    { reviewerId: 'b', score: 5, rationale: 'Ready' },
+                ] }] }),
+            access: 'owner', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        };
+        const screen = await renderView(<>
+            <SourceControlSettingsView />
+            <ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />
+        </>);
+        const readQuality = () => screen.tree.findByType(ReviewDetailView).props.quality;
+        expect(readQuality()).toMatchObject({ aggregation: 'lowest', score: 1 });
+        await screen.pressByTestIdAsync('settings.sourceControl.reviewQualityAggregation:median');
+        await vi.waitFor(() => {
+            expect(storage.getState().settings.reviewQualityAggregation).toBe('median');
+            expect(readQuality()).toMatchObject({ aggregation: 'median', score: 3 });
+        });
+    });
+
     it('keeps contributed resource opening available with SCM writes disabled', async () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', 'scm.writeOperations');
         try {

@@ -18317,6 +18317,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { ca: copy({
+        qualityScoreTitle: "Puntuació de qualitat de la revisió",
+        qualityScoreDescription: "Tria la puntuació més baixa o la mediana quan diversos revisors puntuen una ronda.",
+        qualityScoreLowest: "Més baixa",
+        qualityScoreMedian: "Mediana",
         title: 'Guies de canvis',
         description: 'Un ordre de lectura creat amb IA, amb explicacions al costat dels canvis exactes i propostes de commits opcionals. S’executa a la màquina que té el codi.',
         enabled: 'Explica els canvis',

@@ -18289,6 +18289,10 @@ const en = Shared_walkthroughSettingsTranslations.en;
 const copy = Shared_walkthroughSettingsTranslations.copy;
 
 const walkthroughSettingsTranslations = { pt: copy({
+        qualityScoreTitle: "Pontuação de qualidade da revisão",
+        qualityScoreDescription: "Use a menor pontuação ou a mediana quando vários revisores avaliarem uma rodada.",
+        qualityScoreLowest: "Menor",
+        qualityScoreMedian: "Mediana",
         title: 'Guias',
         description: 'Uma ordem de leitura criada por IA, com explicações ao lado das alterações exatas e propostas de commits opcionais. Executa na máquina que contém o código.',
         enabled: 'Explicar alterações',
