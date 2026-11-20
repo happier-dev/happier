@@ -1,4 +1,4 @@
-import { isWorkflowStepActionSpecV1, listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { findActionSpec, isWorkflowStepActionSpecV1, listActionSpecs, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionJsonSchemaProjectionError } from '@happier-dev/protocol/actions/actionInputJsonSchema';
@@ -49,9 +49,13 @@ function readPrimaryOperand(automation: ActionDiscoveryDefinitionSummaryV1['auto
     return kind === undefined || kind === 'plugin' ? undefined : { kind: { kind } as AutomationSubjectKind };
 }
 
-/** Resolve an authored id without replacing it when the current catalog lacks it. */
-export function findWorkflowActionSpec(actionId: string, catalog: readonly WorkflowActionSpec[] = listWorkflowStepActionSpecs()): WorkflowActionSpec | null {
-    return catalog.find((spec) => spec.id === actionId) ?? null;
+/** A saved host Action can use its installed form declaration while discovery is unavailable. */
+export function findWorkflowActionSpec(actionId: string, catalog: readonly WorkflowActionSpec[] = listWorkflowStepActionSpecs(),
+    options?: Readonly<{ authored: true }>): WorkflowActionSpec | null {
+    const discovered = catalog.find((spec) => spec.id === actionId);
+    if (discovered || !options?.authored) return discovered ?? null;
+    const declaration = findActionSpec(actionId);
+    return declaration ? projectWorkflowHostActionSpecs([declaration])[0] ?? null : null;
 }
 
 /**

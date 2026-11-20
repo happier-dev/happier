@@ -7,13 +7,22 @@ import { isWorkflowRunSummaryActionIdV1 } from '@happier-dev/protocol/actions/ac
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { createDailyHealthDigestWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { listWorkflowStepActionSpecs, projectWorkflowHostActionSpecs } from './workflowActionCatalog';
+import { findWorkflowActionSpec, listWorkflowStepActionSpecs, projectWorkflowHostActionSpecs } from './workflowActionCatalog';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { createPluginLocalizedTextResolver, createPluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 describe('workflow executing-machine Action catalog', () => {
+    it('reads the saved Discussion collection field without Machine discovery', () => {
+        const actionId = 'workflow.discussion.round.project';
+        const discovery = listWorkflowStepActionSpecs(null, null, undefined, []);
+        expect(findWorkflowActionSpec(actionId, discovery)).toBeNull();
+        expect(findWorkflowActionSpec(actionId, discovery, { authored: true })?.inputHints?.fields)
+            .toEqual(expect.arrayContaining([expect.objectContaining({ path: 'collections', widget: 'json', required: true })]));
+        expect(findWorkflowActionSpec('example.tools/actions/missing', discovery, { authored: true })).toBeNull();
+    });
+
     it('offers bundled Actions from the daemon producer local-id shape', () => {
         // READY206 projection, produced by registry/projection/v2.ts buildActionsById:
         // the record key is qualified; the declaration id stays local (including slashes).

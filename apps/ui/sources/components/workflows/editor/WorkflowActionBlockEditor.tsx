@@ -120,7 +120,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const { theme } = useUnistyles();
     const editable = props.editable !== false;
     const catalog = useWorkflowActionCatalog(props.composerScope);
-    const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs), [block.actionId, catalog.specs]);
+    const spec = React.useMemo(() => findWorkflowActionSpec(block.actionId, catalog.specs, { authored: true }), [block.actionId, catalog.specs]);
     const requests = React.useMemo(() => spec === null ? [] : readWorkflowActionFieldRequests({ blocks: [block] }, [spec])
         .requests.filter(({ field }) => !field.path.includes('.')), [block, spec]);
     const rows = React.useMemo(() => resolveActionFieldRows(requests.map(({ field }) => field), block.input), [block.input, requests]);
