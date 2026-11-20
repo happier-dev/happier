@@ -685,7 +685,10 @@ it.each([null, 'MIT'])('supplies the exact catalog pin, literal image tag and op
     if (ref.kind !== 'content') throw new Error('Expected the catalog content digest');
     expect(listing).toMatchObject({ catalogRef: listing.templateRef.ref, imageTag: '2', license });
     expect(screen.findHostByTestId('store.app.listing.versions')).toBeTruthy();
-    expect(screen.getTextContent()).toContain(ref.digest);
+    // Versions names the image tag the install runs, then the pin it came from, short and said for what it is (R6-D5).
+    const [algorithm, hex] = ref.digest.split(':');
+    expect(screen.getTextContent()).toContain(t('capabilities.store.appPage.catalogContent', { ref: `${algorithm}:${hex!.slice(0, 12)}` }));
+    expect(screen.getTextContent()).not.toContain(ref.digest);
   } finally {
     await screen.unmount();
     await fixture.dispose();

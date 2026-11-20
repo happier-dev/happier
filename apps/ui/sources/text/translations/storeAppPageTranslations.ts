@@ -32,6 +32,9 @@ export type StoreAppPageTranslation = Readonly<{
   secretsTitle: (params: Count) => string;
   secretsBody: string;
   firstRunTitle: string;
+  /** The exact catalog pin, short: a Git commit or a content digest. */
+  catalogCommit: (params: Readonly<{ ref: string }>) => string;
+  catalogContent: (params: Readonly<{ ref: string }>) => string;
   firstRunBody: string;
   reviewTitle: string;
   reviewDescription: string;
@@ -160,6 +163,8 @@ const en: StoreAppPageTranslation = {
   refused: ({ name }) => `Couldn’t prepare ${name}`,
   approvalWaiting: 'Waiting for approval',
   approvalDescription: 'Once it’s approved, review it again here.',
+  catalogCommit: ({ ref }) => `Catalog commit ${ref}`,
+  catalogContent: ({ ref }) => `Catalog content ${ref}`,
 };
 
 const ca: StoreAppPageTranslation = {
@@ -242,6 +247,8 @@ const ca: StoreAppPageTranslation = {
   refused: ({ name }) => `No s’ha pogut preparar ${name}`,
   approvalWaiting: 'Esperant l’aprovació',
   approvalDescription: 'Quan s’aprovi, torna-la a revisar aquí.',
+  catalogCommit: ({ ref }) => `Commit del catàleg ${ref}`,
+  catalogContent: ({ ref }) => `Contingut del catàleg ${ref}`,
 };
 
 const de: StoreAppPageTranslation = {
@@ -325,6 +332,8 @@ const de: StoreAppPageTranslation = {
   refused: ({ name }) => `${name} konnte nicht vorbereitet werden`,
   approvalWaiting: 'Wartet auf Freigabe',
   approvalDescription: 'Sobald sie freigegeben ist, prüfe sie hier erneut.',
+  catalogCommit: ({ ref }) => `Katalog-Commit ${ref}`,
+  catalogContent: ({ ref }) => `Kataloginhalt ${ref}`,
 };
 
 const es: StoreAppPageTranslation = {
@@ -407,6 +416,8 @@ const es: StoreAppPageTranslation = {
   refused: ({ name }) => `No se pudo preparar ${name}`,
   approvalWaiting: 'Esperando aprobación',
   approvalDescription: 'Cuando se apruebe, revísala de nuevo aquí.',
+  catalogCommit: ({ ref }) => `Commit del catálogo ${ref}`,
+  catalogContent: ({ ref }) => `Contenido del catálogo ${ref}`,
 };
 
 const fr: StoreAppPageTranslation = {
@@ -489,6 +500,8 @@ const fr: StoreAppPageTranslation = {
   refused: ({ name }) => `Impossible de préparer ${name}`,
   approvalWaiting: 'En attente d’approbation',
   approvalDescription: 'Une fois approuvée, vérifie-la à nouveau ici.',
+  catalogCommit: ({ ref }) => `Commit du catalogue ${ref}`,
+  catalogContent: ({ ref }) => `Contenu du catalogue ${ref}`,
 };
 
 const it: StoreAppPageTranslation = {
@@ -572,6 +585,8 @@ const it: StoreAppPageTranslation = {
   refused: ({ name }) => `Impossibile preparare ${name}`,
   approvalWaiting: 'In attesa di approvazione',
   approvalDescription: 'Quando viene approvata, verificala di nuovo qui.',
+  catalogCommit: ({ ref }) => `Commit del catalogo ${ref}`,
+  catalogContent: ({ ref }) => `Contenuto del catalogo ${ref}`,
 };
 
 const ja: StoreAppPageTranslation = {
@@ -648,6 +663,8 @@ const ja: StoreAppPageTranslation = {
   refused: ({ name }) => `${name} を準備できませんでした`,
   approvalWaiting: '承認待ち',
   approvalDescription: '承認されたら、ここで再度確認してください。',
+  catalogCommit: ({ ref }) => `カタログのコミット ${ref}`,
+  catalogContent: ({ ref }) => `カタログの内容 ${ref}`,
 };
 
 const pl: StoreAppPageTranslation = {
@@ -730,6 +747,8 @@ const pl: StoreAppPageTranslation = {
   refused: ({ name }) => `Nie udało się przygotować ${name}`,
   approvalWaiting: 'Czeka na zatwierdzenie',
   approvalDescription: 'Po zatwierdzeniu przejrzyj ją tu ponownie.',
+  catalogCommit: ({ ref }) => `Commit katalogu ${ref}`,
+  catalogContent: ({ ref }) => `Zawartość katalogu ${ref}`,
 };
 
 const pt: StoreAppPageTranslation = {
@@ -811,6 +830,8 @@ const pt: StoreAppPageTranslation = {
   refused: ({ name }) => `Não foi possível preparar ${name}`,
   approvalWaiting: 'À espera de aprovação',
   approvalDescription: 'Quando for aprovada, revê-a aqui de novo.',
+  catalogCommit: ({ ref }) => `Commit do catálogo ${ref}`,
+  catalogContent: ({ ref }) => `Conteúdo do catálogo ${ref}`,
 };
 
 const ru: StoreAppPageTranslation = {
@@ -889,6 +910,8 @@ const ru: StoreAppPageTranslation = {
   refused: ({ name }) => `Не удалось подготовить ${name}`,
   approvalWaiting: 'Ожидает одобрения',
   approvalDescription: 'После одобрения проверьте его здесь ещё раз.',
+  catalogCommit: ({ ref }) => `Коммит каталога ${ref}`,
+  catalogContent: ({ ref }) => `Содержимое каталога ${ref}`,
 };
 
 const zhHans: StoreAppPageTranslation = {
@@ -962,6 +985,8 @@ const zhHans: StoreAppPageTranslation = {
   refused: ({ name }) => `无法准备 ${name}`,
   approvalWaiting: '等待批准',
   approvalDescription: '批准后，请在这里再次审核。',
+  catalogCommit: ({ ref }) => `目录提交 ${ref}`,
+  catalogContent: ({ ref }) => `目录内容 ${ref}`,
 };
 
 const zhHant: StoreAppPageTranslation = {
@@ -1035,6 +1060,8 @@ const zhHant: StoreAppPageTranslation = {
   refused: ({ name }) => `無法準備 ${name}`,
   approvalWaiting: '等待核准',
   approvalDescription: '核准後，請在這裡再次審核。',
+  catalogCommit: ({ ref }) => `目錄提交 ${ref}`,
+  catalogContent: ({ ref }) => `目錄內容 ${ref}`,
 };
 
 export const storeAppPageTranslations = {

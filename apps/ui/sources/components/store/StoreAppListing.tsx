@@ -199,11 +199,14 @@ export function StoreAppListing(
   const catalogSource = useRegistrySourceDescriptor(summary.sourceId, presented);
   const catalogFacts = appListingCatalogFacts({ version: summary.version, appVersion: app?.data?.version,
     repository: summary.links?.repository, catalog: catalogSource });
-  const refValue = (catalogRef.kind === 'gitTree' ? catalogRef.commit
-    : catalogRef.kind === 'version' ? catalogRef.version : catalogRef.digest).trim();
-  const exactPin = refValue === '0.0.0' ? null : refValue || null;
+  // The exact pin says what it is, short (R6-D5): a catalog commit or content digest is not a release version.
+  const exactPin = catalogRef.kind === 'gitTree' ? (catalogRef.commit.trim()
+    ? t('capabilities.store.appPage.catalogCommit', { ref: catalogRef.commit.trim().slice(0, 7) }) : null)
+    : catalogRef.kind === 'version' ? (catalogRef.version.trim() && catalogRef.version.trim() !== '0.0.0' ? catalogRef.version.trim() : null)
+    : catalogRef.digest.trim() ? t('capabilities.store.appPage.catalogContent', { ref: shortDigest(catalogRef.digest.trim()) }) : null;
   const release = catalogFacts.version?.trim();
-  const appVersion = release === '0.0.0' ? null : release || null;
+  // The version the install runs: the App's release, else the image tag its primary service pins.
+  const appVersion = (release === '0.0.0' ? null : release || null) ?? (state.kind === 'ready' ? state.imageTag : null);
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
   const glyph = (icon: IconName) => (
@@ -363,7 +366,7 @@ export function StoreAppListing(
           testID="store.app.listing"
           facts={{
             version: appVersion ?? exactPin,
-            versionNote: appVersion && exactPin !== appVersion ? exactPin : null,
+            versionNote: appVersion ? exactPin : null,
             license: state.license,
             sourceTitle: catalogFacts.sourceTitle,
             links: {
@@ -395,3 +398,9 @@ const styles = StyleSheet.create((theme) => ({
   facts: { paddingTop: theme.space.s12 },
   mono: { ...Typography.mono() },
 }));
+
+/** `sha256:` and the first 12 hex digits: enough to tell two catalog contents apart at a glance. */
+function shortDigest(digest: string): string {
+  const [algorithm, hex] = digest.includes(':') ? digest.split(':', 2) as [string, string] : ['', digest];
+  return `${algorithm ? `${algorithm}:` : ''}${hex.slice(0, 12)}`;
+}
