@@ -7,6 +7,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { SESSION_STATUS_CLEAR_ACTION_ID_V1, SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { ActionsSettingsV1Schema, SessionEffectiveAccessV1Schema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -208,6 +209,26 @@ describe('headless registered Session field Actions', () => {
       }
     },
   );
+
+  it('persists an addressed Session progress count from MCP and clears it from the CLI', async () => {
+    if (!boundary.session) throw new Error('Missing Home fixture');
+    boundary.session = {
+      ...boundary.session, metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
+    };
+    const owner = executor();
+    const context = { authority: 'present_user', serverId: 'home', defaultSessionId: sessionId } as const;
+    const progress = { label: 'Checks', done: 24, total: 24 };
+
+    expect(await owner.execute(SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1, { progress }, { ...context, surface: 'mcp' }))
+      .toMatchObject({ ok: true });
+    expect(readBotOwner().work?.statusProgress).toEqual(progress);
+
+    expect(await owner.execute(SESSION_STATUS_CLEAR_ACTION_ID_V1, { sessionId }, { ...context, surface: 'cli' }))
+      .toMatchObject({ ok: true });
+    expect(readBotOwner().work?.statusProgress).toBeUndefined();
+    expect(boundary.rpcCalls).toBe(0);
+  });
 
   it('refuses the real Action when its registered-field dependency is missing, without any metadata write', async () => {
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },

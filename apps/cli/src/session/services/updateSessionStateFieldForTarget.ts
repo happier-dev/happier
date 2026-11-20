@@ -4,6 +4,7 @@ import {
   type SessionStateFieldWriteValue,
 } from '@happier-dev/agents';
 import type { SessionStateCapabilitiesV1, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
+import { HOST_SESSION_STATE_METADATA_CAPABILITIES } from '@/agent/runtime/state/sessionStateMetadataCapabilities';
 import {
   assertSessionMetadataMutationCurrentness,
   type SessionMetadataMutationCurrentness,
@@ -30,8 +31,7 @@ const CLI_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
     voicePreference: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   display: {
-    statusReason: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    ...HOST_SESSION_STATE_METADATA_CAPABILITIES.display,
     bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     botFace: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
