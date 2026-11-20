@@ -157,6 +157,8 @@ export function useRemoteWorkspaceAddItem(
           : account.workspaces.map((workspace) =>
               row(`workspace:${workspace.id}`, {
                 title: workspace.name,
+                // Start preparation before the parent closes, preserving the listing's demand.
+                keepMenuOpen: true,
                 ...(workspace.template ? { subtitle: workspace.template } : {}),
                 icon: <Icon name="terminal" size={16} />,
                 category,
@@ -264,7 +266,7 @@ export function useRemoteWorkspaceAddItem(
             signal,
             onApprovalPending,
           }): Promise<ManagedWorkspacePreparationOutcome> => {
-            // The menu closing re-reads the account; attach through the listing that is current when it settles.
+            // Preparation uses the current listing if its controller or account changed.
             const ready = await readyListing(signal);
             if (!ready) return { kind: 'failed', code: signal.aborted ? 'aborted' : 'target_unavailable', message: null };
             const outcome = await ready.attach({

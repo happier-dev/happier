@@ -227,6 +227,72 @@ async function dismissConnectSheet() {
 }
 
 describe('managed provisioner credential purposes', () => {
+    it('keeps one options read when selecting an attached workspace closes its chooser', async () => {
+        const serverId = await setupHome();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { setMachineAdministrationTargetPreference, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } = await import('@/sync/domains/machines/administration/selectionPreferences');
+        storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
+            setMachineAdministrationTargetPreference({}, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines,
+                { serverIdentityId: 'srv_credentials', machineId: controller.machineId }) } });
+        const entry = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{
+            ...provisioner,
+            descriptor: { ...provisioner.descriptor,
+                launchSchema: { type: 'object', properties: { existingWorkspaceId: { type: 'string' }, attachExisting: { type: 'boolean' } }, additionalProperties: false },
+                bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put', stream: 'stream' },
+                workspaceAttachment: { when: { op: 'truthy', path: 'existingWorkspaceId' }, optionsWhen: { op: 'truthy', path: 'attachExisting' } },
+            },
+            credentialPurposes: [{ purpose: cloudPurpose, options: [{ value: cloud, label: 'Cloud work' }] }],
+        }] }).provisioners[0]!;
+        harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+            return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+                execution: { ok: true, result: { controller, provisioners: [entry] } } } };
+        } });
+        await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.provisioners.options', tokenEpoch: 0, execute: () => ({
+                dimensions: { size: [], location: [], network: [], duration: [], image: [{ id: 'guest', title: 'Guest',
+                    assignments: [{ path: 'existingWorkspaceId', value: 'guest' }] }] },
+            }) });
+        const { ProjectsAddMenu } = await import('@/components/projects/ProjectsAddMenu');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { SelectableMenuResults } = await import('@/components/ui/forms/dropdown/SelectableMenuResults');
+        const pending = createDeferred<void>();
+        const onAdd = vi.fn(() => pending.promise);
+        const screen = await renderScreen(<ProjectsAddMenu testID="remote-add" machines={[]} onAdd={async () => {}}
+            onClone={() => {}} remote={{ serverId, onAdd }} />);
+        const menu = () => screen.findAllByType(DropdownMenu)[0]!;
+        try {
+            await screen.pressByTestIdAsync('remote-add');
+            await waitForHomeGovernance(() => expect(menu().props.open).toBe(true));
+            await act(async () => {
+                reportPopoverContentLayout(screen.tree, { width: 320, height: 240 });
+                screen.findAllByType(SelectableMenuResults)[0]!.props.onOpenSubmenu('remoteFolder', {
+                    current: { getBoundingClientRect: () => ({ width: 280, height: 32 }) },
+                });
+            });
+            await waitForHomeGovernance(() => {
+                const items = menu().props.items.find((item: { id: string }) => item.id === 'remoteFolder').submenu.items;
+                expect(items.map((item: { id: string; title: string }) => ({ id: item.id, title: item.title })),
+                    JSON.stringify(harness.requests.map(request => request.path))).toContainEqual(expect.objectContaining({ id: 'remote:workspace:guest' }));
+            });
+            expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+            const scheduled: FrameRequestCallback[] = [];
+            vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { scheduled.push(callback); return scheduled.length; });
+            const results = screen.findAllByType(SelectableMenuResults).at(-1)!;
+            await act(async () => { results.props.onPressItem({ id: 'remote:workspace:guest' }); });
+            await act(async () => { for (const frame of scheduled.splice(0)) frame(0); });
+            await act(async () => { for (const frame of scheduled.splice(0)) frame(0); });
+            await waitForHomeGovernance(() => expect(onAdd).toHaveBeenCalledTimes(1));
+            await flushHookEffects();
+            expect(menu().props.open).toBe(false);
+            expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+            expect(harness.requestsFor('/v1/machines/managed/actions/list')).toHaveLength(0);
+        } finally {
+            await act(async () => { pending.resolve(); });
+            await screen.unmount();
+            vi.unstubAllGlobals();
+        }
+    });
     it.each(['direct', 'brokered'] as const)('chooses a Team %s resource without substituting its personal source through options and use', async deliveryMode => {
         const serverId = await setupHome();
         const { TeamResourceConnectedServiceSelectionV2Schema } = await import('@happier-dev/protocol/connect/connectedServiceBindings');
