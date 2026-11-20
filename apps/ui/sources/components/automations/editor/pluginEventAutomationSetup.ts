@@ -236,6 +236,8 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** A saved source edit passes these values only to its native renderer. */
+    savedSourceRendererInput?: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
     /** The saved source is the initial draft when editing an existing Event. */
     initialSource?: PluginEventAutomationSetupResultV1;
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
@@ -311,6 +313,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const seed = params.initialSetupSeed;
         if (seed && (!arePluginContributionIdentitiesEqual(seed.eventRef, initial.event.event.identity)
             || (seed.monitoringMachineId !== undefined && seed.monitoringMachineId !== initial.origin.machineTarget.target.machineId))) return { kind: 'unavailable', reason: 'invalid_seed' };
+        const customSetupSurface = initial.event.setupSurface?.selectedRenderer.availability.state === 'available';
+        if (params.savedSourceRendererInput && !customSetupSurface) return { kind: 'unavailable' };
         actionSnapshotRef.current = initial.actionSnapshot;
         const controller = createPluginContributedActionController({
             resolveCurrent: () => actionSnapshotRef.current,
@@ -319,7 +323,6 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 ? { resolveConnectedAccountOptions: params.resolveConnectedAccountOptions }
                 : {}),
         });
-        const customSetupSurface = initial.event.setupSurface?.selectedRenderer.availability.state === 'available';
         const selection = await controller.selectExactBoundActionInput({
             action: initial.event.setupAction.identity,
             expectedOccurrenceId: initial.event.setupAction.occurrenceId,
@@ -335,11 +338,15 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 try {
                     if (customSetupSurface) {
                         const retainedInput = params.initialSource?.sourceConfig;
-                        const initialInput = seed ? PluginUiJsonValueV1Schema.safeParse({
-                            ...(isSetupSurfaceObjectInput(retainedInput) ? retainedInput : {}),
-                            ...seed.setupInput,
-                            ...selection.form.getInput(),
-                        }) : params.initialSource ? PluginUiJsonValueV1Schema.safeParse(retainedInput) : null;
+                        const initialInput = params.savedSourceRendererInput
+                            ? PluginUiJsonValueV1Schema.safeParse({
+                                ...(isSetupSurfaceObjectInput(retainedInput) ? retainedInput : {}),
+                                ...params.savedSourceRendererInput,
+                            }) : seed ? PluginUiJsonValueV1Schema.safeParse({
+                                ...(isSetupSurfaceObjectInput(retainedInput) ? retainedInput : {}),
+                                ...seed.setupInput,
+                                ...selection.form.getInput(),
+                            }) : params.initialSource ? PluginUiJsonValueV1Schema.safeParse(retainedInput) : null;
                         if (initialInput && !initialInput.success) {
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;

@@ -19231,6 +19231,7 @@ settingsSession: {
           expect: "Esperado",
           checkFrom: "Comprobar desde",
           checkFromWebhook: "Los resultados llegan por webhook",
+          checkEditSourceUnreachable: "No se pudo acceder a la fuente de eventos guardada.",
           alertAfter: "Alertar tras",
           paused: "En pausa",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `cada ${period} desde ${machine}`,

@@ -687,20 +687,24 @@ it('admits the machine-services Health Event, offers its installation as a watch
 });
 
 it.each([
-    { result: 'configured', reopen: false },
-    { result: 'configured', reopen: true },
-    { result: 'refused', reopen: false },
-] as const)('submits the native Health setup through the real store and Action dispatcher ($result, reopen=$reopen)', async ({ result, reopen }) => {
-    const accountId = `health-native-${result}`;
+    { result: 'configured', reopen: false, editAddress: false },
+    { result: 'configured', reopen: true, editAddress: false },
+    { result: 'configured', reopen: true, editAddress: true },
+    { result: 'refused', reopen: false, editAddress: false },
+] as const)('submits the native Health setup through the real store and Action dispatcher ($result, reopen=$reopen, editAddress=$editAddress)', async ({ result, reopen, editAddress }) => {
+    const fixtureName = editAddress ? 'edit-address' : result;
+    const accountId = `health-native-${fixtureName}`;
     const http = createHomeHubArtifactHttpBoundary(accountId);
-    const connection = await restoreServerAccountForTest({ serverUrl: `https://health-${result}.test`,
-        serverIdentityId: `srv_health_${result}`, accountId, request: http.request });
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://health-${fixtureName}.test`,
+        serverIdentityId: `srv_health_${fixtureName}`, accountId, request: http.request });
     const { storage } = await import('@/sync/domains/state/storage');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { loadDaemonMergedProjectionInputs, clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) throw new Error('Expected restored Health Account lifetime');
-    const fixture = healthSetupFixture(connection.serverId, `srv_health_${result}`, true);
+    const fixture = healthSetupFixture(connection.serverId, `srv_health_${fixtureName}`, true, {
+        eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup',
+    });
     const { machineId, pluginId, event, fresh, projection } = fixture;
     const subject = { kind: 'machineService' as const, machineId: 'service-machine', serviceId: 'systemd:qa-health' };
     const existing = HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject, checks: [{ checkId: 'http',
@@ -746,6 +750,7 @@ it.each([
                 ? { initialSource: { v: 1 as const, sourceInstanceId: 'health-native-source', sourceContractVersion: 1,
                     sourceConfig: existing, displayLabel: 'Saved health checks' } }
                 : { initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: machineId, setupInput: existing } }),
+            ...(editAddress ? { savedSourceRendererInput: { selectedCheckId: 'http' } } : {}),
             filter: null, maximumObservationAgeMs: null, accountLifetime, signal: operation.signal,
             resolveExecutionOrigin: () => fresh,
             loadCurrentProjection: target => loadDaemonMergedProjectionInputs({ ...target, accountLifetime, sections: 'complete' }),
@@ -797,15 +802,18 @@ it.each([
             if (!setValue) throw new Error('Expected browser input value setter');
             await act(async () => { setValue.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); });
         };
+        if (editAddress) expect(document.querySelector<HTMLInputElement>('input[aria-label="Endpoint"]')?.value)
+            .toBe('https://existing-health.test');
+        const submitLabel = editAddress ? 'Save changes' : 'Add check';
         expect(submitted).toEqual([]);
         await changeEndpoint('http://127.0.0.1:8080');
         expect(document.querySelector('[data-testid="health-setup-loopback-refused"]')).not.toBeNull();
-        expect((await mounted.getByRole('button', { name: 'Add check' })).state?.disabled).toBe(true);
+        expect((await mounted.getByRole('button', { name: submitLabel })).state?.disabled).toBe(true);
         expect(submitted).toEqual([]);
         await changeEndpoint('https://added-health.test');
         expect(document.querySelector('[data-testid="health-setup-loopback-refused"]')).toBeNull();
-        expect((await mounted.getByRole('button', { name: 'Add check' })).state?.disabled ?? false).toBe(false);
-        await act(async () => { await mounted!.press(await mounted!.getByRole('button', { name: 'Add check' })); });
+        expect((await mounted.getByRole('button', { name: submitLabel })).state?.disabled ?? false).toBe(false);
+        await act(async () => { await mounted!.press(await mounted!.getByRole('button', { name: submitLabel })); });
         expect(settlementErrors).toEqual([]);
         await Promise.race([
             waitForHomeGovernance(() => expect(submitted).toHaveLength(1)),
@@ -816,10 +824,15 @@ it.each([
         expect(rpc.hostActions).toEqual([{ action: event.setupAction.identity, expectedContributorOccurrenceId: event.event.occurrenceId, input: submitted[0] }]);
         const input = HealthCheckSetupInputV1ProtocolSchema.parse(submitted[0]);
         expect(input.subject).toEqual(subject);
-        expect(input.checks).toHaveLength(existing.checks.length + 1);
-        expect(input.checks.slice(0, existing.checks.length)).toEqual(existing.checks);
-        expect(input.checks.at(-1)).toMatchObject({ checkId: 'http-2', kind: { pluginId, localId: 'http' },
-            config: { endpoint: 'https://added-health.test', expectStatus: 200 } });
+        if (editAddress) {
+            expect(input.checks).toEqual([{ ...existing.checks[0],
+                config: { endpoint: 'https://added-health.test', expectStatus: 200 } }, existing.checks[1]]);
+        } else {
+            expect(input.checks).toHaveLength(existing.checks.length + 1);
+            expect(input.checks.slice(0, existing.checks.length)).toEqual(existing.checks);
+            expect(input.checks.at(-1)).toMatchObject({ checkId: 'http-2', kind: { pluginId, localId: 'http' },
+                config: { endpoint: 'https://added-health.test', expectStatus: 200 } });
+        }
         if (result === 'configured') expect(outcome.kind).toBe('configured');
         else expect(outcome).toMatchObject({ kind: 'unavailable', code: 'health_check_loopback_refused',
             reason: 'health_check_loopback_refused' });

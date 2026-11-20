@@ -19185,6 +19185,7 @@ settingsSession: {
           expect: "Ожидается",
           checkFrom: "Проверять с",
           checkFromWebhook: "Результаты приходят через вебхук",
+          checkEditSourceUnreachable: "Не удалось связаться с сохранённым источником событий.",
           alertAfter: "Оповещать после",
           paused: "На паузе",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `каждые ${period} с ${machine}`,

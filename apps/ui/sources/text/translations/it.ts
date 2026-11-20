@@ -19233,6 +19233,7 @@ settingsSession: {
           expect: "Atteso",
           checkFrom: "Controlla da",
           checkFromWebhook: "I risultati arrivano via webhook",
+          checkEditSourceUnreachable: "Impossibile raggiungere la sorgente eventi salvata.",
           alertAfter: "Avvisa dopo",
           paused: "In pausa",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `ogni ${period} da ${machine}`,

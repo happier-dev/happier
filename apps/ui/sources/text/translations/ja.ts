@@ -19145,6 +19145,7 @@ settingsSession: {
           expect: "期待値",
           checkFrom: "チェック元",
           checkFromWebhook: "結果は Webhook で届きます",
+          checkEditSourceUnreachable: "保存済みのイベントソースに接続できませんでした。",
           alertAfter: "アラートの条件",
           paused: "一時停止",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `${machine} から ${period} ごと`,

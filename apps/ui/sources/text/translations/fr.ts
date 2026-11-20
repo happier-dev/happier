@@ -19105,6 +19105,7 @@ settingsSession: {
           expect: "Attendu",
           checkFrom: "Vérifier depuis",
           checkFromWebhook: "Les résultats arrivent par webhook",
+          checkEditSourceUnreachable: "La source d’événements enregistrée est inaccessible.",
           alertAfter: "Alerter après",
           paused: "En pause",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `toutes les ${period} depuis ${machine}`,

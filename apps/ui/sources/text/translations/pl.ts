@@ -19056,6 +19056,7 @@ settingsSession: {
           expect: "Oczekiwane",
           checkFrom: "Sprawdzaj z",
           checkFromWebhook: "Wyniki przychodzą przez webhook",
+          checkEditSourceUnreachable: "Nie udało się połączyć z zapisanym źródłem zdarzeń.",
           alertAfter: "Alarm po",
           paused: "Wstrzymane",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `co ${period} z ${machine}`,

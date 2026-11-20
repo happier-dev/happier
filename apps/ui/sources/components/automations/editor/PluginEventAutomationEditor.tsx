@@ -10,6 +10,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FloatingOverlay, FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Modal } from '@/modal';
@@ -62,7 +63,7 @@ export function resolvePluginEventEditorProjectionMachineId(params: Readonly<{
         params.observation?.kind === 'checkpointedPull'
         || params.observation?.kind === 'socket'
     ) {
-        return params.observation.watcherMaterializationRef.machineId;
+        return params.selectedWatcherMachineId ?? params.observation.watcherMaterializationRef.machineId;
     }
     if (params.observation?.kind === 'durablePush') {
         return params.observation.endpointMaterializationRef?.machineId ?? params.resolvedEndpointMachineId ?? null;
@@ -156,6 +157,11 @@ export function PluginEventAutomationEditor(props: Readonly<{
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** Open the native setup form for a saved source as soon as its exact editor restores it. */
+    savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & Readonly<{
+        chooseWatcher: boolean;
+        renderUnavailable: (retry: () => void) => React.ReactNode;
+    }>;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
@@ -181,21 +187,22 @@ export function PluginEventAutomationEditor(props: Readonly<{
         machineId: string;
     }> | null>(null);
     const currentObservation = props.value?.observationTransport ?? currentSeed?.observation ?? null;
+    const [catalogRefresh, setCatalogRefresh] = React.useState(0);
+    const setup = props.savedSourceSetup;
+    const placement = endpointPlacement !== null && endpointPlacement.seed === currentSeed && endpointPlacement.lifetime === accountLifetime
+        && accountLifetime?.isCurrent() ? endpointPlacement.machineId : null;
     const machineId = resolvePluginEventEditorProjectionMachineId({
         observation: currentObservation,
         authoringMachineId: props.authoringMachineId,
-        resolvedEndpointMachineId: endpointPlacement !== null && endpointPlacement.seed === currentSeed
-            && endpointPlacement.lifetime === accountLifetime && accountLifetime?.isCurrent()
-            ? endpointPlacement.machineId : null,
-        selectedWatcherMachineId: endpointPlacement !== null && endpointPlacement.seed === currentSeed
-            && endpointPlacement.lifetime === accountLifetime && accountLifetime?.isCurrent()
-            ? endpointPlacement.machineId : null,
+        resolvedEndpointMachineId: placement,
+        selectedWatcherMachineId: currentObservation === null || setup?.chooseWatcher ? placement : null,
     });
     const projection = useDaemonMergedProjectionInputs({
         machineId,
         serverId: props.serverId,
         enabled: Boolean(machineId),
         sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
+        refreshKey: catalogRefresh,
     });
     const model = usePluginEventAutomationComposer({
         machineId,
@@ -206,17 +213,47 @@ export function PluginEventAutomationEditor(props: Readonly<{
         onEditSeedApplied: props.onEditSeedApplied,
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
+        savedSourceSetup: props.savedSourceSetup,
         defaultWatcherMachineId: props.authoringMachineId,
     });
     React.useEffect(() => {
         // A new Event reads the authoring Machine's catalog and follows the selected watcher's Machine
         // (the composer pre-selects one there). Saved endpoint placement still belongs to the existing endpoint reader.
-        const selectedMachineId = currentObservation === null
+        const selectedMachineId = currentObservation === null || (setup?.chooseWatcher && currentObservation.kind !== 'durablePush')
             ? model.selectedWatcherOrigin ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null
             : model.seededObservationMachineId;
         setEndpointPlacement(selectedMachineId && accountLifetime?.isCurrent()
             ? { seed: currentSeed, lifetime: accountLifetime, machineId: selectedMachineId } : null);
-    }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin]);
+    }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin, setup?.chooseWatcher]);
+    const nativeSetupStarted = React.useRef(false);
+    React.useEffect(() => {
+        if (!setup || setup.chooseWatcher || nativeSetupStarted.current || model.sourceStatus !== 'configured') return;
+        nativeSetupStarted.current = true;
+        model.configureSource();
+    }, [model.configureSource, model.sourceStatus, setup]);
+    if (setup) {
+        const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
+            || (!setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
+        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
+        if (setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.selectedEvent && model.sourceStatus !== 'unavailable') {
+            return <View style={styles.content}>
+                <PluginEventAutomationComposerContent model={model} watcherOnly />
+                <View style={styles.footer}>
+                    <RoundButton title={t('common.cancel')} size="small" onPress={props.onCancel} />
+                    <RoundButton title={t('common.continue')} size="small" disabled={!model.selectedWatcherOrigin}
+                        onPress={model.configureSource} />
+                </View>
+            </View>;
+        }
+        if (model.sourceStatus === 'configured') return null;
+        return setup.renderUnavailable(() => {
+            if (model.eventCatalogStatus === 'ready' && model.selectedEvent) model.configureSource();
+            else {
+                nativeSetupStarted.current = false;
+                setCatalogRefresh(current => current + 1);
+            }
+        });
+    }
     return (
         <InlinePluginEventEditor
             model={model}

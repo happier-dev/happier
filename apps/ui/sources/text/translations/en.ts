@@ -22629,6 +22629,7 @@ const enProjects = {
         expect: "Expect",
         checkFrom: "Check from",
         checkFromWebhook: "Results arrive by webhook",
+        checkEditSourceUnreachable: "The saved Event source couldn’t be reached.",
         alertAfter: "Alert after",
         paused: "Paused",
         checkEvery: ({ period, machine }: { period: string; machine: string }) => `every ${period} from ${machine}`,

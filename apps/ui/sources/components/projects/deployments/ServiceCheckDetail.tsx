@@ -4,6 +4,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import {
   InvestigationAgentActionButtons,
   type InvestigationAgentActionButtonModel,
@@ -89,6 +93,8 @@ const percentText = (percent: number | null) => serviceCheckUptimeText(percent) 
 const formatDay = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { month: 'short', day: 'numeric', timeZone: 'UTC' });
 
+type CheckSetting = 'address' | 'expect' | 'from' | 'alert' | 'failsWhen';
+
 type SeedRead = Readonly<{
   key: string;
   seed: PluginEventAutomationEditSeed | null;
@@ -149,7 +155,7 @@ export function useServiceCheckMeta(row: ManagedConfiguredCheckRow | null): stri
     t(`${m}.keyFlowChecksService`, { service: keyFlow.serviceName }),
     environment,
   ] : [every];
-  return [facts.kind, ...flow].filter(Boolean).join(' · ') || t('automations.form.trigger.sourceUnavailable');
+  return [facts.kind, ...flow].filter(Boolean).join(' · ') || null;
 }
 
 /**
@@ -206,13 +212,50 @@ export function ServiceCheckDetail(
   );
   const collectorLabel = useServerScopedMachineLabel(serverId, serviceCheckListFacts(row).collectorTrend?.collectorMachineId ?? null);
   const [pausing, setPausing] = React.useState(false);
-  const openEditor = React.useCallback(
-    () =>
-      router.push(
-        `/automations/${encodeURIComponent(row.automationId)}` as never,
-      ),
-    [router, row.automationId],
-  );
+  const addressRowKey = `${row.automationId}\n${row.triggerId}`;
+  const [addressEditState, setAddressEdit] = React.useState<Readonly<{
+    rowKey: string;
+    checkId: string;
+    lifetime: ReturnType<typeof captureActiveServerAccountScopeLifetime>;
+    field: CheckSetting;
+    submission?: Readonly<{
+      trigger: NonNullable<Parameters<typeof updateWorkflowTrigger>[0]['patch']['trigger']>;
+      error?: ReturnType<typeof resolveWorkflowProblemPresentation>;
+    }>;
+  }> | null>(null);
+  const addressEdit = addressEditState?.rowKey === addressRowKey ? addressEditState : null;
+  const addressLifetime = addressEdit?.lifetime;
+  const canEditAddress = Boolean(addressLifetime?.isCurrent() && areServerAccountScopesEqual(addressLifetime.scope, row.scope));
+  const openEditor = (field: CheckSetting = 'address') => {
+    if (addressEdit?.submission && !addressEdit.submission.error) return;
+    const checkId = settings?.run.check.checkId ?? definition?.checkId;
+    if (!checkId) return;
+    setAddressEdit({ rowKey: addressRowKey, checkId, field, lifetime: captureActiveServerAccountScopeLifetime() });
+  };
+  const [savedRevision, setSavedRevision] = React.useState<Readonly<{ rowKey: string; revision: number }> | null>(null);
+  const saveSource = (trigger: NonNullable<Parameters<typeof updateWorkflowTrigger>[0]['patch']['trigger']>) => {
+    if (!seed || !addressEdit || !addressLifetime || !canEditAddress) return;
+    const saving = { ...addressEdit, submission: { trigger } };
+    setAddressEdit(saving);
+    const expectedRevision = savedRevision?.rowKey === addressRowKey
+      ? Math.max(row.native.templateVersion, savedRevision.revision) : row.native.templateVersion;
+    void updateWorkflowTrigger({ automationId: seed.automationId, triggerId: seed.triggerId,
+      expectedRevision, patch: { trigger } }, { accountLifetime: addressLifetime })
+      .then(({ set }) => {
+        if (!addressLifetime.isCurrent()) return;
+        setSavedRevision({ rowKey: addressRowKey, revision: set.revision });
+        setAddressEdit(current => current === saving ? null : current);
+        retrySeed();
+      }, error => {
+        if (addressLifetime.isCurrent()) setAddressEdit(current => current === saving
+          ? { ...saving, submission: { trigger, error: resolveWorkflowProblemPresentation(error) } } : current);
+      });
+  };
+  const finishAddressSetup: NonNullable<React.ComponentProps<typeof PluginEventAutomationEditor>['savedSourceSetup']>['onSettled'] = result => {
+    if (result.kind === 'cancelled') { setAddressEdit(null); return; }
+    const { enabled: _enabled, ...trigger } = result.trigger;
+    saveSource(trigger);
+  };
   const setPaused = React.useCallback(
     async (paused: boolean) => {
       setPausing(true);
@@ -229,7 +272,8 @@ export function ServiceCheckDetail(
     [row.automationId, row.native.templateVersion, row.scope.accountId, row.scope.serverId],
   );
   const rowForPresence = React.useMemo(() => [row], [row]);
-  const stale = serviceCheckStale(row, useServiceCheckOfflineObservers(rowForPresence, row.scope));
+  const offlineObservers = useServiceCheckOfflineObservers(rowForPresence, row.scope, addressEdit !== null);
+  const stale = serviceCheckStale(row, offlineObservers);
   const failing =
     row.native.enabled &&
     !stale &&
@@ -311,12 +355,55 @@ export function ServiceCheckDetail(
         })
       : t(`${k}.expectStatus`, { status: String(settings.expectStatus) })
     : null;
+  const from = settings?.observerMachineId === null ? t(`${k}.checkFromWebhook`) : observer;
+  const alert = settings ? [
+    t(`${k}.alertFailures`, { count: settings.failuresBeforeAlert }),
+    settings.alertChannels ? t(`${k}.alertChannels`, { count: settings.alertChannels }) : null,
+  ].filter(Boolean).join(' · ') : null;
+  const editField = addressEdit?.field;
+  const settingInteraction = (field: CheckSetting, editable = true) => !editable || editField === field
+    ? { mode: 'info' as const }
+    : { onPress: () => openEditor(field) };
+  const observerId = settings?.observerMachineId ?? (row.definitionFacts.kind === 'available' ? row.definitionFacts.observerMachineId : null);
+  const offlineObserver = observerId !== null && offlineObservers.has(observerId) ? observerId : null;
+  const showRecovery = (title: string, action: NonNullable<React.ComponentProps<typeof SurfaceStateCard>['action']>) => (
+    <SurfaceStateCard testID="services.check.settings.recovery" size="line" kind="unavailable" title={title} action={action} />
+  );
+  const submitted = addressEdit?.submission;
+  const checkEditor = addressEdit ? <View testID="services.check.settings.editor">
+    {submitted?.error ? showRecovery(submitted.error.message, {
+      label: t('common.retry'), onPress: () => saveSource(submitted.trigger),
+    }) : submitted ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
+      : offlineObserver ? showRecovery(t('automations.detail.event.watcherMachineOffline'), {
+        label: t('runs.openMachine'),
+        onPress: () => router.push(machinePageHref({ door: 'rail', target: { machineId: offlineObserver, serverId } })),
+      })
+        : seed && canEditAddress ? (
+          <PluginEventAutomationEditor key={`${addressEdit.checkId}/${addressEdit.field}`}
+            automationId={seed.automationId} clientId={seed.triggerId}
+            seed={seed} value={null} serverId={serverId}
+            authoringMachineId={seed.observation.kind === 'durablePush' ? null : seed.observation.watcherMaterializationRef.machineId}
+            savedSourceSetup={{
+              input: { selectedCheckId: addressEdit.checkId },
+              chooseWatcher: addressEdit.field === 'from' && seed.observation.kind !== 'durablePush',
+              onSettled: finishAddressSetup,
+              renderUnavailable: retry => showRecovery(t('projects.deployments.services.checkEditSourceUnreachable'), {
+                label: t('common.retry'), onPress: retry,
+              }),
+            }}
+            onComplete={() => {}}
+            onCancel={() => setAddressEdit(null)} />
+        ) : seedUnavailable || !canEditAddress ? showRecovery(t('projects.deployments.services.checkEditSourceUnreachable'), {
+          label: t('common.retry'), onPress: retrySeed,
+        }) : <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />}
+  </View> : null;
+
   return (
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
       {props.renderHeader ? props.renderHeader(
         <View style={styles.headerActions}>
           {settings ? <CheckNowButton checkNow={checkNow} /> : null}
-          <CheckMenu onEdit={openEditor} />
+          <CheckMenu onEdit={() => openEditor()} />
         </View>,
       ) : null}
       {/* The head holds the meta line (beside the pane's title) and the check's actions; on the page (whose header holds
@@ -340,7 +427,7 @@ export function ServiceCheckDetail(
               {props.renderHeader ? null : (
                 <View style={styles.headerActions}>
                   <CheckNowButton checkNow={checkNow} />
-                  <CheckMenu onEdit={openEditor} />
+                  <CheckMenu onEdit={() => openEditor()} />
                 </View>
               )}
               <CheckNowStatus checkNow={checkNow} />
@@ -502,61 +589,46 @@ export function ServiceCheckDetail(
                 {definition.targetLabel}
               </Text>
             }
-            onPress={openEditor}
+            {...settingInteraction('address', definition.domainId === null || Boolean(keyFlow))}
           />
         ) : null}
+        {editField === 'address' ? checkEditor : null}
         {keyFlow ? (
           <Item
             testID="services.check.settings.failsWhen"
             title={t(`${m}.keyFlowFailsWhen`)}
             subtitle={keyFlowRuleText(keyFlow)}
-            onPress={openEditor}
+            {...settingInteraction('failsWhen')}
           />
         ) : null}
+        {editField === 'failsWhen' ? checkEditor : null}
         {expect ? (
           <Item
             testID="services.check.settings.expect"
             title={t(`${k}.expect`)}
             subtitle={expect}
-            onPress={openEditor}
+            {...settingInteraction('expect')}
           />
         ) : null}
+        {editField === 'expect' ? checkEditor : null}
         {settings ? (
           <Item
             testID="services.check.settings.from"
             title={t(`${k}.checkFrom`)}
-            subtitle={
-              settings.observerMachineId === null
-                ? t(`${k}.checkFromWebhook`)
-                : (observer ?? undefined)
-            }
-            onPress={openEditor}
+            subtitle={from ?? undefined}
+            {...settingInteraction('from')}
           />
         ) : null}
+        {editField === 'from' ? checkEditor : null}
         {settings ? (
           <Item
             testID="services.check.settings.alert"
             title={t(`${k}.alertAfter`)}
-            subtitle={[
-              t(`${k}.alertFailures`, { count: settings.failuresBeforeAlert }),
-              settings.alertChannels > 0
-                ? t(`${k}.alertChannels`, { count: settings.alertChannels })
-                : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-            onPress={openEditor}
+            subtitle={alert ?? undefined}
+            {...settingInteraction('alert')}
           />
         ) : null}
-        {seedUnavailable ? (
-          <Item
-            testID="services.check.settings.unavailable"
-            title={t('automations.form.trigger.sourceUnavailable')}
-            detail={t('common.retry')}
-            onPress={retrySeed}
-            showChevron={false}
-          />
-        ) : null}
+        {editField === 'alert' ? checkEditor : null}
         <Item
           testID="services.check.settings.paused"
           title={t(`${k}.paused`)}

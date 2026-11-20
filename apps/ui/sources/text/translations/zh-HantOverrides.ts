@@ -14031,6 +14031,9 @@ settingsSession: {
   projects: {
       title: "專案",
         deployments: {
+            services: {
+                checkEditSourceUnreachable: "無法連線到已儲存的事件來源。",
+            },
             databaseQuery: {
                 title: "唯讀查詢", database: "資料庫名稱", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",
                 setup: "唯讀登入", password: "密碼", reviewSetup: "審核設定", working: "執行中…",

@@ -19345,6 +19345,7 @@ settingsSession: {
               expect: "Erwartet",
               checkFrom: "Prüfen von",
               checkFromWebhook: "Ergebnisse kommen per Webhook",
+              checkEditSourceUnreachable: "Die gespeicherte Ereignisquelle ist nicht erreichbar.",
               alertAfter: "Alarm nach",
               paused: "Pausiert",
               checkEvery: ({ period, machine }: { period: string; machine: string }) => `alle ${period} von ${machine}`,

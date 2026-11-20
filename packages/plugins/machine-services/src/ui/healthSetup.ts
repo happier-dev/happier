@@ -1,8 +1,8 @@
-import { createElement as h, useEffect, useState, type ReactElement } from 'react';
+import { createElement as h, useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import {
     HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, HealthCheckKindCatalogV1ProtocolSchema, createHealthCheckSourceInstanceIdV1,
     HealthCheckHttpConfigV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema,
-    HealthCheckDnsConfigV1ProtocolSchema, type HealthCheckSetupPreviewResultV1,
+    HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema, type HealthCheckSetupPreviewResultV1,
     HealthCheckSetupInputV1ProtocolSchema, HealthCheckTcpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1,
     type HealthCheckKindV1, type HealthCheckKindCatalogV1, type HealthCheckSetupDraftV1, type HealthCheckSetupInputV1, type HealthCheckSubjectV1,
 } from '@happier-dev/plugin-sdk';
@@ -58,14 +58,26 @@ type Draft = Readonly<{
 const EMPTY: Draft = { kind: 'http', endpoint: '', expectStatus: '200', keyword: '', host: '', port: '', hostname: '',
     recordType: 'A', expectedAnswer: '', graceMs: MINUTE, periodMs: MINUTE, consecutiveFailuresBeforeAlerting: 1 };
 
-function readSavedCheckDraft(check: Check | undefined): Draft | null {
+function readSavedCheckDraft(check: Check | undefined, kind: HealthCheckKindCatalogV1[number] | undefined): Draft | null {
     if (!check) return null;
     const cadence = {
         periodMs: check.periodMs,
         consecutiveFailuresBeforeAlerting: check.consecutiveFailuresBeforeAlerting,
         ...(check.binding.kind === 'domain' ? { domainCondition: check.binding.condition } : {}),
     };
-    if (check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 && check.binding.kind === 'healthCheck') {
+    if (kind) return {
+        ...EMPTY, ...cadence, contributedKind: kind,
+        contributedValidator: compilePluginJsonSchema(kind.configSchema),
+        contributedDraft: contributedConfigDraft(kind.configSchema, check.config),
+    };
+    if (check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1) {
+        if (check.binding.kind === 'domain' && (check.kind.localId === 'http' || check.kind.localId === 'certificate')) {
+            return { ...EMPTY, ...cadence, kind: check.kind.localId };
+        }
+        if (check.kind.localId === 'heartbeat') {
+            const config = HealthCheckHeartbeatConfigV1ProtocolSchema.safeParse(check.config);
+            return config.success ? { ...EMPTY, ...cadence, kind: 'heartbeat', graceMs: config.data.graceMs } : null;
+        }
         if (check.kind.localId === 'http' || check.kind.localId === 'certificate') {
             const config = HealthCheckHttpConfigV1ProtocolSchema.safeParse(check.config);
             return config.success && 'endpoint' in config.data
@@ -94,13 +106,23 @@ function readSavedCheckDraft(check: Check | undefined): Draft | null {
 }
 
 /** The host hands the prebound draft; an observer, when the host names it, decides loopback in place. */
-function readLaunch(input: unknown): Readonly<{ draft: HealthCheckSetupDraftV1; observerMachineId?: string }> | null {
+function readLaunch(input: unknown): Readonly<{
+    draft: HealthCheckSetupDraftV1;
+    observerMachineId?: string;
+    selectedCheckId?: string;
+}> | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
     const record = input as Readonly<Record<string, unknown>>;
-    const draft = HealthCheckSetupDraftV1ProtocolSchema.safeParse(record.initialInput);
+    const initial = record.initialInput;
+    if (typeof initial !== 'object' || initial === null || Array.isArray(initial)) return null;
+    const { selectedCheckId, ...setupDraft } = initial as Readonly<Record<string, unknown>>;
+    const draft = HealthCheckSetupDraftV1ProtocolSchema.safeParse(setupDraft);
     if (!draft.success || draft.data.subject === undefined) return null;
+    if (selectedCheckId !== undefined && (typeof selectedCheckId !== 'string'
+        || !draft.data.checks?.some(check => check.checkId === selectedCheckId))) return null;
     const observer = record.observerMachineId;
-    return { draft: draft.data, ...(typeof observer === 'string' && observer.length > 0 ? { observerMachineId: observer } : {}) };
+    return { draft: draft.data, ...(typeof observer === 'string' && observer.length > 0 ? { observerMachineId: observer } : {}),
+        ...(selectedCheckId === undefined ? {} : { selectedCheckId }) };
 }
 
 function configFor(draft: Draft, retainedMonitorConfig?: Check['config']): unknown {
@@ -115,7 +137,10 @@ function configFor(draft: Draft, retainedMonitorConfig?: Check['config']): unkno
     if (draft.kind === 'tcp') return { host: draft.host.trim(), port: Number(draft.port) };
     if (draft.kind === 'dns') return { hostname: draft.hostname.trim(), recordType: draft.recordType,
         ...optional('expectedAnswer', draft.expectedAnswer) };
-    if (draft.kind === 'heartbeat') return { graceMs: draft.graceMs };
+    if (draft.kind === 'heartbeat') {
+        const existing = HealthCheckHeartbeatConfigV1ProtocolSchema.safeParse(retainedMonitorConfig);
+        return { ...(existing.success ? existing.data : {}), graceMs: draft.graceMs };
+    }
     return { endpoint: draft.endpoint.trim(), expectStatus: Number(draft.expectStatus), ...optional('keyword', draft.keyword) };
 }
 
@@ -205,14 +230,17 @@ function text(label: string, value: string, onChange: (next: string) => void, op
 
 function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; existing: readonly Check[];
     sourceOptions: SourceOptions;
-    observerMachineId?: string; signal: AbortSignal }>): ReactElement {
+    observerMachineId?: string; selectedCheckId?: string; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
     const [existing, setExisting] = useState(props.existing);
-    const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
+    const [selectedCheckId, setSelectedCheckId] = useState<string | null>(props.selectedCheckId ?? null);
     const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
     const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? existing[0];
-    const restoredDraft = readSavedCheckDraft(selectedCheck);
+    const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
+    const selectedKind = catalog?.find(kind =>
+        kind.pluginId === selectedCheck?.kind.pluginId && kind.id === selectedCheck.kind.localId);
+    const restoredDraft = useMemo(() => readSavedCheckDraft(selectedCheck, selectedKind), [selectedCheck, selectedKind]);
     const draft = editedDraft ?? restoredDraft ?? EMPTY;
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
@@ -244,7 +272,6 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const configuredActionId = investigation?.configuredActionId ?? '';
     const [saving, setSaving] = useState(false);
     const [refusedSave, setRefusedSave] = useState(false);
-    const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
     const [loadingKinds, setLoadingKinds] = useState(false);
     const [kindsUnavailable, setKindsUnavailable] = useState(false);
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
@@ -256,6 +283,26 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     };
     const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set({ contributedKind: kind,
         contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedDraft: contributedConfigDraft(kind.configSchema) });
+    const readInstalledKinds = useCallback(async () => {
+        setLoadingKinds(true);
+        setKindsUnavailable(false);
+        try {
+            const kinds = HealthCheckKindCatalogV1ProtocolSchema.parse(await host.executeAction(
+                { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: HEALTH_KINDS_ACTION_ID }, {}, { signal: props.signal }))
+                .filter(kind => kind.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1
+                    || (!HEALTH_CHECK_KINDS_V1.some(native => native === kind.id) && !isMonitorKind(kind.id)));
+            if (!props.signal.aborted) {
+                setCatalog(kinds);
+                return kinds;
+            }
+        } catch { if (!props.signal.aborted) setKindsUnavailable(true); }
+        finally { if (!props.signal.aborted) setLoadingKinds(false); }
+        return null;
+    }, [host, props.signal]);
+    const savedContributedKind = selectedCheck && selectedCheck.kind.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
+    useEffect(() => {
+        if (savedContributedKind && catalog === null) void readInstalledKinds();
+    }, [catalog, readInstalledKinds, savedContributedKind]);
     const issues = fieldIssues(draft, t);
     const candidate = buildHealthCheckSetupInput(props.subject, existing, draft, { ...props.sourceOptions,
         ...(alerts === undefined ? {} : { alerts }),
@@ -274,11 +321,13 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         && isValidPluginJsonSchemaValue(draft.contributedValidator, configFor(draft)));
     const monitorKind = !draft.contributedKind && isMonitorKind(draft.kind) ? draft.kind : null;
     const monitorValid = !monitorKind || monitorDefinitions[monitorKind].configSchema.safeParse(configFor(draft)).success;
-    const editedCheck = editedDraft !== null && !draft.contributedKind && draft.kind === restoredDraft?.kind
-        ? selectedCheck : undefined;
-    const savedEditValid = !editedCheck || (monitorValid && loopback?.refused !== true);
+    const matchesSavedKind = restoredDraft && (draft.contributedKind
+        ? draft.contributedKind === restoredDraft.contributedKind
+        : !restoredDraft.contributedKind && draft.kind === restoredDraft.kind);
+    const editedCheck = editedDraft !== null && matchesSavedKind ? selectedCheck : undefined;
+    const savedEditValid = !editedCheck || (contributedValid && monitorValid && loopback?.refused !== true);
     const savedChecks = editedCheck ? existing.map(check => check === editedCheck ? {
-        ...check, config: configFor(draft, check.config),
+        ...check, config: nativeDomain ? check.config : configFor(draft, check.config),
         periodMs: monitorKind ? check.periodMs : draft.periodMs,
         consecutiveFailuresBeforeAlerting: draft.consecutiveFailuresBeforeAlerting,
     } : check) : existing;
@@ -384,19 +433,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 subtitle: kind.subtitle, subtitleKey: `${K}.kind.${kind.id}.subtitle` })) }),
         h(Button, { title: t(`${K}.more`, 'More checks'), busy: loadingKinds, disabled: loadingKinds,
             onPress: async () => {
-                setLoadingKinds(true);
-                setKindsUnavailable(false);
-                try {
-                    const kinds = HealthCheckKindCatalogV1ProtocolSchema.parse(await host.executeAction(
-                        { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: HEALTH_KINDS_ACTION_ID }, {}, { signal: props.signal }))
-                        .filter(kind => kind.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1
-                            || (!HEALTH_CHECK_KINDS_V1.some(native => native === kind.id) && !isMonitorKind(kind.id)));
-                    if (!props.signal.aborted) {
-                        setCatalog(kinds);
-                        if (kinds[0]) selectContributed(kinds[0]);
-                    }
-                } catch { if (!props.signal.aborted) setKindsUnavailable(true); }
-                finally { if (!props.signal.aborted) setLoadingKinds(false); }
+                const kinds = await readInstalledKinds();
+                if (kinds?.[0] && !savedContributedKind) selectContributed(kinds[0]);
             } }),
         catalog && catalog.length > 0 ? h(Field, { label: t(`${K}.contributed`, 'Installed check') }, h(Select, {
             label: t(`${K}.contributed`, 'Installed check'), presentation: 'field',
@@ -460,7 +498,8 @@ function HealthCheckSetupSurface(context: RenderContext): ReactElement {
     return h(HealthCheckSetupForm, { subject: launch.draft.subject, existing: launch.draft.checks ?? [],
         sourceOptions: { ...(launch.draft.investigation ? { investigation: launch.draft.investigation } : {}),
             ...(launch.draft.alerts ? { alerts: launch.draft.alerts } : {}), ...(launch.draft.domain ? { domain: launch.draft.domain } : {}) },
-        ...(launch.observerMachineId ? { observerMachineId: launch.observerMachineId } : {}), signal: context.signal });
+        ...(launch.observerMachineId ? { observerMachineId: launch.observerMachineId } : {}),
+        ...(launch.selectedCheckId ? { selectedCheckId: launch.selectedCheckId } : {}), signal: context.signal });
 }
 
 export const renderSurface = defineUiSurface(HealthCheckSetupSurface);

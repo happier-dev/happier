@@ -359,7 +359,7 @@ it('adds a declared contributed kind with its closed configuration through the s
 
 // J5: an installed kind with variants, a list of records and a nested threshold (the telemetry Key flow's
 // declared shape) is authored through typed fields that round-trip into its saved configuration.
-it('authors a Key flow through typed fields drawn from its declared schema', async () => {
+it.each([false, true])('authors a Key flow through its declared schema (saved=%s)', async saved => {
   const text = { type: 'string', minLength: 1 };
   const keyFlowSchema = { type: 'object', additionalProperties: false, required: ['environmentId', 'serviceName', 'measure', 'windowMs', 'threshold'],
     properties: {
@@ -377,22 +377,39 @@ it('authors a Key flow through typed fields drawn from its declared schema', asy
       threshold: { type: 'object', additionalProperties: false, required: ['operator', 'value'], properties: {
         operator: { anyOf: [{ const: 'above' }, { const: 'below' }] }, value: { type: 'number' } } },
     } };
-  const { page, settled } = await mount({ initialInput: { v: 1, subject } }, {
+  const existing = { checkId: 'saved-checkout', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' },
+    binding: { kind: 'healthCheck' },
+    config: { environmentId: 'env-prod', serviceName: 'billing-api',
+      measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' },
+      windowMs: 600_000, threshold: { operator: 'above', value: 450 } },
+    periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3,
+  } as const;
+  const { page, settled } = await mount({ initialInput: { v: 1, subject,
+    ...(saved ? { checks: [existing], selectedCheckId: existing.checkId } : {}),
+  } }, {
     executeAction: async () => [{ pluginId: 'happier.telemetry', id: 'key-flow', title: 'Key flow', action: 'health/key-flow',
       configSchema: keyFlowSchema }],
   });
-  await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
-  expect(document.querySelector('input[aria-label="Configuration"]')).toBeNull();
-  await type('Environment id', 'env-prod');
-  await type('Service name', 'billing-api');
-  await type('Method', 'POST');
-  await type('Route', '/checkout');
-  await type('Window ms', '600000');
-  expect((await addButton(page)).state?.disabled).toBe(true);
+  const field = (label: string) => document.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+  if (saved) {
+    await vi.waitFor(() => expect(field('Route')?.value).toBe('/checkout'));
+    expect(field('Value')?.value).toBe('450');
+  } else {
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
+    expect(field('Configuration')).toBeNull();
+    await type('Environment id', 'env-prod');
+    await type('Service name', 'billing-api');
+    await type('Method', 'POST');
+    await type('Route', '/checkout');
+    await type('Window ms', '600000');
+    expect((await addButton(page)).state?.disabled).toBe(true);
+  }
   await type('Value', '800');
-  await act(async () => { await page.press(await addButton(page)); });
+  await act(async () => {
+    await page.press(await page.getByRole('button', { name: saved ? 'Save changes' : 'Add check' }));
+  });
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
-    checks: [expect.objectContaining({ checkId: 'key-flow', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' },
+    checks: [expect.objectContaining({ checkId: saved ? existing.checkId : 'key-flow', kind: existing.kind,
       config: { environmentId: 'env-prod', serviceName: 'billing-api',
         measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' },
         windowMs: 600_000, threshold: { operator: 'above', value: 800 } } })] }) })]);
@@ -481,6 +498,32 @@ it.each([
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Save changes' })); });
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
     checks: [first, { ...saved, config: { ...editedConfig, ...mapping } }],
+  }) })]);
+});
+
+it.each([
+  { kind: 'http', field: 'Endpoint', config: { endpoint: 'https://shop.example.test', expectStatus: 204, keyword: 'Ready' },
+    fieldKey: 'endpoint', address: 'https://shop.example.test', editedAddress: 'https://new-shop.example.test' },
+  { kind: 'certificate', field: 'Endpoint', config: { endpoint: 'https://shop.example.test', expectStatus: 200 },
+    fieldKey: 'endpoint', address: 'https://shop.example.test', editedAddress: 'https://new-shop.example.test' },
+  { kind: 'tcp', field: 'Host', config: { host: 'shop.example.test', port: 5432 },
+    fieldKey: 'host', address: 'shop.example.test', editedAddress: 'new-shop.example.test' },
+  { kind: 'dns', field: 'Name', config: { hostname: 'shop.example.test', recordType: 'AAAA', expectedAnswer: '2001:db8::1' },
+    fieldKey: 'hostname', address: 'shop.example.test', editedAddress: 'new-shop.example.test' },
+])('edits the selected saved $kind address without replacing the check or its siblings', async ({
+  kind, field, config, fieldKey, address, editedAddress,
+}) => {
+  const first = { checkId: 'first-http', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' },
+    binding: { kind: 'healthCheck' }, config: { endpoint: 'https://other.example.test', expectStatus: 200 },
+    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 };
+  const saved = { ...first, checkId: 'shop-check', kind: { ...first.kind, localId: kind }, config,
+    periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3 };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject, checks: [first, saved], selectedCheckId: saved.checkId } });
+  expect(document.querySelector<HTMLInputElement>(`input[aria-label="${field}"]`)?.value).toBe(address);
+  await type(field, editedAddress);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Save changes' })); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [first, { ...saved, config: { ...saved.config, [fieldKey]: editedAddress } }],
   }) })]);
 });
 

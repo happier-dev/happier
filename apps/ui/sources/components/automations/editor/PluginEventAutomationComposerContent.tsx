@@ -36,6 +36,7 @@ import { AutomationEventFilterFields, useEventComposerPickerDisclosure } from '.
 
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
+    watcherOnly?: boolean;
 }>;
 
 function watcherKey(origin: PluginMachineExecutionOriginV1): string {
@@ -307,6 +308,91 @@ export function PluginEventAutomationComposerContent(props: Props) {
         : null;
 
 
+    const watcherPicker = (props.model.eventCatalogStatus === 'ready' && selectedEvent)
+        || watcherPickerOpen
+        || (props.model.pendingEventRef && props.model.watcherCandidates.length > 0) ? (
+        <>
+            <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>
+            <HappierPressable
+                testID="automation-event-watcher-picker"
+                accessibilityRole="button"
+                accessibilityLabel={observationPlacementTitle}
+                expanded={watcherPickerOpen}
+                controlRef={pickerTriggerRef('watcher')}
+                onPress={() => {
+                    notePickerTriggerPressed('watcher', watcherPickerOpen);
+                    setWatcherPickerOpen((current) => !current);
+                }}
+                style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
+            >
+                <Text numberOfLines={1} style={styles.selectTriggerText}>
+                    {selectedWatcher
+                        ? watcherDisplayLabel(selectedWatcher)
+                        : chooseObservationPlacement}
+                </Text>
+                <Icon
+                    name={watcherPickerOpen ? 'caret-up' : 'caret-down'}
+                    size={14}
+                    color={theme.colors.text.secondary}
+                />
+            </HappierPressable>
+            {watcherPickerOpen ? (
+                <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
+                    <PluginPresentedExecutionOriginProjectionDemand
+                        key={selectedEvent?.event.identity.pluginId ?? props.model.pendingEventRef?.pluginId}
+                        targets={watcherProjectionTargets}
+                    />
+                    <SelectionList
+                        rootStep={watcherSelectionStep}
+                        listAccessibilityLabel={observationPlacementTitle}
+                        selectedOptionId={selectedWatcher
+                            ? watcherKey(selectedWatcher)
+                            : null}
+                        onSelect={(key) => {
+                            const candidate = watcherOptionByKey.get(key);
+                            if (!candidate) return;
+                            props.model.selectWatcher(candidate);
+                            notePickerCollapsed('watcher');
+                            setWatcherPickerOpen(false);
+                        }}
+                        onRequestClose={() => {
+                            notePickerCollapsed('watcher');
+                            setWatcherPickerOpen(false);
+                        }}
+                        keyboardHintsEnabled={false}
+                        autoFocusInputOnWeb
+                        disableTransitions
+                        maxHeight={300}
+                        testID="automation-event-watcher-selection-list"
+                        inputTestID="automation-event-watcher-search"
+                    />
+                    {watcherSettingsRemedies.length > 0 ? (
+                        <View testID="automation-event-watcher-remedies" style={styles.watcherRemedies}>
+                            <Text style={styles.optionDescription}>
+                                {t('automations.form.trigger.fixUnavailableWatchers')}
+                            </Text>
+                            <View style={styles.watcherRemedyActions}>
+                                {watcherSettingsRemedies.map((remedy) => (
+                                    <RoundButton
+                                        key={remedy.id}
+                                        testID={`automation-event-watcher-remedy-${remedy.id}`}
+                                        size="mini"
+                                        display="secondary"
+                                        title={remedy.title}
+                                        trailing={<Icon name="caret-right" size={12} color={theme.colors.text.secondary} />}
+                                        onPress={() => router.push(remedy.path as never)}
+                                    />
+                                ))}
+                            </View>
+                        </View>
+                    ) : null}
+                </View>
+            ) : null}
+
+        </>
+    ) : null;
+    if (props.watcherOnly) return watcherPicker;
+
     return (
         <View testID="automation-event-composer" style={styles.section}>
                 <View style={styles.eventFields}>
@@ -398,89 +484,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
 
                         </>
                     )}
-                            {(props.model.eventCatalogStatus === 'ready' && selectedEvent)
-                                || watcherPickerOpen
-                                || (props.model.pendingEventRef && props.model.watcherCandidates.length > 0) ? (
-                                <>
-                                    <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>
-                                    <HappierPressable
-                                        testID="automation-event-watcher-picker"
-                                        accessibilityRole="button"
-                                        accessibilityLabel={observationPlacementTitle}
-                                        expanded={watcherPickerOpen}
-                                        controlRef={pickerTriggerRef('watcher')}
-                                        onPress={() => {
-                                            notePickerTriggerPressed('watcher', watcherPickerOpen);
-                                            setWatcherPickerOpen((current) => !current);
-                                        }}
-                                        style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
-                                    >
-                                        <Text numberOfLines={1} style={styles.selectTriggerText}>
-                                            {selectedWatcher
-                                                ? watcherDisplayLabel(selectedWatcher)
-                                                : chooseObservationPlacement}
-                                        </Text>
-                                        <Icon
-                                            name={watcherPickerOpen ? 'caret-up' : 'caret-down'}
-                                            size={14}
-                                            color={theme.colors.text.secondary}
-                                        />
-                                    </HappierPressable>
-                                    {watcherPickerOpen ? (
-                                        <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
-                                            <PluginPresentedExecutionOriginProjectionDemand
-                                                key={selectedEvent?.event.identity.pluginId ?? props.model.pendingEventRef?.pluginId}
-                                                targets={watcherProjectionTargets}
-                                            />
-                                            <SelectionList
-                                                rootStep={watcherSelectionStep}
-                                                listAccessibilityLabel={observationPlacementTitle}
-                                                selectedOptionId={selectedWatcher
-                                                    ? watcherKey(selectedWatcher)
-                                                    : null}
-                                                onSelect={(key) => {
-                                                    const candidate = watcherOptionByKey.get(key);
-                                                    if (!candidate) return;
-                                                    props.model.selectWatcher(candidate);
-                                                    notePickerCollapsed('watcher');
-                                                    setWatcherPickerOpen(false);
-                                                }}
-                                                onRequestClose={() => {
-                                                    notePickerCollapsed('watcher');
-                                                    setWatcherPickerOpen(false);
-                                                }}
-                                                keyboardHintsEnabled={false}
-                                                autoFocusInputOnWeb
-                                                disableTransitions
-                                                maxHeight={300}
-                                                testID="automation-event-watcher-selection-list"
-                                                inputTestID="automation-event-watcher-search"
-                                            />
-                                            {watcherSettingsRemedies.length > 0 ? (
-                                                <View testID="automation-event-watcher-remedies" style={styles.watcherRemedies}>
-                                                    <Text style={styles.optionDescription}>
-                                                        {t('automations.form.trigger.fixUnavailableWatchers')}
-                                                    </Text>
-                                                    <View style={styles.watcherRemedyActions}>
-                                                        {watcherSettingsRemedies.map((remedy) => (
-                                                            <RoundButton
-                                                                key={remedy.id}
-                                                                testID={`automation-event-watcher-remedy-${remedy.id}`}
-                                                                size="mini"
-                                                                display="secondary"
-                                                                title={remedy.title}
-                                                                trailing={<Icon name="caret-right" size={12} color={theme.colors.text.secondary} />}
-                                                                onPress={() => router.push(remedy.path as never)}
-                                                            />
-                                                        ))}
-                                                    </View>
-                                                </View>
-                                            ) : null}
-                                        </View>
-                                    ) : null}
-
-                                </>
-                            ) : null}
+                            {watcherPicker}
                             {props.model.eventCatalogStatus === 'ready' && selectedEvent ? (
                                 <>
                                     {props.model.availableObservationTransports.length > 1 ? (

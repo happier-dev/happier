@@ -18851,6 +18851,7 @@ settingsSession: {
           expect: "期望",
           checkFrom: "检查来源",
           checkFromWebhook: "结果通过 Webhook 送达",
+          checkEditSourceUnreachable: "无法连接已保存的事件源。",
           alertAfter: "告警条件",
           paused: "已暂停",
           checkEvery: ({ period, machine }: { period: string; machine: string }) => `每 ${period} 从 ${machine}`,

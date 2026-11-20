@@ -269,6 +269,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** Observe submission of the native form in a direct saved-source edit. */
+    savedSourceSetup?: Readonly<{
+        input: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
+        onSettled: (settlement: Readonly<{
+            kind: 'configured';
+            trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>;
+        }> | Readonly<{ kind: 'cancelled' }>) => void;
+    }>;
     /** The surface's Machine (a workflow's Runs on): a new Event watches from its installation unless the person picks another. */
     defaultWatcherMachineId?: string | null;
 }>): PluginEventAutomationComposerModel {
@@ -862,6 +870,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceFailure(null);
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
+                savedSourceRendererInput: params.savedSourceSetup?.input,
                 eligibleEvent: currentEvent,
                 ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
                     ? { initialSource: configuredSetup.draft.source }
@@ -893,6 +902,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             if (configured.kind === 'cancelled') {
                 setSourceStatus(previousStatus);
                 setSourceFailure(previousFailure);
+                params.savedSourceSetup?.onSettled({ kind: 'cancelled' });
                 return;
             }
             if (configured.kind !== 'configured') {
@@ -914,6 +924,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceFailure(configured.webhookEndpointUnavailable
                 ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
             advanceRevision();
+            if (params.savedSourceSetup) {
+                const watcher = resolveExecutionOrigin();
+                const trigger = watcher && buildPluginEventAutomationTriggerInput({
+                    eligibleEvents, draft: configured.draft.draft, watcherOrigin: watcher.origin,
+                });
+                if (trigger) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
+                else setSourceStatus('unavailable');
+            }
         })();
     }, [
         accountLifetime,
@@ -932,6 +950,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         sourceStatus,
         sourceFailure,
         params.initialSetupSeed,
+        params.savedSourceSetup,
     ]);
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;

@@ -9,12 +9,13 @@ import { NO_OFFLINE_OBSERVERS } from './serviceCheckPresentation';
 export function useServiceCheckOfflineObservers(
   rows: readonly ManagedConfiguredCheckRow[],
   scope: ServerAccountScope | null,
+  includePaused = false,
 ): ReadonlySet<string> {
   const machineIds = React.useMemo(
     () => [...new Set(rows.flatMap((row) =>
-      row.native.enabled && row.definitionFacts.kind === 'available' && row.definitionFacts.observerMachineId !== null
+      (includePaused || row.native.enabled) && row.definitionFacts.kind === 'available' && row.definitionFacts.observerMachineId !== null
         ? [row.definitionFacts.observerMachineId] : []))].sort(),
-    [rows],
+    [rows, includePaused],
   );
   const summaries = useMachinePresenceSummaries(scope?.serverId ?? null, machineIds);
   return React.useMemo(() => {
