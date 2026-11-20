@@ -23,7 +23,9 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
 }>>;
 
 function focusStepTarget(target: FocusReturnTarget, fallback?: FocusReturnTarget) {
-    if (Platform.OS === 'web' && target instanceof HTMLElement && !target.hasAttribute('tabindex')) target.tabIndex = -1;
+    if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && !target.hasAttribute('tabindex')) {
+        target.tabIndex = -1;
+    }
     restoreFocusToBestTarget({ current: target }, { current: fallback });
 }
 
