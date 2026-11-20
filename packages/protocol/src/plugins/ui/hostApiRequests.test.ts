@@ -509,28 +509,34 @@ describe('plugin UI open and Action components', () => {
       service: { pluginId: 'happier.scm.forge.github', localId: 'github' },
       accountId: 'account-1',
     };
-    expect(PluginUiSelectActionInputResultV1Schema.parse({
-      kind: 'submitted',
-      action: {
-        pluginId: 'happier.scm.forge.github',
-        localId: 'connection/prepare-v1',
-      },
-      input: { repository: 'happier-dev/happier' },
-      selection: admittedSelection,
-      connectedAccount: {
-        kind: 'selected',
-        fieldPath: 'credentialRef',
-        ref: selectedAccount,
-      },
-      presentation: {
-        connectedAccountLabel: 'Work account',
-        machineDisplayName: 'Development Mac',
-      },
-    })).toMatchObject({
-      kind: 'submitted',
-      selection: admittedSelection,
-      connectedAccount: { kind: 'selected' },
-    });
+    const selectedTeamAccount = {
+      teamId: 'team-a',
+      selection: { source: 'team_resource', resourceId: 'github-resource-a', deliveryMode: 'brokered' },
+    };
+    for (const ref of [selectedAccount, selectedTeamAccount]) {
+      expect(PluginUiSelectActionInputResultV1Schema.parse({
+        kind: 'submitted',
+        action: {
+          pluginId: 'happier.scm.forge.github',
+          localId: 'connection/prepare-v1',
+        },
+        input: { repository: 'happier-dev/happier' },
+        selection: admittedSelection,
+        connectedAccount: {
+          kind: 'selected',
+          fieldPath: 'credentialRef',
+          ref,
+        },
+        presentation: {
+          connectedAccountLabel: 'Work account',
+          machineDisplayName: 'Development Mac',
+        },
+      })).toMatchObject({
+        kind: 'submitted',
+        selection: admittedSelection,
+        connectedAccount: { kind: 'selected', ref },
+      });
+    }
     expect(PluginUiSelectActionInputResultV1Schema.safeParse({
       kind: 'submitted',
       action: admittedOperation.action,

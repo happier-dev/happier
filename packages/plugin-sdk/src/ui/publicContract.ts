@@ -1,7 +1,6 @@
 import type { PluginUiResourceSubscriptionEventV1 as ProtocolPluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ResourceContent } from '@happier-dev/cli-common/plugins/ui';
 import type { InboxItemAttentionTypeV1 as DtoInboxItemAttentionTypeV1, PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as DtoPluginUiAttachmentToneV1, PluginUiIconTokenV1 as DtoPluginUiIconTokenV1 } from '../actions/dtos/actionDeclarativeNodeDto.generated.js';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1, SessionSpawnNewInputV2 } from '../sessions/authoring.js';
 import { SessionSpawnNewSelectionV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
@@ -60,6 +59,7 @@ import type {
     PluginUiPreparedReviewWorkspaceResultV1 as ProtocolPluginUiPreparedReviewWorkspaceResultV1,
     PluginUiSelectActionInputHostRequestV1 as ProtocolPluginUiSelectActionInputHostRequestV1,
     PluginUiSelectActionInputResultV1 as ProtocolPluginUiSelectActionInputResultV1,
+    PluginUiSelectActionInputTargetedSubmittedV1 as ProtocolPluginUiSelectActionInputTargetedSubmittedV1,
     PluginHostedWebAccountDataBridgeOperationV1 as ProtocolPluginHostedWebAccountDataBridgeOperationV1,
     PluginHostedWebAccountDataBridgeResponseV1 as ProtocolPluginHostedWebAccountDataBridgeResponseV1,
     PluginHostedWebAccountDataBridgeChangeV1 as ProtocolPluginHostedWebAccountDataBridgeChangeV1,
@@ -421,9 +421,7 @@ export type PluginUiSelectActionInputTargetedSubmittedV1 = {
     action: PluginUiContributionIdentityV1;
     input: PluginUiJsonObjectV1;
     selection: PluginUiTargetedContributionSelectionV1;
-    connectedAccount:
-        | { kind: 'none' }
-        | { kind: 'selected'; fieldPath: string; ref: QualifiedConnectedAccountRef };
+    connectedAccount: ProtocolPluginUiSelectActionInputTargetedSubmittedV1['connectedAccount'];
     /** Host-resolved, non-secret labels for confirmation UI. IDs are never substituted. */
     presentation: {
         connectedAccountLabel: string | null;
