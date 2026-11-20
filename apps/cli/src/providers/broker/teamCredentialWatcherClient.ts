@@ -104,7 +104,7 @@ export function createTeamCredentialWatcherRead(input: TeamCredentialWatcherTran
         && repositoryPaths.some(root => path === root || path.startsWith(`${root}/`));
       let checksBody: Uint8Array | undefined;
       if (githubOrigin && request.method === 'POST' && url.pathname === '/graphql' && !url.search && input.checks) {
-        const { isGithubChecksEvent, readGithubWatcherChecksQuery } = await import('@happier-dev/plugins-scm-github');
+        const { isGithubChecksEvent, readGithubWatcherChecksQuery } = await import('@happier-dev/plugins-scm-github/checks-watcher');
         const checks = readGithubWatcherChecksQuery(request.body);
         if (checks && isGithubChecksEvent(input.checks.eventLocalId)
           && checks.pullRequestNumber === input.checks.pullRequestNumber

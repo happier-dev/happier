@@ -30,7 +30,7 @@ export function createTeamCredentialBrokerWatcherRead(input: Readonly<{
     }
     const url = new URL(GITHUB_API_ORIGIN + request.pathAndQuery.slice('/v1'.length));
     const checks = checksPost
-      ? (await import('@happier-dev/plugins-scm-github')).readGithubWatcherChecksQuery(request.body)
+      ? (await import('@happier-dev/plugins-scm-github/checks-watcher')).readGithubWatcherChecksQuery(request.body)
       : null;
     if (checksPost ? checks === null
       : !GITHUB_WATCHER_READ_PATH.test(url.pathname) && !GITHUB_WATCHER_PAGE_PATH.test(url.pathname)) {

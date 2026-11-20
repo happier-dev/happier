@@ -31,6 +31,11 @@
       "happier-source": "./src/connectedAccounts/service.ts",
       "types": "./dist/connectedAccounts/service.d.ts",
       "default": "./dist/connectedAccounts/service.js"
+    },
+    "./checks-watcher": {
+      "happier-source": "./src/observations/githubChecksWatcher.ts",
+      "types": "./dist/observations/githubChecksWatcher.d.ts",
+      "default": "./dist/observations/githubChecksWatcher.js"
     }
   },
   "files": [

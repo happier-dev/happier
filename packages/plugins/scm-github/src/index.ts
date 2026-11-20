@@ -9,6 +9,4 @@ export * from './pullRequests/restAdapter.js';
 export * from './repositoryProvisioning/index.js';
 export * from './remoteUrl.js';
 export * from './webhookAction.js';
-export { isGithubChecksEvent } from './observations/githubChecksSource.js';
-export { readGithubWatcherChecksQuery } from './triage/checksQuery.js';
 export * from './triage/securityAlerts/actionContracts.js';
