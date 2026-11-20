@@ -31,6 +31,7 @@ import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { useActionFieldOptionsForMachine } from './useSessionActionFieldOptions';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 // Hoist the physical transport before cross-package imports can capture Socket.IO.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -236,7 +237,8 @@ describe('qualified input field options scope', () => {
         const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
         harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
         harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
-        const reviewField = { path: 'engineIds', optionsSourceId: 'review.engines.available' };
+        const reviewField = getActionSpec('review.start').inputHints?.fields.find(field => field.path === 'reviewers');
+        if (!reviewField) throw new Error('Review Action must declare its reviewer choices');
         let observed: InputFieldOptionsState | undefined;
         function ReviewOptions() {
             const options = useActionFieldOptionsForMachine({ machineId: 'controller-a', serverId, enabled: true,
@@ -253,7 +255,10 @@ describe('qualified input field options scope', () => {
             expect({ status: screen.findByTestId('review.options')?.props.accessibilityLabel,
                 error: screen.findByTestId('review.options')?.props.accessibilityHint }).toEqual({ status: 'ready', error: undefined });
             expect(screen.getTextContent()).toContain('Detached reviewer');
-            expect(observed).toMatchObject({ reviewEngineInventory: { items: [engine, setupEngine] } });
+            expect(observed?.options).toEqual([
+                { value: 'codex', label: 'Detached reviewer' },
+                { value: 'claude', label: 'Install reviewer', disabled: true },
+            ]);
         } finally { await screen.unmount(); }
     });
 
