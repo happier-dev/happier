@@ -19,7 +19,14 @@ describe('selected Voice Agent readiness', () => {
             { ...context, activeRuntime: { ...activeRuntime, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' } } },
         ]) expect(projectVoiceSelectedAgentReadiness(target, EMPTY_MACHINE_AGENTS, mismatched).runtime).toBe('unknown');
     });
-    it('uses the selected Provider credential route while preserving installation and unknown-route blockers', () => {
+    it('keeps an in-flight inventory probe pending until it settles without a usable Agent', () => {
+        const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const context = { serverId: 'home', machineId: 'machine' };
+        expect(projectVoiceSelectedAgentReadiness(target, { ...EMPTY_MACHINE_AGENTS, status: 'loading' }, context).runtime).toBe('pending');
+        expect(projectVoiceSelectedAgentReadiness(target, { ...EMPTY_MACHINE_AGENTS, status: 'ready' }, context).runtime).toBe('unavailable');
+    });
+
+    it('uses the selected Provider credential route while preserving installation and unresolved-route blockers', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const serviceId = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' })!.authIsolation.suppressConnectedServiceIds[0]!;
         const agent = projectMachineAgent({ agentId: 'codex', title: 'Codex', checking: false, stale: false, job: null,
@@ -47,7 +54,7 @@ describe('selected Voice Agent readiness', () => {
         expect(projectVoiceSelectedAgentReadiness(target, { ...inventory, agents: [{ ...agent, installed: false }] }, context).runtime).toBe('missing');
         expect(projectVoiceSelectedAgentReadiness(target, inventory, { ...context, modelRoute: {
             ...context.modelRoute, teamCredentialResourceStatusByKey: new Map(),
-        } }).runtime).toBe('unknown');
+        } }).runtime).toBe('unavailable');
         // The initialized brokered Run already proved its admitted execution route.
         // An unobserved passive Team catalog cannot withdraw that runtime fact.
         expect(projectVoiceSelectedAgentReadiness(target, EMPTY_MACHINE_AGENTS, { ...context, modelRoute: {

@@ -29,6 +29,8 @@ export function projectVoiceDefaultAgentSelection(
     }) };
 }
 
+export type VoiceSelectedAgentRuntimeReadiness = VoiceReadinessFact | 'pending' | 'unavailable';
+
 /** An initialized Run owns active readiness; inventory owns passive authentication and installation. */
 export function projectVoiceSelectedAgentReadiness(
     target: AgentExecutionTargetV1 | null,
@@ -36,7 +38,7 @@ export function projectVoiceSelectedAgentReadiness(
     context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined;
         activeRuntime?: VoiceAgentRuntimeProjection;
         modelRoute?: Parameters<typeof resolveSelectedProviderRoute>[0] }>,
-): Readonly<{ runtime: VoiceReadinessFact; selectedAgent?: VoiceRoleReadiness['selectedAgent'] }> {
+): Readonly<{ runtime: VoiceSelectedAgentRuntimeReadiness; selectedAgent?: VoiceRoleReadiness['selectedAgent'] }> {
     if (!target) return { runtime: 'unknown' };
     const bundledId = resolveBundledAgentIdFromContributionIdentity(target.identity);
     const agentId = bundledId ?? buildQualifiedPluginContributionKey(target.identity);
@@ -48,9 +50,13 @@ export function projectVoiceSelectedAgentReadiness(
         && resolveVoiceAgentRunBackendId(context.activeRuntime.backendTarget) === (target.definitionId ?? agentId);
     const providerRoute = !activeReady && context.modelRoute ? resolveSelectedProviderRoute(context.modelRoute) : null;
     const agent = providerRoute ? projectMachineAgentForCredential(observed, { credentialBindings: null, providerRoute }) : observed;
-    const runtime: VoiceReadinessFact = activeReady || agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
-        : agent?.state === 'needsSignIn' || agent?.state === 'notInstalled' ? 'missing'
-            : agent?.state === 'installing' ? 'installing' : agent?.state === 'unsupported' ? 'incompatible' : 'unknown';
+    let runtime: VoiceSelectedAgentRuntimeReadiness;
+    if (activeReady || agent?.state === 'ready' || agent?.state === 'updateAvailable') runtime = 'ready';
+    else if (agent?.state === 'needsSignIn' || agent?.state === 'notInstalled') runtime = 'missing';
+    else if (agent?.state === 'installing') runtime = 'installing';
+    else if (agent?.state === 'unsupported') runtime = 'incompatible';
+    else if (inventory.status === 'loading') runtime = 'pending';
+    else runtime = inventory.status === 'idle' ? 'unknown' : 'unavailable';
     return { runtime, selectedAgent: {
         title: row?.title ?? (bundledId ? resolveAgentCatalogTitle(bundledId) : target.identity.localId),
         needsSignIn: !activeReady && agent?.state === 'needsSignIn',

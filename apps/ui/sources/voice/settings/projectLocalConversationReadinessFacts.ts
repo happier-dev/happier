@@ -15,6 +15,7 @@ import type {
   VoiceServerFeatureReadinessFact,
 } from '@/voice/registry/readiness';
 import { resolveVoiceRoleReadiness } from '@/voice/registry/readiness';
+import type { VoiceSelectedAgentRuntimeReadiness } from '@/voice/agent/projectVoiceAgentSelection';
 import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { projectVoiceSpeechCredentialReadiness } from '@/voice/registry/speechCredentialReadiness';
@@ -88,7 +89,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
   voiceAgentAvailability: FeatureAvailabilityArm;
   /** Selected Agent's observed inventory readiness; never a speech runtime fact. */
-  voiceAgentRuntime?: VoiceReadinessFact | 'unavailable';
+  voiceAgentRuntime?: VoiceSelectedAgentRuntimeReadiness;
   selectedAgent?: VoiceRoleReadiness['selectedAgent'];
   rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
     contribution: Readonly<{ pluginId: string; localId: string }>;
@@ -201,7 +202,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       settings: thinkSettings,
       serverFeature,
       executionMachine: projectVoiceExecutionMachineReadiness(input.executionMachineSelectionKind, input.executionMachineId),
-      runtime: agentRuntime === 'unavailable' ? 'unknown' : agentRuntime,
+      runtime: agentRuntime === 'pending' || agentRuntime === 'unavailable' ? 'unknown' : agentRuntime,
     },
   });
   const thinkReadiness: VoiceRoleReadiness = {

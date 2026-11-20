@@ -19,6 +19,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui';
 import type { CapabilityDetectResult } from '@happier-dev/protocol/capabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { VoiceSettingsPipeline } from '../../projectVoiceSettingsPipeline';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -401,17 +402,21 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const signedOut = { ...codex, data: { ...codex.data, isLoggedIn: false,
             signIn: { status: 'signedOut', loginSupport: 'status_only' },
             authStatus: { state: 'logged_out', checkedAt: 1 } } };
-        let codexResult: CapabilityDetectResult = codex;
+        const probeStarted = createDeferred<void>();
+        const failedProbe = createDeferred<void>();
+        let codexResult: CapabilityDetectResult = { ok: false, checkedAt: 1,
+            error: { code: 'detect-failed', message: 'Detect failed' } };
         const reply = respond;
         respond = (request, context) => {
             switch (request.method) {
                 case `machine-a:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`:
                     return { protocolVersion: 1, projection: inventory.projection };
                 case `machine-a:${RPC_METHODS.CAPABILITIES_DETECT}`:
-                    return { ...inventory.capabilities, results: {
+                    probeStarted.resolve();
+                    return failedProbe.promise.then(() => ({ ...inventory.capabilities, results: {
                         'cli.claude': inventory.capabilities.results['cli.claude'],
                         'cli.codex': codexResult,
-                    } };
+                    } }));
                 case `machine-a:${RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST}`:
                     return { ok: true, jobs: [] };
                 default:
@@ -426,6 +431,31 @@ describe('useDaemonVoiceModelCatalogState', () => {
             expect(result).toMatchObject({ ok: true, result: { status: 'completed', value: { roles: {
                 think: { status, code },
             } } } });
+        const { VoiceProviderSection } = await import('../VoiceProviderSection');
+        const screen = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+            <VoiceProviderSection voice={storage.getState().settings.voice} setVoice={() => {}}
+                happierVoiceSupported platformOs="ios" executionMachineId="machine-a" executionMachineSelectionKind="resolved" />
+        </AuthProvider>);
+        const panelThink = () => {
+            const pipeline: VoiceSettingsPipeline | undefined = screen.tree.root.findAll(node =>
+                node.props.testID === 'settings.voice.conversations.pipeline' && node.props.pipeline)[0]?.props.pipeline;
+            return pipeline?.steps.find(step => step.roles.includes('think'))?.readiness;
+        };
+        try {
+            const inFlight = inspect();
+            await act(async () => { await probeStarted.promise; });
+            try {
+                expect(panelThink()).toMatchObject({ code: 'runtime_unknown' });
+            } finally {
+                await act(async () => { failedProbe.resolve(); await inFlight; });
+            }
+            think(await inFlight, 'unavailable', 'runtime_unavailable');
+            expect(panelThink()).toMatchObject({ status: 'unavailable', code: 'runtime_unavailable', recoveryAction: 'retry' });
+        } finally {
+            await screen.unmount();
+        }
+
+        codexResult = codex;
         const ready = await inspect();
         think(ready, 'ready', 'ready');
         expect(ready).toMatchObject({ result: { value: { roles: { think: {
@@ -433,14 +463,13 @@ describe('useDaemonVoiceModelCatalogState', () => {
         } } } } });
         expect(requests.filter(request => request.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`))).toMatchObject([
             { method: `machine-a:${RPC_METHODS.CAPABILITIES_DETECT}`, params: { requests: [{ id: 'cli.codex' }] } },
+            { method: `machine-a:${RPC_METHODS.CAPABILITIES_DETECT}`, params: { requests: [{ id: 'cli.codex' }] } },
         ]);
 
         codexResult = signedOut;
         think(await inspect(), 'needs_setup', 'agent_signed_out');
         codexResult = { ...signedOut, data: { ...signedOut.data, installed: false, version: null } };
         think(await inspect(), 'needs_setup', 'runtime_missing');
-        codexResult = { ok: false, checkedAt: 1, error: { code: 'detect-failed', message: 'Detect failed' } };
-        think(await inspect(), 'unavailable', 'runtime_unavailable');
         codexResult = codex;
         think(await inspect(), 'ready', 'ready');
 

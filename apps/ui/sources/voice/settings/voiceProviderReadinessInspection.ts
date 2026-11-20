@@ -311,8 +311,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,
         executionMachineId: machine.machineId, executionMachineSelectionKind: machine.selectionKind, voiceAgentAvailability,
-        voiceAgentRuntime: agentTarget?.ok === false ? 'incompatible'
-            : selectedAgentReadiness.runtime === 'unknown' ? 'unavailable' : selectedAgentReadiness.runtime,
+        voiceAgentRuntime: agentTarget?.ok === false ? 'incompatible' : selectedAgentReadiness.runtime,
         selectedAgent: selectedAgentReadiness.selectedAgent, resolveSavedSecret,
         rawCredentialAuthorizationByContribution: Object.fromEntries((inspection.raw ?? []).map(target => [target.providerId, {
             contribution: target.contribution, machineId: machine.machineId, realm: 'daemon' as const, phase: 'speech' as const, status: target.status }])) });
