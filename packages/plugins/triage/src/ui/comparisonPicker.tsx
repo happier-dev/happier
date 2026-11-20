@@ -75,13 +75,13 @@ function TriageComparisonPicker(context: RenderContext) {
   const surface = useSurfaceContext();
   const text = usePluginTranslation();
   const window = useTriageListWindow();
-  const nowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked);
+  const activity = usePluginSurfaceActivity();
+  const nowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked, undefined, activity.active);
   const [query, setQuery] = React.useState('');
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const selection = useComparisonSelection();
   const changeQuery = (value: string) => { selection.reset(); setQuery(value); };
   const sharedScope = usePluginUiEphemeralSharedScope();
-  const activity = usePluginSurfaceActivity();
   const mountId = React.useId();
   const launch = readInputTypePickerLaunchInput(context.launchInput);
   const retained = useTriagePickerSnapshot(window);

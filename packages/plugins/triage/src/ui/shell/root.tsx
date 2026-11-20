@@ -547,7 +547,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const readAgeAtMs = state.kind === 'window' && !state.refreshing && !(state.showReadWarning && state.failure == null)
     ? window.snapshot.completedAtMs
     : undefined;
-  const eligibilityNowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked, readAgeAtMs);
+  const eligibilityNowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked, readAgeAtMs, surfaceActivity.active);
   const refreshState = resolveTriageListRefreshV1(window.snapshot, eligibilityNowMs);
 
   // The named page-view producers (`core/CORPUS.md` §4.1): mount, then every

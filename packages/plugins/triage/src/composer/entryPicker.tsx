@@ -379,7 +379,7 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
     // shared eligibility clock also observes the deadline this surface prints
     // arriving, so a picker left open past it offers the press again instead of
     // waiting for unrelated state activity.
-    const nowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked);
+    const nowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked, undefined, surfaceActivity.active);
     const retained = useTriagePickerSnapshot(window);
     const facts = projectTriagePickerCorpusFacts({ snapshot: retained, nowMs });
     const view = buildTriagePickerView({
