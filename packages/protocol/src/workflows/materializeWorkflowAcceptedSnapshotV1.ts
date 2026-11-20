@@ -33,7 +33,7 @@ import type { WorkflowTargetUnavailableDetailsV1 } from './workflowProgressV1.js
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { resolveWorkflowContextInputsV1, workflowInputErrorV1, WorkflowInputErrorV1, type ResolveWorkflowSessionTargetV1, type WorkflowResolvedSessionTargetV1 } from './workflowStartPreparationV1.js';
-import { requiresReviewWorkflowCompositionV1, readReviewSessionReviewerAddressesV1 } from '../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, readReviewSessionScopeAddressesV1 } from '../reviews/reviewStart.js';
 import { ReviewSessionInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
@@ -1037,7 +1037,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           for (const fields of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose)) {
             // An unselected optional branch or deferred roster confers no authority.
             if (hasUnresolvedValue(fields.reviewers) || hasUnresolvedValue(fields.steps)) continue;
-            const addresses = readReviewSessionReviewerAddressesV1(fields);
+            const addresses = readReviewSessionScopeAddressesV1(fields);
             if (!addresses) return invalidInput(leaf.id);
             for (const address of addresses) {
               const target = await input.effects.resolveSessionTarget?.(address);

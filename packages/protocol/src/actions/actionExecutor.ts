@@ -2473,9 +2473,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           childActionId: childId, position }),
       } : childCaller;
       if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
+      // This private host continuation spends its parent's admitted corpus.
+      // A changed caller, Home, Account or target is a separate invocation.
+      const inheritedScope = hostInternal && ctx.actionCaller?.kind === 'workflowRun'
+        && sameStrictJsonValue(childCaller.actionCaller, ctx.actionCaller)
+        && isSameHome(childCaller.serverId, ctx.serverId, ctx)
+        && childCaller.expectedAccountId === ctx.expectedAccountId
+        && childCaller.runtimeAccountId === ctx.runtimeAccountId
+        && sameStrictJsonValue(childCaller.externalActionTarget ?? null, ctx.externalActionTarget ?? null)
+        ? workflowSessionScope : undefined;
       return !hostInternal && deps.executeOrdinaryChildAction
         ? deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext })
-        : executeInvocation(childId, childInput, derivedContext, hostInternal);
+        : executeInvocation(childId, childInput, derivedContext, hostInternal, inheritedScope);
     };
     const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) =>
       executeChild(childId, childInput, childContext, true);
@@ -2501,7 +2510,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return await executeHostChild('session.archive', { sessionId, alsoArchiveReports: false }, childContext);
     };
     const existingAdmission = options?.prepared;
-    let workflowSessionScope = existingAdmission?.workflowSessionScope;
+    let workflowSessionScope = existingAdmission ? existingAdmission.workflowSessionScope : options?.workflowSessionScope;
     // Public ingress normalized the caller; replay/continuation contexts are host-owned.
     let ctx: ActionExecutorContext = withHostReviewedChildAction(existingAdmission?.context ?? context ?? {});
 
@@ -8043,6 +8052,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     hostInternal = false,
     dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
+    inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
   ): Promise<PrivatePrepareResult> => {
     const normalizedContext = normalizeActionCallerContext(context ?? {});
     if (!normalizedContext) return settlePrepareResult(actionId, {
@@ -8133,7 +8143,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx,
         false,
         undefined,
-        { prepareOnly: true, hostInternal, dispatchImmediately,
+        { prepareOnly: true, hostInternal, dispatchImmediately, workflowSessionScope: inheritedWorkflowSessionScope,
           onAutomationAdmission: admitted => { settlementContext = admitted; },
           ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
           ...(preparedDiscussionPolicy !== undefined ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}) },
@@ -8244,6 +8254,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       true,
       undefined,
       { prepareOnly: true, hostInternal, dispatchImmediately, admittedInputSchema: spec.inputSchema,
+        workflowSessionScope: inheritedWorkflowSessionScope,
         onAutomationAdmission: admitted => { settlementContext = admitted; },
         ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
         ...(preparedDiscussionPolicy !== undefined && readRecord(parsedSemanticInput.data).discussionId === originalDiscussionId
@@ -8279,9 +8290,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     hostInternal = false,
     dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
+    inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
   ): Promise<PrivatePrepareResult> => {
     try {
-      return await prepareInvocationCore(actionId, input, context, hostInternal, dispatchImmediately, preparationOptions);
+      return await prepareInvocationCore(actionId, input, context, hostInternal, dispatchImmediately, preparationOptions, inheritedWorkflowSessionScope);
     } catch (error) {
       if (error instanceof ActionCatalogUnavailableError) {
         return settlePrepareResult(actionId, { ok: false, ...normalizeActionExecutorThrownError(error) });
@@ -8298,6 +8310,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     input: unknown,
     context?: ActionExecutorContext,
     hostInternal = false,
+    inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
   ): Promise<ActionExecuteResult> => {
     const reviewedChild = readHostReviewedChildOperationV1(context, actionId, input);
     if (hostInternal && actionId === 'action.invoke' && deps.routeHostChildAction) {
@@ -8305,7 +8318,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
     }
     hostInternal ||= reviewedChild !== null;
-    const prepared = await prepareInvocation(actionId, input, context, hostInternal, true);
+    const prepared = await prepareInvocation(actionId, input, context, hostInternal, true, undefined, inheritedWorkflowSessionScope);
     if (hostInternal && prepared.kind === 'ready' && deps.routeHostChildAction
       && actionId !== 'action.invoke') {
       const spec = getActionSpec(actionId);
@@ -8329,12 +8342,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return result.ok ? result : projectActionExecuteFailure(result, context?.actionRequestId ?? undefined);
   };
   const executeInvocation = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
-    hostInternal = false): Promise<ActionExecuteResult> => {
+    hostInternal = false, inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope']): Promise<ActionExecuteResult> => {
     const runActionOperation = context?.runActionOperation ?? deps.runActionOperation;
     return actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && runActionOperation && !context?.operationAcceptance
       ? runActionOperation({ actionId, input, context: context ?? {}, resumeRetained: true,
-          execute: () => executeNewInvocation(actionId, input, context, hostInternal) })
-      : executeNewInvocation(actionId, input, context, hostInternal);
+          execute: () => executeNewInvocation(actionId, input, context, hostInternal, inheritedWorkflowSessionScope) })
+      : executeNewInvocation(actionId, input, context, hostInternal, inheritedWorkflowSessionScope);
   };
 
   const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,

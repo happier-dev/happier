@@ -11,7 +11,7 @@ import { readWorkflowCurrentInvocationAncestryV1 } from '../../workflows/workflo
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { bindWorkflowActionFieldV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
-import { readReviewSessionReviewerAddressesV1 } from '../../reviews/reviewStart.js';
+import { readReviewSessionScopeAddressesV1 } from '../../reviews/reviewStart.js';
 
 type WorkflowActionInvocationContextV1 = Readonly<{
   opened: ReturnType<typeof WorkflowRunGetResultV1Schema.parse>;
@@ -150,7 +150,7 @@ export async function resolveActionWorkflowSessionScopeV1(
       : identifier === context.serverIdentityId ? context.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
   for (const binding of leaf.sessionAuthorityBindings ?? []) {
     const roster = binding.inputName === undefined && actionId === 'review.start' && structure.leaf.kind === 'action'
-      ? readReviewSessionReviewerAddressesV1(Object.fromEntries(Object.entries(structure.leaf.input).map(([field, value]) =>
+      ? readReviewSessionScopeAddressesV1(Object.fromEntries(Object.entries(structure.leaf.input).map(([field, value]) =>
         [field, bindWorkflowActionFieldV1(value, { inputs: structure.inputs, origin: 'origin' in opened.acceptedContext ? opened.acceptedContext.origin : undefined },
           structure.leaf.id, 'run', structure.frame.item)]))) : null;
     if (binding.inputName === undefined && !roster) return null;

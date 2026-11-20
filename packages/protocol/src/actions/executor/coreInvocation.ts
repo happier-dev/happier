@@ -75,6 +75,8 @@ export type CoreOptions = Readonly<{
       /** Immediate execute retains its already prepared memory admission across dispatch. */
       dispatchImmediately?: boolean;
       prepared?: PreparedCoreAdmission;
+      /** The issuing host parent's admitted corpus; private to this invocation chain. */
+      workflowSessionScope?: WorkflowSessionScopeV1 | null;
       /** Private schema admission for this exact value, invalidated by input binding. */
       admittedInputSchema?: ActionSpec['inputSchema'];
       discussionPublicationPolicy?: DiscussionPublicationPolicy;

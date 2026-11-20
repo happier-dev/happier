@@ -264,14 +264,17 @@ export type ReviewStartInput = z.infer<typeof ReviewStartInputSchema>;
 
 const ReviewSessionRosterV1Schema = lazyZodSchema(() => z.object({
   reviewers: ReviewStartInputFieldsSchema.shape.reviewers, steps: ReviewStartInputFieldsSchema.shape.steps,
+  sourceSession: ReviewStartInputFieldsSchema.shape.sourceSession,
 }));
 
-/** Read the same normalized roster used by Review execution, including staged passes. */
-export function readReviewSessionReviewerAddressesV1(value: unknown): z.infer<typeof ActionSessionAddressV1Schema>[] | null {
+/** Read the Session corpus consumed by the selected roster, including its opted-in transcript. */
+export function readReviewSessionScopeAddressesV1(value: unknown): z.infer<typeof ActionSessionAddressV1Schema>[] | null {
   const parsed = ReviewSessionRosterV1Schema.safeParse(decodeLegacyReviewStartInput(value));
   if (!parsed.success) return null;
-  return (parsed.data.steps ?? [{ reviewers: parsed.data.reviewers }]).flatMap(step =>
-    step.reviewers.flatMap(reviewer => reviewer.kind === 'session' ? [reviewer.session] : []));
+  const reviewers = (parsed.data.steps ?? [{ reviewers: parsed.data.reviewers }]).flatMap(step => step.reviewers);
+  return [...reviewers.flatMap(reviewer => reviewer.kind === 'session' ? [reviewer.session] : []),
+    ...(parsed.data.sourceSession && reviewers.some(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true)
+      ? [parsed.data.sourceSession] : [])];
 }
 
 /** A composed pass delegates executable admission to its concrete Workflow leaves. */

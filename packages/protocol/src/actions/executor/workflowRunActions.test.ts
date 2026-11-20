@@ -221,16 +221,23 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
-  it.each(['typed', 'typed_wrong_session', 'builtin', 'literal', 'builtin_wrong_session', 'root_wrong_session'] as const)(
+  it.each(['typed', 'typed_wrong_session', 'builtin', 'literal', 'builtin_wrong_session', 'root_wrong_session',
+    'literal_transcript', 'literal_transcript_source_only', 'literal_transcript_foreign_session', 'literal_transcript_foreign_home',
+    'literal_source_without_transcript'] as const)(
     'retains the accepted Review Session scope in its child Workflow: %s', async scenario => {
       // Q10's actual catalog definition has plain JSON reviewers, with no extra
       // typed Session input. Its root admission must freeze the selected corpus.
       const address = { serverId: 'home', sessionId: 'review-target' };
-      const reviewer = { kind: 'session' as const, session: address };
+      const transcript = scenario.startsWith('literal_transcript');
+      const sourceSession = { ...address, sessionId: scenario === 'literal_transcript_source_only' ? 'transcript-source' : address.sessionId };
+      const reviewer = { kind: 'session' as const, session: address, ...(transcript ? { includeSessionTranscript: true } : {}) };
       const selection = { target: { kind: 'detached' as const }, cwd: '/repo', scope: 'repository' as const,
-        reviewers: [reviewer], instructions: 'Inspect the complete isolated repository. Preserve files.' };
+        reviewers: [reviewer], instructions: 'Inspect the complete isolated repository. Preserve files.',
+        ...(transcript || scenario === 'literal_source_without_transcript' ? { sourceSession: {
+          ...sourceSession, ...(scenario === 'literal_source_without_transcript' ? { sessionId: 'unread-source' } : {}),
+        } } : {}) };
       const typed = scenario.startsWith('typed');
-      const builtin = !typed && scenario !== 'literal';
+      const builtin = !typed && !scenario.startsWith('literal');
       const authored = { version: 1, defaults: {}, inputs: typed ? [{ name: 'reviewSession', valueType: 'json', required: true,
         inputType: { hostType: 'session' } }] : [], blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
         input: Object.fromEntries(Object.entries(selection).map(([key, value]) => [key, { kind: 'literal', value }])) }] };
@@ -320,29 +327,48 @@ describe('shared Account workflow run owner', () => {
       }
       const records = createInMemoryReviewRecordPortV1();
       const scopeReads: string[] = [];
+      const transcriptReads: string[] = [];
       const executor = createActionExecutor({ resolveAgentStartContext, reviewRecords: () => records,
         workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+        sessionTranscriptGet: async ({ sessionId }) => {
+          transcriptReads.push(sessionId);
+          return { ok: true, sessionId, items: [{ id: 'source-message', createdAt: 1, semanticRole: 'assistant',
+            role: 'assistant', kind: 'text', text: 'Expected total([2,3]) is 5.' }],
+            nextCursor: null, hasMore: false, diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 } };
+        },
         resolveSessionReference: async ({ sessionId }) => {
           scopeReads.push(sessionId ?? '');
-          return { kind: 'unique', address };
+          return { kind: 'unique', address: { ...address, sessionId: sessionId! } };
         },
       });
       const wrongSelection = scenario.endsWith('wrong_session');
       const result = await executor.execute('review.start', wrongSelection ? { ...selection,
-        reviewers: [{ ...reviewer, session: { ...address, sessionId: 'unrelated-session' } }] } : selection,
+        reviewers: [{ ...reviewer, session: { ...address, sessionId: 'unrelated-session' } }] } : { ...selection,
+          ...(scenario === 'literal_transcript_foreign_session' ? { sourceSession: { ...sourceSession, sessionId: 'foreign-session' } } : {}),
+          ...(scenario === 'literal_transcript_foreign_home' ? { sourceSession: { ...sourceSession, serverId: 'foreign-home' } } : {}) },
       { surface: 'agent', serverId: 'home', defaultSessionId: 'origin-1', callerPermissionMode: 'yolo',
         actionRequestId: `${runId}/${invocationId}/0`,
         actionCaller: { kind: 'workflowRun', runId, authorization: accepted.authorization }, externalActionTarget: machineTarget });
-      if (wrongSelection) {
+      if (scenario === 'literal_transcript_foreign_session' || scenario === 'literal_transcript_foreign_home') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(transcriptReads).toEqual([]);
+        expect(snapshots.size).toBe(1);
+      } else if (wrongSelection) {
         expect(result).toMatchObject({ ok: false, errorCode: 'subtree_denied', details: { blockId: 'step-1-reviewer-1' } });
         expect(snapshots.size).toBe(1);
       } else {
-        expect(result).toMatchObject({ ok: true });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
         const child = [...snapshots.entries()].find(([id]) => id !== runId)!;
         expect(open(...child).materializedLeaves.find(leaf => leaf.blockId === 'step-1-reviewer-1'))
           .toMatchObject({ participantBindings: { selections: [{ participant: { kind: 'session', session: address } }] } });
       }
-      expect(scopeReads).toEqual([address.sessionId]);
+      expect(scopeReads).toEqual(scenario === 'literal_transcript_source_only' ? [address.sessionId, sourceSession.sessionId] : [address.sessionId]);
+      if (!transcript) expect(transcriptReads).toEqual([]);
+      if (transcript && !scenario.includes('foreign')) {
+        expect(transcriptReads).toEqual([sourceSession.sessionId]);
+        const child = [...snapshots.entries()].find(([id]) => id !== runId)!;
+        expect(JSON.stringify(open(...child))).toContain('Expected total([2,3]) is 5.');
+      }
     });
 
   it.each(['refused', 'unresolved', 'accepted'] as const)('settles a composed Review only when its Workflow admission is definitely %s', async outcome => {
@@ -375,7 +401,7 @@ describe('shared Account workflow run owner', () => {
     });
     const selection = { reviewers: [{ kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' },
       { kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' }], instructions: 'Review independently.', scope: 'repository' as const };
-    const result = await executor.execute('review.start', selection, { surface: 'ui', defaultSessionId: 'origin-1',
+    const result = await executor.execute('review.start', selection, { surface: 'ui', defaultSessionId: 'origin-1', defaultSessionMachineId: 'machine-a',
       externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } });
     expect(result).toMatchObject(outcome === 'accepted' ? { ok: true }
       : { ok: false, errorCode: outcome === 'refused' ? 'target_unavailable' : 'workflow_outcome_unresolved' });

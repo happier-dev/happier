@@ -7,6 +7,17 @@ const reviewStartExports = reviewStart as typeof reviewStart & {
 };
 
 describe('ReviewStartInputSchema', () => {
+  it.each(['selected', 'staged', 'disabled', 'replaced'] as const)(
+    'includes a source Session in admission only for the selected transcript read: %s', scenario => {
+      const sourceSession = { serverId: 'home', sessionId: 'transcript-source' };
+      const reviewer = { kind: 'engine', engineId: 'codex', includeSessionTranscript: scenario !== 'disabled' };
+      const steps = scenario === 'staged' || scenario === 'replaced'
+        ? [{ kind: 'review', instructions: 'Review.', reviewers: [{ ...reviewer, includeSessionTranscript: scenario === 'staged' }] }]
+        : undefined;
+      expect(reviewStart.readReviewSessionScopeAddressesV1({ reviewers: [reviewer], sourceSession, ...(steps ? { steps } : {}) }))
+        .toEqual(scenario === 'selected' || scenario === 'staged' ? [sourceSession] : []);
+    });
+
   it.each(['selectedPaths', 'selectedFiles'])('refuses repository scope with explicit %s instead of broadening it', key => {
     const input = { reviewers: [{ kind: 'engine', engineId: 'deepsec' }], instructions: 'Review.', scope: 'repository' };
     expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, [key]: ['src/auth.ts'] }).success).toBe(false);
