@@ -39,10 +39,6 @@ function readPersistedListeningSince(lifetime: ServerAccountScopeLifetime): numb
     return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function persistListeningSince(lifetime: ServerAccountScopeLifetime, value: number): void {
-    getPersistenceStorage().set(listeningSinceStorageKey(lifetime), String(value));
-}
-
 function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySource {
     const observers = new Set<WorkflowActivityObserver>();
     const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
@@ -97,8 +93,10 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         failed = false;
     };
     const open = () => {
-        since ??= Date.now();
-        persistListeningSince(lifetime, since);
+        if (since === null) {
+            since = Date.now();
+            getPersistenceStorage().set(listeningSinceStorageKey(lifetime), String(since));
+        }
         const listeningSince = since;
         controller = new AbortController();
         const snapshot = storage.getState();

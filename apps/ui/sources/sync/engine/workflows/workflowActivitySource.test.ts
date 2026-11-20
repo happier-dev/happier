@@ -304,6 +304,10 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     vi.spyOn(access, 'executeMachineAccessHttpAction').mockResolvedValue({ kind: 'present', machineId: machine.id,
         transitions: { v: 1, revision: 4, offline: { revision: 3, occurredAt: 10 }, online: { revision: 4, occurredAt: 20 } } });
     const { getWorkflowActivitySource } = await import('./workflowActivitySource');
+    const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+    const persistence = getPersistenceStorage();
+    const listeningKey = `workflow-events-listening-since-v1:${encodeURIComponent(scope.serverId)}:${encodeURIComponent(scope.accountId)}`;
+    const writes = vi.spyOn(persistence, 'set');
     const source = getWorkflowActivitySource()!;
     const first: WorkflowActivityLiveFact[] = [];
     const release = source.acquire({ onLive: rows => first.push(...rows), onRetained() {} });
@@ -311,6 +315,7 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     await vi.waitFor(() => expect(first.filter(row => row.kind === 'machine')).toHaveLength(2));
     const listeningSince = source.listeningSince();
     expect(listeningSince).not.toBeNull();
+    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(1);
     release();
     expect(source.listeningSince()).toBe(listeningSince);
     const second: WorkflowActivityLiveFact[] = [];
@@ -319,4 +324,6 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     await vi.waitFor(() => expect(second.filter(row => row.kind === 'machine')).toHaveLength(2));
     expect(source.listeningSince()).toBe(listeningSince);
     expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(2);
+    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(1);
+    expect(persistence.getString(listeningKey)).toBe(String(listeningSince));
 });
