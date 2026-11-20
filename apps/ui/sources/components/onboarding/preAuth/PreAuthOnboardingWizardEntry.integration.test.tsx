@@ -6,12 +6,13 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
-import { onboardingAuthHistoryState, onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
+import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import type { StorageState } from '@/sync/store/types';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import type { IModal } from '@/modal';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const reactNativeState = vi.hoisted(() => ({
     width: 390,
@@ -34,7 +35,6 @@ const authMock = vi.hoisted(() => ({
 }));
 
 const serverFetchMock = vi.hoisted(() => vi.fn());
-const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalAlertAsyncMock = vi.hoisted(() => vi.fn<IModal['alertAsync']>(async () => {}));
 const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>(() => 'modal-id'));
@@ -80,6 +80,7 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         Dimensions: { get: () => ({ ...reactNativeState, scale: 2, fontScale: 1 }) },
+        useWindowDimensions: () => ({ ...reactNativeState, scale: 2, fontScale: 1 }),
     });
 });
 
@@ -134,11 +135,6 @@ vi.mock('@/sync/http/client', async () => {
         ...actual,
         serverFetch: serverFetchMock,
     };
-});
-
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
-    return { ...actual, runtimeFetch: runtimeFetchMock };
 });
 
 vi.mock('@/assets/onboarding/planet-dark.jpg', () => ({ default: 'planet-dark.jpg' }));
@@ -239,7 +235,6 @@ vi.mock('@/text', async () => {
 describe('PreAuthOnboardingWizardEntry shell integration', () => {
     let previousStorageState: StorageState;
     let previousAuthHistory: boolean | undefined;
-    let nowSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(async () => {
         routerMocks.params = {};
@@ -252,7 +247,6 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
             serverId: 'server-a',
         });
         previousStorageState = storage.getState();
-        onboardingHistoryState.set('brandHeroSeenAt', null);
         act(() => {
             storage.setState((state) => ({
                 ...state,
@@ -261,7 +255,6 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
                 },
             }));
         });
-        nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_789_000_000_000);
         reactNativeState.width = 390;
         reactNativeState.height = 844;
         authMock.login.mockClear();
@@ -277,9 +270,8 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
                 })
                 : new Response(null, { status: 404 })
         ));
-        runtimeFetchMock.mockReset();
-        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => (
-            await serverFetchMock(new URL(String(input)).pathname, init)
+        setRuntimeFetch((input, init) => (
+            serverFetchMock(new URL(input instanceof Request ? input.url : String(input)).pathname, init)
         ));
         modalAlertMock.mockClear();
         modalAlertAsyncMock.mockReset();
@@ -305,16 +297,15 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         reactNativeState.width = 1100;
         reactNativeState.height = 720;
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
-        const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
-        // The Welcome panel's own action, so the request runs through the wizard controller.
-        const panel = screen.find((candidate) => (
-            candidate.props.authEntryOptions != null
-            && typeof candidate.props.onContinueWithHomeAuthentication === 'function'
-            && typeof candidate.props.onOpenSecretKeyLogin === 'function'
-        ));
-        if (!panel?.props.authEntryOptions.homeTarget) throw new Error('Expected exact Home auth entry');
-        const target = panel.props.authEntryOptions.homeTarget;
         const runProvision = async (mode: 'keyed' | 'keyless') => {
+            const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
+            const panel = screen.find((candidate) => (
+                candidate.props.authEntryOptions != null
+                && typeof candidate.props.onContinueWithHomeAuthentication === 'function'
+                && typeof candidate.props.onOpenSecretKeyLogin === 'function'
+            ));
+            if (!panel?.props.authEntryOptions.homeTarget) throw new Error('Expected exact Home auth entry');
+            const target = panel.props.authEntryOptions.homeTarget;
             await panel.props.onContinueWithHomeAuthentication({
                 method: { id: 'email_password', enabledActions: [{ id: 'provision', mode }] },
                 action: { id: 'provision', mode },
@@ -325,13 +316,13 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
             await flushHookEffects();
             const step = findEmailPasswordStep(screen);
             if (!step) throw new Error('Expected the email/password workflow step');
-            return step.onAuthenticated;
+            return { finish: step.onAuthenticated, unmount: screen.unmount };
         };
 
         const recoverySecret = new Uint8Array(32).fill(9);
-        const finishE2ee = await runProvision('keyed');
+        const e2ee = await runProvision('keyed');
         let destinationCompleted = false;
-        const pending = finishE2ee({
+        const pending = e2ee.finish({
             credentials: { token: 'e2ee-token', secret: 'e2ee-secret' },
             accountId: 'account-a',
             teamId: null,
@@ -341,7 +332,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledOnce());
         expect(authMock.loginWithCredentials).toHaveBeenCalledWith(
             { token: 'e2ee-token', secret: 'e2ee-secret' },
-            { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' } },
+            { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' }, signInMethodId: 'email_password' },
         );
         expect(destinationCompleted).toBe(false);
         expect(trackAccountCreatedMock).not.toHaveBeenCalled();
@@ -357,13 +348,14 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         expect(trackAccountCreatedMock).toHaveBeenCalledOnce();
         expect([...recoverySecret]).toEqual(new Array(32).fill(0));
         expect([...(disclosure.props?.secret ?? [])]).toEqual(new Array(32).fill(0));
+        await e2ee.unmount();
 
         modalShowMock.mockClear();
         trackAccountCreatedMock.mockClear();
         const deferredRecoverySecret = new Uint8Array(32).fill(8);
-        const finishDeferredE2ee = await runProvision('keyed');
+        const deferred = await runProvision('keyed');
         let deferredDestinationCompleted = false;
-        const deferredPending = finishDeferredE2ee({
+        const deferredPending = deferred.finish({
             credentials: { token: 'deferred-e2ee-token', secret: 'deferred-e2ee-secret' },
             accountId: 'account-deferred',
             teamId: null,
@@ -379,12 +371,13 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         expect(deferredDestinationCompleted).toBe(true);
         expect(trackAccountCreatedMock).toHaveBeenCalledOnce();
         expect([...deferredRecoverySecret]).toEqual(new Array(32).fill(0));
+        await deferred.unmount();
         expect([...(deferredDisclosure.props?.secret ?? [])]).toEqual(new Array(32).fill(0));
 
         modalShowMock.mockClear();
         trackAccountCreatedMock.mockClear();
-        const finishPlain = await runProvision('keyless');
-        await finishPlain({
+        const plain = await runProvision('keyless');
+        await plain.finish({
             credentials: { token: 'plain-token' },
             accountId: 'account-b',
             teamId: null,
@@ -450,35 +443,16 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
     });
 
     afterEach(() => {
-        nowSpy.mockRestore();
         if (previousAuthHistory === undefined) onboardingAuthHistoryState.remove('completed');
         else onboardingAuthHistoryState.set('completed', previousAuthHistory);
         act(() => {
             storage.setState(previousStorageState, true);
         });
         standardCleanup();
+        resetRuntimeFetch();
     });
 
-    it('dismisses the mobile brand hero locally and reveals welcome without changing wizard step', async () => {
-        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
-        const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
-
-        await vi.waitFor(() => expect(screen.findByTestId('brand-hero-get-started')).toBeTruthy());
-        expect(screen.findByTestId('unauth-shell-route-welcome')).toBeTruthy();
-        expect(screen.findAllByTestId('welcome-decision-panel')).toHaveLength(0);
-
-        await act(async () => {
-            screen.pressByTestId('brand-hero-get-started');
-        });
-        await flushHookEffects();
-
-        expect(onboardingHistoryState.read('brandHeroSeenAt')).toBe(1_789_000_000_000);
-        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
-        expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
-        expect(screen.findAllByTestId('unauth-shell-back-chevron')).toHaveLength(0);
-    });
-
-    it('shows split shell immediately on desktop and creates an anonymous account from welcome', async () => {
+    it('creates an anonymous account from the desktop Welcome workflow', async () => {
         reactNativeState.width = 1100;
         reactNativeState.height = 720;
         serverFetchMock.mockImplementation(async (path: string) => (
@@ -505,9 +479,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
 
         await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard')).toBeTruthy());
         expect(screen.findByTestId('unauth-shell-route-welcome')).toBeTruthy();
-        expect(screen.findByTestId('unauth-shell-brand-pane')).toBeTruthy();
         expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
-        expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
 
         const panel = screen.find((candidate) => (
             candidate.props.authEntryOptions != null
@@ -531,7 +503,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         await vi.waitFor(() => {
             expect(authMock.loginWithCredentials).toHaveBeenCalledWith(
                 { token: 'account-token' },
-                { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' } },
+                { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' }, signInMethodId: 'key_challenge' },
             );
         });
     });
@@ -642,7 +614,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         expect(serverFetchMock.mock.calls.filter(([path]) => path === '/v1/account/encryption')).toHaveLength(2);
         expect(authMock.loginWithCredentials).toHaveBeenCalledWith(
             { token: 'retained-account-token' },
-            { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' } },
+            { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' }, signInMethodId: 'key_challenge' },
         );
         expect(modalAlertAsyncMock).toHaveBeenCalledWith('common.error', 'errors.operationFailed', [
             expect.objectContaining({ text: 'common.retry' }),
@@ -698,13 +670,12 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
     });
 
     it('keeps returning mobile users in workflow and navigates restore and relay through the shell', async () => {
-        act(() => { onboardingHistoryState.set('brandHeroSeenAt', 1_700_000_000_000); });
-
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
 
-        expect(screen.findAllByTestId('brand-hero-get-started')).toHaveLength(0);
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        await vi.waitFor(() => expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy());
+        expect(screen.findByTestId('unauth-shell-route-welcome')).toBeTruthy();
+        expect(screen.findByTestId('unauth-shell-back-chevron')).toBeNull();
 
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
         await flushHookEffects({ cycles: 2, turns: 2 });
