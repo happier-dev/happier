@@ -1,6 +1,6 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { reviewReviewersForEngineIdsV1 } from '@happier-dev/plugin-sdk/reviews';
+import { reviewReviewersForEngineIdsV1, type ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
 import type { SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
@@ -21,49 +21,70 @@ export type TriagePullRequestReviewContinuationOutcomeV1 =
     | Readonly<{ kind: 'unavailable' | 'unknown'; failure?: TriageNewSessionFailureV1 }>
     | Readonly<{ kind: 'settled'; result: TriageStartPullRequestReviewResultV1 }>;
 
-export type TriagePreparedPullRequestReviewContinuationV1 =
+export type TriagePreparedPullRequestReviewContinuationV1 = Readonly<{ draft?: ReviewStartInput }> & (
     | Readonly<{ kind: 'cancelled' }>
     | Readonly<{ kind: 'unavailable'; failure?: TriageNewSessionFailureV1 }>
-    | Readonly<{ kind: 'ready'; input: JsonValue }>;
+    | Readonly<{ kind: 'ready'; input: JsonValue }>);
 
 /** Selection and current catalog resolution prepare one exact Review operand without starting it. */
 export async function prepareTriagePullRequestReviewContinuationV1(
     host: TriagePullRequestReviewContinuationHostV1,
     pending: TriagePendingPullRequestReviewV1,
-    choice: TriagePullRequestReviewChoiceV1,
-    options?: PluginCancellationOptions & Readonly<{ isCurrent?: () => boolean }>,
+    choice: TriagePullRequestReviewChoiceV1 | undefined,
+    options?: PluginCancellationOptions & Readonly<{ isCurrent?: () => boolean; draft?: ReviewStartInput }>,
 ): Promise<TriagePreparedPullRequestReviewContinuationV1> {
     const current = () => options?.signal?.aborted !== true && options?.isCurrent?.() !== false;
     const cancellation = options?.signal === undefined ? undefined : { signal: options.signal };
     if (!current()) return { kind: 'cancelled' };
+    let draft: ReviewStartInput | undefined;
     try {
-        let launchSelection = choice.launchSelection;
-        if (launchSelection === undefined) {
+        let operand: Readonly<Record<string, unknown>>;
+        if (choice === undefined) {
             const selected = await host.selectActionInput({
-                hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+                hostAction: { action: 'review.start', projection: 'composition' },
                 sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
-                draft: { reviewers: reviewReviewersForEngineIdsV1(choice.engineIds), instructions: pending.instructions },
+                // Review inputs are objects; the canonical transport projection preserves that root kind.
+                draft: projectNativeJsonValueForTransport(options?.draft ?? { instructions: pending.instructions }) as Readonly<Record<string, JsonValue>>,
             }, cancellation);
             if (!current() || selected.kind === 'cancelled') return { kind: 'cancelled' };
-            if (selected.kind !== 'executionRunLaunch') return { kind: 'unavailable' };
-            launchSelection = selected.input;
+            if (selected.kind !== 'reviewComposition') return { kind: 'unavailable' };
+            draft = selected.input;
+            operand = { reviewInput: selected.input,
+                ...(pending.comparisonSource === undefined ? {} : { comparisonSource: pending.comparisonSource }) };
+        } else {
+            let launchSelection = choice.launchSelection;
+            if (launchSelection === undefined) {
+                const selected = await host.selectActionInput({
+                    hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+                    sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
+                    draft: { reviewers: reviewReviewersForEngineIdsV1(choice.engineIds), instructions: pending.instructions },
+                }, cancellation);
+                if (!current() || selected.kind === 'cancelled') return { kind: 'cancelled' };
+                if (selected.kind !== 'executionRunLaunch') return { kind: 'unavailable' };
+                launchSelection = selected.input;
+            }
+            operand = {
+                instructions: pending.instructions, ...choice, launchSelection,
+                ...(choice.comparisonSource === undefined && pending.comparisonSource !== undefined
+                    ? { comparisonSource: pending.comparisonSource } : {}),
+            };
         }
         if (!current()) return { kind: 'cancelled' };
         // Selection can remain open while the configured row changes elsewhere.
         const resolved = await resolveTriageConfiguredActionForExecutionV1(host, pending.actionId, 'pullRequest', cancellation);
         if (!current()) return { kind: 'cancelled' };
         if (resolved.status !== 'resolved' || resolved.action.target.kind !== 'reviewStart'
-            || resolved.action.workspaceMode !== 'pull_request') return { kind: 'unavailable' };
-        return { kind: 'ready', input: projectNativeJsonValueForTransport({
+            || resolved.action.workspaceMode !== 'pull_request') {
+            return { kind: 'unavailable', ...(draft === undefined ? {} : { draft }) };
+        }
+        return { kind: 'ready', ...(draft === undefined ? {} : { draft }), input: projectNativeJsonValueForTransport({
                 v: 1, sessionId: pending.sessionId, review: pending.review,
-                instructions: pending.instructions, ...choice, launchSelection,
-                ...(choice.comparisonSource === undefined && pending.comparisonSource !== undefined
-                    ? { comparisonSource: pending.comparisonSource } : {}),
+                ...operand,
             }) };
     } catch (error) {
         if (!current()) return { kind: 'cancelled' };
         const failure = projectTriageNewSessionFailureV1(error);
-        return { kind: 'unavailable', ...(failure === undefined ? {} : { failure }) };
+        return { kind: 'unavailable', ...(draft === undefined ? {} : { draft }), ...(failure === undefined ? {} : { failure }) };
     }
 }
 

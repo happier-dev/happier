@@ -1736,11 +1736,10 @@ describe('the entry action controls on the mounted detail header', () => {
         await settle();
 
         await expect.poll(
-            () => harness.reviewEngineListRequests.length,
+            () => mountedActionControls.get(shell)?.presentation('Start review'),
             { timeout: 60_000 },
-        ).toBe(1);
-        await settle();
-        await expect(shell.getByRole('checkbox', { name: 'Codex' })).resolves.toBeDefined();
+        ).toBeDefined();
+        expect(harness.reviewEngineListRequests).toEqual([]);
         expect(harness.startRequests).toHaveLength(1);
         expect(harness.startRequests[0]).toMatchObject({
             workspaceMode: 'pull_request',
@@ -1777,7 +1776,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 credentialRef: configuredInstance().binding.account,
             },
         });
-        expect(harness.reviewEngineListRequests).toEqual([{ sessionId: 'session-review' }]);
+        expect(harness.reviewEngineListRequests).toEqual([]);
         expect(draftsOpened).toBe(0);
     }, 60_000);
 
@@ -1914,10 +1913,9 @@ describe('the entry action controls on the mounted detail header', () => {
         expect('prepareReviewWorkspaceSelection' in (harness.startRequests[1] ?? {})).toBe(false);
         expect(draftsOpened).toBe(0);
         await expect.poll(
-            () => harness.reviewEngineListRequests.length,
+            () => mountedActionControls.get(shell)?.presentation('Start review'),
             { timeout: 60_000 },
-        ).toBe(1);
-        await settle();
-        await expect(shell.getByRole('checkbox', { name: 'Codex' })).resolves.toBeDefined();
+        ).toBeDefined();
+        expect(harness.reviewEngineListRequests).toEqual([]);
     });
 });
