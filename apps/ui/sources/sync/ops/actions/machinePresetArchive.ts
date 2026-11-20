@@ -9,12 +9,14 @@ import { MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerP
 import { ManagedMachineControllerError, settleManagedMachinePresetPreparationOperationV1, managedMachinePresetPreparationNeedsNativeCleanupV1,
     resolveManagedMachinePresetArchiveExecutionTargetV1,
     type ManagedMachinePresetPreparationCustodyV1, type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
+import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createUiManagedAccountNativeInvocationForLaunch } from '@/sync/api/machines/managedMachineAccountNative';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { captureManagedMachinePresetCustodyV1 } from '@/sync/ops/machines/managedMachinePresetCustody';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
 type ArchiveRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0];
@@ -34,7 +36,10 @@ export async function resolveUiMachinePresetArchiveExecutionTarget(rawInput: unk
                     const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
                     const destroy = selected.manifest.contributes.actions?.find(action => action.id === provisioner.preparation!.actions.destroy);
                     if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
-                    return destroy.execution;
+                    if (destroy.execution?.target !== 'account') return { execution: destroy.execution };
+                    const host = await readRuntimeFetchHost(account.endpointUrl);
+                    const { available } = readMachineProvisionerHostAvailability({ host, provisioner });
+                    return { execution: destroy.execution, requiresNativeHost: !available };
                 },
                 readCleanupUnavailable: machineId => readCleanupUnavailable(account, machineId, signal) });
         });

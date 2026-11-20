@@ -12,7 +12,7 @@ import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 import { createPresetPreparationProgress, type ManagedMachinePresetPreparationProgressV1 } from './presetPreparationProgress.js';
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
-import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
+import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
 
 export type ManagedMachinePresetPreparationStorageV1 = Readonly<{
   /** Bound to the preset and original admission by the installed custodian. */
@@ -233,19 +233,25 @@ export function managedMachinePresetPreparationNeedsNativeCleanupV1(prepared: Ma
     || prepared.status !== 'failed' && prepared.status !== 'cancelled';
 }
 
-/** Archive and its private native children execute together on the retained image's host. */
+/** Place Archive with its native cleanup, using the Prepare host when the caller cannot execute it. */
 export async function resolveManagedMachinePresetArchiveExecutionTargetV1(input: Readonly<{
   prepared: ManagedMachinePresetPreparedV1 | undefined;
-  readDestroyExecution(launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch']): Promise<PluginActionExecutionV2 | undefined>;
+  readDestroyExecution(launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch']): Promise<Readonly<{
+    execution: PluginActionExecutionV2 | undefined;
+    requiresNativeHost?: boolean;
+  }>>;
   readCleanupUnavailable(machineId: string): Promise<OperationInput['cleanupUnavailable']>;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
   const prepared = input.prepared;
   if (!prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) return null;
-  const execution = await input.readDestroyExecution(prepared.binding.configuration.launch);
+  const { execution, requiresNativeHost } = await input.readDestroyExecution(prepared.binding.configuration.launch);
+  const accountTarget = execution?.target === 'account';
+  if (accountTarget && !requiresNativeHost) return null;
   const machineId = prepared.binding.machineId;
-  if (execution?.target === 'account' || !machineId) return null;
+  if (machineId && !await input.readCleanupUnavailable(machineId)) return { kind: 'machine', machineId };
+  if (accountTarget) throw new ManagedMachineControllerError('controller_unavailable');
   // Permanent host loss keeps the existing metadata Archive and cleanup diagnostics.
-  return await input.readCleanupUnavailable(machineId) ? null : { kind: 'machine', machineId };
+  return null;
 }
 
 async function cancelOperation(input: OperationInput, current: OpenPreset, expectedRevision?: number): Promise<OperationResult> {

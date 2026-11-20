@@ -1,6 +1,8 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -25,7 +27,7 @@ const { executeManagedMachineNativeAction } = await import('./managedMachineOrig
 const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
 
 describe('Account managed creation through the app Action executor', () => {
-    it('retires a controllerless resource through the existing Account control admission', async () => {
+    it.each(['ordinary', 'reviewed', 'reviewed-e2ee', 'unwitnessed'] as const)('retires a controllerless resource through Account control admission (%s)', async mode => {
         const serverUrl = 'https://account-managed-retire.test';
         const homeId = 'srv_account_managed_retire';
         const profile = await upsertAndActivateServer({ serverUrl });
@@ -34,19 +36,24 @@ describe('Account managed creation through the app Action executor', () => {
             token: createAccountTokenForTests('creator', { currentAccount: true }),
         });
         const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
-        const machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: 'creator',
-            launch: { provider, schemaVersion: 1, name: 'Retained', choices: {} }, allocation: 'bound', creationState: 'active',
-            resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
+        const retained = { id: 'retained', homeId, custodianAccountId: 'creator', allocation: 'bound', creationState: 'active',
             desired: 'start', desiredWhen: 'now', intentRevision: 2, archivedAt: 1,
             cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const machine = ManagedMachineV1Schema.parse(mode === 'reviewed-e2ee'
+            ? { ...retained, preset: { id: 'preset', revision: 3, contentEncryptionMode: 'e2ee' } }
+            : { ...retained, launch: { provider, schemaVersion: 1, name: 'Retained', choices: {} },
+                resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } } });
+        const presetContent = { content: { t: 'encrypted', c: encodeBase64(new Uint8Array(64)) }, recipientEnvelope: null };
+        const carriesPreset = mode === 'reviewed-e2ee';
+        const read = carriesPreset ? { machine, presetContent } : machine;
         const requests: unknown[] = [];
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
-            if (path.endsWith('/actions/get')) return Response.json(machine);
+            if (path.endsWith('/actions/get')) return Response.json(read);
             if (path.endsWith('/admit-control')) {
                 requests.push(JSON.parse(String(init?.body)));
-                return Response.json({ machine, replayed: false });
+                return Response.json(carriesPreset ? { machine, presetContent, replayed: false } : { machine, replayed: false });
             }
             throw new Error(`Unexpected HTTP effect: ${path}`);
         });
@@ -54,10 +61,25 @@ describe('Account managed creation through the app Action executor', () => {
         const account = await captureLazyActionAccountContext(profile.id);
         onTestFinished(() => account.dispose());
         const input = { homeId, managedId: machine.id, expectedIntentRevision: 1, manualResponsibility: true };
-        expect(await executeManagedMachineNativeAction({ account, actionId: 'machines.managed.retire', input,
-            context: { surface: 'ui', authority: 'present_user', actionRequestId: 'retire-reviewed' } }))
-            .toEqual({ ok: true, result: machine });
-        expect(requests).toEqual([{ action: 'machines.managed.retire', input, requestId: 'retire-reviewed' }]);
+        const actionId = 'machines.managed.retire';
+        const requestId = 'retire-reviewed';
+        const artifactId = 'retire-approval';
+        const result = await executeManagedMachineNativeAction({ account, actionId, input,
+            context: { surface: 'ui', authority: 'present_user', actionRequestId: requestId,
+                ...(mode === 'ordinary' ? {} : { bypassApprovals: true }),
+                ...(mode === 'reviewed' || mode === 'reviewed-e2ee' ? {
+                    approvedActionReplay: { artifactId, origin: { surface: 'ui', caller: { kind: 'host' }, accountId: account.accountId } },
+                    presentUserApproval: recordPresentUserApprovalV1({ actionId, input, requestId, artifactId,
+                        requestSurface: 'ui', decidingAccountId: account.accountId }),
+                } : {}) },
+        });
+        if (mode === 'unwitnessed') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            expect(requests).toEqual([]);
+        } else {
+            expect(result).toEqual({ ok: true, result: read });
+            expect(requests).toEqual([{ action: actionId, input, requestId }]);
+        }
     });
 
     it('preserves the typed unsupported dimension from an admitted Account resize', async () => {

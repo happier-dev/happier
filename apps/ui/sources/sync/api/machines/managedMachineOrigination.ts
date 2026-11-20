@@ -1,5 +1,6 @@
 import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedAdmissionOutputV1Schema, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1,
+import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedMetadataControlAdmissionOutputV1Schema,
+    projectManagedMetadataControlResultV1, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -24,7 +25,6 @@ import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/na
 import { executeUiManagedAccountAcquire, executeUiManagedAccountRecovery } from './managedMachineAccountAcquire';
 import { executeUiManagedAccountControl } from './managedMachineAccountControl';
 import { createUiManagedAccountHomeRequest } from './managedMachineAccountHome';
-import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1,
     readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -97,8 +97,10 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     // Parent replay can read the setup Plan through its captured Account; effect children use their own reviewed port.
     const pluginCaller = context.surface === 'plugin' && context.actionCaller?.kind === 'plugin'
         && context.authority === 'account_automation';
+    // An approved Retire only changes the retained Home record and needs no native custody.
+    const replayingRetire = actionId === MANAGED_RETIRE_ACTION_ID_V1 && context.approvedActionReplay?.artifactId !== undefined;
     // The captured Account owner already resolved authority with its preference.
-    if ((context.bypassApprovals && actionId !== SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action)
+    if ((context.bypassApprovals && !replayingRetire && actionId !== SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action)
         || (!pluginCaller && ((context.surface !== 'ui' && context.surface !== 'voice')
             || context.authority === undefined))) return failure('admission_unavailable');
     const invocation = resolveOriginalAccountPluginInvocation(context.actionCaller);
@@ -299,11 +301,8 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     if (actionId === MANAGED_RETIRE_ACTION_ID_V1) {
         try {
             const output = await createUiManagedAccountHomeRequest(params)('admit-control',
-                { action: actionId, input, requestId }, ManagedAdmissionOutputV1Schema);
-            return validateExecution({ ok: true, result: 'presetContent' in output
-                ? { machine: output.machine, presetContent: projectManagedMachinePresetForRecipientV1({
-                    ...output.presetContent, recipientAccountId: account.accountId }) }
-                : output.machine });
+                { action: actionId, input, requestId }, ManagedMetadataControlAdmissionOutputV1Schema);
+            return validateExecution({ ok: true, result: projectManagedMetadataControlResultV1(output) });
         } catch (error) {
             if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
             throw error;

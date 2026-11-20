@@ -50,7 +50,7 @@ export async function resolveCliMachinePresetArchiveExecutionTarget(input: Machi
         mode: preset.contentEncryptionMode, projection: projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: accountId }),
         signal: host.signal });
     return await resolveManagedMachinePresetArchiveExecutionTargetV1({ prepared: content.prepared,
-        readDestroyExecution: async launch => (await readArchivePreparationProvider(launch, host, host.signal)).destroy.execution,
+        readDestroyExecution: async launch => ({ execution: (await readArchivePreparationProvider(launch, host, host.signal)).destroy.execution }),
         readCleanupUnavailable: async machineId => (await readCurrentAccountMachinePreparationCleanupHost({ machineId,
             serverHttpBaseUrl: host.serverUrl,
             ...(host.authorization ? { authorization: host.authorization } : { token: host.credentials.token }),

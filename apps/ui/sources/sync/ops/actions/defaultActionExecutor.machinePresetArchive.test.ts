@@ -8,6 +8,7 @@ import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plu
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
 import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
 import { PLUGIN as DAYTONA_PLUGIN } from '../../../../../../packages/plugins/machine-daytona/src/manifest';
+import { PLUGIN as AGENT37_PLUGIN } from '../../../../../../packages/plugins/machine-agent37/src/manifest';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE } from '../../../../../../packages/plugins/machine-daytona/src/account';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -20,6 +21,7 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { executeUiMachinePresetArchive } from './machinePresetArchive';
@@ -31,14 +33,16 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 afterEach(() => standardCleanup());
 
-async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false, retainedCancelled = false, mode: 'plain' | 'e2ee' = 'plain') {
+async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false, retainedCancelled = false, mode: 'plain' | 'e2ee' = 'plain',
+    providerPlugin: Readonly<{ manifest: unknown }> = accountNative ? DAYTONA_PLUGIN : LIMA_PLUGIN) {
     await homes.reset();
     const lifetime = new AbortController();
     onTestFinished(() => lifetime.abort());
-    const manifest = PluginPortableReleaseManifestV1Schema.parse(accountNative ? DAYTONA_PLUGIN.manifest : LIMA_PLUGIN.manifest);
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(providerPlugin.manifest);
     onTestFinished(installBundledPluginUiDeclarationsForTests([
         { plugin: LIMA_PLUGIN, packageName: '@happier-dev/plugins-machine-lima', displayName: 'Lima' },
         { plugin: DAYTONA_PLUGIN, packageName: '@happier-dev/plugins-machine-daytona', displayName: 'Daytona' },
+        { plugin: AGENT37_PLUGIN, packageName: '@happier-dev/plugins-machine-agent37', displayName: 'Agent37' },
     ].map(({ plugin, packageName, displayName }) => {
         const normalizedManifest = PluginPortableReleaseManifestV1Schema.parse(plugin.manifest);
         return { pluginId: normalizedManifest.id, pluginVersion: normalizedManifest.version, packageName, displayName,
@@ -98,6 +102,25 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     return { serverId, homeId, account, row: () => preset, signal: lifetime.signal };
 }
 
+it('routes browser-ineligible retained Agent37 cleanup through the same host as Prepare', async () => {
+    const browser = await installBrowserRuntimeForTests({ url: 'https://archive-original-image.test' });
+    onTestFinished(() => browser.restore());
+    const fixture = await archiveFixture('original-host', true, false, true, 'plain', AGENT37_PLUGIN);
+    const input = { homeId: fixture.homeId, id: fixture.row().id, expectedRevision: fixture.row().revision };
+    const reviewed: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, fixture.serverId, { actionId: 'machines.presets.archive',
+        machineId: 'original-host', installationId: 'original-installation', tokenEpoch: 0,
+        execute: (body, context) => {
+            reviewed.push({ body, target: context.target });
+            return { kind: 'conflict', currentRevision: 9 };
+        } });
+    const result = await createDefaultActionExecutor().executeConfirmed('machines.presets.archive', input, {
+        serverId: fixture.serverId, surface: 'ui', authority: 'present_user', actionRequestId: 'archive-agent37', signal: fixture.signal,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'conflict', currentRevision: 9 } });
+    expect(reviewed).toEqual([{ body: input, target: { kind: 'machine', machineId: 'original-host' } }]);
+});
+
 it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed', 'e2ee'], ['prepare', 'e2ee']] as const)('sends retained-image Archive as a whole root to its original host (%s, %s)', async (entry, mode) => {
     const fixture = await archiveFixture('original-host', false, false, true, mode);
     const roots: unknown[] = [];
@@ -124,6 +147,34 @@ it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed
             credentialMaterial: { secret: false, encryption: mode === 'e2ee' } }] });
     expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toEqual([]);
     expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.archive'))).toEqual([]);
+    expect(fixture.row().revision).toBe(input.expectedRevision);
+});
+
+it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed', 'e2ee'], ['prepare', 'e2ee']] as const)('refuses retained-image Archive before disclosure to a foreign custodian (%s, %s)', async (entry, mode) => {
+    const fixture = await archiveFixture('foreign-host', false, false, true, mode);
+    let received = false;
+    await answerExternalActionAccountForHome(homes, fixture.serverId, { actionId: 'machines.presets.archive',
+        machineId: 'foreign-host', installationId: 'foreign-installation', tokenEpoch: 0,
+        custodian: { accountId: 'other-account', displayName: 'Other person' },
+        execute: () => { received = true; return { kind: 'conflict', currentRevision: 9 }; } });
+    homes.answer(fixture.serverId, 'POST /v1/actions/machines.presets.archive/execution-authorization', {
+        status: 403, body: { error: 'credential_scope_denied', failureCause: { phase: 'machines.presets.archive',
+            errorClass: 'Error', errorCode: 'credential_scope_denied', httpStatus: null,
+            nativeErrorReason: 'prepared_image_custodian_required' } },
+    });
+    const input = { homeId: fixture.homeId, id: fixture.row().id, expectedRevision: fixture.row().revision };
+    const context = { serverId: fixture.serverId, surface: 'ui' as const, authority: 'present_user' as const,
+        actionRequestId: `foreign-archive-${entry}-${mode}`, signal: fixture.signal };
+    const executor = createDefaultActionExecutor();
+    const result = entry === 'executeConfirmed' ? await executor.executeConfirmed('machines.presets.archive', input, context)
+        : await (async () => {
+            const prepared = await executor.prepare('machines.presets.archive', input, context);
+            return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+        })();
+    expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied',
+        failureCause: { nativeErrorReason: 'prepared_image_custodian_required' } });
+    expect(received).toBe(false);
+    expect(homes.requestsFor('/v1/actions/machines.presets.archive')).toEqual([]);
     expect(fixture.row().revision).toBe(input.expectedRevision);
 });
 
