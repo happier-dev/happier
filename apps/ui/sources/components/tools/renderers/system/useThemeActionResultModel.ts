@@ -69,23 +69,28 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         const redo = facts.redo?.read(input.cardId);
         return redo && (redo.optionId === null || input.options.some(option => option.id === redo.optionId)) ? redo : null;
     });
-    const [outcome, setOutcome] = React.useState<Outcome>(() => {
+    const [localOutcome, setOutcome] = React.useState<Outcome>(() => {
         if (retainedRedo) return { kind: 'undone', previous: call.actionId === THEME_ACTION_IDS.apply ? 'applied' : 'kept' };
         if (call.actionId === THEME_ACTION_IDS.tryOn) return { kind: 'preview', output: call.output };
         if (call.actionId === THEME_ACTION_IDS.keep) return { kind: 'kept', output: call.output };
         return { kind: 'applied', output: call.output };
     });
-    const previewRef = outcome.kind === 'preview' ? outcome.output.previewRef : null;
+    const previewRef = localOutcome.kind === 'preview' ? localOutcome.output.previewRef : null;
     const subscribePreview = React.useCallback((listener: () => void) => presented && previewRef !== null
         ? facts.preview.subscribe(listener) : () => {}, [presented, previewRef, facts.preview]);
     const readPreview = React.useCallback(() => {
         const current = facts.preview.read();
-        return current?.previewRef === previewRef ? current : null;
-    }, [facts.preview, previewRef]);
+        return current && previewRef !== null && (current.previewRef === previewRef
+            || input.options.some(option => option.call.output.previewRef === current.previewRef)) ? current : null;
+    }, [facts.preview, input.options, previewRef]);
     const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
     React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
         [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
-    const [currentOptionKey, setCurrentOptionKey] = React.useState(() => retainedRedo ? retainedRedo.optionId : input.options.at(-1)?.id ?? null);
+    const [localOptionKey, setCurrentOptionKey] = React.useState(() => retainedRedo ? retainedRedo.optionId : input.options.at(-1)?.id ?? null);
+    // An earlier grouped proposal can settle after the final row already mounted.
+    const activeOption = preview ? input.options.find(option => option.call.output.previewRef === preview.previewRef) : undefined;
+    const outcome: Outcome = activeOption ? { kind: 'preview', output: activeOption.call.output } : localOutcome;
+    const currentOptionKey = activeOption?.id ?? localOptionKey;
     const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
     const [revealedCssSource, setRevealedCssSource] = React.useState<string | null>(null);
     // Replaced transcript cards retain their authored input, while preparations share CSS identity.
@@ -137,8 +142,12 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     }, [input.options, perform, tryOption]);
     const onKeep = React.useCallback(() => {
         if (outcome.kind !== 'preview') return;
-        perform('keep', async () => setOutcome({ kind: 'kept', output: await invoke(THEME_ACTION_IDS.keep, { previewRef: outcome.output.previewRef }) }));
-    }, [outcome, perform, invoke]);
+        perform('keep', async () => {
+            const output = await invoke(THEME_ACTION_IDS.keep, { previewRef: outcome.output.previewRef });
+            setCurrentOptionKey(currentOptionKey);
+            setOutcome({ kind: 'kept', output });
+        });
+    }, [outcome, currentOptionKey, perform, invoke]);
     const onUndo = React.useCallback(() => {
         if (outcome.kind === 'undone') return;
         perform('undo', async () => {
@@ -148,6 +157,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
                 await invoke(THEME_ACTION_IDS.undo, { undoHandle });
                 facts.redo?.retain(undoHandle, { cardId: input.cardId, optionId: currentOptionKey });
             }
+            setCurrentOptionKey(currentOptionKey);
             setOutcome({ kind: 'undone', previous: outcome.kind });
         });
     }, [outcome, perform, invoke, facts.redo, input.cardId, currentOptionKey]);

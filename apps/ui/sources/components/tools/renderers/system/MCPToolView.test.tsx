@@ -4,7 +4,7 @@ import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { buildToolCallMessageRouteId } from '@happier-dev/session-core/messages';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import { createSessionFixture, makeToolCall, makeToolViewProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createSessionFixture, flattenTestStyle, makeToolCall, makeToolViewProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
@@ -29,6 +29,173 @@ const { ThemeActionResult } = await import('./ThemeActionResult');
 const { ThemeActionResultView } = await import('./ThemeActionResultView');
 
 describe('MCPToolView', () => {
+    it.each(['single', 'first option', 'last option'])('shows a CSS approval receipt in the theme card (%s)', async placement => {
+        const grouped = placement !== 'single';
+        const cssFirst = placement === 'first option';
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { createActionAutomationHttpPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const { buildProtectedSessionInputTextRecordV1, SESSION_MESSAGE_PROVENANCE_META_KEY, settleSessionInputRequestV1,
+            settleSessionMessageProvenanceV1, withSessionInputAuthorityV1 } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+        const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+        const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionFamily');
+        const { parseThemeProfileDocument } = await import('@happier-dev/protocol/account/settings/themeProfiles');
+        const { createThemeActionHarness, themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
+        const { createThemeActionExecute } = await import('@/sync/ops/actions/themeActionDeps');
+        const { prepareThemeProfileCss } = await import('@/theme/css/prepareThemeCss');
+        const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+        const serverId = 'theme-approval-home';
+        const accountId = 'theme-approval-account';
+        const session = createSessionFixture({ id: 'theme-approval-session', serverId });
+        const artifactId = 'theme-css-approval';
+        const owner = getThemeTryOnOwner();
+        const priorState = storage.getState();
+        const actionId = THEME_ACTION_IDS.tryOn;
+        const parsed = parseThemeProfileDocument({ ...themeActionDocument('Approved').raw,
+            css: '.dark [data-surface="composer"][data-part="root"] { border-radius: 23px; }' });
+        if (!parsed.ok) throw new Error(parsed.error);
+        const fixtures = createThemeActionHarness();
+        let approval: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
+        let receipt: NormalizedMessage | null = null;
+        const executor = createActionExecutor({
+            actionAutomations: createActionAutomationHttpPortV1({ accountId, request: async () => ({ v: 1, rows: [] }) }),
+            approvalsCreate: async ({ request }) => {
+                approval = ApprovalRequestV2Schema.parse(request);
+                return { artifactId };
+            },
+            approvalsGet: async () => approval ?? null,
+            approvalsUpdate: async ({ request }) => {
+                approval = ApprovalRequestV2Schema.parse(request);
+                return { ok: true };
+            },
+            isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === serverId && origin.accountId === accountId,
+            themeAction: createThemeActionExecute({
+                withLibrary: operation => operation(fixtures.library), readSelection: () => fixtures.selection, clientId: () => '',
+                runtime: { preview: owner, coverage: document => prepareThemeProfileCss(document.profile).coverage,
+                    detailedCoverage: document => prepareThemeProfileCss(document.profile).detailedCoverage },
+            }),
+            sessionSendMessage: async ({ sessionId, localId, message, inputAdmission }) => {
+                expect(sessionId).toBe(session.id);
+                if (!localId || !inputAdmission) throw new Error('Missing host publication identity');
+                const pending = buildProtectedSessionInputTextRecordV1({ text: message, admission: inputAdmission });
+                const inputAdmissionReceipt = { v: 1, issuer: 'authenticatedMachine' };
+                const authority = settleSessionInputRequestV1({ request: inputAdmission.request, currentSessionPermissionCeiling: 'default', inputAdmissionReceipt });
+                const provenance = settleSessionMessageProvenanceV1({ request: inputAdmission.request,
+                    requestedProvenance: inputAdmission.provenance, inputAdmissionReceipt });
+                receipt = normalizeRawMessage('settled-receipt', localId, 10, { ...pending,
+                    meta: { ...withSessionInputAuthorityV1(pending.meta, authority), [SESSION_MESSAGE_PROVENANCE_META_KEY]: provenance },
+                }, { seq: 10 });
+                return { status: 'accepted', localId };
+            },
+        });
+        const home = { serverId, serverIdentityId: serverId, runtimeAccountId: accountId };
+        const agent = { ...home, surface: 'agent', authority: 'account_automation',
+            actionCaller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+            defaultSessionId: session.id, defaultSessionMachineId: 'machine',
+            sessionInputSource: { sourceSessionId: session.id, sourceTurnId: 'turn', via: 'action' },
+            callerPermissionMode: 'default',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        } as const;
+        const input = { document: parsed.document, mode: 'dark', origin: { kind: 'agent' },
+            ...(grouped ? { group: 'choices' } : {}) } as const;
+        const toolMessages = (id: string, seq: number, args: unknown, result: unknown): NormalizedMessage[] => [
+            { id: `call-${id}`, seq, createdAt: seq, isSidechain: false, localId: null, role: 'agent', content: [{
+                type: 'tool-call', id, name: 'mcp__happier__action_execute',
+                input: { _happier: { canonicalToolName: 'mcp__happier__action_execute' }, actionId, input: args },
+                description: null, uuid: `call-${id}`, parentUUID: null,
+            }] },
+            { id: `result-${id}`, seq: seq + 1, createdAt: seq + 1, isSidechain: false, localId: null, role: 'agent', content: [{
+                type: 'tool-result', tool_use_id: id, content: result, is_error: false, uuid: `result-${id}`, parentUUID: null,
+            }] },
+        ];
+        const displaySettings = { ...settingsDefaults, toolViewExpandedDetailLevelDefault: 'summary', toolViewTapAction: 'expand' } as const;
+        function Rows() {
+            const source = useSessionTranscriptSource();
+            const ids = source.useMessageIdsOldestFirst();
+            const messages = source.useMessagesById();
+            return ids.map(id => {
+                const message = messages[id];
+                return message?.kind === 'tool-call' ? <ToolView key={id} tool={message.tool} metadata={null} messages={message.children}
+                    sessionId={session.id} serverId={serverId}
+                    messageId={buildToolCallMessageRouteId({ toolId: message.tool.id, fallbackMessageId: id }) ?? undefined}
+                    displaySettings={displaySettings} /> : null;
+            });
+        }
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        const counter = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        try {
+            storage.setState({ settingsScope: { serverId, accountId } });
+            const pending = await executor.execute(actionId, input, { ...agent, actionRequestId: 'css-tool' });
+            expect(pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId, actionId } });
+            expect(owner.read()).toBeNull();
+            const sibling = { ...input, document: themeActionDocument('Other') };
+            const direct = grouped ? await executor.execute(actionId, sibling, { ...agent, actionRequestId: 'direct-tool' }) : null;
+            if (direct) expect(direct).toMatchObject({ ok: true, result: { previewRef: expect.any(String) } });
+            storage.getState().applySessions([session]);
+            storage.getState().applyMessages(session.id, [
+                ...(direct ? toolMessages('direct-tool', cssFirst ? 3 : 1, sibling, direct) : []),
+                ...toolMessages('css-tool', cssFirst ? 1 : 3, input, pending),
+            ]);
+            storage.getState().applyMessagesLoaded(session.id);
+            screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={session.id} serverId={serverId}>
+                <React.Profiler id="settled-theme-card" onRender={() => {
+                    if (readRoot) counter.onCommitRoot(readRoot());
+                }}><Rows /></React.Profiler>
+            </AppSessionTranscriptSourceProvider>);
+            readRoot = readTestRendererRoot(screen.tree.root);
+            const rows = screen.findAllByType(ToolView);
+            expect(rows).toHaveLength(grouped ? 2 : 1);
+            for (const row of rows) await pressTestInstanceAsync(row.findAll(node =>
+                node.props.testID === 'tool-view-header-primary' && typeof node.props.onPress === 'function')[0]);
+            expect(screen.findAllHostsByTestId('theme-action-result')).toHaveLength(grouped ? 1 : 0);
+            await act(async () => {
+                const approved = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+                    { ...home, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+                expect(approved).toMatchObject({ ok: true, result: { status: 'executed' } });
+                if (!receipt) throw new Error('Publisher did not deliver a transcript receipt');
+                storage.getState().applyMessages(session.id, [receipt]);
+            });
+            const cardCount = (row: typeof rows[number]) => row.findAll(node => typeof node.type === 'string'
+                && node.props.testID === 'theme-action-result').length;
+            expect(rows.map(cardCount)).toEqual(grouped ? [0, 1] : [1]);
+            await vi.waitFor(() => {
+                expect(screen!.findByTestId('theme-action-result:keep')).not.toBeNull();
+                const comparison = screen!.findByTestId('theme-action-result:comparison');
+                expect(comparison?.findAll(node => typeof node.type === 'string'
+                    && flattenTestStyle(node.props.style).borderTopLeftRadius === 23)).toHaveLength(1);
+            });
+            expect(owner.read()?.document?.profile.name).toBe('Approved');
+            counter.start();
+            await act(async () => storage.getState().applyMessages(session.id, [{
+                id: 'unrelated', seq: 12, createdAt: 12, isSidechain: false, localId: null, role: 'user',
+                content: { type: 'text', text: 'Unrelated arrival' },
+            }]));
+            const unrelated = counter.read();
+            expect(unrelated.rendersFor(ThemeActionResult)).toBe(0);
+            expect(unrelated.rendersFor(ThemeActionResultView)).toBe(0);
+            if (grouped) {
+                await act(async () => {
+                    for (const group of screen!.tree.findAll(node => typeof node.type === 'string'
+                        && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
+                        group.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+                    }
+                });
+                expect(screen.findByTestId('theme-action-result:option:css-tool')).not.toBeNull();
+                expect(screen.findByTestId('theme-action-result:option:direct-tool:try')).not.toBeNull();
+            } else {
+                await act(async () => { owner.revert(owner.read()!.previewRef); });
+                expect(screen.findByTestId('theme-action-result:retry')).not.toBeNull();
+            }
+        } finally {
+            counter.stop();
+            await screen?.unmount();
+            const preview = owner.read();
+            if (preview) owner.revert(preview.previewRef);
+            storage.setState(priorState, true);
+        }
+    });
+
     it('hosts four streamed theme proposals on the final tool and skips unrelated arrivals', async () => {
         const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionFamily');
         const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');

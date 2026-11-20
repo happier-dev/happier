@@ -1718,6 +1718,12 @@ its catalog-validated output reports a failed effect. The reader projects the ty
 message for the existing failure formatter without rewriting history or exposing opaque result
 details. Machine conflict and plugin review outcomes retain their family-specific interpretation.
 
+In 0.3 development, an approved agent theme try-on reaches its original
+transcript card through the result message delivered to the originating Session.
+The collector matches the approval Artifact id from the tool result to the
+Session receipt. Grouped proposals share the final tool row, and Keep addresses
+the option currently active in the device's preview owner.
+
 In unreleased 0.3 source, failed or cancelled `machines.command.run` approvals retain the
 command result's exit code, stdout, stderr and optional truncation flags for authorized
 approval reads and resumed callers. The strict command-output schema excludes arbitrary

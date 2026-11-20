@@ -5,6 +5,8 @@ import {
     type ThemeActionId, type ThemeActionInput, type ThemeActionOutput,
 } from '@happier-dev/protocol/actions/themeActionFamily';
 import { withoutClientActionInput } from '@happier-dev/protocol/actions/clientActionInput';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import {
     isRecord, readHappierActionCallId, readHappierActionCallInput, readHappierActionToolResultCandidates,
 } from '@/components/sessions/transcript/references/happierActionToolResult';
@@ -31,12 +33,20 @@ export type ThemeActionCardPresentation = Readonly<{
     visible: boolean;
 }>;
 
+type PendingThemeTry = Readonly<{
+    actionId: typeof THEME_ACTION_IDS.tryOn;
+    input: TranscriptThemeTry['input'];
+    artifactId: string;
+}>;
+type ThemeToolOutcome = TranscriptThemeAction | PendingThemeTry;
+type ReadThemeCall = (tool: ToolCall) => TranscriptThemeAction | null;
+
 const decodedCalls = new WeakMap<ToolCall, Readonly<{
-    name: string; input: unknown; result: unknown; call: TranscriptThemeAction | null;
+    name: string; input: unknown; result: unknown; call: ThemeToolOutcome | null;
 }>>();
 
 /** Validate at the transcript boundary through the Action's canonical input/output schemas. */
-export function readTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | null {
+function readThemeToolOutcome(tool: ToolCall): ThemeToolOutcome | null {
     if (tool.state !== 'completed') return null;
     const cached = decodedCalls.get(tool);
     if (cached && cached.name === tool.name && cached.input === tool.input && cached.result === tool.result) {
@@ -47,27 +57,67 @@ export function readTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction
     return call;
 }
 
-function decodeTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | null {
+function decodeTranscriptThemeAction(tool: ToolCall): ThemeToolOutcome | null {
     const actionId = readHappierActionCallId(tool.name, tool.input);
     if (!actionId || !isThemeActionId(actionId)) return null;
-    const input = ThemeActionInputSchemas[actionId].safeParse(withoutClientActionInput(readHappierActionCallInput(tool.name, tool.input)));
+    const args = withoutClientActionInput(readHappierActionCallInput(tool.name, tool.input));
+    const input = ThemeActionInputSchemas[actionId].safeParse(args);
     if (!input.success) return null;
     for (const candidate of readHappierActionToolResultCandidates(tool.result, tool.input)) {
         const value = isRecord(candidate) && candidate.ok === true ? candidate.result : candidate;
         const output = ThemeActionOutputSchemas[actionId].safeParse(value);
         // Both schemas are keyed by this same catalog-owned id; the cast retains that correlation.
         if (output.success) return { actionId, input: input.data, output: output.data } as TranscriptThemeAction;
+        if (actionId === THEME_ACTION_IDS.tryOn && isRecord(value) && value.kind === 'approval_request_created') {
+            const approval = ActionApprovalRequestCreatedResultSchema.safeParse(value);
+            if (approval.success && approval.data.actionId === actionId) {
+                return { actionId, input: input.data as TranscriptThemeTry['input'], artifactId: approval.data.artifactId };
+            }
+        }
     }
     return null;
 }
 
-type TranscriptNeighbors = Readonly<{ index: number; at: (position: number) => Message | undefined }>;
+const decodedReceipts = new WeakMap<Message, Readonly<{ artifactId: string; output: TranscriptThemeTry['output'] }> | null>();
+
+/** The deferred approval publisher delivers an admitted host input to the originating Session. */
+function decodeSettledThemeTry(message: Message | undefined, artifactId: string): TranscriptThemeTry['output'] | undefined {
+    if (message?.kind !== 'user-text') return undefined;
+    if (!decodedReceipts.has(message)) {
+        decodedReceipts.set(message, readSettledThemeTry(message));
+    }
+    const receipt = decodedReceipts.get(message);
+    return receipt?.artifactId === artifactId ? receipt.output : undefined;
+}
+
+function readSettledThemeTry(message: Extract<Message, { kind: 'user-text' }>) {
+    const provenance = readSessionMessageProvenanceV1(message.meta, 'stored');
+    if (provenance?.kind !== 'host' || provenance.producer !== 'happierMcp') return null;
+    let receipt: unknown;
+    try {
+        receipt = JSON.parse(message.text);
+    } catch {
+        return null;
+    }
+    if (!isRecord(receipt) || typeof receipt.artifactId !== 'string' || receipt.actionId !== THEME_ACTION_IDS.tryOn
+        || receipt.ok !== true || receipt.status !== 'executed' || !isRecord(receipt.execution) || receipt.execution.ok !== true) return null;
+    const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.tryOn].safeParse(receipt.execution.result);
+    return output.success ? { artifactId: receipt.artifactId, output: output.data } : null;
+}
+
+export function readTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | null {
+    const call = readThemeToolOutcome(tool);
+    return call && 'output' in call ? call : null;
+}
+
+type TranscriptNeighbors = Readonly<{ index: number; at: (position: number) => Message | undefined; readCall: ReadThemeCall }>;
 
 /** Options stay in the transcript's retained input documents; no candidate registry or writes. */
 export function readThemeActionCardPresentation(input: Readonly<{
     tool: ToolCall; messages: readonly Message[]; messageId?: string;
 }>, neighbors?: TranscriptNeighbors): ThemeActionCardPresentation | null {
-    const call = readTranscriptThemeAction(input.tool);
+    const readCall = neighbors?.readCall ?? readTranscriptThemeAction;
+    const call = readCall(input.tool);
     if (!call) return null;
     if (call.actionId !== THEME_ACTION_IDS.tryOn && call.actionId !== THEME_ACTION_IDS.keep && call.actionId !== THEME_ACTION_IDS.apply) return null;
     const cardId = input.messageId ?? input.tool.id
@@ -76,7 +126,7 @@ export function readThemeActionCardPresentation(input: Readonly<{
         for (let position = input.messages.length - 1; position >= 0; position--) {
             const previous = input.messages[position];
             if (previous.kind !== 'tool-call') continue;
-            const proposal = readTranscriptThemeAction(previous.tool);
+            const proposal = readCall(previous.tool);
             if (proposal?.actionId === THEME_ACTION_IDS.tryOn && proposal.output.previewRef === call.input.previewRef) {
                 return { cardId, call, options: [], replayTry: proposal, visible: true };
             }
@@ -101,7 +151,7 @@ export function readThemeActionCardPresentation(input: Readonly<{
         // Reasoning between tool calls is part of the same proposal, during a streamed agent turn.
         while (message?.kind === 'agent-text' && message.isThinking) message = at(position += step);
         if (message?.kind !== 'tool-call') return null;
-        const option = readTranscriptThemeAction(message.tool);
+        const option = readCall(message.tool);
         return option?.actionId === THEME_ACTION_IDS.tryOn && option.input.group === call.input.group
             ? { position, id: message.tool.id ?? message.id, call: option }
             : null;
@@ -119,9 +169,9 @@ export function useThemeActionCardPresentation(
     enabled: boolean, tool: ToolCall, messages: readonly Message[], messageId?: string, sessionId?: string,
 ): ThemeActionCardPresentation | null {
     const source = useOptionalSessionTranscriptSource();
-    const call = enabled ? readTranscriptThemeAction(tool) : null;
+    const call = enabled ? readThemeToolOutcome(tool) : null;
     const liveSessionId = source?.kind === 'app' && source.sessionId === sessionId && tool.id
-        && call?.actionId === THEME_ACTION_IDS.tryOn && call.input.group ? source.sessionId : undefined;
+        && call?.actionId === THEME_ACTION_IDS.tryOn && ('artifactId' in call || call.input.group) ? source.sessionId : undefined;
     const serverId = liveSessionId ? source?.serverId : undefined;
     const activeServerId = useActiveServerSnapshot(Boolean(serverId)).serverId;
     const retainedFallback = useRef<ThemeActionCardPresentation | null>(null);
@@ -151,7 +201,15 @@ export function useThemeActionCardPresentation(
             if (ids[index] !== anchorId) index = ids.lastIndexOf(anchorId);
             if (index < 0) return current = fallback;
             const at = (position: number) => transcript.messagesById[transcript.messageIdsOldestFirst[position]];
-            return current = retainDeep(current, readThemeActionCardPresentation({ tool, messages, messageId }, { index, at }));
+            const readCall: ReadThemeCall = candidate => {
+                const result = readThemeToolOutcome(candidate);
+                if (!result || 'output' in result) return result;
+                // actionExecutor publishes to this Session with the approval Artifact's stable local id.
+                const receiptId = transcript.reducerState.localIds.get(`approval-result:${result.artifactId}`);
+                const output = decodeSettledThemeTry(receiptId === undefined ? undefined : transcript.messagesById[receiptId], result.artifactId);
+                return output ? { actionId: result.actionId, input: result.input, output } : null;
+            };
+            return current = retainDeep(current, readThemeActionCardPresentation({ tool, messages, messageId }, { index, at, readCall }));
         };
     }, [activeServerId, fallback, liveSessionId, messageId, messages, serverId, tool]);
     return getStorage()(selector, {
