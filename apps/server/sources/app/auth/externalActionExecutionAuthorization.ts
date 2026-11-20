@@ -1798,8 +1798,9 @@ async function verifyCommon(
             signer.custodianAccountId, signer.machineId);
         if (proof.reviewedChild && childPurpose.deploymentReferenceRead !== true) return refuseExternalActionExecutionRequest('verification_purpose', proof);
         const preparationRead = childPurpose.deploymentReferenceRead === null
-            ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding, effectActionId.data, proof,
-                actionId => isAccountActionHttpOperation(actionId, proof)) : null;
+            ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding,
+                readDeclaredDeploymentPreparationHttpRead(verified.binding, effectActionId.data, proof,
+                    actionId => isAccountActionHttpOperation(actionId, proof))) : null;
         const signedChildPurpose = { ...childPurpose, preparationRead };
         return { ...verified, effectActionId: effectActionId.data, deploymentChildRouting: routing,
             deploymentChildSigner: signer, signedChildPurpose };
@@ -1911,9 +1912,13 @@ async function verifyCommon(
     // replays the retained identity and never admits another native effect.
     const retainedCreationAdmission = acquireAdmissionRequest
         ? await hasAdmittedManagedCreationRootInTx(db, binding) : undefined;
+    // Receipt and Domain custody require this exact key, even when another signer was accepted.
+    let boundMachineKeySigned: boolean | undefined;
+    const verifyBoundMachineKey = () => boundMachineKeySigned ??=
+        Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
     let signatureCurrent = custody
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
-        : Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
+        : verifyBoundMachineKey();
     const boundMachineSigned = signatureCurrent;
     if (binding.requesterOperationRead && !boundMachineSigned) return refuse('machine_signature');
     if (managedPowerContinuation) {
@@ -1976,7 +1981,7 @@ async function verifyCommon(
         ? { deploymentId: platformMaterial.consumer.deploymentId, environmentId: platformMaterial.consumer.environmentId,
             actionOperationId: platformMaterial.consumer.operationId, installationId: binding.installationId } : nativeTransition
         && (deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined
-            || binding.actionId === 'deployments.receipts.observe') && verifySignature(machine.installationPublicKey) ? {
+            || binding.actionId === 'deployments.receipts.observe') && verifyBoundMachineKey() ? {
         deploymentId: nativeTransition.deploymentId, actionOperationId: nativeTransition.actionOperationId,
         environmentId: nativeTransition.environmentId, installationId: binding.installationId,
         ...(binding.actionId === 'deployments.receipts.observe' && nativeTransition.kind === 'settle'
@@ -1999,7 +2004,7 @@ async function verifyCommon(
             actionId => isAccountActionHttpOperation(actionId, proof)) : null;
     const acceptedDeployment = (deploymentContinuation
         || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
-        && verifySignature(machine.installationPublicKey)
+        && verifyBoundMachineKey()
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
@@ -2009,9 +2014,8 @@ async function verifyCommon(
             // Prove the original job is active without constraining a pinned
             // source read to the destination Environment or current receipt.
         });
-    const acceptedPreparationRead = childPurpose.deploymentReferenceRead === null
-        ? await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId.data, proof,
-            actionId => isAccountActionHttpOperation(actionId, proof), acceptedDeployment || undefined) : null;
+    const acceptedPreparationRead = declaredPreparationRead
+        ? await readDeploymentPreparationHttpReadPurpose(db, binding, declaredPreparationRead, acceptedDeployment || undefined) : null;
     const signedChildPurpose = { ...childPurpose, preparationRead: acceptedPreparationRead };
     if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
@@ -2020,7 +2024,7 @@ async function verifyCommon(
     if (domainContinuation?.kind === 'secret-facts') {
         const input = domainContinuation.input;
         const materialization = domainContinuation.materialization;
-        if (!verifySignature(machine.installationPublicKey)) return refuse('machine_signature');
+        if (!verifyBoundMachineKey()) return refuse('machine_signature');
         const domainJob = await readAcceptedDeploymentDomainInTx(db, binding, {
             environmentId: input.environmentId, domainId: materialization.domainId,
             expectedDomainRevision: materialization.expectedDomainRevision,
@@ -2045,7 +2049,7 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : refuse('principal');
     }
     if (domainContinuation) {
-        if (!verifySignature(machine.installationPublicKey)) return refuse('machine_signature');
+        if (!verifyBoundMachineKey()) return refuse('machine_signature');
         // Prepared content spends the accepted binding once, under the Domain CAS lock.
         // A transition continues the Domain owner's accepted native capture or provider custody.
         if (domainContinuation.kind === 'transition'

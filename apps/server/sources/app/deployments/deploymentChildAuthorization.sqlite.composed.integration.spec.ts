@@ -95,6 +95,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, EXTERNAL_ACTION_EF
     createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
     type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import * as machineHttpProof from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createExternalActionDaemonDispatchResponse, prepareExternalActionResponseEnvelopeV1,
     prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import type { ExternalActionDaemonDispatchRequest, ExternalActionRequestEnvelope, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -2294,20 +2295,73 @@ describe('deployment children retain their controller Action authority', () => {
         ];
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const bearer = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
-            for (const read of reads) {
-                const signed = await app.inject({ method: 'GET', url: read.path, headers: {
-                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
-                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: read.actionId,
-                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
-                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: f.authorization.token,
-                        effectActionId: read.actionId, target: f.authorization.binding.target,
-                        installationId: f.controller.installationId, requestId: f.authorization.binding.requestId,
-                        method: 'GET', path: read.path, privateKey: f.controller.keys.secretKey }),
-                } });
-                expect.soft(signed.statusCode, `${read.actionId}: ${signed.body}`).toBe(200);
-                const ordinary = await app.inject({ method: 'GET', url: read.path, headers: { authorization: `Bearer ${bearer}` } });
-                expect(ordinary.statusCode, ordinary.body).toBe(404);
+            const verify = vi.spyOn(machineHttpProof, 'verifyExternalActionMachineRequestV1');
+            const parseEnvironment = vi.spyOn(getActionSpec('deployments.environments.get').inputSchema, 'safeParse');
+            try {
+                for (const read of reads) {
+                    verify.mockClear();
+                    parseEnvironment.mockClear();
+                    const signed = await app.inject({ method: 'GET', url: read.path, headers: {
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: read.actionId,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: f.authorization.token,
+                            effectActionId: read.actionId, target: f.authorization.binding.target,
+                            installationId: f.controller.installationId, requestId: f.authorization.binding.requestId,
+                            method: 'GET', path: read.path, privateKey: f.controller.keys.secretKey }),
+                    } });
+                    expect.soft(signed.statusCode, `${read.actionId}: ${signed.body}`).toBe(200);
+                    expect.soft(verify.mock.calls.filter(([proof]) => proof.effectActionId === read.actionId
+                        && Buffer.from(proof.publicKey).equals(Buffer.from(f.controller.keys.publicKey))), read.actionId).toHaveLength(1);
+                    if (read.actionId === 'deployments.environments.get') expect.soft(parseEnvironment.mock.calls.length).toBe(3);
+                    const ordinary = await app.inject({ method: 'GET', url: read.path, headers: { authorization: `Bearer ${bearer}` } });
+                    expect(ordinary.statusCode, ordinary.body).toBe(404);
+                }
+            } finally { verify.mockRestore(); parseEnvironment.mockRestore(); }
+        }, { authentication: 'real' });
+    });
+
+    it('refuses a native receipt transition signed only by the Session source', async () => {
+        const f = await fixture('account', 'account');
+        const session = await db.session.create({ data: { accountId: f.account.id,
+            tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.builder.id,
+            sessionId: session.id, data: 'deployment-session-source' } });
+        const { target, requestId, input } = f.originalActionEnvelope;
+        const actionId = 'deployments.deploy';
+        const authorization = await auth.mintExternalActionExecutionAuthorization({
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            serverIdentityId: serverId, actionId, machineId: f.controller.id, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(f.originalActionEnvelope),
+            sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                sourceTurnId: 'deploy-turn', callerPermissionMode: null, requestId },
+            sessionActionSource: { machineId: f.builder.id, installationId: f.builder.installationId },
+        }, { input, resolveCurrentSessionMachine: async () => f.builder.id });
+        const path = `/v1/deployments/environments/${f.environment.id}/deployments/${f.receipt.id}/transitions`;
+        const body = signedStage(f, f.controller, 'running', f.receipt.revision);
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = (privateKey: Uint8Array) => app.inject({ method: 'POST', url: path, payload: body, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: actionId, target, requestId,
+                    installationId: f.controller.installationId, method: 'POST', path, body, privateKey,
+                }),
+            } });
+            const verify = vi.spyOn(machineHttpProof, 'verifyExternalActionMachineRequestV1');
+            try {
+                const denied = await send(f.builder.keys.secretKey);
+                expect(denied.statusCode, denied.body).toBe(401);
+                expect(verify.mock.calls.some(([proof], index) => Buffer.from(proof.publicKey).equals(Buffer.from(f.builder.keys.publicKey))
+                    && verify.mock.results[index]?.value === true)).toBe(true);
+            } finally {
+                verify.mockRestore();
             }
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                .toMatchObject({ revision: f.receipt.revision, state: f.receipt.state });
+            const transitioned = await send(f.controller.keys.secretKey);
+            expect(transitioned.statusCode, transitioned.body).toBe(200);
         }, { authentication: 'real' });
     });
 
@@ -3111,18 +3165,26 @@ describe('deployment children retain their controller Action authority', () => {
         };
         const authorization = await mint();
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const signRead = (path: string, signer: typeof f.member) => signExternalActionMachineRequestV1({
+                authorizationToken: authorization.token, effectActionId: actionId, target,
+                installationId: signer.installationId, requestId: authorization.binding.requestId,
+                method: 'GET', path, privateKey: signer.keys.secretKey,
+            });
             const get = (artifactId: string, signer = f.member) => {
                 const path = `/v1/artifacts/${artifactId}`;
                 return app.inject({ method: 'GET', url: path, headers: {
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
-                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: actionId, target,
-                        installationId: signer.installationId, requestId: authorization.binding.requestId,
-                        method: 'GET', path, privateKey: signer.keys.secretKey }),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signRead(path, signer),
                 } });
             };
+            const acceptedArtifact = `/v1/artifacts/${f.input.contentArtifactId}`;
+            const receiver = await verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
+                effectActionId: actionId, encodedTarget: encodeExternalActionResolvedTargetV1(target),
+                method: 'GET', path: acceptedArtifact, machineSignature: signRead(acceptedArtifact, f.member) });
+            expect(receiver).toMatchObject({ setupReceiverMachineId: f.member.id });
+            expect(receiver?.acceptedDeploymentReceipt).toBeUndefined();
             expect((await get(f.input.contentArtifactId)).statusCode).toBe(200);
             expect((await get(f.environment.contentArtifactId)).statusCode).toBe(200);
             await expectHttpRefusalWarning({ phase: 'deployment_setup_receiver_purpose', method: 'GET', path: `/v1/artifacts/${f.link.contentArtifactId}` },
@@ -6957,7 +7019,14 @@ describe('deployment children retain their controller Action authority', () => {
             expect(controllerKeyReads).toBe(1);
             expect(requests.filter(model => ['ProjectSource', 'TeamMembership', 'MachineAccessGrant', 'MachineGrant'].includes(model)))
                 .toEqual([]);
-            expect((await send(body, f.outsider.keys.secretKey)).statusCode).toBe(401);
+            const refuseNonBoundSigner = async () => {
+                expect((await send(body, f.outsider.keys.secretKey)).statusCode).toBe(401);
+            };
+            if (carrier === 'controller') {
+                await expectHttpRefusalWarning({ phase: 'machine_signature', method: 'POST', path }, refuseNonBoundSigner, [authorization.token]);
+            } else {
+                await refuseNonBoundSigner();
+            }
             expect((await send({ ...body, materialization: { ...body.materialization, domainId: crypto.randomUUID() } })).statusCode).toBe(401);
             expect((await send({ ...body, materialization: { ...body.materialization, capture: { ...capture,
                 placement: { ...capture.placement, machineId: f.outsider.id } } } })).statusCode).toBe(401);

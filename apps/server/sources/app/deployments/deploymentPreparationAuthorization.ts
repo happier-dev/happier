@@ -874,7 +874,8 @@ export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: 
 ): Promise<boolean | null> {
     if (binding.actionId !== deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1) return null;
     const admission = binding.deploymentLinkAdmission;
-    const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof, isHttpOperation);
+    const read = await readDeploymentPreparationHttpReadPurpose(tx, binding,
+        readDeclaredDeploymentPreparationHttpRead(binding, effectActionId, proof, isHttpOperation));
     if (read) {
         return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, proof.routeInput,
             undefined, undefined, read.actionId) === true;
@@ -1324,8 +1325,9 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
         return reviewedDeploy ? admit(true) : { rootActionId: deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, effectActionId };
     }
     if (deployEffect && !proof.path.startsWith('/v1/artifacts/')) {
-        const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof,
-            actionId => isNativeHttpPurpose?.(proof, actionId) === true);
+        const read = await readDeploymentPreparationHttpReadPurpose(tx, binding,
+            readDeclaredDeploymentPreparationHttpRead(binding, effectActionId, proof,
+                actionId => isNativeHttpPurpose?.(proof, actionId) === true));
         if (read) {
             const allowed = await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read, undefined, undefined, read.actionId, undefined, true) === true;
             return allowed ? reviewedDeploy ? admit(true) : { rootActionId: deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, effectActionId } : null;
@@ -1801,13 +1803,11 @@ export function readDeclaredDeploymentPreparationHttpRead(
 
 /** Resolve operand custody once, consuming the accepted job's exact identities when available. */
 export async function readDeploymentPreparationHttpReadPurpose(
-    tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
-    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
-    isHttpOperation: Parameters<typeof readDeclaredDeploymentPreparationHttpRead>[3],
+    tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    read: ReturnType<typeof readDeclaredDeploymentPreparationHttpRead>,
     acceptedReceipt?: Pick<NonNullable<Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>>, 'id' | 'environmentId'>,
 ): Promise<Readonly<{ actionId: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1;
     environmentId?: string; deploymentId?: string }> | null> {
-    const read = readDeclaredDeploymentPreparationHttpRead(binding, effectActionId, proof, isHttpOperation);
     if (!read) return null;
     const acceptedOperand = acceptedReceipt !== undefined
         && (read.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && read.environmentId === acceptedReceipt.environmentId
@@ -1897,8 +1897,9 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) return true;
         // The reviewed deploy child retains its effect while using ordinary
         // preparation read transports. Bind those through the transport owner.
-        const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof,
-            actionId => isNativeHttpPurpose?.(proof, actionId) === true);
+        const read = await readDeploymentPreparationHttpReadPurpose(tx, binding,
+            readDeclaredDeploymentPreparationHttpRead(binding, effectActionId, proof,
+                actionId => isNativeHttpPurpose?.(proof, actionId) === true));
         if (read) return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read, undefined, undefined, read.actionId, undefined, true) === true;
         if (!isNativeHttpPurpose?.(proof)) return false;
         const native = DeploymentDeployAdmissionInputV1Schema.safeParse(proof.body);

@@ -9,7 +9,7 @@ import {
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
 import { isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
-  readDeploymentPreparationHttpReadPurpose } from './deploymentPreparationAuthorization';
+  readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose } from './deploymentPreparationAuthorization';
 
 // The admitted deployment scope is the one decider for declared read operands.
 // Bindings are cast from fixtures: only the admission operands are read here.
@@ -47,7 +47,7 @@ describe('admitted deployment read scope (real SQLite)', () => {
     const read = async (id: string, home = serverId, method = 'GET', effect = 'deployments.environments.get') => {
       const operands = { serverId: home, environmentId: id };
       const proof = { method, path: `/v1/deployments/environments/${id}?serverId=${home}`, routeInput: operands };
-      const purpose = await readDeploymentPreparationHttpReadPurpose(db, admitted, effect, proof, readActionId => {
+      const declaredRead = readDeclaredDeploymentPreparationHttpRead(admitted, effect, proof, readActionId => {
         // Use the real schema/HTTP binder, as the production transport matcher
         // does. This callback cannot grant a purpose or bypass its declaration.
         const spec = getActionSpec(readActionId);
@@ -57,6 +57,7 @@ describe('admitted deployment read scope (real SQLite)', () => {
           inputSchema: spec.inputSchema, input: parsed.data });
         return request.method === proof.method && request.path === proof.path && request.body === undefined;
       });
+      const purpose = await readDeploymentPreparationHttpReadPurpose(db, admitted, declaredRead);
       return purpose !== null && await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(db, admitted, proof);
     };
 
