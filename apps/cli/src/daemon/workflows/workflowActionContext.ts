@@ -1,4 +1,4 @@
-import type { ActionExecutorContext, WorkflowAcceptedAuthorizationV1, WorkflowAcceptedOriginV1, WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, WorkflowAcceptedAuthorizationV1, WorkflowAcceptedOriginV1, WorkflowAcceptedSnapshotV1, WorkflowProjectTargetV1 } from '@happier-dev/protocol';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -123,7 +123,7 @@ export function createWorkflowActionContextResolver(
   source?: WorkflowAcceptedSnapshotV1['source'];
   invocationRecordId?: string;
   authorization: WorkflowAcceptedAuthorizationV1;
-  workspace: Readonly<{ machineId: string; directory: string }>;
+  workspace: WorkflowProjectTargetV1;
   workDepth: number;
   originSessionId?: string;
   origin?: WorkflowAcceptedOriginV1;
@@ -139,7 +139,8 @@ export function createWorkflowActionContextResolver(
     return { ...context, defaultSessionId: execution.originSessionId ?? null,
       workspaceWrites: execution.role?.workspaceWrites ?? 'allow',
       externalActionTarget: context.externalActionTarget ?? { kind: 'machine' as const, machineId: execution.workspace.machineId,
-        project: { machineId: execution.workspace.machineId, directory: execution.workspace.directory } },
+        project: { machineId: execution.workspace.machineId, directory: execution.workspace.directory,
+          ...(execution.workspace.workspaceRefId ? { workspaceRefId: execution.workspace.workspaceRefId } : {}) } },
       sessionAgentSpawnPolicyV1: current.policy,
       agentStartContext: { caller: { kind: 'originless' as const, runId: execution.runId, runDepth: execution.workDepth,
           ...(execution.originSessionId ? { runOriginSessionId: execution.originSessionId } : {}) },

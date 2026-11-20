@@ -86,6 +86,9 @@ import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createWorkflowActionContextResolver } from './workflowActionContext';
 import { createCredentialedWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
+import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
+import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
+import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import { admitActionAgentStartV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { prepareWorkflowApprovedOperation } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { AutomationDefinitionDetailSchema, AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -1816,7 +1819,7 @@ describe('production daemon Workflow policy-only context preparation', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it('refreshes installed Workflow Action policy without listing accepted Artifact or Role inventories', async () => {
+  it('retains accepted Project access while refreshing Workflow Action policy without listing Artifact or Role inventories', async () => {
     const accountId = 'workflow-policy-owner';
     const machineId = 'workflow-policy-machine';
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
@@ -1828,14 +1831,14 @@ describe('production daemon Workflow policy-only context preparation', () => {
     const role = ResolvedRoleV1Schema.parse({ roleId: 'accepted-reviewer', name: 'Accepted reviewer', instructions: 'Keep the accepted instructions.',
       engine: { agentTargetKey: buildBackendTargetKeyV2(agentTarget) },
       runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
-    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { engine: { role: role.roleId } }, blocks: [
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { roleId: role.roleId }, blocks: [
       { kind: 'step', id: 'review', document: { text: 'Review accepted work.', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
     ] };
     // Freeze the Role through the real accepted-snapshot producer. Only the
     // external target-availability observation is supplied by this fixture.
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
       context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
-        workspaceTarget: { project: { machineId, directory: tmpdir(), checkoutRootPath: tmpdir() } },
+        workspaceTarget: { project: { machineId, directory: tmpdir(), checkoutRootPath: tmpdir(), workspaceRefId: 'accepted-project' } },
         origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
       roleSelection: { settingsRoles: { [role.roleId]: role } }, admission: { kind: 'user' },
       effects: { resolveTargetAvailability: async () => true } });
@@ -1881,6 +1884,20 @@ describe('production daemon Workflow policy-only context preparation', () => {
       credentials, accountId, serverId: configuration.activeServerId,
       callMachineAction: unavailable, readWorkflowDefinition: unavailable,
     }));
+    const runOwner = createWorkflowRunActionOwner({
+      resolveAccountId: async () => accountId,
+      storage: createWorkflowRunStorageClient({ token: credentials.token, serverHttpBaseUrl: home }),
+      definitions: { get: unavailable },
+      resolveEncryption: async signal => {
+        const encryption = await resolveAutomationWorkerAccountEncryption({ token: credentials.token, credentials, signal });
+        if (encryption.kind !== 'available') throw new Error('Workflow fixture Account encryption unavailable');
+        return encryption;
+      },
+    });
+    const acceptedContext = await resolveContext({ runId, authorization: accepted.snapshot.authorization,
+      workspace: accepted.snapshot.workspaceTarget.project, workDepth: accepted.snapshot.workDepth, role });
+    await expect(runOwner.execute({ actionId: 'workflow.run.get', input: { runId, includeUsage: false },
+      context: acceptedContext })).resolves.toMatchObject({ run: { id: runId } });
     const leaf = (await readWorkflowAcceptedAgentStartLeavesV1(accepted.snapshot))[0]!;
     const admitNewAction = async () => {
       const context = await resolveContext({ runId, authorization: accepted.snapshot.authorization,
