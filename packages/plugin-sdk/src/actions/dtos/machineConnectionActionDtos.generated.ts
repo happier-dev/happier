@@ -331,6 +331,16 @@ export type MachineConnectionActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "homes.personal.create": ({
+        method: 'ssh';
+        host: string;
+        username?: string | undefined;
+        port?: number | undefined;
+    } | {
+        method: 'this_computer';
+    }) & {
+        clientId?: string | undefined;
+    };
     readonly "machines.add.command": ({
         method: 'another_computer';
         serverId: string;
@@ -915,6 +925,18 @@ export type MachineConnectionActionResultById = {
         kind: 'mixed_content';
     } | {
         kind: 'unreachable';
+    };
+    readonly "homes.personal.create": {
+        status: 'created';
+        address: null | string;
+    } | {
+        status: 'outcome_unknown';
+        taskId: string;
+    } | {
+        status: 'setup_started';
+    } | {
+        status: 'task_started';
+        taskId: string;
     };
     readonly "machines.add.command": {
         command: string;

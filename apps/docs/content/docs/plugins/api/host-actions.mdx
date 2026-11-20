@@ -8479,6 +8479,24 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `acceptCanonicalUrl` (boolean): Use the advertised canonical address
 - `clientId` (text): Client Id
 
+## `homes.personal.create`
+
+**Create a personal Home** — Start Personal Home setup on the answering desktop or install it over SSH. For SSH use a configured host alias or address. The desktop handles any SSH trust or credential prompts.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `method` (select, required): Install on
+- `host` (text, required): SSH host or alias
+- `username` (text): SSH user
+- `port` (number): SSH port
+- `clientId` (text): Client Id
+
 ## `homes.reconnect`
 
 **Retry the focused Home connection** — Retry the current Home through its existing connection recovery owner. This does not switch device focus to another Home.
