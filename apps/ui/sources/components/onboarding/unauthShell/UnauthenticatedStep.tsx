@@ -14,6 +14,7 @@ import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeAction
 import type { IconName } from '@/components/ui/icons/Icon';
 
 import { StepMark } from './StepMark';
+import { STEP_DOOR_WIDTH_PX } from './StepFormParts';
 
 import { useUnauthShellLayout } from './useUnauthShellLayout';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_LEAVE_TEST_ID, useStepLeave, useStepRowBack } from './stepBack';
@@ -59,6 +60,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
   mark?: React.ReactNode;
   testID?: string;
   subtitleTestID?: string;
+  problem?: boolean;
 }>) {
   useUnistyles();
   const styles = stylesheet;
@@ -70,7 +72,7 @@ export function UnauthenticatedStepHeading(props: Readonly<{
       <Text ref={headingRef} testID={props.testID} accessibilityRole="header" style={styles.title}>
         {props.title}
       </Text>
-      {props.subtitle ? <Text testID={props.subtitleTestID} style={styles.subtitle}>{props.subtitle}</Text> : null}
+      {props.subtitle ? <Text testID={props.subtitleTestID} style={[styles.subtitle, props.problem ? styles.problemSubtitle : styles.workingSubtitle]}>{props.subtitle}</Text> : null}
     </View>
   );
 }
@@ -95,6 +97,7 @@ export function StepProblemHeading(props: Readonly<{
     <View style={compact ? styles.rootProblemCompact : styles.rootProblem}
       accessibilityRole="text" accessibilityLiveRegion="polite" aria-live="polite" role="status">
       <UnauthenticatedStepHeading
+        problem
         mark={<StepMark iconName={props.iconName} />}
         title={props.title}
         subtitle={props.subtitle}
@@ -128,6 +131,7 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
             subtitleTestID={props.subtitleTestID}
             context={props.context}
             mark={props.mark}
+            problem={props.problem != null}
             testID={props.testID ? `${props.testID}-title` : undefined}
           />
         ) : null}
@@ -241,9 +245,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.variant('reading'),
     color: theme.colors.text.secondary,
     textAlign: 'center',
-    maxWidth: 440,
     marginTop: theme.space.s10,
+  },
+  workingSubtitle: {
+    maxWidth: 440,
     ...HAPPIER_BALANCED_TEXT_WRAP,
+  },
+  problemSubtitle: {
+    width: '100%',
+    maxWidth: STEP_DOOR_WIDTH_PX,
   },
   body: {
     width: '100%',

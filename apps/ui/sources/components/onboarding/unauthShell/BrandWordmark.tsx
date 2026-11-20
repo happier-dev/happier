@@ -1,7 +1,13 @@
 import * as React from 'react';
 import { Image } from 'expo-image';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const darkLogotype = require('@/assets/images/logotype-dark.png');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const lightLogotype = require('@/assets/images/logotype-light.png');
 
 export type BrandWordmarkProps = Readonly<{
     /** Height in px; width scales 5x like the existing wizard logotype. Default 32. */
@@ -9,39 +15,33 @@ export type BrandWordmarkProps = Readonly<{
     testID?: string;
 }>;
 
-/**
- * The Happier wordmark for the unauth brand pane. Theme-aware: in dark mode
- * we render the light (white) logotype against the dark canvas + dark planet;
- * in light mode we render the dark (black) logotype against the cream canvas
- * + warm planet. Mirrors `WizardLogotype`'s asset-swap pattern so the brand
- * pane reads clearly in both themes.
- */
+const logotypes = [
+    { source: darkLogotype, onDark: false },
+    { source: lightLogotype, onDark: true },
+] as const;
+
+/** Keep both assets loaded so a theme change can reveal the other image immediately. */
 export const BrandWordmark = React.memo(function BrandWordmark(props: BrandWordmarkProps) {
     const { theme } = useUnistyles();
     const height = props.height ?? 32;
     const width = Math.round(height * 5);
-    const styles = stylesheet;
     return (
-        <Image
-            testID={props.testID ?? 'brand-wordmark'}
-            // The wordmark is where the brand pane names Happier: it is read as the name, not skipped as art.
-            accessibilityLabel={t('welcome.brandWordmarkAccessibilityLabel')}
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            source={theme.dark
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                ? require('@/assets/images/logotype-light.png')
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                : require('@/assets/images/logotype-dark.png')}
-            contentFit="contain"
-            // The drawn mark starts on the box's edge, level with the copy under it.
-            contentPosition="left"
-            style={[styles.image, { height, width }]}
-        />
+        <View style={{ height, width }}>
+            {logotypes.map(({ source, onDark }) => {
+                const visible = theme.dark === onDark;
+                return (
+                    <Image
+                        key={onDark ? 'on-dark' : 'on-light'}
+                        testID={visible ? props.testID ?? 'brand-wordmark' : undefined}
+                        accessibilityLabel={visible ? t('welcome.brandWordmarkAccessibilityLabel') : undefined}
+                        aria-hidden={!visible}
+                        source={source}
+                        contentFit="contain"
+                        contentPosition="left"
+                        style={{ position: 'absolute', left: 0, top: 0, height, width, opacity: visible ? 1 : 0 }}
+                    />
+                );
+            })}
+        </View>
     );
 });
-
-const stylesheet = StyleSheet.create(() => ({
-    image: {
-        // intentionally empty; size is driven by height/width props.
-    },
-}));

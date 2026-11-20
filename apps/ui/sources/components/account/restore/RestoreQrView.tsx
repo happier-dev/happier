@@ -3,10 +3,10 @@ import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMoti
 import { Platform, View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -31,7 +31,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { EnrolledComputerSetup } from './EnrolledComputerSetup';
-import { StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
+import { STEP_DOOR_WIDTH_PX, StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
 import { StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 
 const RESTORE_MANUAL_TEST_ID = 'restore-open-manual';
@@ -57,6 +57,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     embeddedContentWrapper: {
         paddingVertical: 0,
+    },
+    embeddedRequesterNotice: {
+        alignSelf: 'center',
+        width: '100%',
+        maxWidth: STEP_DOOR_WIDTH_PX,
     },
     noticeCard: {
         borderWidth: 1,
@@ -246,6 +251,12 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     // replacement after a successful exact-profile switch.
     const claimOwnsNavigation = presentation.phase === 'verifying'
         || presentation.phase === 'adding';
+    const showEmbeddedActions = embedded && (approvalVisible || (!claimOwnsNavigation && pairing.phase !== 'succeeded'));
+    const chooseHome = showEmbeddedActions && !props.targetProfileId && !approvalVisible ? {
+        testID: 'restore-choose-home',
+        label: t('connect.addPhoneChooseHomeTitle'),
+        onPress: () => router.push('/server'),
+    } : undefined;
     usePreventRemove(claimOwnsNavigation, () => undefined);
     const targetLabel = 'descriptor' in pairing && pairing.descriptor !== undefined
         ? formatHomeEnrollmentTargetLabel(pairing.descriptor)
@@ -371,14 +382,20 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     Home, the outcome line says what changed (the Home was added; the focused one did not change). */}
                 {embedded && (pendingCode || pairing.phase === 'ready' || (approvedCode !== null && props.entryIntent === 'enter_home')) ? null : embedded ? (
                     // On the step a state that is not the code (a failure, a disabled way) is the door-width notice line.
-                    <SurfaceStateCard
-                        testID="restore-requester-status"
-                        size="line"
-                        lineLayout="notice"
-                        kind={presentation.activity ? 'loading' : presentation.liveRegion === 'assertive' ? 'warning' : 'empty'}
-                        title={t(presentation.primaryTranslationKey)}
-                        accessibilitySemantics={presentation.liveRegion === 'assertive' ? 'alert' : 'status'}
-                    />
+                    <View style={styles.embeddedRequesterNotice}>
+                        <HappierBodyEdgeContext.Provider value>
+                            <SurfaceStateCard
+                                testID="restore-requester-status"
+                                size="line"
+                                lineLayout="notice"
+                                kind={presentation.activity ? 'loading' : presentation.liveRegion === 'assertive' ? 'warning' : 'empty'}
+                                title={t(presentation.primaryTranslationKey)}
+                                accessibilitySemantics={presentation.liveRegion === 'assertive' ? 'alert' : 'status'}
+                                action={chooseHome}
+                                actionGlyph={chooseHome ? 'forward' : undefined}
+                            />
+                        </HappierBodyEdgeContext.Provider>
+                    </View>
                 ) : (
                     <Text style={styles.sectionLead}>
                         {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
@@ -421,7 +438,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     ) : null}
                 </View>}
 
-                {embedded && (approvalVisible || (!claimOwnsNavigation && pairing.phase !== 'succeeded')) ? (
+                {showEmbeddedActions ? (
                     // Approved keeps the ways visible during credential adoption and the exit animation.
                     <View style={styles.embeddedActions} pointerEvents={approvalVisible ? 'none' : 'auto'}
                         aria-hidden={approvalVisible || undefined} accessibilityElementsHidden={approvalVisible}
@@ -430,9 +447,6 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             <View style={styles.embeddedPrimary}>
                                 <RoundButton {...recoveryButton} size="large" />
                             </View>
-                        ) : null}
-                        {!props.targetProfileId && !approvalVisible ? (
-                            <TextLinkButton testID="restore-choose-home" label={t('connect.addPhoneChooseHomeTitle')} onPress={() => router.push('/server')} />
                         ) : null}
                         {/* The ways row (owner 2026-11-19): Back on a computer, the recovery key (its own step), the
                             code's pairing link, then the model's ways with "New account" last. Leaving cancels the code. */}

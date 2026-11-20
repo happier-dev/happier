@@ -8,7 +8,7 @@ import { StepTransitionFrame } from '@/components/ui/motion/StepTransitionFrame'
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
@@ -31,8 +31,6 @@ export type WelcomeEntryViewInteraction = Readonly<{
     policySupportUrl?: string;
 }>;
 
-/** The doors' column (lab direction A: 380 px), narrower than the headline above it. */
-const WELCOME_DOOR_WIDTH_PX = 380;
 /** The subline wraps to two short balanced lines under the headline. */
 const WELCOME_INTRO_WIDTH_PX = 300;
 
@@ -231,7 +229,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     actionStack: {
         gap: theme.space.s12,
         width: '100%',
-        maxWidth: WELCOME_DOOR_WIDTH_PX,
+        maxWidth: STEP_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
     noticeSlot: {
@@ -304,7 +302,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     // At the doors' width, like every welcome notice.
     signupDisabledNotice: {
         width: '100%',
-        maxWidth: WELCOME_DOOR_WIDTH_PX,
+        maxWidth: STEP_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
 }));

@@ -8,6 +8,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+/** The centred door column shared by welcome, notices and problem steps. */
+export const STEP_DOOR_WIDTH_PX = 380;
+
 /**
  * The parts every signed-out form is made of, so Login, the email forms and Connect to a Home read as
  * one anatomy (owner review 11-16): a field's label over its control, one line under the control that
@@ -160,7 +163,7 @@ const styles = StyleSheet.create((theme) => ({
     // The rule's width on every step (lab direction A: 380 px, centred), whatever the column around it.
     or: {
         width: '100%',
-        maxWidth: 380,
+        maxWidth: STEP_DOOR_WIDTH_PX,
         alignSelf: 'center',
         flexDirection: 'row',
         alignItems: 'center',
