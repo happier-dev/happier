@@ -6,7 +6,7 @@ import * as Fonts from 'expo-font';
 import { loadBundledFontAssets } from '@/constants/bundledFonts';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Slot, Stack } from 'expo-router';
-import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
+import { useCurrentRoutePathname, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
 import { ctx } from 'expo-router/_ctx';
 import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import {
@@ -88,7 +88,7 @@ import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/d
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
-import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
+import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternalLinkClicks';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
@@ -97,6 +97,9 @@ import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, run
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
+import { FirstOpenHost, useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenHost';
+import { resolveFirstOpen, type FirstOpenDecision } from '@/components/onboarding/firstOpen/resolveFirstOpen';
+import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { AppPresentationPlatformProvider } from '@/components/ui/presentation/AppPresentationPlatformProvider';
@@ -688,7 +691,7 @@ function FullAppRootLayout() {
                     onRestart={onRestart}
                     onError={(error) => captureExceptionIfEnabled(error)}
                 >
-                    <AppBoot />
+                    <StepMotionStage><AppBoot /></StepMotionStage>
                 </AppCrashRecoveryBoundary>
             </WebCryptoStartupGate>
             </GlassMaterialRuntime>
@@ -722,6 +725,7 @@ function AppBoot() {
     // Init sequence
     //
     const pathname = useCurrentRoutePathname();
+    const segments = useCurrentRouteSegments();
     const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
     const primaryRealm = desktopWindowContext.role === 'primary';
     const fullChrome = desktopWindowContext.chrome === 'full';
@@ -748,6 +752,12 @@ function AppBoot() {
     }, [bootReady, primaryRealm]);
 
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
+    const firstOpenSegments = React.useRef(segments);
+    firstOpenSegments.current = segments;
+    const [firstOpenDecision, setFirstOpenDecision] = React.useState<FirstOpenDecision>('none');
+    const renderFirstOpen = (content: React.ReactNode) => firstOpenDecision === 'none'
+        ? content
+        : <FirstOpenHost decision={firstOpenDecision}>{content}</FirstOpenHost>;
 
     React.useEffect(() => {
         clearSessionSurfaceVisibilityForNonSessionRoute(pathname);
@@ -776,9 +786,23 @@ function AppBoot() {
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
             prepareTranslations: () => preloadTranslations(),
             restoreSync: isDesktopOverlayWindow ? null : restoreConnectionToActiveServer,
+            onAuthResolved: (accountRestored) => {
+                if (cancelled || !primaryRealm) return;
+                const candidate = desktopHostKind() === 'tauri' ? readWebRuntimeFirstOpenCandidate() ?? null : undefined;
+                const decision = resolveFirstOpen({
+                    segments: firstOpenSegments.current,
+                    accountRestored,
+                    desktopCandidate: candidate,
+                });
+                if (decision !== 'none') setFirstOpenDecision(decision);
+                if (candidate) {
+                    void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {
+                        // Native still shows main as soon as it has usable content.
+                    });
+                }
+            },
             onReady: (state) => {
-                if (cancelled) return;
-                setInitState(state);
+                if (!cancelled) setInitState(state);
             },
         }).catch((error: unknown) => {
             if (cancelled) return;
@@ -788,7 +812,7 @@ function AppBoot() {
         return () => {
             cancelled = true;
         };
-    }, [isDesktopOverlayWindow]);
+    }, [isDesktopOverlayWindow, primaryRealm]);
 
     React.useEffect(() => {
         if (initState) {
@@ -808,7 +832,7 @@ function AppBoot() {
 
     if (bootError) throw bootError;
     if (!initState) {
-        return <AppBootPendingSurface phase={bootPhase} />;
+        return renderFirstOpen(<AppBootPendingSurface phase={bootPhase} />);
     }
 
     //
@@ -861,7 +885,6 @@ function AppBoot() {
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
                     <WindowFoldMetricsProvider>
-                    <StepMotionStage>
                     {/*
                       * Keyed on the boot auth generation: `0` on every normal boot, so the key never
                       * changes and nothing remounts. It only advances when a keychain read that missed
@@ -902,7 +925,6 @@ function AppBoot() {
                             </AppPaneModalProvider>
                         </GlassNavigationThemeProvider>
                     </AuthProvider>}
-                    </StepMotionStage>
                     </WindowFoldMetricsProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>
@@ -917,7 +939,7 @@ function AppBoot() {
         );
     }
 
-    return (
+    return renderFirstOpen(
         <>
             {primaryRealm && !isTerminalConnectRoute ? <FaviconPermissionIndicator /> : null}
             {providers}
@@ -938,6 +960,11 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
     isTerminalConnectRoute: boolean;
 }>>) {
     const onContentLayout = useDesktopMainWindowContentReady();
+    const onFirstOpenContent = useFirstOpenContentLayout();
+    const onLayout = React.useCallback((event: Parameters<typeof onContentLayout>[0]) => {
+        const welcome = onFirstOpenContent?.(event);
+        onContentLayout(event, welcome);
+    }, [onContentLayout, onFirstOpenContent]);
     const chromeSafeArea = useChromeSafeAreaInsets();
     const isTablet = useIsTablet();
     const desktopHost = isDesktopHost();
@@ -947,7 +974,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
         isTablet,
         isTerminalConnectRoute: props.isTerminalConnectRoute,
     });
-    const shell = <View onLayout={onContentLayout} style={{ flex: 1, position: 'relative' }}>
+    const shell = <View onLayout={onFirstOpenContent ? onLayout : onContentLayout} style={{ flex: 1, position: 'relative' }}>
         {chromeHost === 'narrow-desktop-fallback' ? <DesktopFallbackShellChrome chromeSafeArea={chromeSafeArea} /> : null}
         <View style={{ flex: 1 }}>{props.children}</View>
     </View>;

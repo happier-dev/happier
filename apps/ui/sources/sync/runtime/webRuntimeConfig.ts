@@ -3,6 +3,7 @@ export type HappierWebRuntimeConfig = Readonly<{
     serverContext?: string;
     organizationPolicyJson?: string;
     organizationPolicyError?: Readonly<{ path: string; code: string }>;
+    firstOpenCandidate?: 'overlay' | 'in-app';
 }>;
 
 type RuntimeWindow = Window & {
@@ -28,4 +29,9 @@ export function readWebRuntimeConfigServerUrl(): string {
 export function readWebRuntimeConfigServerContext(): string {
     const raw = readWebRuntimeConfig()?.serverContext;
     return typeof raw === 'string' ? raw.trim() : '';
+}
+
+export function readWebRuntimeFirstOpenCandidate(): HappierWebRuntimeConfig['firstOpenCandidate'] {
+    const value = readWebRuntimeConfig()?.firstOpenCandidate;
+    return value === 'overlay' || value === 'in-app' ? value : undefined;
 }

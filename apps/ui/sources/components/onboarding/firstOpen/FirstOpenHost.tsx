@@ -1,0 +1,162 @@
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Animated, AppState, Platform, View, type LayoutChangeEvent } from 'react-native';
+
+import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
+import { usePrepareStepBuild } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
+import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
+import { readHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+
+import { FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
+import { resolveInAppFirstFrame } from './inAppFirstFrame';
+import type { FirstOpenDecision } from './resolveFirstOpen';
+
+type SceneModule = typeof import('./FirstOpenScene');
+type Phase = 'preparing' | 'still' | 'settled' | { epoch: number };
+const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
+type OverlayHost = { kind: 'overlay'; epoch: number } | { kind: 'none' };
+
+export function useFirstOpenContentLayout() {
+    return useContext(FirstOpenContentLayout);
+}
+
+/** Warms the admitted decoration in parallel. The real destination lays out and accepts input independently. */
+export function FirstOpenHost({ decision, children }: Readonly<{
+    decision: Exclude<FirstOpenDecision, 'none'>;
+    children: ReactNode;
+}>) {
+    const seen = useRef(false);
+    const readiness = useRef<GlyphSurfaceReadiness | null>(null);
+    const [scene, setScene] = useState<SceneModule | null>(null);
+    const [phase, setPhase] = useState<Phase>('preparing');
+    const [opacity] = useState(() => new Animated.Value(1));
+    const [replica, setReplica] = useState<number | null>(null);
+    const [replicaClosed, setReplicaClosed] = useState(false);
+    const welcome = useRef<WelcomeEntryViewModel | undefined>(undefined);
+    const transmitted = useRef<WelcomeEntryViewModel | undefined>(undefined);
+    const replicaLive = useRef(false);
+    const publishWelcome = useCallback((model: WelcomeEntryViewModel) => {
+        welcome.current = model;
+        if (!replicaLive.current || transmitted.current === model) return;
+        transmitted.current = model;
+        void invokeDesktopHost('desktop_first_open_welcome', { welcome: model }).catch(() => {});
+    }, []);
+    const waitingForReplica = decision === 'overlay-eligible' && !replicaClosed;
+    const playing = typeof phase === 'object';
+    const readBuildReady = usePrepareStepBuild(decision === 'in-app' && phase !== 'still' && phase !== 'settled');
+    const settle = useCallback(() => setPhase('settled'), []);
+    const updateReady = useCallback((result: GlyphSurfaceReadiness) => {
+        readiness.current = result;
+        if (result === 'still' && playing) scene?.skipFirstOpenDestination();
+    }, [playing, scene]);
+
+    useLayoutEffect(() => {
+        if (!waitingForReplica) return;
+        let listening = true;
+        let unlisten: (() => void) | undefined;
+        void listenDesktopHostEvent<OverlayHost>('first_open:host', (host) => {
+            if (host.kind === 'none') {
+                replicaLive.current = false;
+                // The ambient field keeps its phase as the overlay fades away.
+                setReplicaClosed(true);
+                return;
+            }
+            replicaLive.current = true;
+            setReplica(host.epoch - performance.timeOrigin);
+            if (welcome.current) publishWelcome(welcome.current);
+        }).then(stop => {
+            if (listening) unlisten = stop;
+            else stop();
+        }).catch(() => setReplicaClosed(true));
+        return () => {
+            listening = false;
+            replicaLive.current = false;
+            unlisten?.();
+        };
+    }, [publishWelcome, waitingForReplica]);
+
+    useEffect(() => {
+        if (decision !== 'in-app') return;
+        let active = true;
+        void import('./FirstOpenScene').then(module => {
+            if (active && !seen.current) setScene(module);
+        }).catch(() => {
+            // The next layout settles through the same Still path as an unavailable renderer.
+        });
+        return () => { active = false; };
+    }, [decision]);
+
+    const onFirstLayout = useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        if (seen.current || width <= 0 || height <= 0) return;
+        seen.current = true;
+        recordOpeningSeen(Date.now());
+        if (decision === 'overlay-eligible') {
+            transmitted.current = welcome.current;
+            settle();
+            return welcome.current;
+        }
+        // A desktop main webview commits this layout just before native shows it.
+        if (scene && (isDesktopHost() || readHostActivelyViewed())
+            && resolveInAppFirstFrame(decision, readiness.current, readBuildReady()) === 'play') {
+            const epoch = performance.now();
+            setPhase({ epoch });
+            void scene.buildFirstOpenDestination(epoch).then(settle, settle);
+            return;
+        }
+        opacity.setValue(0.65);
+        setPhase('still');
+    }, [decision, opacity, readBuildReady, scene, settle]);
+
+    useEffect(() => {
+        if (phase !== 'still') return;
+        const fade = Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' });
+        fade.start(({ finished }) => { if (finished) settle(); });
+        return () => fade.stop();
+    }, [opacity, phase, settle]);
+
+    useEffect(() => {
+        if (!playing || !scene) return;
+        const skip = () => { scene.skipFirstOpenDestination(); settle(); };
+        if (Platform.OS !== 'web') {
+            const appState = AppState.addEventListener('change', (state) => { if (state !== 'active') skip(); });
+            return () => appState.remove();
+        }
+        if (typeof document === 'undefined') return;
+        const key = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') { event.preventDefault(); skip(); }
+        };
+        const visibility = () => { if (document.hidden) skip(); };
+        document.addEventListener('keydown', key, true);
+        document.addEventListener('pointerdown', skip, true);
+        document.addEventListener('visibilitychange', visibility);
+        return () => {
+            document.removeEventListener('keydown', key, true);
+            document.removeEventListener('pointerdown', skip, true);
+            document.removeEventListener('visibilitychange', visibility);
+        };
+    }, [playing, scene, settle]);
+
+    const skipTouch = playing && Platform.OS !== 'web' ? () => {
+        scene?.skipFirstOpenDestination();
+        settle();
+    } : undefined;
+    const Scene = scene?.FirstOpenScene;
+    return (
+        <View style={{ flex: 1, position: 'relative' }} onTouchStart={skipTouch}>
+            <Animated.View style={{ flex: 1, opacity }}>
+                <FirstOpenContentLayout.Provider value={phase === 'preparing' ? onFirstLayout : null}>
+                    <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replica}>
+                        <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>
+                            {children}
+                        </FirstOpenWelcomeModelContext.Provider>
+                    </FirstOpenWelcomeEpoch.Provider>
+                </FirstOpenContentLayout.Provider>
+            </Animated.View>
+            {Scene && (phase === 'preparing' || typeof phase === 'object')
+                ? <Scene epoch={typeof phase === 'object' ? phase.epoch : null} onReady={updateReady} />
+                : null}
+        </View>
+    );
+}

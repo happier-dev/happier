@@ -24,6 +24,17 @@ export function isWelcomeRoute(segments: readonly string[]): boolean {
   return normalized.length === 0 || normalized[0] === 'index';
 }
 
+/** Terminal pairing has a native index and a web connect leaf. */
+export function isTerminalConnectEntryRoute(segments: readonly string[]): boolean {
+  const normalized = segments.filter(
+    (s) => !(s.startsWith('(') && s.endsWith(')')),
+  );
+  return normalized[0] === 'terminal' && (
+    normalized.length === 1 ||
+    (normalized.length === 2 && (normalized[1] === 'index' || normalized[1] === 'connect'))
+  );
+}
+
 export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // Home (welcome / login / create account)
   if (isWelcomeRoute(segments)) return true;

@@ -29,6 +29,7 @@ type FieldRun = {
 export function useHomeGlyphField(input: Readonly<{
     mode: GlyphFieldMode;
     arriving: boolean;
+    arrivalEpoch?: number;
     quiet?: readonly GlyphRect[];
     /** How strongly the field shows (Brand `homeFieldStrength`), and the planet it gives way around. */
     strength?: number;
@@ -37,14 +38,14 @@ export function useHomeGlyphField(input: Readonly<{
     nativeTap?: React.RefObject<((x: number, y: number) => void) | null>;
     scrollY?: React.RefObject<number>;
 }>) {
-    const { mode, arriving, quiet, host, nativeTap, scrollY, strength, planet } = input;
+    const { mode, arriving, arrivalEpoch, quiet, host, nativeTap, scrollY, strength, planet } = input;
     const [epoch, setEpoch] = React.useState<number | null>(null);
     const run = React.useRef<FieldRun | null>(null);
     const restingPhase = React.useRef(0);
 
-    const start = React.useCallback(() => {
+    const start = React.useCallback((at = performance.now()) => {
         const current = run.current ?? {
-            epoch: performance.now(), phase: restingPhase.current, lastStir: 0, lastCell: null,
+            epoch: at, phase: restingPhase.current, lastStir: 0, lastCell: null,
             trail: new Map<string, Stamp>(), stirs: [], ripples: [],
         };
         if (!run.current) {
@@ -61,7 +62,7 @@ export function useHomeGlyphField(input: Readonly<{
     }, []);
     React.useEffect(() => {
         if (mode !== 'animated') { settle(); return; }
-        if (arriving) start();
+        if (arriving) start(arrivalEpoch);
         const node = host?.current as unknown as HTMLElement | undefined;
         function stir(x: number, y: number, click: boolean) {
             if (!readHostActivelyViewed()) return;
@@ -102,7 +103,7 @@ export function useHomeGlyphField(input: Readonly<{
                 node?.removeEventListener?.('click', click);
             }
         };
-    }, [arriving, host, mode, nativeTap, scrollY, settle, start]);
+    }, [arriving, arrivalEpoch, host, mode, nativeTap, scrollY, settle, start]);
 
     const layer = React.useCallback((seconds: number): FieldDotLayer | null => {
         if (mode === 'off') return null;

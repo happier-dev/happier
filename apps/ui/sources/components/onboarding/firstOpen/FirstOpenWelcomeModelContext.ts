@@ -1,15 +1,18 @@
-import { createContext, useContext, useEffect, useRef } from 'react';
+import { createContext, useContext, useLayoutEffect, useRef } from 'react';
 
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 
 /** The opening host supplies this channel only while it has a replica to update. */
 export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryViewModel) => void) | null>(null);
 
+/** Shared phase for the real Welcome and the replica during the native hand-off. */
+export const FirstOpenWelcomeEpoch = createContext<number | null>(null);
+
 export function usePublishFirstOpenWelcomeModel(model: WelcomeEntryViewModel | null): void {
     const publish = useContext(FirstOpenWelcomeModelContext);
     const previous = useRef<{ publish: typeof publish; serialized: string } | null>(null);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!publish || !model) {
             previous.current = null;
             return;
