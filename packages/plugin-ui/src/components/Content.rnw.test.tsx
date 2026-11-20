@@ -6,6 +6,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { CodeBlock, DiffViewer, Markdown } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { HappierText } from '../presentation/text/Text.js';
 import {
   PluginUiPresentationHostProviderInternal,
   type PluginUiPresentationHost,
@@ -131,6 +132,27 @@ describe('bounded Markdown and Code presentation', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// DBW-UI-ACCEPT-1119 M11: the column a diff names ("status" under "id 1002") read in untoned micro text, close to invisible
+// on a dark surface. Its label takes the theme's secondary ink, as every quiet label does.
+describe('the DiffViewer label', () => {
+  it.each([false, true])('reads in the secondary ink (fill %s)', (fill) => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <HappierText variant="micro" tone="secondary">secondary reference</HappierText>
+        <DiffViewer unifiedDiff={'@@ -1 +1 @@\n-a\n+b'} label="status" fill={fill} />
+      </PluginUiProvider>,
+    );
+    try {
+      const leaf = (text: string) => [...mount.container.querySelectorAll<HTMLElement>('*')]
+        .find((node) => node.children.length === 0 && node.textContent === text)!;
+      expect(getComputedStyle(leaf('status')).color).toBe(getComputedStyle(leaf('secondary reference')).color);
+    } finally {
+      mount.unmount();
     }
   });
 });

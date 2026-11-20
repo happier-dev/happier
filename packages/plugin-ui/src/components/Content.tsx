@@ -122,7 +122,7 @@ export function DiffViewer({
   const namedByRow = useContext(ListItemDisclosedBodyContext);
   if (fill && !pageScroll) {
     // One scroller: the label and whatever reads above it travel inside the diff's own list.
-    const leading = <HappierStack gap={8}>{leadingContent}<HappierText variant="micro">{label}</HappierText></HappierStack>;
+    const leading = <HappierStack gap={8}>{leadingContent}<HappierText variant="micro" tone="secondary">{label}</HappierText></HappierStack>;
     const hosted = host?.renderDiffViewer?.(resolveHappierDiffViewerRequest({
       unifiedDiff, fill: true, leadingContent: leading,
       ...(filePath === undefined ? {} : { filePath }),
@@ -156,7 +156,7 @@ export function DiffViewer({
   return (
     <HappierStack gap={8}>
       {fill ? leadingContent : null}
-      <HappierText variant="micro">{label}</HappierText>
+      <HappierText variant="micro" tone="secondary">{label}</HappierText>
       {content}
     </HappierStack>
   );
