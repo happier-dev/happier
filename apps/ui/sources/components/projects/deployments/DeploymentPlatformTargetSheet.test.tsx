@@ -42,6 +42,18 @@ afterEach(async () => {
   standardCleanup();
 });
 
+it.each(['Vercel', 'Cloudflare'])('renders the personal %s connection and its owner separately', async platform => {
+  const { DeploymentPlatformCredentialPrincipal } = await import('./DeploymentPlatformCredentialDisclosure');
+  const screen = await renderScreen(<DeploymentPlatformCredentialPrincipal
+    principal={{ kind: 'account', accountId: 'owner',
+      purpose: { consumer: { pluginId: 'com.example.deploy', localId: 'deploy' }, purpose: 'deploy.manage' },
+      target: { kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'token' } } }}
+    scope={null} lifetime={null} serverId="deployment-home" platform={platform} />);
+  const row = screen.findByType(Item);
+  expect(row.props.detail).toBeTruthy();
+  expect(row.props.title).toBe(`Deploys use this ${platform} connection`);
+});
+
 it('settles when Account availability arrives between the first read and its result', async () => {
   await homes.reset();
   const serverId = await homes.addHome({ name: 'Target availability', serverUrl: 'https://target-availability.test',

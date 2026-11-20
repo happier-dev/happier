@@ -850,7 +850,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Использовать существующее окружение",
     chooseAnother: "Выбрать другую область",
     accessTitle: "Доступ для развёртывания",
-    deploysUse: ({ principal, platform }) => `Развёртывания используют доступ ${principal} к ${platform}`,
+    deploysUse: ({ platform }) => `Развёртывания используют это подключение к ${platform}`,
     personalAccessDependency: "Это личное подключение должно оставаться доступным. Его удаление или потеря доступа к провайдеру остановит будущие развёртывания.",
     teamAccessDependency: "Для развёртываний нужны доступные учётные данные команды с доступом к провайдеру.",
     providerAccount: "Аккаунт или команда провайдера",

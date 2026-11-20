@@ -837,7 +837,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "使用現有環境",
     chooseAnother: "選擇其他範圍",
     accessTitle: "部署存取權限",
-    deploysUse: ({ principal, platform }) => `部署使用 ${principal} 的 ${platform} 存取權限`,
+    deploysUse: ({ platform }) => `部署使用此 ${platform} 連線`,
     personalAccessDependency: "此個人連線必須保持可用。刪除連線或失去供應商存取權限會阻止後續部署。",
     teamAccessDependency: "部署依賴此團隊憑證保持可用並保留供應商存取權限。",
     providerAccount: "供應商帳號或團隊",

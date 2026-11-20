@@ -38,7 +38,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   useExisting: string;
   chooseAnother: string;
   accessTitle: string;
-  deploysUse: (params: { principal: string; platform: string }) => string;
+  deploysUse: (params: { platform: string }) => string;
   personalAccessDependency: string;
   teamAccessDependency: string;
   providerAccount: string;
@@ -135,7 +135,7 @@ export const deploymentPlatformLinkTranslations = {
     useExisting: "Use existing Environment",
     chooseAnother: "Choose another scope",
     accessTitle: "Deployment access",
-    deploysUse: ({ principal, platform }) => `Deploys use ${principal}’s ${platform} access`,
+    deploysUse: ({ platform }) => `Deploys use this ${platform} connection`,
     personalAccessDependency: "This personal connection must remain available for deployments to work. Removing it or losing provider access stops future deployments.",
     teamAccessDependency: "Deployments depend on this Team credential remaining available and retaining provider access.",
     providerAccount: "Provider account or team",

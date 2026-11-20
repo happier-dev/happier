@@ -855,7 +855,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Usar entorno existente",
     chooseAnother: "Elegir otro ámbito",
     accessTitle: "Acceso de despliegue",
-    deploysUse: ({ principal, platform }) => `Los despliegues usan el acceso de ${principal} a ${platform}`,
+    deploysUse: ({ platform }) => `Los despliegues usan esta conexión con ${platform}`,
     personalAccessDependency: "Esta conexión personal debe seguir disponible. Si se elimina o pierde acceso al proveedor, se detienen los próximos despliegues.",
     teamAccessDependency: "Los despliegues dependen de que esta credencial del equipo siga disponible y conserve el acceso al proveedor.",
     providerAccount: "Cuenta o equipo del proveedor",

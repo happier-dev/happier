@@ -857,7 +857,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Fes servir l’entorn existent",
     chooseAnother: "Tria un altre àmbit",
     accessTitle: "Accés de desplegament",
-    deploysUse: ({ principal, platform }) => `Els desplegaments fan servir l’accés de ${principal} a ${platform}`,
+    deploysUse: ({ platform }) => `Els desplegaments fan servir aquesta connexió a ${platform}`,
     personalAccessDependency: "Aquesta connexió personal ha de continuar disponible. Si s’elimina o perd l’accés al proveïdor, s’aturen els desplegaments futurs.",
     teamAccessDependency: "Els desplegaments depenen que aquesta credencial de l’equip continuï disponible i conservi l’accés al proveïdor.",
     providerAccount: "Compte o equip del proveïdor",

@@ -857,7 +857,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Usar ambiente existente",
     chooseAnother: "Escolher outro escopo",
     accessTitle: "Acesso de implantação",
-    deploysUse: ({ principal, platform }) => `As implantações usam o acesso de ${principal} a ${platform}`,
+    deploysUse: ({ platform }) => `As implantações usam esta conexão com ${platform}`,
     personalAccessDependency: "Esta conexão pessoal precisa continuar disponível. Removê-la ou perder o acesso ao provedor interrompe as próximas implantações.",
     teamAccessDependency: "As implantações dependem de esta credencial da equipe continuar disponível e manter o acesso ao provedor.",
     providerAccount: "Conta ou equipe do provedor",

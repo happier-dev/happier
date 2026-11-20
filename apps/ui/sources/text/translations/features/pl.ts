@@ -849,7 +849,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Użyj istniejącego środowiska",
     chooseAnother: "Wybierz inny zakres",
     accessTitle: "Dostęp do wdrożeń",
-    deploysUse: ({ principal, platform }) => `Wdrożenia używają dostępu ${principal} do ${platform}`,
+    deploysUse: ({ platform }) => `Wdrożenia używają tego połączenia z ${platform}`,
     personalAccessDependency: "To osobiste połączenie musi pozostać dostępne. Jego usunięcie lub utrata dostępu do dostawcy zatrzymuje przyszłe wdrożenia.",
     teamAccessDependency: "Wdrożenia wymagają dostępności tych danych logowania zespołu i zachowania dostępu do dostawcy.",
     providerAccount: "Konto lub zespół dostawcy",

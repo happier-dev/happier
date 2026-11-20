@@ -852,7 +852,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "Vorhandene Umgebung verwenden",
     chooseAnother: "Anderen Bereich wählen",
     accessTitle: "Bereitstellungszugriff",
-    deploysUse: ({ principal, platform }) => `Bereitstellungen nutzen den ${platform}-Zugriff von ${principal}`,
+    deploysUse: ({ platform }) => `Bereitstellungen nutzen diese Verbindung zu ${platform}`,
     personalAccessDependency: "Diese persönliche Verbindung muss verfügbar bleiben. Wird sie entfernt oder verliert sie den Anbieterzugriff, sind weitere Bereitstellungen nicht möglich.",
     teamAccessDependency: "Bereitstellungen benötigen verfügbare Team-Zugangsdaten mit Anbieterzugriff.",
     providerAccount: "Anbieterkonto oder Team",

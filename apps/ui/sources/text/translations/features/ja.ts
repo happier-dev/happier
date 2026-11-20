@@ -846,7 +846,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "既存の環境を使用",
     chooseAnother: "別のスコープを選択",
     accessTitle: "デプロイのアクセス権",
-    deploysUse: ({ principal, platform }) => `デプロイには ${principal} の ${platform} アクセス権を使用します`,
+    deploysUse: ({ platform }) => `デプロイにはこの ${platform} 接続を使用します`,
     personalAccessDependency: "この個人接続が利用可能である必要があります。削除やプロバイダーへのアクセス権の喪失により、以降のデプロイは停止します。",
     teamAccessDependency: "デプロイには、このチーム認証情報が利用可能で、プロバイダーへのアクセス権を保持している必要があります。",
     providerAccount: "プロバイダーのアカウントまたはチーム",

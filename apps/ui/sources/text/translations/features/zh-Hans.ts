@@ -836,7 +836,7 @@ const deploymentPlatformLinkTranslations = {
     useExisting: "使用现有环境",
     chooseAnother: "选择其他范围",
     accessTitle: "部署访问权限",
-    deploysUse: ({ principal, platform }) => `部署使用 ${principal} 的 ${platform} 访问权限`,
+    deploysUse: ({ platform }) => `部署使用此 ${platform} 连接`,
     personalAccessDependency: "此个人连接必须保持可用。删除连接或失去提供商访问权限会阻止后续部署。",
     teamAccessDependency: "部署依赖此团队凭据保持可用并保留提供商访问权限。",
     providerAccount: "提供商账户或团队",

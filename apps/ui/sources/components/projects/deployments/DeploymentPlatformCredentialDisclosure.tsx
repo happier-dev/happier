@@ -64,7 +64,7 @@ function TeamCredentialPrincipal(props: PrincipalProps & Readonly<{
 }
 function PrincipalRow(props: Readonly<{ name: string; platform: string; personal: boolean; testIDPrefix?: string }>) {
   return <Item testID={`${props.testIDPrefix ?? 'project-deployments.environment.permissions.platform'}.principal`} mode="info"
-    title={t('projects.deployments.platformLink.deploysUse', { principal: props.name, platform: props.platform })}
+    title={t('projects.deployments.platformLink.deploysUse', { platform: props.platform })}
     detail={props.name} subtitle={t(props.personal ? 'projects.deployments.platformLink.personalAccessDependency'
       : 'projects.deployments.platformLink.teamAccessDependency')} />;
 }
