@@ -125,7 +125,9 @@ describe('LocalServicesSurfaceHost Home availability', () => {
     }
   });
 
-  it('keeps the Services panel surfaces out of a pane whose Home has Local services off or whose Machine is out of reach', async () => {
+  // Databases reach remote databases and other targets that do not depend on Local services (owner 2026-11-20),
+  // so the Services panel surfaces stay under the off card; only a Machine out of reach leaves them out.
+  it('keeps the Services panel surfaces under a Home that turned Local services off, and out of a pane whose Machine is out of reach', async () => {
     const serverId = await home.addHome({
       name: 'Services off',
       serverUrl: 'https://services-off.test',
@@ -139,7 +141,7 @@ describe('LocalServicesSurfaceHost Home availability', () => {
     );
     try {
       expect(off.findByTestId('services-off')).not.toBeNull();
-      expect(off.findByTestId('services-footer-probe')).toBeNull();
+      expect(off.findByTestId('services-footer-probe')).not.toBeNull();
     } finally {
       await off.unmount();
     }

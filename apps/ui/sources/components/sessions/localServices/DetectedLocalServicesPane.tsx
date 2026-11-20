@@ -741,17 +741,16 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     if (availability !== 'available') {
         // Nothing is scanned while the Home does not offer Local services: the state says why, never an
-        // empty list. The scope switch has nothing to switch. A Home that turned them off leaves the Services
-        // panel's plugin surfaces nothing to run on or read, so they stay out; while the decision is still
-        // being checked (or could not be), they stay below the state as on any other whole-pane state.
+        // empty list. The scope switch has nothing to switch. The Services panel's plugin surfaces stay below the
+        // state: Databases reach remote databases and other targets that do not depend on Local services
+        // (owner 2026-11-20), and each surface says its own state.
         const state = <LocalServicesAvailabilityState availability={availability} serverId={props.serverId ?? null}
             animationEnabled={animationEnabled} testID={testID} />;
-        const footer = availability === 'checking' || availability === 'unknown' ? props.footer : null;
-        return footer || pageHeader ? (
+        return props.footer || pageHeader ? (
             <ScrollView style={styles.root} contentContainerStyle={styles.stateScrollContent}>
                 {pageHeader ? <ConstrainedScreenContent>{pageHeader}</ConstrainedScreenContent> : null}
                 {state}
-                {footer}
+                {props.footer}
             </ScrollView>
         ) : state;
     }
