@@ -28,8 +28,9 @@ const ROW = 'model-picker-runs-through';
 /**
  * The selected model's "Runs through" row (lab round 4 B; owner decisions 2026-11-18 and 2026-11-19). How many
  * sources serve the model is decided once by `selectSessionModelPickerSourceGroups`; this row only presents its
- * answer. Two serving sources are a two-part switch. Otherwise the row names the chosen source and its usage and
- * ends in one icon button that opens the source menu (no "Change" word, no boxed select); the menu also lists
+ * answer. One serving source is a plain value with its usage (owner 2026-11-18, decision 4). Two serving sources
+ * are a two-part switch. Three or more name the chosen source and its usage and end in one icon button that opens
+ * the source menu (no "Change" word, no boxed select); the menu also lists
  * hidden, signed-out and needs-key sources. A Provider source reads its name and its one state from the
  * Runs-through content model (`buildSessionRouteSourceRows`, the composer popover's rows), so the two surfaces
  * never word a source differently. Picking a source is the picker's decision (`onPick`): it commits that source's
@@ -67,6 +68,18 @@ export function SessionModelRunsThrough(
     const source = group.sources.find((candidate) => candidate.key === key);
     if (source) onPick(source);
   };
+  // One serving source is a value, not a choice (owner 2026-11-18, decision 4): its name and usage as text, with
+  // nothing to press or tab to. A one-row menu would be a dead end.
+  if (group.sourceCount === 1) {
+    return (
+      <OptionPickerBandRow testID={ROW} label={label}>
+        <Text testID={`${ROW}:value`} numberOfLines={1} style={styles.value}>
+          {sourceLabel(current)}
+        </Text>
+        {usage}
+      </OptionPickerBandRow>
+    );
+  }
   if (group.sourceCount === 2) {
     const tabs = group.sources
       .filter((source) => source.state === 'ready')

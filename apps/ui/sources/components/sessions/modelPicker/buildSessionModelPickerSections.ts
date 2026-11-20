@@ -14,6 +14,7 @@ import { presentProviderModelRow, type ProviderModelSelectionPurpose } from '@/p
 import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
 import type { ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { t } from '@/text';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import {
     teamCredentialRecoveryLabel,
     teamCredentialRecoveryPresentation,
@@ -92,14 +93,16 @@ export type SessionModelPickerSection = Omit<OptionPickerSection<SessionModelPic
 }>;
 
 /**
- * Design A labels: a model name that appears under more than one source, and a Provider or Team model
- * listed under Favorites (whose heading names no source), carry "· via <source>". Everything else is
- * already named by its section heading or its own description, so it stays plain. Equal names are
- * never merged.
+ * Design A labels: a model name that appears under more than one source carries "· via <source>" after its
+ * name. A Favorites row (whose heading names no source) says "via <source>" on its description line instead,
+ * as the lab draws it, so its title can name its saved Thinking. The chosen row says neither: its Runs-through
+ * row names the source right under it (PICKER-ACCEPT-1120). Everything else is already named by its section
+ * heading or its own description, so it stays plain. Equal names are never merged.
  */
 export function withSessionModelSourceSuffixes(
     sections: ReadonlyArray<SessionModelPickerSection>,
     favoritesSectionId: string,
+    selectedKey?: string,
 ): ReadonlyArray<SessionModelPickerSection> {
     const sourcesByName = new Map<string, Set<string>>();
     for (const section of sections) {
@@ -116,8 +119,15 @@ export function withSessionModelSourceSuffixes(
         const options = section.options.map((option) => {
             if (!option.source || option.source.inDescription) return option;
             const ambiguous = (sourcesByName.get(option.label.trim().toLowerCase())?.size ?? 0) > 1;
-            if (!ambiguous && !(section.id === favoritesSectionId && !option.source.native)) return option;
+            const favorite = section.id === favoritesSectionId;
+            if (!ambiguous && !(favorite && !option.source.native)) return option;
+            if (selectedKey !== undefined && option.value !== null && sessionModelSelectionKey(option.value) === selectedKey) return option;
             changed = true;
+            if (favorite) {
+                const via = t('agentInput.model.viaSourceFact', { source: option.source.label });
+                return { ...option, description: joinHappierFacts(via, option.description) || via,
+                    source: { ...option.source, inDescription: true } };
+            }
             return { ...option, labelSuffix: t('agentInput.model.viaSource', { source: option.source.label }) };
         });
         return changed ? { ...section, options } : section;

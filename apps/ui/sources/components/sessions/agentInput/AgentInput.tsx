@@ -3312,6 +3312,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const selectedOption = agentPickerOptions.find(
             (option) => option.id === effectiveAgentPickerSelectedOptionId,
         );
+        // A view row (Favorites) is where the popover opens, not what runs: the chip keeps the chosen Agent's mark.
+        if (selectedOption?.view) {
+            return <AgentIcon agentId={engineChipMarkAgentId} size={16} color={theme.colors.composer.chipTint} testID="agent-input-agent-chip-logo" />;
+        }
         if (armedComposerTarget && (
             !armedComposerTarget.backendTargetKey
             || selectedOption?.id !== armedComposerTarget.backendTargetKey

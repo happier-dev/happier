@@ -13,6 +13,7 @@ import {
     type SelectionListColumnsLayout,
     type SelectionListHeightBehavior,
     type SelectionListOption,
+    type SelectionListKeyboardHint,
     type SelectionListQuickActionShortcut,
 } from '@/components/ui/selectionList';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
@@ -237,6 +238,8 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     autoFocusInputOnWeb?: boolean;
     onRequestClose?: () => void;
     quickActionShortcuts?: readonly SelectionListQuickActionShortcut[];
+    /** The keys-only footer (↑↓ Move · ↵ Choose …). SelectionList shows it only with a hardware keyboard. */
+    footerHints?: readonly SelectionListKeyboardHint[];
     favoriteActionVisibility?: 'selected-or-favorite' | 'all';
     /**
      * Lay the options out as a two-up card grid when the surface is wide enough.
@@ -553,7 +556,8 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         // The list only renders with options, so its empty state is a search that matched none: the
         // list's own "No matches", never `emptyText`, which describes an empty catalog (DESIGN-9 N50).
         sections: selectionSections,
-    }), [props.searchPlaceholder, selectionSections, totalOptionCount]);
+        ...(props.footerHints ? { footerHints: props.footerHints } : {}),
+    }), [props.footerHints, props.searchPlaceholder, selectionSections, totalOptionCount]);
 
     // Clear synchronously before the callback: the owner may unmount
     // this picker inside onSelect, before passive effects can refresh.
@@ -800,7 +804,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     onRequestClose={props.onRequestClose ?? (() => {})}
                     quickActionShortcuts={props.quickActionShortcuts}
                     onQuickActionModifierHeldChange={props.favoriteOptions?.shortcutSlotByKey ? setModifierHeld : undefined}
-                    keyboardHintsEnabled={false}
+                    keyboardHintsEnabled={props.footerHints !== undefined}
                     autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? false}
                     disableTransitions
                     fillAvailableSpace={props.fillAvailableSpace}

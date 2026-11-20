@@ -97,6 +97,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
         id: FAVORITE_MODELS_AGENT_PICKER_OPTION_ID,
         label: t('profiles.groups.favorites'),
         icon: <FavoriteModelsPickerIcon />,
+        view: true,
         closeOnSelectImmediate: false,
         deferRenderDetailContent: true,
         deferredDetailContentCacheKey: [

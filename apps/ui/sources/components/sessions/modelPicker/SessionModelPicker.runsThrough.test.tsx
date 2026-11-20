@@ -22,6 +22,8 @@ const { SessionModelPicker } = await import('./SessionModelPicker');
 const { sessionModelSelectionKey } = await import('./sessionModelSelectionKey');
 const { DropdownMenu } =
   await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { OptionPickerOverlay } = await import('@/components/sessions/pickers/OptionPickerOverlay');
+const { SelectionList } = await import('@/components/ui/selectionList');
 
 const AGENT = 'agent:happier.agent.claude/claude';
 const SONNET = { vendor: 'anthropic', vendorModelId: 'claude-sonnet-5-5' };
@@ -179,7 +181,7 @@ describe('SessionModelPicker Runs through', () => {
     }
   });
 
-  it('names one source with its source button and no Change (lab round 4)', async () => {
+  it('names one source as a plain value with its usage: no button, no menu (owner 11-18 decision 4)', async () => {
     const screen = await renderScreen(
       picker({ selected: native('claude-opus-5-5') }),
     );
@@ -187,13 +189,86 @@ describe('SessionModelPicker Runs through', () => {
       expect(screen.findByTestId(`${ROW}:value`)).not.toBeNull();
       expect(texts(screen)).toContain('Claude subscription · Work pool');
       expect(screen.findByTestId(`${ROW}:switch`)).toBeNull();
-      // One icon button opens the source menu; it lists the one source, checked.
-      expect(screen.findByTestId(`${ROW}:sources`)).not.toBeNull();
-      const menu = screen.root.findAll((node) => node.type === DropdownMenu
-        && String(node.props.items?.[0]?.testID ?? '').startsWith(`${ROW}:menu`))[0]!;
-      expect(menu.props.items).toEqual([expect.objectContaining({ title: 'Claude subscription · Work pool', checked: true })]);
+      // Nothing to press or tab to: one source is a value, not a choice.
+      expect(screen.findByTestId(`${ROW}:sources`)).toBeNull();
+      expect(screen.findByTestId(`${ROW}:value-press`)).toBeNull();
+      expect(screen.root.findAll((node) => node.type === DropdownMenu
+        && String(node.props.items?.[0]?.testID ?? '').startsWith(`${ROW}:menu`))).toHaveLength(0);
     } finally {
       await screen.unmount();
+    }
+  });
+
+  it("titles each favourite with its saved Thinking, and names a closed favourite's source on its description line only", async () => {
+    const gatewaySonnet = { agentTargetKey: AGENT, providerConnectionId: gateway, modelId: 'claude-sonnet-5-5' };
+    const screen = await renderScreen(
+      picker({
+        selected: native('claude-opus-5-5'),
+        providerGroups: [group(gateway, 'OpenRouter', 'Work', [{ modelId: 'claude-sonnet-5-5', name: 'Sonnet 5.5' }])],
+        favoriteEntries: [
+          { ref: native('claude-opus-5-5'), reasoningEffort: 'high' },
+          { ref: gatewaySonnet, reasoningEffort: 'medium' },
+        ],
+        favoriteKeys: new Set([sessionModelSelectionKey(native('claude-opus-5-5')), sessionModelSelectionKey(gatewaySonnet)]),
+        onToggleFavorite: () => {},
+      }),
+    );
+    try {
+      const overlay = screen.root.findAll((node) => node.type === OptionPickerOverlay)[0]!;
+      const favorites = overlay.props.sections.find((section: { id: string }) => section.id === 'favorites');
+      const row = (ref: object) => favorites.options.find((option: { value: object }) => (
+        sessionModelSelectionKey(option.value as never) === sessionModelSelectionKey(ref as never)));
+      expect(row(native('claude-opus-5-5'))).toMatchObject({ label: 'Opus 5.5', labelSuffix: 'High' });
+      const closed = row(gatewaySonnet);
+      expect(closed).toMatchObject({ label: 'Sonnet 5.5', labelSuffix: 'Medium' });
+      expect(String(closed.description)).toMatch(/^via OpenRouter/);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('drops the chosen tile\'s "via" source: Runs through already says it', async () => {
+    const gatewaySonnet = { agentTargetKey: AGENT, providerConnectionId: gateway, modelId: 'claude-sonnet-5-5' };
+    const screen = await renderScreen(
+      picker({
+        selected: gatewaySonnet,
+        providerGroups: [group(gateway, 'OpenRouter', 'Work', [{ modelId: 'claude-sonnet-5-5', name: 'Sonnet 5.5' }])],
+        favoriteEntries: [{ ref: gatewaySonnet, reasoningEffort: 'high' }],
+        favoriteKeys: new Set([sessionModelSelectionKey(gatewaySonnet)]),
+        onToggleFavorite: () => {},
+      }),
+    );
+    try {
+      const overlay = screen.root.findAll((node) => node.type === OptionPickerOverlay)[0]!;
+      const chosen = overlay.props.sections.find((section: { id: string }) => section.id === 'favorites').options[0];
+      expect(chosen.labelSuffix).toBe('High');
+      expect(String(chosen.description ?? '')).not.toMatch(/via/);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('shows the keys-only footer, naming ⌘1–9 only when favourites are bound to digits', async () => {
+    const favorite = native('claude-opus-5-5');
+    const footerIds = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
+      .findAll((node) => node.type === SelectionList)[0]!.props.rootStep.footerHints?.map((hint: { id: string }) => hint.id);
+    const bound = await renderScreen(picker({
+      favoriteEntries: [{ ref: favorite, reasoningEffort: 'high' }],
+      favoriteKeys: new Set([sessionModelSelectionKey(favorite)]),
+      onToggleFavorite: () => {},
+      onSelectFavoriteModel: vi.fn(async () => true),
+      onRequestClose: () => {},
+    }));
+    try {
+      expect(footerIds(bound)).toEqual(['move', 'choose', 'favorite', 'close']);
+    } finally {
+      await bound.unmount();
+    }
+    const unbound = await renderScreen(picker({}));
+    try {
+      expect(footerIds(unbound)).toEqual(['move', 'choose', 'close']);
+    } finally {
+      await unbound.unmount();
     }
   });
 

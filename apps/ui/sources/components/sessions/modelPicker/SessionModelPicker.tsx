@@ -64,9 +64,11 @@ import { SessionModelSourceUsage } from './SessionModelSourceUsage';
 import { selectSessionModelPickerSourceGroups } from './selectSessionModelPickerSourceGroups';
 import { SessionModelFavoriteEffortNote, SessionModelRunsThrough, type SessionModelPickerSource } from './SessionModelRunsThrough';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { AgentInputChipPickerCloseContext } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import type { SelectionListQuickActionShortcut } from '@/components/ui/selectionList';
+import type { SelectionListKeyboardHint, SelectionListQuickActionShortcut } from '@/components/ui/selectionList';
+import { resolveModModifier } from '@/keyboard/bindings';
+import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import {
     SessionModelHiddenSources,
@@ -586,9 +588,12 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             const key = sessionModelSelectionKey(entry.ref);
             if (favoriteKeys.has(key)) return [];
             favoriteKeys.add(key);
+            // A favourite names the Thinking it was saved with after its name ("Opus 5.5 High", lab r4).
+            const effort = entry.reasoningEffort ? formatReasoningEffortTierLabel(entry.reasoningEffort) : undefined;
             const projected = optionByKey.get(key);
-            if (projected) return [projected];
+            if (projected) return [effort ? { ...projected, labelSuffix: effort } : projected];
             return [{
+                ...(effort ? { labelSuffix: effort } : {}),
                 value: entry.ref,
                 label: entry.label ?? entry.ref.modelId,
                 searchText: entry.ref.modelId,
@@ -617,6 +622,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     // its lone group goes unheaded too. A lone Favorites group keeps its label: it still says what
     // the list is.
     const browsing = props.scope !== undefined;
+    const selectedKey = sessionModelSelectionKey(props.selectedTeamCredentialModel ?? props.selected);
     const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
         // What can run reads first; every model that can't sits in one "Unavailable (n)" group last, each
         // row naming its source and a few words of why (the full reason stays its accessible label). A reason
@@ -638,15 +644,14 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
                 ...(option.source ? { source: { ...option.source, inDescription: true } } : {}),
             }),
         });
-        const suffixed = withSessionModelSourceSuffixes(folded, 'favorites');
+        const suffixed = withSessionModelSourceSuffixes(folded, 'favorites', selectedKey);
         return suffixed.length === 1 && !isSessionModelGatewaySlotSection(suffixed[0]!)
             && ((suffixed[0]!.id === 'native' && !nativeSourceLabel) || browsing)
             ? [{ ...suffixed[0]!, title: undefined }]
             : suffixed;
-    }, [browsing, nativeSourceLabel, sections]);
+    }, [browsing, nativeSourceLabel, sections, selectedKey]);
     // The pane's failure line says why the current selection could not be listed; its row does not repeat it.
     const paneSaysUnavailable = props.probe?.failed === true || (props.notes ?? []).includes(t('agentInput.model.unavailable'));
-    const selectedKey = sessionModelSelectionKey(props.selectedTeamCredentialModel ?? props.selected);
     const selectedAttribution = props.selectedAttribution ?? null;
     // The header names the model the next message uses when it is not the one running (lab A2 review 10).
     const nextModelLabel = props.reportedModel && selectedKey !== sessionModelSelectionKey(props.reportedModel.ref)
@@ -789,6 +794,19 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         })),
         [chooseFavorite, favoriteBindings, favoriteEfforts],
     );
+    // Keys only, shown by SelectionList's footer with a hardware keyboard (lab r4-cmd). ⌘1–9 is named only while
+    // favourites are bound to digits.
+    const bindsFavoriteDigits = Boolean(quickActionShortcuts?.length);
+    const footerHints = React.useMemo<readonly SelectionListKeyboardHint[]>(() => [
+        { id: 'move', label: '↑↓', description: t('commandPalette.hints.move') },
+        { id: 'choose', label: '↵', description: t('agentInput.model.keyHintChoose') },
+        ...(bindsFavoriteDigits ? [{
+            id: 'favorite',
+            label: `${resolveModModifier(resolveKeyboardPlatform()) === 'meta' ? '⌘' : 'Ctrl+'}1–9`,
+            description: t('agentInput.model.keyHintFavorite'),
+        }] : []),
+        { id: 'close', label: 'esc', description: t('commandPalette.hints.close') },
+    ], [bindsFavoriteDigits]);
     const pickSource = useEventCallback((source: SessionModelPickerSource, label: string) => {
         const option = source.state === 'ready'
             ? source.options.find(candidate => candidate.disabled !== true && candidate.availability !== 'unavailable')
@@ -943,6 +961,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? Boolean(quickActionShortcuts?.length)}
             onRequestClose={props.onRequestClose}
             quickActionShortcuts={quickActionShortcuts}
+            footerHints={footerHints}
             favoriteActionVisibility={props.favoriteActionVisibility}
             multiColumn={props.multiColumn}
             title={props.scope ? props.scope.scope.label : t('agentInput.model.title')}

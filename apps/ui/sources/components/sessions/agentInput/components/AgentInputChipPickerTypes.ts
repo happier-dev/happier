@@ -43,6 +43,11 @@ export type AgentInputChipPickerOption = Readonly<{
      * but can still be focused/inspected in detailed pickers.
      */
     muted?: boolean;
+    /**
+     * A rail row that browses models across Agents (Favorites) rather than naming one engine. While it is open the
+     * composer chip keeps the chosen Agent's mark.
+     */
+    view?: true;
     sectionId?: string;
     sectionLabel?: string;
     detailTitle?: string;

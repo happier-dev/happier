@@ -418,10 +418,12 @@ describe('buildSessionModelPickerSections', () => {
             { id: 'favorites', title: 'Favorites', options: native!.options },
             provider!,
         ], 'favorites');
+        // The Favorites row says its source on its description line; the source section's row keeps its suffix.
         expect(displayed.flatMap(section => section.options.map(option => option.labelSuffix))).toEqual([
-            t('agentInput.model.viaSource', { source: 'Work pool' }),
+            undefined,
             t('agentInput.model.viaSource', { source: 'Gateway · Work' }),
         ]);
+        expect(displayed[0]!.options[0]!.description).toMatch(new RegExp(`^${t('agentInput.model.viaSourceFact', { source: 'Work pool' })}`));
     });
     it('retains source identity when same-name model rows are flattened into search or favorites', () => {
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
@@ -459,7 +461,11 @@ describe('buildSessionModelPickerSections', () => {
             ?.options.find(option => option.label === label)?.labelSuffix;
         expect(suffixOf('Opus', 'native')).toBeUndefined();
         expect(suffixOf('Opus', 'favorites')).toBeUndefined();
-        expect(suffixOf('Provider only-here', 'favorites')).toBe(t('agentInput.model.viaSource', { source: 'Gateway · Lab' }));
+        // A favourite says its source on its description line, leaving its title for its saved Thinking.
+        expect(suffixOf('Provider only-here', 'favorites')).toBeUndefined();
+        expect(suffixed.find(section => section.id === 'favorites')?.options
+            .find(option => option.label === 'Provider only-here')?.description)
+            .toMatch(new RegExp(`^${t('agentInput.model.viaSourceFact', { source: 'Gateway · Lab' })}`));
         expect(suffixOf('Provider only-here', 'connection:pc_lab')).toBeUndefined();
         expect(suffixOf('Provider same', 'native')).toBe(t('agentInput.model.viaSource', { source: 'Claude: Work pool' }));
         expect(suffixOf('Provider same', 'connection:pc_work')).toBe(t('agentInput.model.viaSource', { source: 'Gateway · Work' }));
@@ -501,10 +507,8 @@ describe('buildSessionModelPickerSections', () => {
         // The native row is told apart by its suffix; the Team row says its source in its description, never twice.
         expect(options('native')[0]?.labelSuffix).toBe(t('agentInput.model.viaSource', { source: 'Codex' }));
         expect(options('team-resource:team-1:resource-1')[0]?.labelSuffix).toBeUndefined();
-        expect(options('favorites').map(option => option.labelSuffix)).toEqual([
-            t('agentInput.model.viaSource', { source: 'Codex' }),
-            undefined,
-        ]);
+        expect(options('favorites').map(option => option.labelSuffix)).toEqual([undefined, undefined]);
+        expect(options('favorites')[0]?.description).toMatch(new RegExp(`^${t('agentInput.model.viaSourceFact', { source: 'Codex' })}`));
         expect(options('team-resource:team-1:resource-1')[0]?.description).toContain('Connected Pool');
     });
     it('projects an entitled direct Team resource into the canonical picker without exposing source authority', () => {

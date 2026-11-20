@@ -8,6 +8,7 @@ import {
 import { POPOVER_PREFERRED_ROOM_PX } from '@/components/ui/popover/popoverPreferredRoom';
 import { useComposerKeyboardLayout } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
@@ -96,6 +97,7 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const retainedNativeKeyboardHeightRef = React.useRef(0);
     const { height: windowHeight, width: windowWidth } = useWindowDimensions();
     const safeAreaTop = useChromeSafeAreaInsets().top;
+    const headerHeight = useHeaderHeight();
     const phone = isMobileLayoutWidth(windowWidth);
     const normalizedKeyboardHeight = Number.isFinite(keyboardHeight)
         ? Math.max(0, keyboardHeight)
@@ -142,13 +144,14 @@ export function useAgentInputPopoverLayout(input: Readonly<{
         const inset = Platform.OS === 'web' && phone
             ? MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING
             : DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING;
-        // A desktop-width web window keeps its title strip (tabs, window controls) clear above; elsewhere the
-        // popover may reach the top safe area (the status bar) and never runs under it.
-        const top = Platform.OS === 'web' && !phone
-            ? Math.max(inset, DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX)
-            : Math.max(inset, safeAreaTop);
+        // A desktop-width web window keeps its title strip (tabs, window controls) clear above, and a phone-width
+        // browser its page's header band (the Home status line, PICKER-ACCEPT-1120). A native app may grow up to
+        // the top safe area (the status bar) and never runs under it (owner 2026-11-10, PHONE-POPOVERS).
+        const top = Platform.OS !== 'web'
+            ? Math.max(inset, safeAreaTop)
+            : Math.max(inset, phone ? headerHeight : DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX);
         return top === inset ? { horizontal: inset, vertical: inset } : { horizontal: inset, vertical: inset, top };
-    }, [phone, safeAreaTop]);
+    }, [headerHeight, phone, safeAreaTop]);
 
     const maxHeightCap = React.useMemo(() => {
         if (Platform.OS === 'web' || effectiveKeyboardHeight <= 0) {

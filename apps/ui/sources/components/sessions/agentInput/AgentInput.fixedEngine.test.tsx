@@ -54,4 +54,22 @@ describe('AgentInput fixed engine', () => {
         expect(logo, 'the chip has a mark').toBeTruthy();
         expect(logo?.props.name, 'the chip wears the control glyph, not the first row\'s mark').toBe('sparkle');
     });
+
+    // The cross-Agent Favorites rail row is a view the popover opens on, not an engine: while it is browsed the chip
+    // keeps the chosen Agent's mark (PICKER-ACCEPT-1120 fix 8).
+    it('keeps the chosen Agent\'s mark while a view row such as Favorites is browsed', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const options = [
+            { id: 'favorite-models', label: 'Favorites', view: true as const, icon: <Icon name="star" size={12} /> },
+            { id: 'codex', label: 'Codex', icon: <Icon name="circle" size={12} /> },
+        ];
+        const screen = await renderScreen(<AgentInput value="" placeholder="Message" onChangeText={() => undefined}
+            onSend={() => undefined} autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            voiceAffordance="none" agentType="codex" agentPickerOptions={options}
+            agentPickerSelectedOptionId="favorite-models" onAgentPickerSelect={() => undefined} />);
+        const marks = screen.findAll((node) => node.props?.testID === 'agent-input-agent-chip-logo');
+        expect(marks.some((node) => node.props.name === 'star'), 'the chip does not wear the Favorites view\'s star').toBe(false);
+        expect(marks.some((node) => node.props.agentId === 'codex'), 'the chip wears the chosen Agent\'s mark').toBe(true);
+    });
 });
