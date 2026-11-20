@@ -103,6 +103,8 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
  * wizard card it has always had.
  */
 export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
+    /** The signed-out frame's current step when the route hosts more than one. */
+    stepId?: string;
     /** The signed-in card's step counter, when the route is a step of a longer setup. */
     progress?: Readonly<{ index: number; count: number }>;
     children: React.ReactNode;
@@ -115,6 +117,7 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
         return (
             <UnauthenticatedRouteStep
                 testID={props.testID}
+                stepId={props.stepId}
                 title={props.title}
                 subtitle={props.subtitle}
                 context={props.context}

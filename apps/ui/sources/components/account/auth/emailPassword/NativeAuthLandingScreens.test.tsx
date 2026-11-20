@@ -187,7 +187,9 @@ afterEach(async () => {
 });
 
 it('continues a verified mailbox proof into the exact Home provision controller without losing its bearer', async () => {
-    await mountVerify(); await openProvision(); await createAccount();
+    await mountVerify(); await openProvision();
+    expect(screen!.findByTestId('unauth-shell-native-auth-verify')).not.toBeNull();
+    await createAccount();
     expect(NativeEmailPasswordProvisionRequestV1Schema.parse(homes.requestsFor(PROVISION)[0]?.input).admission).toEqual({ kind: 'native_email_verification', token: VERIFY });
     expect(homes.requestsFor(PROVISION)[0]?.serverId).toBe(savedHomeProfileId);
     expect(NativeAuthBearerPreviewRequestV1Schema.parse(homes.requestsFor(PREVIEW)[0]?.input).token).toBe(VERIFY);

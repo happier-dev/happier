@@ -32,6 +32,7 @@ import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/clien
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
@@ -143,7 +144,11 @@ function LandingRetryAction(props: Readonly<{ testID: string; onPress: () => voi
     );
 }
 
-function LandingShell(props: Readonly<{ title: string; children: React.ReactNode; testID: string }>) {
+function moveLandingStep(kind: 'step' | 'back', commit: () => void) {
+    runStepMove({ kind, layer: 'workflow', commit });
+}
+
+function LandingShell(props: Readonly<{ title: string; children: React.ReactNode; testID: string; stepId?: string }>) {
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const activeActionRef = React.useRef<string | null>(null);
     const mountedRef = React.useRef(true);
@@ -170,7 +175,7 @@ function LandingShell(props: Readonly<{ title: string; children: React.ReactNode
     // A mailed link opens one more step of sign-in: signed out it sits in the welcome split's
     // pane like every other standalone auth route, signed in it takes the same focused card.
     return (
-        <AuthRouteStepFrame testID={props.testID} title={props.title}>
+        <AuthRouteStepFrame testID={props.testID} stepId={props.stepId} title={props.title}>
             <WelcomeActionList admission={admission}>
                 <View style={styles.card}>{props.children}</View>
             </WelcomeActionList>
@@ -350,7 +355,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
         return resolved ? (
             // The panel titles itself ("Create your account"); the page keeps the landing's own title so
             // the two headings never repeat.
-            <LandingShell testID="native-auth-verify-account-service" title={t('settingsAccount.nativePassword.verifyTitle')}>
+            <LandingShell testID="native-auth-verify-account-service" stepId="account-service" title={t('settingsAccount.nativePassword.verifyTitle')}>
                 <EmailPasswordSetupSteps step="password" inset={false} />
                 <EmailPasswordAuthPanel
                     target={resolved}
@@ -383,7 +388,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
                             },
                         });
                     }}
-                    onBack={() => setAdmissionOpen(false)}
+                    onBack={() => moveLandingStep('back', () => setAdmissionOpen(false))}
                 />
             </LandingShell>
         ) : null;
@@ -395,40 +400,42 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
         && landingTarget.kind === 'ready'
         && authActions?.provision) {
         return (
-            <HomeAuthenticationFlow
-                target={landingTarget.target}
-                actions={[authActions.provision]}
-                returnTo="/"
-                nativeAdmission={verificationContinuation?.admission
-                    ? { ...verificationContinuation.admission, emailVerificationToken: props.token }
-                    : { kind: 'native_email_verification', token: props.token }}
-                // The mailbox this landing just proved. Without it the panel asks for the
-                // address again on the very screen that verified it.
-                {...(verificationContinuation ? { initialEmail: verificationContinuation.normalizedEmail } : {})}
-                homeLabel={landingTarget.homeLabel}
-                keyChallengeV2Available={false}
-                onAuthenticated={async ({ teamId }) => {
-                    if (verificationContinuation) {
-                        clearNativeEmailVerificationContinuation(verificationContinuation);
-                    }
-                    // The Account was created on this exact Home while another
-                    // may be focused. Landing on the previous Home would read as
-                    // the creation having silently failed — and that is just as
-                    // true of the Team the same operation atomically admitted, so
-                    // both destinations wait for the one focus.
-                    setAdmissionOpen(false);
-                    await destination.continueToHome(
-                        landingTarget.serverId,
-                        teamId
-                            ? () => router.replace(teamDetailPath({
-                                serverId: resolveServerProfileScopeIdForIdentifier(landingTarget.serverId),
-                                teamId,
-                            }))
-                            : undefined,
-                    );
-                }}
-                onBack={() => setAdmissionOpen(false)}
-            />
+            <LandingShell testID="native-auth-verify" stepId="home-admission" title={t('settingsAccount.nativePassword.verifyTitle')}>
+                <HomeAuthenticationFlow
+                    target={landingTarget.target}
+                    actions={[authActions.provision]}
+                    returnTo="/"
+                    nativeAdmission={verificationContinuation?.admission
+                        ? { ...verificationContinuation.admission, emailVerificationToken: props.token }
+                        : { kind: 'native_email_verification', token: props.token }}
+                    // The mailbox this landing just proved. Without it the panel asks for the
+                    // address again on the very screen that verified it.
+                    {...(verificationContinuation ? { initialEmail: verificationContinuation.normalizedEmail } : {})}
+                    homeLabel={landingTarget.homeLabel}
+                    keyChallengeV2Available={false}
+                    onAuthenticated={async ({ teamId }) => {
+                        if (verificationContinuation) {
+                            clearNativeEmailVerificationContinuation(verificationContinuation);
+                        }
+                        // The Account was created on this exact Home while another
+                        // may be focused. Landing on the previous Home would read as
+                        // the creation having silently failed — and that is just as
+                        // true of the Team the same operation atomically admitted, so
+                        // both destinations wait for the one focus.
+                        setAdmissionOpen(false);
+                        await destination.continueToHome(
+                            landingTarget.serverId,
+                            teamId
+                                ? () => router.replace(teamDetailPath({
+                                    serverId: resolveServerProfileScopeIdForIdentifier(landingTarget.serverId),
+                                    teamId,
+                                }))
+                                : undefined,
+                        );
+                    }}
+                    onBack={() => moveLandingStep('back', () => setAdmissionOpen(false))}
+                />
+            </LandingShell>
         );
     }
 
@@ -443,36 +450,38 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
         && authActions
         && authActions.login.length > 0) {
         return (
-            <HomeAuthenticationFlow
-                target={landingTarget.target}
-                actions={authActions.login}
-                returnTo={buildEmailVerificationReturnTo(props.token, props.homeTarget)}
-                homeLabel={landingTarget.homeLabel}
-                onAuthenticated={async ({ credentials }) => {
-                    try {
-                        if (state.preview.continuation === 'sign_in_email_change') {
-                            await changeAccountSignInEmail(
-                                landingTarget.createAuthenticatedRequest(credentials),
-                                { verificationToken: props.token! },
+            <LandingShell testID="native-auth-verify" stepId="verify-authentication" title={t('settingsAccount.nativePassword.verifyTitle')}>
+                <HomeAuthenticationFlow
+                    target={landingTarget.target}
+                    actions={authActions.login}
+                    returnTo={buildEmailVerificationReturnTo(props.token, props.homeTarget)}
+                    homeLabel={landingTarget.homeLabel}
+                    onAuthenticated={async ({ credentials }) => {
+                        try {
+                            if (state.preview.continuation === 'sign_in_email_change') {
+                                await changeAccountSignInEmail(
+                                    landingTarget.createAuthenticatedRequest(credentials),
+                                    { verificationToken: props.token! },
+                                );
+                            }
+                            // Whatever this bearer authorized has now committed, so the
+                            // authentication step is retired before the destination is
+                            // attempted. Leaving it mounted would hide a blocked exact-Home
+                            // activation behind a sign-in form that proves nothing further.
+                            setAuthenticationOpen(false);
+                            await continueToExactHomeAccountSecurity(
+                                state.preview.continuation === 'password_enrollment'
+                                    ? props.token ?? undefined
+                                    : undefined,
                             );
+                        } catch (cause) {
+                            setProblem(describeEmailPasswordFailure(cause));
+                            setAuthenticationOpen(false);
                         }
-                        // Whatever this bearer authorized has now committed, so the
-                        // authentication step is retired before the destination is
-                        // attempted. Leaving it mounted would hide a blocked exact-Home
-                        // activation behind a sign-in form that proves nothing further.
-                        setAuthenticationOpen(false);
-                        await continueToExactHomeAccountSecurity(
-                            state.preview.continuation === 'password_enrollment'
-                                ? props.token ?? undefined
-                                : undefined,
-                        );
-                    } catch (cause) {
-                        setProblem(describeEmailPasswordFailure(cause));
-                        setAuthenticationOpen(false);
-                    }
-                }}
-                onBack={() => setAuthenticationOpen(false)}
-            />
+                    }}
+                    onBack={() => moveLandingStep('back', () => setAuthenticationOpen(false))}
+                />
+            </LandingShell>
         );
     }
 
@@ -565,7 +574,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
                             title={t('settingsAccount.nativePassword.signInFirst')}
                             iconName="sign-in"
                             primary
-                            onPress={() => setAuthenticationOpen(true)}
+                            onPress={() => moveLandingStep('step', () => setAuthenticationOpen(true))}
                         />
                     ) : null}
                 </>
@@ -593,7 +602,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
                             title={t('settingsAccount.nativePassword.signInFirst')}
                             iconName="sign-in"
                             primary
-                            onPress={() => setAuthenticationOpen(true)}
+                            onPress={() => moveLandingStep('step', () => setAuthenticationOpen(true))}
                         />
                     ) : null}
                 </>
@@ -604,7 +613,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
                 title={t('settingsAccount.nativePassword.continue')}
                 iconName="arrow-right"
                 primary
-                onPress={() => setAdmissionOpen(true)}
+                onPress={() => moveLandingStep('step', () => setAdmissionOpen(true))}
             />
         ) : (
             // Account admission consumes this bearer inside its own creation
@@ -800,20 +809,23 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
             </LandingShell>;
         }
         if (authenticationOpen && landingTarget.kind === 'ready' && loginActions && loginActions.length > 0) {
-            return <HomeAuthenticationFlow
-                target={landingTarget.target}
-                actions={loginActions}
-                returnTo="/"
-                homeLabel={landingTarget.homeLabel}
-                onAuthenticated={async () => {
-                    // The new password signs in to the Home the reset link named,
-                    // which need not be the focused one. Only move on once this
-                    // device is actually on it.
-                    setAuthenticationOpen(false);
-                    await destination.continueToHome(landingTarget.serverId);
-                }}
-                onBack={() => setAuthenticationOpen(false)}
-            />;
+            return <LandingShell testID="native-auth-reset" stepId="reset-authentication"
+                title={t('settingsAccount.nativePassword.resetCompleteTitle')}>
+                <HomeAuthenticationFlow
+                    target={landingTarget.target}
+                    actions={loginActions}
+                    returnTo="/"
+                    homeLabel={landingTarget.homeLabel}
+                    onAuthenticated={async () => {
+                        // The new password signs in to the Home the reset link named,
+                        // which need not be the focused one. Only move on once this
+                        // device is actually on it.
+                        setAuthenticationOpen(false);
+                        await destination.continueToHome(landingTarget.serverId);
+                    }}
+                    onBack={() => moveLandingStep('back', () => setAuthenticationOpen(false))}
+                />
+            </LandingShell>;
         }
         return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
             <Text testID="native-auth-reset-done" style={styles.body}>{t('settingsAccount.nativePassword.resetComplete')}</Text>
@@ -823,7 +835,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
                     title={t('settingsAccount.nativePassword.returnToSignIn')}
                     iconName="sign-in"
                     primary
-                    onPress={() => setAuthenticationOpen(true)}
+                    onPress={() => moveLandingStep('step', () => setAuthenticationOpen(true))}
                 />
             ) : (
                 <Text accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
