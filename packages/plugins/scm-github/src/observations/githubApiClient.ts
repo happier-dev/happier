@@ -1,6 +1,7 @@
 import { computeCanonicalDomainSeparatedDigest, PluginError, type PluginInvocationContext, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { GithubHttpInvocationContextV1 } from './githubHttpInvocation.js';
 import type {
+  ConnectedAccountActionFormSelectionV1,
   ConnectedAccountMaterialization,
   ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -452,15 +453,16 @@ const LISTED_ACCOUNT_AUTHORIZATION_REFUSALS: Readonly<Record<
 
 function createGithubApiClientWithAuthorization(
   context: GithubHttpInvocationContextV1,
-  authorizationHeader: string,
+  authorizationHeader: string | undefined,
   credentialRef?: ConnectedAccountRef,
 ): GithubApiMediaClientV1 {
   const owner = getGithubAccountRequestOwnerV1({
-    ...(context.githubRequestLifetime !== undefined ? { lifetime: context.githubRequestLifetime }
+    ...(authorizationHeader === undefined ? { lifetime: context.services.http }
+      : context.githubRequestLifetime !== undefined ? { lifetime: context.githubRequestLifetime }
       : credentialRef === undefined ? { lifetime: context.services.connectedAccounts } : {}),
     accountScope: credentialRef === undefined ? 'unidentified-native' : JSON.stringify([credentialRef.service.pluginId, credentialRef.service.localId, credentialRef.accountId]),
     fallbackLifetime: context.services.connectedAccounts,
-    credentialScope: authorizationHeader,
+    credentialScope: authorizationHeader ?? 'watcher-http',
     executionOrigin: GITHUB_API_ORIGIN,
   });
   async function send(input: Readonly<{
@@ -475,11 +477,14 @@ function createGithubApiClientWithAuthorization(
     assertGithubApiUrl(input.url);
     context.signal.throwIfAborted();
     const safeRead = isGithubSafeRead(input);
+    if (authorizationHeader === undefined && (!safeRead || input.redirect !== 'error')) {
+      throw new PluginError({ code: 'github_credential_mismatch', message: 'The watcher HTTP binding accepts finite GitHub reads' });
+    }
     const request = {
       url: input.url,
       method: input.method ?? 'GET',
       headers: createGithubRequestHeaders({
-        authorization: authorizationHeader,
+        ...(authorizationHeader === undefined ? {} : { authorization: authorizationHeader }),
         userAgent: context.plugin.id,
         headers: input.headers,
         media: input.media,
@@ -589,10 +594,14 @@ export async function createGithubNativeApiClient(
  */
 export async function createGithubApiClient(
   context: GithubHttpInvocationContextV1,
-  credentialRef: ConnectedAccountRef | null,
+  credentialRef: ConnectedAccountActionFormSelectionV1 | null,
 ): Promise<GithubApiMediaClientV1> {
   if (credentialRef === null) return createGithubNativeApiClient(context, GITHUB_CONNECTED_ACCOUNT_SERVICE);
-  assertGithubCredentialRef(context, credentialRef);
+  const account = 'service' in credentialRef ? credentialRef
+    : credentialRef.selection.deliveryMode === 'direct' ? credentialRef.selection.disclosedMember
+      : (await context.services.connectedAccounts.getBinding(GITHUB_CONNECTED_ACCOUNT_PURPOSE, { signal: context.signal }))?.account;
+  if (!account) throw new PluginError({ code: 'github_credential_unavailable', message: 'The Team Action has no materialized GitHub account' });
+  assertGithubCredentialRef(context, account);
   const materialized = await context.services.connectedAccounts.materialize(
     GITHUB_CONNECTED_ACCOUNT_PURPOSE,
     {
@@ -600,9 +609,19 @@ export async function createGithubApiClient(
       origin: GITHUB_API_ORIGIN,
       headerNames: ['authorization'],
     },
-    { signal: context.signal, expectedAccount: credentialRef },
+    { signal: context.signal, expectedAccount: account },
   );
-  return createGithubApiClientFromMaterialization(context, materialized, credentialRef);
+  return createGithubApiClientFromMaterialization(context, materialized, account);
+}
+
+/** The watcher host binds its finite HTTP transport before invoking the attempt. */
+export async function createGithubWatcherApiClient(
+  context: GithubHttpInvocationContextV1,
+  credentialRef: ConnectedAccountActionFormSelectionV1 | null,
+): Promise<GithubApiMediaClientV1> {
+  return credentialRef && 'teamId' in credentialRef && credentialRef.selection.deliveryMode === 'brokered'
+    ? createGithubApiClientWithAuthorization(context, undefined)
+    : await createGithubApiClient(context, credentialRef);
 }
 
 /**

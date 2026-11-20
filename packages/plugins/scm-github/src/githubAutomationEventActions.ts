@@ -27,8 +27,10 @@ import { parseGithubRepositorySetupInput } from './observations/githubRepository
 import { githubChecksSourceInstanceId, parseGithubChecksSource } from './observations/githubChecksSource.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
+  GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_CONNECTED_ACCOUNT_SERVICE,
+  GithubAutomationRepositorySourceConfigV1Schema,
   type GithubRepositorySourceConfigV1,
   type GithubAutomationRepositoryEventSourceConfigV1,
   parseGithubDeploymentMonitoringSelection,
@@ -186,7 +188,7 @@ export async function setupGithubRepositoryEventSource(
     }
     repositoryInput = { credentialRef: raw.credentialRef, repository: raw.repository };
   }
-  const setup = deploymentReview ? parseGithubRepositorySetupInput(repositoryInput, context.plugin.id, true)
+  const setup = deploymentReview ? parseGithubRepositorySetupInput(repositoryInput, context.plugin.id, 'deployment')
     : parseGithubRepositorySetupInput(repositoryInput, context.plugin.id);
   context.signal.throwIfAborted();
 
@@ -233,14 +235,25 @@ export async function setupGithubDeploymentReviewEventSource(input: unknown, con
     throw new PluginError({ code: 'github_setup_credential_invalid', message: 'Choose this Machine’s native GitHub login or one exact Connected Account.' });
   }
   const setup = parseGithubRepositorySetupInput({ repository: raw.repository,
-    credentialRef: raw.credentialRef === undefined ? null : raw.credentialRef }, context.plugin.id, true);
+    credentialRef: raw.credentialRef === undefined ? null : raw.credentialRef }, context.plugin.id, 'deployment');
   const explicit = raw.deploymentReview === undefined ? null : parseGithubDeploymentMonitoringSelection(raw.deploymentReview);
   const routing = await context.services.actions.getCurrentExecutionRouting?.({ signal: context.signal });
   context.signal.throwIfAborted();
   const unavailable = () => new PluginError({ code: 'github_deployment_monitoring_placement_unavailable',
     message: 'Choose a currently available monitoring Machine in the Event editor.' });
   if (!routing || routing.pluginId !== context.plugin.id || (explicit && explicit.monitoringMachineId !== routing.machineId)) throw unavailable();
-  const result = await setupGithubRepositoryEventSource({ ...setup, deploymentReview: { ...explicit, monitoringMachineId: routing.machineId } }, context);
+  const deploymentReview = { ...explicit, monitoringMachineId: routing.machineId };
+  let result: PluginEventAutomationSetupResultV1;
+  if (setup.credentialRef && 'teamId' in setup.credentialRef && setup.credentialRef.selection.deliveryMode === 'brokered') {
+    const lookup = await context.services.actions.execute({ pluginId: context.plugin.id, localId: GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID },
+      setup, { signal: context.signal });
+    const source = PluginEventAutomationSetupResultV1Schema.parse(lookup);
+    const resolved = GithubAutomationRepositorySourceConfigV1Schema.parse(source.sourceConfig);
+    result = { ...source, sourceInstanceId: `github:repository:${resolved.repository.repositoryId}:deployment-review`,
+      sourceConfig: { ...resolved, credentialRef: setup.credentialRef, deploymentReview } };
+  } else {
+    result = await setupGithubRepositoryEventSource({ ...setup, deploymentReview }, context);
+  }
   const current = await context.services.actions.getCurrentExecutionRouting?.({ signal: context.signal });
   context.signal.throwIfAborted();
   if (!current || current.pluginId !== routing.pluginId || current.machineId !== routing.machineId

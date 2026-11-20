@@ -19,6 +19,7 @@ export type { HostEventTarget } from '../events.js';
 export type { HostEvents } from '../events.js';
 export type { PluginEventAutomationSetupResultV1 } from '../events.js';
 export { PluginEventAutomationSetupResultV1Schema } from '../events.js';
+export { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '../events.js';
 export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';
 export type { PluginEventAutomationHistoryGapResetActionInputV1 } from '../events.js';
 export { PluginEventAutomationHistoryGapResetActionInputV1JsonSchema } from '../events.js';

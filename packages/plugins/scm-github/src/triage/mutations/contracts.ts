@@ -27,7 +27,7 @@ import {
   TRIAGE_PULL_REQUEST_MERGE_METHODS_V1,
   type TriageSourceAccountBindingV1,
 } from '@happier-dev/triage-protocol/v1';
-import { GithubAutomationRepositorySourceConfigV1Schema } from '../../observations/githubProviderContracts.js';
+import { GithubPreviewPublicationSourceConfigV1Schema } from '../../observations/githubProviderContracts.js';
 
 /** Source UI and publication admission describe the same credential authority. */
 export function githubReviewPublicationCredential(binding: TriageSourceAccountBindingV1) {
@@ -126,7 +126,7 @@ export type GithubPullRequestPreviewStatusInputV1 = ReturnType<typeof GithubPull
 /** Ordinary receipt Events retain the provider source; the Action derives publication facts. */
 export const GithubPullRequestPreviewStatusActionInputV1Schema = defineProtocolUnion([
   GithubPullRequestPreviewStatusInputV1Schema,
-  defineProtocolObject({ v: defineProtocolLiteral(1), sourceConfig: GithubAutomationRepositorySourceConfigV1Schema,
+  defineProtocolObject({ v: defineProtocolLiteral(1), sourceConfig: GithubPreviewPublicationSourceConfigV1Schema,
     serverId: PreviewReferenceSchema, environmentId: PreviewReferenceSchema,
     templateEnvironmentId: PreviewReferenceSchema, deploymentId: PreviewReferenceSchema }, { policy: 'closed' }),
 ]);

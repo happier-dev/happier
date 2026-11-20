@@ -298,7 +298,7 @@ export async function setupGithubChannels(
     const selected = await context.services.connectedAccounts.getBinding(GITHUB_CONNECTED_ACCOUNT_PURPOSE, { signal: context.signal });
     input = { ...input, credentialRef: selected?.account ?? null };
   }
-  const setup = parseGithubRepositorySetupInput(input, context.plugin.id, true);
+  const setup = parseGithubRepositorySetupInput(input, context.plugin.id, 'channels');
   const client = setup.credentialRef === null ? await createGithubNativeApiClient(context, GITHUB_CONNECTED_ACCOUNT_SERVICE)
     : await createGithubApiClient(context, setup.credentialRef);
   const [repository, identity] = await Promise.all([

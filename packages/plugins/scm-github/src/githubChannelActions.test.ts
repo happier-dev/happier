@@ -53,6 +53,17 @@ describe('headerless GitHub Channel cadence', () => {
 });
 
 describe('explicit native GitHub Channel credential', () => {
+  it('refuses a Team resource before opening a Channels credential', async () => {
+    const connectedAccounts = { getBinding: vi.fn(), materialize: vi.fn() };
+    const http = { request: vi.fn() };
+    await expect(setupGithubChannels({ repository: 'acme/widgets', credentialRef: { teamId: 'fixture-team',
+      selection: { source: 'team_resource', resourceId: 'fixture-resource', deliveryMode: 'brokered' },
+    } }, coreContext({ connectedAccounts, http }))).rejects.toMatchObject({ code: 'github_setup_credential_invalid' });
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
+  });
+
   it.each(['explicit', 'repository shortcut'] as const)('materializes only the declared machine-native service and performs read-only setup (%s)', async mode => {
     const materialize = vi.fn(async (_purpose: string, _request: unknown, _options?: unknown) => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-native' } }));
     const reads: string[] = [];

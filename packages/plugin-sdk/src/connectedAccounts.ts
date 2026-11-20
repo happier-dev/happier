@@ -108,6 +108,12 @@ export { ConnectedServiceAuthGroupIdSchema, ConnectedServiceBindingsV1Schema, Co
 /** @realm daemon */
 export { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 export { QualifiedConnectedAccountRefJsonSchema, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+export { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+export {
+    ConnectedAccountActionFormSelectionProtocolV1Schema as ConnectedAccountActionFormSelectionV1Schema,
+    connectedAccountActionFormSelectionV1JsonSchema,
+    type ConnectedAccountActionFormSelectionV1,
+} from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 /** @realm daemon */
 export { QualifiedConnectedAccountPurposeBindingV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 export type {

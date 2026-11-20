@@ -1,5 +1,6 @@
-import { QualifiedConnectedAccountRefSchema, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { ConnectedAccountActionFormSelectionV1Schema, QualifiedConnectedAccountRefSchema, type ConnectedAccountActionFormSelectionV1, type ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/plugin-sdk/events';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
 
 export { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../connectedAccounts/service.js';
@@ -8,8 +9,8 @@ export const GITHUB_CONNECTED_ACCOUNT_ID = GITHUB_CONNECTED_ACCOUNT_SERVICE.loca
 /** Declared host-access purpose for materializing the selected GitHub account. */
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';
-export const GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID = 'automation/setup-repository-event-v1';
-export const GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID = 'automation/setup-deployment-review-event-v1';
+export const GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID = GITHUB_EVENT_SETUP_ACTIONS_V1.repository;
+export const GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID = GITHUB_EVENT_SETUP_ACTIONS_V1.deploymentReview;
 /** Host target-Action boundary for one repository-scoped checkpointed-pull attempt. */
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID = 'automation/run-repository-event-source-attempt-v1';
 /** Explicit user/host Action for replacing a pull history-gap marker with a current-head baseline. */
@@ -27,11 +28,13 @@ export const GithubRepositorySourceConfigV1Schema = defineProtocolObject({
   nameWithOwner: defineProtocolString({ minLength: 3, maxLength: 512 }),
 }, { policy: 'closed' });
 export const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubRepositorySourceConfigV1Schema.jsonSchema;
-/** Source setup, observation and receipt publication retain one exact provider contract. */
-export const GithubAutomationRepositorySourceConfigV1Schema = defineProtocolObject({
-  v: defineProtocolLiteral(1), credentialRef: QualifiedConnectedAccountRefSchema,
-  repository: GithubRepositorySourceConfigV1Schema,
-}, { policy: 'closed' });
+function defineGithubRepositorySourceConfig<T>(credentialRef: ProtocolComposableSchema<T>) {
+  return defineProtocolObject({ v: defineProtocolLiteral(1), credentialRef, repository: GithubRepositorySourceConfigV1Schema }, { policy: 'closed' });
+}
+
+/** Preview publication has the same personal credential contract as its Triage binding. */
+export const GithubPreviewPublicationSourceConfigV1Schema = defineGithubRepositorySourceConfig(QualifiedConnectedAccountRefSchema);
+export const GithubAutomationRepositorySourceConfigV1Schema = defineGithubRepositorySourceConfig(ConnectedAccountActionFormSelectionV1Schema);
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubAutomationRepositorySourceConfigV1Schema.jsonSchema;
 /** Known media locations for cooperative network disclosure, not a redirect allowlist. */
 export const GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1 = Object.freeze([
@@ -48,7 +51,7 @@ export type GithubRepositorySourceConfigV1 = Readonly<{
 /** Provider-private source facts retained by an Automation Event definition. */
 export type GithubAutomationRepositoryEventSourceConfigV1 = Readonly<{
   v: 1;
-  credentialRef: ConnectedAccountRef | null;
+  credentialRef: ConnectedAccountActionFormSelectionV1 | null;
   repository: GithubRepositorySourceConfigV1;
   checks?: Readonly<{ pullRequestNumber: number; headSha: string; selection: 'all' | 'required' }>;
   deploymentReview?: Readonly<{
@@ -73,10 +76,12 @@ export function parseGithubDeploymentMonitoringSelection(value: unknown): NonNul
 
 /** One parser for the deployment source used by observation and app-page admission. */
 export function parseGithubDeploymentMonitoringSourceConfig(value: unknown): GithubAutomationRepositoryEventSourceConfigV1 & Readonly<{ deploymentReview: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']> }> {
-  if (!isRecord(value) || Object.keys(value).length !== 4 || value.v !== 1 || (value.credentialRef !== null && !isGithubConnectedAccountRef(value.credentialRef))) {
+  if (!isRecord(value) || Object.keys(value).length !== 4 || value.v !== 1) {
     throw new RangeError('GitHub deployment source configuration is incompatible');
   }
-  return { v: 1, credentialRef: value.credentialRef, repository: parseGithubRepositorySourceConfig(value.repository),
+  const credentialRef = value.credentialRef === null ? null : readGithubCredentialRef(value.credentialRef);
+  if (credentialRef === undefined) throw new RangeError('GitHub deployment source configuration is incompatible');
+  return { v: 1, credentialRef, repository: parseGithubRepositorySourceConfig(value.repository),
     deploymentReview: parseGithubDeploymentMonitoringSelection(value.deploymentReview) };
 }
 
@@ -188,4 +193,13 @@ export function isGithubConnectedAccountRef(
     && value.service.localId === GITHUB_CONNECTED_ACCOUNT_ID
     && typeof value.accountId === 'string'
     && value.accountId.trim().length > 0;
+}
+
+/** Personal and disclosed Team members must be GitHub accounts. Brokered members stay opaque. */
+export function readGithubCredentialRef(value: unknown, pluginId: string = GITHUB_PLUGIN_ID): ConnectedAccountActionFormSelectionV1 | undefined {
+  const parsed = ConnectedAccountActionFormSelectionV1Schema.safeParse(value);
+  if (!parsed.success) return undefined;
+  const ref = parsed.data;
+  if ('service' in ref) return isGithubConnectedAccountRef(ref, pluginId) ? ref : undefined;
+  return ref.selection.deliveryMode === 'brokered' || isGithubConnectedAccountRef(ref.selection.disclosedMember, pluginId) ? ref : undefined;
 }

@@ -18,6 +18,9 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFAC
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { GITHUB_BROKER_WATCHER_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PLUGIN_MANIFEST as githubManifest } from '@happier-dev/plugins-scm-github/manifest';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -607,6 +610,43 @@ function fact(overrides: Partial<PluginTargetActivationFact> = {}): PluginTarget
 }
 
 describe('buildTargetActionInvocationRegistry', () => {
+    it('refuses a directly delivered Team credential before an Event watcher can acquire it', async () => {
+        const { service, attemptActionId: localId } = GITHUB_BROKER_WATCHER_V1;
+        const { pluginId } = service;
+        const actionId = formatQualifiedPluginActionId({ pluginId, localId });
+        const accountId = 'fixture-account';
+        const requestHeaders = vi.fn(async () => ({ 'x-fixture': 'signed' }));
+        const admission = vi.fn(async (): Promise<never> => { throw new Error('Unexpected Team credential acquisition'); });
+        const invokeWatcher = vi.fn(handler);
+        const contribution = { family: 'actions' as const, localId };
+        const target = buildRegistry({
+            contributes: registry({ pluginManifest: normalizePluginManifestV2(githubManifest) }),
+            targetRegistrations: [{ pluginId, occurrenceId: '7', registration: { ...contribution, value: invokeWatcher } }],
+            targetActivationFacts: [fact({ pluginId, pluginVersion: githubManifest.version, required: [contribution], bound: [contribution] })],
+            actionFormConnectedAccounts: { resolveBindingIntent: admission, admitActionPurposeBindings: admission },
+        });
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-execution', binding: {
+            serverIdentityId: 'srv_home', accountId, principalId: accountId, credentialId: 'fixture-credential',
+            grant: API_TOKEN_FULL_GRANT_V1, accountEncryptionMode: 'plain', machineId: 'machine-a', installationId: 'installation-a',
+            custodianAccountId: accountId, actionId, requestId: 'fixture-request', requestEnvelopeDigest: 'a'.repeat(43),
+            target: { kind: 'machine', machineId: 'machine-a' },
+        } });
+        try {
+            await expect(target.invoke({ pluginId, localId, surface: 'plugin',
+                input: { definitions: [{}], credentialRef: { teamId: 'fixture-team', selection: {
+                    source: 'team_resource', resourceId: 'fixture-resource', deliveryMode: 'direct', disclosedMember: { service, accountId },
+                } } },
+                approvalContext: { externalActionExecutionAuthorization: { ...authorization, requesterHttpProjection: {
+                    accountId, serverId: 'srv_home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://fixture.home',
+                    accountEncryptionMode: 'plain', isCurrent: async () => true, createRequestHeaders: requestHeaders,
+                } } },
+            })).resolves.toMatchObject({ status: 'failed', code: 'plugin_connected_account_team_resource_unavailable', actionHandlerInvocation: 'notStarted' });
+            expect(admission).not.toHaveBeenCalled();
+            expect(requestHeaders).not.toHaveBeenCalled();
+            expect(invokeWatcher).not.toHaveBeenCalled();
+        } finally { target.dispose(); }
+    });
+
     it('executes an ordinary Action when the optional Machine provisioner family is absent', async () => {
         const { machineProvisioners: _provisioners, ...contributes } = registry();
         const target = buildRegistry({ contributes, targetActivationFacts: [fact()],

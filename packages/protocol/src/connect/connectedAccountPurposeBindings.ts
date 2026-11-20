@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
-import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { ConnectedAccountServiceIdentityV1Schema } from './qualifiedConnectedAccountPersistence.js';
 import { ConnectedAccountPurposeIdSchema, QualifiedConnectedAccountPurposeV1Schema } from './connectedAccountPurposes.js';
@@ -62,9 +62,11 @@ export const ConnectedAccountActionFormSelectionV1Schema = lazyZodSchema(() => z
 ]));
 export type ConnectedAccountActionFormSelectionV1 = z.infer<typeof ConnectedAccountActionFormSelectionV1Schema>;
 
+export const ConnectedAccountActionFormSelectionProtocolV1Schema = projectZodProtocolSchema(ConnectedAccountActionFormSelectionV1Schema);
+
 /** Portable declaration for the same exact selection the Action host reads. */
 export function connectedAccountActionFormSelectionV1JsonSchema() {
-  const { $schema: _dialect, ...schema } = z.toJSONSchema(ConnectedAccountActionFormSelectionV1Schema, { target: 'draft-7', io: 'input' });
+  const { $schema: _dialect, ...schema } = ConnectedAccountActionFormSelectionProtocolV1Schema.jsonSchema;
   return PluginJsonSchemaV2Schema.parse(schema);
 }
 

@@ -1,4 +1,5 @@
 import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
@@ -17,10 +18,13 @@ import {
   setupGithubDeploymentReviewEventSource,
 } from './githubAutomationEventActions.js';
 import {
+  GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_PLUGIN_ID,
 } from './observations/githubProviderContracts.js';
 import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from './githubAutomationEvents.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
+import { parseGithubAutomationRepositoryEventSourceConfig } from './observations/githubAutomationEventObserver.js';
 
 const GITHUB_ACCOUNT = {
   service: {
@@ -28,6 +32,9 @@ const GITHUB_ACCOUNT = {
     localId: 'github-account',
   },
   accountId: 'account-github-primary',
+} as const;
+const TEAM_SELECTION = {
+  teamId: 'fixture-team', selection: { source: 'team_resource', resourceId: 'fixture-resource', deliveryMode: 'brokered' },
 } as const;
 
 function jsonResponse(value: unknown, status = 200) {
@@ -61,6 +68,30 @@ function automationContext(params: Readonly<{
 }
 
 describe('GitHub Automation Event source setup', () => {
+  it('admits exact Team and personal refs in the repository setup declaration', () => {
+    const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID);
+    if (!action?.inputSchema) throw new Error('GitHub repository setup has no input schema');
+    const validate = compilePluginJsonSchema(action.inputSchema);
+    expect(validate({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT })).toBe(true);
+    expect(validate({ repository: 'acme/widgets', credentialRef: TEAM_SELECTION })).toBe(true);
+    expect(validate({ repository: 'acme/widgets', credentialRef: { teamId: TEAM_SELECTION.teamId } })).toBe(false);
+  });
+
+  it('uses the admitted account for setup and retains the selected Team resource in the observer definition', async () => {
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({ account: GITHUB_ACCOUNT })),
+      materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer test-fixture' } })),
+    };
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const setup = await setupGithubRepositoryEventSource({ repository: 'acme/widgets', credentialRef: TEAM_SELECTION },
+      automationContext({ connectedAccounts, http }));
+    expect(parseGithubAutomationRepositoryEventSourceConfig(setup.sourceConfig)).toMatchObject({
+      credentialRef: TEAM_SELECTION, repository: { repositoryId: '77' },
+    });
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(GITHUB_CONNECTED_ACCOUNT_PURPOSE, expect.anything(),
+      expect.objectContaining({ expectedAccount: GITHUB_ACCOUNT }));
+  });
+
   it('uses exactly the selected purpose binding when repository-only enrollment omits the account', async () => {
     const connectedAccounts = { getBinding: vi.fn(async () => ({ account: GITHUB_ACCOUNT })),
       materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected' } })) };
@@ -102,6 +133,24 @@ describe('GitHub Automation Event source setup', () => {
       deploymentReview: selection }, context);
     expect(result.sourceConfig).toMatchObject({ deploymentReview: selection });
     expect(http.request).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps deployment setup at the monitoring Machine and sends only the Team repository lookup to its child Action', async () => {
+    const connectedAccounts = { materialize: vi.fn(), getBinding: vi.fn() };
+    const http = { request: vi.fn() };
+    const base = automationContext({ connectedAccounts, http });
+    const execute = vi.fn(async () => ({ v: 1, sourceInstanceId: 'github:repository:77', sourceContractVersion: 1,
+      displayLabel: 'acme/widgets', sourceConfig: { v: 1, credentialRef: TEAM_SELECTION,
+        repository: { v: 1, repositoryId: '77', owner: 'acme', name: 'widgets', nameWithOwner: 'acme/widgets' } } }));
+    const context = { ...base, services: { ...base.services, actions: { ...base.services.actions, execute,
+      getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home-1', machineId: 'monitoring-machine', pluginId: GITHUB_PLUGIN_ID }),
+    } } };
+    const result = await setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: TEAM_SELECTION }, context);
+    expect(result.sourceConfig).toMatchObject({ credentialRef: TEAM_SELECTION, deploymentReview: { monitoringMachineId: 'monitoring-machine' } });
+    expect(execute).toHaveBeenCalledExactlyOnceWith({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID },
+      { repository: 'acme/widgets', credentialRef: TEAM_SELECTION }, expect.objectContaining({ signal: context.signal }));
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
   });
   it('derives deployment monitoring placement only from the current explicitly selected setup executor', async () => {
     const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account' } })) };

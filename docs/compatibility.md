@@ -76,6 +76,16 @@ checkpoint and publication ownership on its assigned Machine. Older verifiers
 refuse the unknown watcher scope. Existing Session and Execution Run grants retain
 their wire shape and keep working across this change.
 
+## GitHub Automation Event credential references (unreleased 0.3)
+
+GitHub repository, Checks, and deployment-review sources can retain the exact
+Team credential selection in their existing `credentialRef` field. Existing
+personal references and native deployment configurations remain readable.
+Event watchers accept brokered Team delivery. The same carrier still supports
+direct delivery for finite Action setup. Earlier strict GitHub declarations
+reject the new Team carrier. Matching GitHub source, SDK, and generated
+declarations load together. No persisted version or migration is added.
+
 ## Compose App enrollment (unreleased 0.3)
 
 The existing `managedEnrollment` registration carrier accepts a `deploymentApp`

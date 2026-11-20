@@ -27,7 +27,7 @@ import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1, GithubFileViewedSetInputV1Schema, ScmFileViewedSetResultV1Schema } from './triage/fileViewedContracts.js';
 import { GITHUB_PREVIEW_STATUS_WORKFLOW_ID_V1, GITHUB_PREVIEW_STATUS_WORKFLOW_V1 } from './triage/previewStatusWorkflow.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
+import { connectedAccountActionFormSelectionV1JsonSchema, QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   createPluginEventAutomationSetupResultV1JsonSchema,
@@ -350,10 +350,12 @@ const GITHUB_REPOSITORY_SETUP_INPUT_HINTS = {
   }],
 } satisfies ActionInputHints;
 
+const GITHUB_CREDENTIAL_SELECTION_SCHEMA = connectedAccountActionFormSelectionV1JsonSchema();
+
 const GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA = {
   ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
   properties: { ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.properties,
-    credentialRef: { anyOf: [QualifiedConnectedAccountRefJsonSchema, { type: 'null' }] },
+    credentialRef: { anyOf: [GITHUB_CREDENTIAL_SELECTION_SCHEMA, { type: 'null' }] },
     deploymentReview: GithubDeploymentMonitoringSelectionV1Schema.jsonSchema },
   required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required!, 'deploymentReview'],
 } satisfies PluginJsonSchema;
@@ -380,7 +382,7 @@ const GITHUB_NATIVE_SERVICE_INPUT_SCHEMA = {
 function githubCredentialInputSchema(properties: NonNullable<PluginJsonSchema['properties']>, required: readonly string[]): PluginJsonSchema {
   return { anyOf: [{
     type: 'object', additionalProperties: false,
-    properties: { ...properties, credentialRef: QualifiedConnectedAccountRefJsonSchema },
+    properties: { ...properties, credentialRef: GITHUB_CREDENTIAL_SELECTION_SCHEMA },
     required: [...required, 'credentialRef'],
   }, {
     type: 'object', additionalProperties: false,
@@ -2389,7 +2391,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['plugin'],
       inputSchema: {
         type: 'object', additionalProperties: false,
-        properties: { credentialRef: QualifiedConnectedAccountRefJsonSchema, repository: GITHUB_REPOSITORY_INPUT_SCHEMA, checks: GITHUB_CHECKS_SOURCE_SCHEMA },
+        properties: { credentialRef: GITHUB_CREDENTIAL_SELECTION_SCHEMA, repository: GITHUB_REPOSITORY_INPUT_SCHEMA, checks: GITHUB_CHECKS_SOURCE_SCHEMA },
         required: ['credentialRef', 'repository', 'checks'],
       },
       resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION, GITHUB_CHECKS_SOURCE_CONFIG_SCHEMA),
@@ -2406,7 +2408,7 @@ function createGithubPlugin(): GithubPlugin {
         type: 'object',
         additionalProperties: false,
         properties: {
-          credentialRef: QualifiedConnectedAccountRefJsonSchema,
+          credentialRef: GITHUB_CREDENTIAL_SELECTION_SCHEMA,
           repository: GITHUB_REPOSITORY_INPUT_SCHEMA,
         },
         required: ['repository'],

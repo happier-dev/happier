@@ -118,6 +118,8 @@ export type {
     ConnectedServiceQuotaRecoveryCreditDetailsByIdV1,
 } from '../connectedAccounts.js';
 export type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
+export type { ConnectedAccountActionFormSelectionV1 } from '../connectedAccounts.js';
+export { ConnectedAccountActionFormSelectionV1Schema, connectedAccountActionFormSelectionV1JsonSchema, sameQualifiedConnectedAccountRef } from '../connectedAccounts.js';
 export { QualifiedConnectedAccountRefJsonSchema } from '../connectedAccounts.js';
 export { QualifiedConnectedAccountRefSchema } from '../connectedAccounts.js';
 export type { QualifiedConnectedAccountServiceRef } from '../connectedAccounts.js';

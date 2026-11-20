@@ -1,5 +1,6 @@
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { GITHUB_BROKER_WATCHER_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { createDeploymentTargetRoleExecEnvironmentForHost } from '@/deployments/targets/createDeploymentTargetRoleExecEnvironmentForHost';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -585,9 +586,18 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             if (snapshot.purposes.length === 0) return null;
             if (snapshot.teamResourceSelections?.length) {
                 const [selected] = snapshot.teamResourceSelections;
+                if (input.pluginId === GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
+                    && input.localId === GITHUB_EVENT_SETUP_ACTIONS_V1.deploymentReview
+                    && selected?.selection.deliveryMode === 'brokered') {
+                    // Placement is owned by the requested Machine. The local handler runs
+                    // one separately admitted repository lookup on the credential custodian.
+                    return { dispose() {} };
+                }
                 if (input.pluginId === GITHUB_BROKER_WATCHER_V1.service.pluginId
-                    && input.localId === GITHUB_BROKER_WATCHER_V1.attemptActionId && selected?.selection.deliveryMode === 'brokered') {
-                    const adapter = params.bindAutomationEventWatcherRead?.({ caller: input.caller, selected, input: input.input });
+                    && input.localId === GITHUB_BROKER_WATCHER_V1.attemptActionId) {
+                    const adapter = selected?.selection.deliveryMode === 'brokered'
+                        ? params.bindAutomationEventWatcherRead?.({ caller: input.caller, selected, input: input.input })
+                        : undefined;
                     return adapter ? { watcherHttpAdapter: adapter, dispose() {} }
                         : { status: 'unavailable' as const, code: 'plugin_connected_account_team_resource_unavailable',
                             message: 'The Team credential requires its current Automation Event watcher' };

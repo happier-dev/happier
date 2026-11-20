@@ -8,7 +8,7 @@ import {
   type BackgroundServiceContext,
   type PluginCheckpointedEventSourceAdapterV1,
 } from '@happier-dev/plugin-sdk/background-services';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import { sameQualifiedConnectedAccountRef, type ConnectedAccountActionFormSelectionV1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProtocolStoredReadSchema, defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
   type PluginEventAutomationHistoryGapResetActionResultV1,
@@ -40,6 +40,7 @@ import {
 } from './githubAutomationEventCheckpoint.js';
 import {
   createGithubApiClient,
+  createGithubWatcherApiClient,
   decodeGithubJsonResponse,
   GITHUB_RATE_LIMIT_FALLBACK_MS,
   type GithubApiResponseV1,
@@ -56,7 +57,7 @@ import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_PLUGIN_ID,
   GITHUB_CONNECTED_ACCOUNT_SERVICE,
-  isGithubConnectedAccountRef,
+  readGithubCredentialRef,
   parseGithubRepositorySourceConfig,
   readGithubPositiveDecimal,
   type GithubAutomationRepositoryEventSourceConfigV1,
@@ -121,7 +122,7 @@ type AutomationEventCheckpointRetirementCandidateV1 = NonNullable<
 
 type GithubAutomationObservedSourceV1 = Readonly<{
   definition: GithubObservedSourceDefinitionV1;
-  credentialRef: ConnectedAccountRef | null;
+  credentialRef: ConnectedAccountActionFormSelectionV1 | null;
   repository: GithubRepositorySourceConfigV1;
   checks?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['checks']>;
   deploymentReview?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']>;
@@ -301,15 +302,6 @@ function parseNextPageUrl(
   return next === undefined ? null : validateRepositoryEventsPageUrl(next, repository);
 }
 
-function credentialRequestKey(credentialRef: ConnectedAccountRef | null): string {
-  if (credentialRef === null) return 'native-gh';
-  return JSON.stringify([
-    credentialRef.service.pluginId,
-    credentialRef.service.localId,
-    credentialRef.accountId,
-  ]);
-}
-
 function materializationRequestKey(value: Readonly<{
   pluginId: string;
   machineId: string;
@@ -339,15 +331,16 @@ function parseRepositoryEventsContinuity(
 export function parseGithubAutomationRepositoryEventSourceConfig(
   value: unknown,
 ): GithubAutomationRepositoryEventSourceConfigV1 {
-  if (!isRecord(value) || value.v !== 1 || (!isGithubConnectedAccountRef(value.credentialRef, GITHUB_PLUGIN_ID)
-    && !(value.credentialRef === null && value.deploymentReview !== undefined))) {
+  if (!isRecord(value) || value.v !== 1) {
     throw new GithubRepositoryEventsSourceContractError('GitHub Automation source configuration is incompatible');
   }
   try {
     if (value.deploymentReview !== undefined) return parseGithubDeploymentMonitoringSourceConfig(value);
+    const credentialRef = readGithubCredentialRef(value.credentialRef);
+    if (credentialRef === undefined) throw new RangeError('GitHub credential reference is invalid');
     return Object.freeze({
       v: 1,
-      credentialRef: value.credentialRef,
+      credentialRef,
       repository: parseGithubRepositorySourceConfig(value.repository),
       ...(value.checks === undefined ? {} : { checks: parseGithubChecksSource(value.checks) }),
     });
@@ -398,8 +391,9 @@ async function pollRepositoryEvents(input: Readonly<{
   context: PluginInvocationContext;
   source: GithubAutomationObservedSourceV1;
   cursor: GithubRepositoryEventsCursorV1 | null;
+  client?: Awaited<ReturnType<typeof createGithubApiClient>>;
 }>): Promise<GithubRepositoryEventsPollResultV1<GithubRepositoryEventFactsV1>> {
-  const client = await createGithubApiClient(input.context, input.source.credentialRef);
+  const client = input.client ?? await createGithubApiClient(input.context, input.source.credentialRef);
   const initialUrl = createRepositoryEventsUrl(input.source.repository);
   return await pollGithubRepositoryEvents({
     initialUrl,
@@ -1076,13 +1070,14 @@ async function readGroupProviderCandidate(input: Readonly<{
   input.context.signal.throwIfAborted();
   if (!(await input.isCurrent())) throw new GithubRepositoryEventsSourceContractError('GitHub source group is no longer current');
   const source = first.source;
+  const client = await createGithubWatcherApiClient(input.context, source.credentialRef);
   if (source.deploymentReview) return { kind: 'deployment', candidate: await readGithubDeploymentReviewCandidateV1({
     source: { v: 1, credentialRef: source.credentialRef, repository: source.repository, deploymentReview: source.deploymentReview },
+    client,
     previousCursors: eligible.map(member => readDeploymentCheckpoint(member.source, member.row).monitorCursor),
     ...(input.deliveredRunId === undefined ? {} : { deliveredRunId: input.deliveredRunId }),
   }, input.context) };
   if (source.checks) {
-    const client = await createGithubApiClient(input.context, source.credentialRef);
     return { kind: 'checks', surface: await readGithubPullRequestChecks({ route: source.repository, headSha: source.checks.headSha,
       observation: { pullRequestNumber: source.checks.pullRequestNumber, selection: source.checks.selection },
     }, { client, now: input.now, signal: input.context.signal }) };
@@ -1090,7 +1085,7 @@ async function readGroupProviderCandidate(input: Readonly<{
   const cursors = eligible.map(member => member.row ? loadCheckpoint({ source: member.source, row: member.row }).cursor : null);
   const cursor = cursors[0] ?? null;
   const agreed = cursor?.etag !== null && cursor?.etag !== undefined && cursors.every(value => value?.etag === cursor.etag);
-  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null,
+  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null, client,
   }) };
 }
 
@@ -1649,12 +1644,12 @@ export function createGithubAutomationEventCheckpointedPullObserver(
       return member;
     });
     const source = members[0]!;
-    const credentialRef = isGithubConnectedAccountRef(input.credentialRef) && input.nativeService === undefined
-      ? input.credentialRef
+    const credentialRef = input.nativeService === undefined ? readGithubCredentialRef(input.credentialRef)
       : input.credentialRef === undefined && isRecord(input.nativeService)
         && input.nativeService.pluginId === GITHUB_CONNECTED_ACCOUNT_SERVICE.pluginId
         && input.nativeService.localId === GITHUB_CONNECTED_ACCOUNT_SERVICE.localId ? null : undefined;
-    if (credentialRef === undefined || members.some(member => credentialRequestKey(member.credentialRef) !== credentialRequestKey(credentialRef))) {
+    if (credentialRef === undefined || members.some(member => member.credentialRef === null || credentialRef === null
+      ? member.credentialRef !== credentialRef : !sameQualifiedConnectedAccountRef(member.credentialRef, credentialRef))) {
       throw new GithubRepositoryEventsSourceContractError('GitHub source attempt credential does not match its definition');
     }
     const caller = context.caller;

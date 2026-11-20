@@ -1,15 +1,15 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountActionFormSelectionV1, ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
-  isGithubConnectedAccountRef,
   parseGithubRepositorySpecifier,
+  readGithubCredentialRef,
 } from './githubProviderContracts.js';
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
 export type GithubRepositorySetupInputV1 = Readonly<{
-  credentialRef: ConnectedAccountRef;
+  credentialRef: ConnectedAccountActionFormSelectionV1;
   repository: string;
 }>;
 
@@ -27,21 +27,22 @@ export function parseGithubRepositorySetupInput(
   pluginId: string,
 ): GithubRepositorySetupInputV1;
 export function parseGithubRepositorySetupInput(
-  value: unknown, pluginId: string, allowNativeService: true,
+  value: unknown, pluginId: string, mode: 'channels',
 ): Readonly<{ repository: string; credentialRef: ConnectedAccountRef | null }>;
 export function parseGithubRepositorySetupInput(
-  value: unknown, pluginId: string, allowNativeService?: true,
-): Readonly<{ repository: string; credentialRef: ConnectedAccountRef | null }> {
+  value: unknown, pluginId: string, mode: 'deployment',
+): Readonly<{ repository: string; credentialRef: ConnectedAccountActionFormSelectionV1 | null }>;
+export function parseGithubRepositorySetupInput(
+  value: unknown, pluginId: string, mode?: 'channels' | 'deployment',
+): Readonly<{ repository: string; credentialRef: ConnectedAccountActionFormSelectionV1 | null }> {
   if (!isRecord(value) || Object.keys(value).length !== 2) {
     throw new PluginError({
       code: 'github_setup_input_invalid',
       message: 'GitHub setup requires a repository and exact Connected Account.',
     });
   }
-  let credentialRef: ConnectedAccountRef | null;
-  if (allowNativeService === true && value.credentialRef === null) credentialRef = null;
-  else if (isGithubConnectedAccountRef(value.credentialRef, pluginId)) credentialRef = value.credentialRef;
-  else {
+  const credentialRef = mode && value.credentialRef === null ? null : readGithubCredentialRef(value.credentialRef, pluginId);
+  if (credentialRef === undefined || (mode === 'channels' && credentialRef !== null && 'teamId' in credentialRef)) {
     throw new PluginError({
       code: 'github_setup_credential_invalid',
       message: 'GitHub setup requires this plugin’s exact Connected Account.',

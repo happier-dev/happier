@@ -11,6 +11,13 @@ import {
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { embedProtocolJsonSchema } from '../plugins/actions/protocolComposableSchema.js';
 
+/** The deployment setup's one finite repository lookup uses the existing repository setup Action. */
+export const GITHUB_EVENT_SETUP_ACTIONS_V1 = Object.freeze({
+  pluginId: 'happier.scm.forge.github',
+  repository: 'automation/setup-repository-event-v1',
+  deploymentReview: 'automation/setup-deployment-review-event-v1',
+} as const);
+
 /**
  * Builds the exact Action result schema bound to one Automation Event source
  * declaration. Manifest ingestion and plugin authors share this owner so the

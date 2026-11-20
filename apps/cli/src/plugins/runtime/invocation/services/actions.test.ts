@@ -8,6 +8,7 @@ import {
     AutomationRunCauseSchema,
     StrictJsonValueSchema,
     createActionExecutor,
+    formatQualifiedPluginActionId,
     normalizeActionsSettingsV1,
     type ActionExecutorContext,
     type ActionExecutorDeps,
@@ -18,6 +19,10 @@ import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happie
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { createHostReviewedChildPortV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 
 import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
@@ -156,6 +161,45 @@ function withHostActionsSettings(executor: ReturnType<typeof createActionExecuto
 }
 
 describe('plugin invocation ActionsService', () => {
+    it('admits only the repository and Team credential from a local deployment setup press as a reviewed child', async () => {
+        const { pluginId, deploymentReview, repository } = GITHUB_EVENT_SETUP_ACTIONS_V1;
+        const parentAction = { pluginId, localId: deploymentReview };
+        const childAction = { pluginId, localId: repository };
+        const credentialRef = { teamId: 'fixture-team', selection: {
+            source: 'team_resource', resourceId: 'fixture-resource', deliveryMode: 'brokered',
+        } };
+        const root = { action: parentAction, input: { repository: 'acme/widgets', credentialRef } };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-execution', binding: {
+            serverIdentityId: 'srv_home', accountId: 'owner', principalId: 'owner', credentialId: 'fixture-credential',
+            grant: API_TOKEN_FULL_GRANT_V1, accountEncryptionMode: 'plain', machineId: 'monitor', installationId: 'fixture-installation',
+            actionId: 'action.invoke', custodianAccountId: 'owner', requestId: 'fixture-request', requestEnvelopeDigest: 'a'.repeat(43),
+            target: { kind: 'machine', machineId: 'monitor' },
+        } });
+        const context: ActionExecutorContext = { runtimeAccountId: 'owner', externalActionTarget: authorization.binding.target,
+            externalActionExecutionAuthorization: authorization };
+        const seen: Array<ReturnType<typeof readHostAdmittedReviewedChildV1>> = [];
+        const service = createPluginInvocationActionsService({
+            seed: { plugin: { id: pluginId, version: '1.0.0' }, occurrenceId: 'github-fixture', surface: 'ui',
+                contribution: { id: deploymentReview, qualifiedId: formatQualifiedPluginActionId(parentAction) },
+                sourceCustody: { kind: 'development', registeredRootId: 'github-fixture' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                approvalContext: context, reviewedParentByPress: true,
+                reviewedParent: createHostReviewedChildPortV1({ actionId: 'action.invoke', input: root, context, reviewAdmitted: true }).parent,
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true },
+            actionExecutor: { async execute(_action, _input, executionContext) {
+                seen.push(readHostAdmittedReviewedChildV1(executionContext));
+                return { ok: true, result: { ok: true } };
+            } },
+            invokeContributedAction: async () => { throw new Error('Unexpected direct dispatch'); },
+        });
+        await service.execute(childAction, root.input);
+        await service.execute(childAction, { ...root.input, repository: 'acme/other' });
+        await service.execute(childAction, { ...root.input, credentialRef: { ...credentialRef,
+            selection: { ...credentialRef.selection, resourceId: 'other-resource' } } });
+        await service.execute(parentAction, root.input);
+        expect(seen).toEqual([expect.objectContaining({ actionId: formatQualifiedPluginActionId(childAction), input: root.input }), null, null, null]);
+    });
+
     it('uses the current Run attachment once per new Action and detaches without inheriting the Session profile', async () => {
         let approvalProfileId: string | null = 'ask-backends';
         let reads = 0;

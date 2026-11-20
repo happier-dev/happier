@@ -29,7 +29,9 @@ import type {
     PluginInvocationSurface,
 } from '@happier-dev/plugin-sdk/interactions';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { ConnectedAccountActionFormTeamSelectionV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { isJsonObject, sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
 import { arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionRouting, PluginMachineExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -840,9 +842,19 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 : {}),
         } satisfies RpcActionExecutorContext & Readonly<{ actionCaller: ActionPluginCaller; signal: AbortSignal }>;
         // A bare press admits the pressed Action's own host effects (owner-approved
-        // Save-defaults precedent), never another contributed Action (option A).
+        // Save-defaults precedent). Deployment setup owns one exact repository read.
+        const parentInput = params.seed.reviewedParentByPress && params.seed.reviewedParent?.input;
+        const parentOperands = isJsonObject(parentInput) ? parentInput.input : undefined;
+        const selected = isJsonObject(parentOperands) && params.seed.contribution?.id === GITHUB_EVENT_SETUP_ACTIONS_V1.deploymentReview
+            && params.seed.plugin.id === GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
+            ? ConnectedAccountActionFormTeamSelectionV1Schema.safeParse(parentOperands.credentialRef) : null;
+        const isDeploymentRepositoryLookup = selected?.success && selected.data.selection.deliveryMode === 'brokered'
+            && contributionRef?.pluginId === GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
+            && contributionRef.localId === GITHUB_EVENT_SETUP_ACTIONS_V1.repository
+            && isJsonObject(parentOperands) && typeof parentOperands.repository === 'string'
+            && sameStrictJsonValue(input, { repository: parentOperands.repository, credentialRef: selected.data });
         const issueReviewedChild = params.seed.reviewedParent
-            && !(params.seed.reviewedParentByPress && actionId === 'action.invoke');
+            && (!(params.seed.reviewedParentByPress && actionId === ACTION_INVOKE_ACTION_ID_V1) || isDeploymentRepositoryLookup);
         const execute = () => params.seed.reviewedParent && issueReviewedChild ? invokeHostReviewedChildV1({
             parent: params.seed.reviewedParent,
             context: executionContext,

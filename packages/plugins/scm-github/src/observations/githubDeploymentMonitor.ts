@@ -6,7 +6,7 @@ import { reconcileGithubDeploymentNoticeFactsV1 } from '../actions/deploymentNot
 import type { GithubDeploymentNoticeFactsV1, GithubDeploymentMonitorCursorV1 } from '../actions/deploymentReviewProtocol.js';
 import { githubRecord as record } from '../actions/mapping.js';
 import { GithubCiReadError, requestGithubCiJson } from '../actions/reads.js';
-import { createGithubApiClient, decodeGithubJsonResponse } from './githubApiClient.js';
+import { createGithubApiClient, decodeGithubJsonResponse, type GithubApiMediaClientV1 } from './githubApiClient.js';
 import { classifyGithubResponseFailure } from './githubResponseFailure.js';
 import { readGithubPositiveDecimal, type GithubAutomationRepositoryEventSourceConfigV1 } from './githubProviderContracts.js';
 import { buildGithubApiUrl } from '../triage/locator.js';
@@ -49,12 +49,13 @@ function deploymentCensusDemand(previous: GithubDeploymentMonitorCursorV1 | null
 export async function readGithubDeploymentReviewCandidateV1(input: Readonly<{
   source: GithubAutomationRepositoryEventSourceConfigV1;
   previousCursors: readonly (GithubDeploymentMonitorCursorV1 | null)[];
+  client?: GithubApiMediaClientV1;
   /** Authenticated webhook wake: read only this run, never the waiting census. */
   deliveredRunId?: string;
 }>, context: PluginInvocationContext): Promise<GithubDeploymentReviewCandidateV1> {
   if (!input.source.deploymentReview) throw new RangeError('Deployment monitoring is not enrolled');
   const { repository, credentialRef } = input.source;
-  const client = await createGithubApiClient(context, credentialRef);
+  const client = input.client ?? await createGithubApiClient(context, credentialRef);
   const root = buildGithubApiUrl(['repos', repository.owner, repository.name, 'actions', 'runs']);
   const query = new URL(root);
   query.searchParams.set('status', 'waiting');

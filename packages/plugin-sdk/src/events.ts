@@ -15,6 +15,7 @@ import type {
 export type {
     PluginEventAutomationSetupResultV1,
 } from '@happier-dev/protocol/automations/event-setup-result';
+export { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema as canonicalPluginEventAutomationHistoryGapResetActionInputV1Schema, PluginEventAutomationHistoryGapResetActionResultV1Schema as canonicalPluginEventAutomationHistoryGapResetActionResultV1Schema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import type {
     PluginEventAutomationHistoryGapResetActionInputV1,
