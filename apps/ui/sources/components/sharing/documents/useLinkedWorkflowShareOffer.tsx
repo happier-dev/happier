@@ -180,7 +180,7 @@ export function useLinkedWorkflowShareOffer(
               const shared = outcome?.kind === 'shared';
               return {
                 ref,
-                title: titleOf(ref) ?? t('workflowActivityView.untitled'),
+                title: titleOf(ref) ?? t('tools.workflowActivityView.untitled'),
                 sharing,
                 shared,
                 ...(outcome?.kind === 'error' ? { issue: outcome.error } : {}),

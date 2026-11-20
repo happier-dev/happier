@@ -29,7 +29,7 @@ export const AttachmentFilePicker = React.forwardRef<AttachmentFilePickerHandle,
         const takePhoto = React.useCallback(() => {
             void nativePickImages({
                 source: 'camera',
-                onPermissionDenied: () => Modal.alert(t('common.permissionRequired'), t('common.cameraPermissionForPhoto')),
+                onPermissionDenied: () => Modal.alert(t('status.permissionRequired'), t('common.cameraPermissionForPhoto')),
             }).then(
                 picked => { if (picked.length > 0) onPickedRef.current(picked); },
                 () => Modal.alert(t('common.error'), t('common.takePhotoFailed')),
