@@ -2990,6 +2990,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             'readResource',
             'watchResource',
             'openResource',
+            'deviceState',
             'notify',
             'confirm',
             'diagnostic',
