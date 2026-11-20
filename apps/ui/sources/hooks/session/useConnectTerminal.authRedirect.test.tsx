@@ -22,13 +22,22 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
+import { installTerminalRouteCommonModuleMocks } from '../../__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { buildTerminalConnectAuthRedirectHref, parseTerminalConnectUrl, type ParsedTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const routerReplaceSpy = vi.fn();
-const routerPushSpy = vi.fn();
+// Expo Router is the navigation boundary. Its mock is registered before the static
+// imports below load any route owner, so every navigation reaches this record.
+const navigation = vi.hoisted(() => ({
+    destination: null as unknown,
+    async routerModule() {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const navigate = (href: unknown) => { navigation.destination = href; };
+        return createExpoRouterMock({ router: { replace: navigate, push: navigate } }).module;
+    },
+}));
+vi.mock('expo-router', () => navigation.routerModule());
 const modalAlertSpy = vi.fn<IModal['alert']>();
 const modalAlertAsyncSpy = vi.fn<IModal['alertAsync']>(async (...args) => { modalAlertSpy(...args); });
 const modalConfirmSpy = vi.fn<IModal['confirm']>(async () => true);
@@ -55,7 +64,7 @@ vi.mock('../../../../../packages/iroh-native/src/HappierIrohNative', async (impo
 
 // Only presentation, navigation, device storage and native SDK ports are replaced.
 // Credential qualification, Home selection, Account currentness and sealing stay real.
-installSessionHooksCommonModuleMocks({
+installTerminalRouteCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'ios' }, {
@@ -63,22 +72,19 @@ installSessionHooksCommonModuleMocks({
             useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
         });
     },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ router: { replace: routerReplaceSpy, push: routerPushSpy } }).module;
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: {
-            alert: (...args) => modalAlertSpy(...args),
-            alertAsync: (...args) => modalAlertAsyncSpy(...args),
-            confirm: (...args) => modalConfirmSpy(...args),
-        } }).module;
-    },
+    router: navigation.routerModule,
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: key => key });
     },
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: {
+        alert: (...args) => modalAlertSpy(...args),
+        alertAsync: (...args) => modalAlertAsyncSpy(...args),
+        confirm: (...args) => modalConfirmSpy(...args),
+    } }).module;
 });
 vi.mock('expo-camera', () => ({ CameraView: {
     isModernBarcodeScannerAvailable: false,
@@ -198,8 +204,7 @@ async function renderHook(home: Home, options?: Parameters<typeof useConnectTerm
         return null;
     }
     await renderScreen(<AuthProvider initialCredentials={home.credentials}><Probe /></AuthProvider>);
-    routerReplaceSpy.mockClear();
-    routerPushSpy.mockClear();
+    navigation.destination = null;
     modalAlertSpy.mockClear();
     modalAlertAsyncSpy.mockClear();
     modalConfirmSpy.mockClear();
@@ -334,7 +339,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             'connect.legacyPairingUpdateRequiredBody', expect.any(Array));
         expect(await authority()).toEqual(before);
         expect(pending.getPendingTerminalConnect()).toBeNull();
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(navigation.destination).toBeNull();
         expect(posts()).toHaveLength(0);
         expect(boundary.requests).toHaveLength(0);
     });
@@ -348,7 +353,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(await hook.process('happier://terminal?key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
             + '&pairingSecret=AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE'
             + '&createdAt=1000&expiresAt=61000')).toBe(false);
-        expect(routerPushSpy).toHaveBeenCalledWith('/scan/terminal');
+        expect(navigation.destination).toBe('/scan/terminal');
         expect(posts()).toHaveLength(0);
     });
 
@@ -368,7 +373,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(pending.getPendingTerminalConnect()).toMatchObject({
             serverIdentityId: CURRENT_ID, homeConnectionDescriptor: strict,
         });
-        expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: CURRENT_URL }));
+        expect(navigation.destination).toEqual(buildTerminalConnectAuthRedirectHref({ serverUrl: CURRENT_URL }));
         expect(posts()).toHaveLength(0);
     });
 
@@ -381,7 +386,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const before = await authority();
         expect(await hook.approveLink(link(pairing(), { descriptor: strict }))).toBe(false);
         expect(await authority()).toEqual(before);
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(navigation.destination).toBeNull();
         expect(modalAlertSpy).toHaveBeenCalledWith('welcome.serverUnavailableTitle', 'welcome.serverUnavailableBody', expect.any(Array));
         expect(await pendingAt(target)).toMatchObject({ serverUrl: target.url, homeConnectionDescriptor: strict });
         expect(posts()).toHaveLength(0);
@@ -398,7 +403,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             serverUrl: CURRENT_URL, serverIdentityId: CURRENT_ID,
         });
         expect(modalAlertSpy).toHaveBeenCalledWith('terminal.connectTerminal', 'modals.pleaseSignInFirst', [{ text: 'common.continue' }]);
-        expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: CURRENT_URL }));
+        expect(navigation.destination).toEqual(buildTerminalConnectAuthRedirectHref({ serverUrl: CURRENT_URL }));
         expect(await authority()).toEqual(before);
     });
 
@@ -410,7 +415,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(await hook.approveLink(identityLink(pairing(), target.url, target.identity))).toBe(false);
         expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(await authority()).toEqual(before);
-        expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: target.url }));
+        expect(navigation.destination).toEqual(buildTerminalConnectAuthRedirectHref({ serverUrl: target.url }));
         expect(await pendingAt(target)).toMatchObject({ serverUrl: target.url });
     });
 
@@ -426,7 +431,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(await authority()).toEqual(before);
         // The focused signed-in Home keeps syncing as itself; nothing may reach the unknown destination.
         expect(boundary.requests.filter(request => request.token !== null && request.serverUrl !== focused.url)).toHaveLength(0);
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(navigation.destination).toBeNull();
         expect(pending.getPendingTerminalConnect()).toBeNull();
     });
 
@@ -451,7 +456,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(await hook.approveLink(identityLink(pairing(), requestedUrl, home.identity))).toBe(false);
         expect(await authority()).toEqual(before);
         expect(pending.getPendingTerminalConnect()).toMatchObject({ serverUrl: focusedUrl, serverIdentityId: home.identity });
-        expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: focusedUrl }));
+        expect(navigation.destination).toEqual(buildTerminalConnectAuthRedirectHref({ serverUrl: focusedUrl }));
         expect(posts()).toHaveLength(0);
     });
 
@@ -609,7 +614,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         // URL-only sign-in advice does not adopt or focus a Home. The explicit next
         // user focus below verifies that the retained intent still names that URL.
         expect(await authority()).toEqual(before);
-        expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: target.url }));
+        expect(navigation.destination).toEqual(buildTerminalConnectAuthRedirectHref({ serverUrl: target.url }));
         expect(await pendingAt(target)).toMatchObject({ serverUrl: target.url, serverIdentityId: home.identity });
     });
 
@@ -640,7 +645,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             'terminal.switchServerToConnectTerminal', expect.objectContaining({ confirmText: 'server.switchToServer' }));
         expect(modalAlertSpy).not.toHaveBeenCalled();
         expect(pending.getPendingTerminalConnect()).toBeNull();
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(navigation.destination).toBeNull();
         expect(posts()).toHaveLength(0);
         expect(await authority()).toEqual(before);
     });
@@ -657,7 +662,7 @@ describe('useConnectTerminal real approval outcomes', () => {
             else await hook.api.connectWithUrl(url);
         });
         expect(posts()).toHaveLength(0);
-        expect(routerPushSpy).toHaveBeenCalledWith('/terminal');
+        expect(navigation.destination).toBe('/terminal');
         expect(pending.getPendingTerminalConnect()).toMatchObject({
             serverIdentityId: CURRENT_ID,
             publicKeyB64Url: Buffer.from(request.terminalPublicKey).toString('base64url'),
