@@ -184,9 +184,11 @@ export function createMachineSetupPlanAction(params: Readonly<{
       return { runtime, admitted: result.success ? result.data : null };
     };
     const resolveHomeSources = async (body: HomeSetupCopyRequest, sources?: MachineSetupSourceApplyV1,
-      retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>) => {
+      retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>): Promise<
+        { failure: ActionExecuteFailure } | { sources: MachineSetupSourceV1 }
+      > => {
       const request = await requestHomeSources(body);
-      if ('failure' in request) return request;
+      if (request.failure) return { failure: request.failure };
       const { runtime, admitted } = request;
       if (!admitted || !('sources' in admitted)) return { failure: fail('machine_setup_response_invalid') };
       const references = sources ?? admitted.sources.map(source => {
