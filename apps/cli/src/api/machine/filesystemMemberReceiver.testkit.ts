@@ -9,6 +9,7 @@ import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/instal
 import { createAgentIsolationEffectsBoundary, createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { resolveAgentIsolationMemberCliRuntime } from '@/daemon/agentIsolation/memberCliRuntime';
 import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { configuration } from '@/configuration';
@@ -17,6 +18,9 @@ import { projectPath } from '@/projectPath';
 import { MachineAgentIsolationPreviewResultV1Schema, readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
+
+const installedCli = '/opt/happier/cli/current/happier';
+const memberCli = resolveAgentIsolationMemberCliRuntime(installedCli).executable;
 
 const nativeOs = vi.hoisted(() => ({
   home: undefined as undefined | { path: string; backing: string; workspaceRoot: string; workspaceBacking: string; uid: number },
@@ -78,6 +82,7 @@ vi.mock('@happier-dev/cli-common/process', async original => {
 // serialized identity, policy, executable, arguments or pointers are rewritten.
 const nativeWorker = String.raw`
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const { syncBuiltinESMExports } = require('node:module');
 const { dirname, join, sep } = require('node:path');
 let buffered = Buffer.alloc(0);
@@ -89,7 +94,7 @@ async function receive(chunk) {
   if (buffered.length < 12 + length) return;
   process.stdin.pause(); process.stdin.off('data', receiveChunk);
   const payload = JSON.parse(buffered.subarray(12, 12 + length).toString('utf8'));
-  if (payload.executable !== '/opt/happier/cli/current/happier' || JSON.stringify(payload.args) !== '["filesystem-effect"]')
+  if (payload.executable !== process.env.HAPPIER_TEST_NATIVE_CLI || JSON.stringify(payload.args) !== '["filesystem-effect"]')
     throw new Error('native_command_changed');
   const nativeHome = payload.nativeIdentity?.home ?? process.env.HAPPIER_TEST_SHARED_NATIVE_HOME;
   if (!nativeHome) throw new Error('native_home_missing');
@@ -112,6 +117,12 @@ async function receive(chunk) {
   for (const name of ['copyFile', 'rename']) {
     const original = fs[name];
     fs[name] = async (source, destination, ...args) => original(nativePath(source), nativePath(destination), ...args);
+  }
+  // Configuration resolves and creates the daemon-independent member HOME
+  // synchronously when the native owner imports.
+  for (const name of ['existsSync', 'mkdirSync', 'chmodSync']) {
+    const original = fsSync[name];
+    fsSync[name] = (path, ...args) => original(nativePath(path), ...args);
   }
   syncBuiltinESMExports();
   Object.assign(process.env, payload.environment);
@@ -174,7 +185,8 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   const f = await createInstalledFilesystemMachineFixture({
     ...(options.registerCleanup ? { registerCleanup: options.registerCleanup } : {}),
     ...(options.accountId === 'requester' ? { boundSessionId: 'owner-agent-files' } : {}), agentIsolation: {
-    managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+    managedHappierBinaryPath: installedCli,
+    memberManagedHappierBinaryPath: memberCli,
     read: () => ({ ...(options.coldPolicy === 'reviewedMember' ? readSnapshot() : readAgentIsolationSnapshot({
       metadata: { status: 'ready', metadataVersion: 1, metadata: { agentIsolation: options.coldPolicy ? coldPolicy : { enabled: true,
         ...(!options.legacy ? { memberProvisioning: 'linuxUsersV1' as const } : {}) } } },
@@ -207,7 +219,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   if (options.legacy) preparation.setPolicy({ enabled: true });
   if (options.coldPolicy) preparation.setPolicy(coldPolicy);
   else for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
-    binaryPath: '/opt/happier/cli/current/happier' })) preparation.installed.add(step.id);
+    binaryPath: installedCli })) preparation.installed.add(step.id);
   const member = join(f.directory, 'member-home');
   const workspace = join(f.directory, 'member-workspace');
   const foreign = join(f.directory, 'neighbor-private');
@@ -238,7 +250,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
           uid: 2401, home: identity.home });
     }
     expect(args).toEqual(['-n', '-u', options.legacy ? 'happier-agent' : identity.username,
-      '--', '/opt/happier/cli/current/happier', 'agent-launch']);
+      '--', options.legacy ? installedCli : memberCli, 'agent-launch']);
     // The real shared home is Agent-owned 0700. Reject the daemon-side chdir
     // before substituting this fixture's actual source-child working directory.
     if (options.legacy && spawnOptions.cwd === sharedHome) throw Object.assign(
@@ -254,6 +266,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
       : ['--conditions=happier-source', '--import', sourceRuntime, '-e', nativeWorker];
     const child = actual.spawn(process.execPath, childArgs, {
       ...spawnOptions, cwd: projectPath(), env: { PATH: process.env.PATH, HOME: member, TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
+        HAPPIER_TEST_NATIVE_CLI: options.legacy ? installedCli : memberCli,
         HAPPIER_TEST_MEMBER_HOME: member, ...(!options.legacy ? { HAPPIER_TEST_MEMBER_WORKSPACE: workspace } : {}),
         ...(options.legacy ? { HAPPIER_TEST_SHARED_NATIVE_HOME: sharedHome } : {}), HAPPIER_TEST_FOREIGN_ROOT: foreign,
         HAPPIER_TEST_FILESYSTEM_INTERNAL: join(projectPath(), 'src/rpc/handlers/fileSystem/filesystemEffectInternal.ts') },
@@ -304,7 +317,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   };
   if (options.coldPolicy === 'reviewedMember') {
     const native = createAgentIsolationEffectsBoundary({ installationId: f.installation.installationId,
-      installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: async () => {} });
+      installedCli, readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: async () => {} });
     registerDaemonMachineAgentIsolationRpcHandlers(f.rpcHandlerManager, {
       target: () => ({ serverId: f.serverId, machineId: f.machineId, installationId: f.installation.installationId, custodianAccountId: 'requester' }),
       readCanonicalHomeServerIdentityId: () => f.homeServerIdentityId, read: readSnapshot, captureMetadataPort: () => metadataPort,
@@ -333,7 +346,7 @@ export function assertNativeInvocation(f: Awaited<ReturnType<typeof createNative
   expect(frame.identity).toEqual(legacy ? undefined : {
     username: f.identity.username, agentUid: 2401, agentGid: 2401, home: f.identity.home,
   });
-  expect(frame.executable).toBe('/opt/happier/cli/current/happier');
+  expect(frame.executable).toBe(legacy ? installedCli : memberCli);
   expect(frame.args).toEqual(['filesystem-effect']);
   expect(frame.cwd).toBe(legacy ? f.sharedHome : f.identity.workspaceRoot);
   expect(frame.runtimeHome.startsWith(`${legacy ? f.sharedHome : f.identity.home}/runtime/operations/`)).toBe(true);
