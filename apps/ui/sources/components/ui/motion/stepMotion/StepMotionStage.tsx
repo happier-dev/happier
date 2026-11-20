@@ -130,6 +130,12 @@ function createStepMotionStage(
         syncPresentation();
     }
 
+    function skip(focusDestination: boolean) {
+        const destination = focusDestination && active ? findLayer(active.layer) : undefined;
+        settle();
+        destination?.focus();
+    }
+
     function showIncoming(layer: StepMotionLayerHandle, complete?: (outcome: StepBuildResult) => void) {
         let cancel: (() => void) | undefined;
         let settled = false;
@@ -537,6 +543,7 @@ function createStepMotionStage(
             });
         },
         settle,
+        skip,
     };
 }
 
@@ -623,8 +630,8 @@ export function playBuild(build: StepBuild): Promise<StepBuildResult> {
     return rootStage?.build(build) ?? Promise.resolve('skipped');
 }
 
-export function skipStepMotion(): void {
-    rootStage?.settle();
+export function skipStepMotion(options?: Readonly<{ focusDestination: boolean }>): void {
+    rootStage?.skip(options?.focusDestination === true);
 }
 
 export function settleStepMotionOnNativeInput(): void {

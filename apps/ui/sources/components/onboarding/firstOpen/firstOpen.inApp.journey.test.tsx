@@ -59,6 +59,7 @@ it.each([
                 quietWays: [], notices: [],
             }} compact={false} interaction={{
                 admission: { pendingActionId: null, run: async (_id, invoke) => { await invoke(); } },
+                getActionId: () => 'first-open-next',
                 onAction, onRetry() {}, onSelfHosting() {},
             }} />
         </UnauthenticatedSplitShell> : <UnauthenticatedRouteShell stepId="team-sign-in" testID="team-sign-in-shell">
@@ -88,7 +89,10 @@ it.each([
         expect(box.querySelector('[data-testid="first-open-next"]')?.closest('[inert]')).toBeNull();
         await act(async () => {
             const next = box.querySelector<HTMLElement>('[data-testid="first-open-next"]')!;
-            next.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+            if (name === 'Welcome') {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+                expect(document.activeElement).toBe(box.querySelector('[role="heading"],h1,h2'));
+            } else next.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
             next.click();
         });
         expect(scene()).toBeNull();

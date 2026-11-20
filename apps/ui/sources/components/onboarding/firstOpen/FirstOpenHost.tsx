@@ -53,11 +53,11 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         opacity.setValue(0.65);
         setPhase('still');
     }, [opacity]);
-    const skip = useCallback(() => {
+    const skip = useCallback((options?: Readonly<{ focusDestination: boolean }>) => {
         if (!activePlay.current || !scene) return;
         activePlay.current = false;
         fadeToRest();
-        scene.skipFirstOpenDestination();
+        scene.skipFirstOpenDestination(options);
     }, [fadeToRest, scene]);
     const interrupt = useCallback(() => {
         if (!activePlay.current || !scene) return;
@@ -132,7 +132,7 @@ export function FirstOpenHost({ decision, children }: Readonly<{
                 activePlay.current = false;
                 if (outcome === 'settled') settle();
                 else fadeToRest();
-            }, skip);
+            }, () => skip());
             return;
         }
         fadeToRest();
@@ -153,20 +153,23 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         }
         if (typeof document === 'undefined') return;
         const key = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') { event.preventDefault(); skip(); }
+            if (event.key !== 'Escape' || !activePlay.current) return;
+            event.preventDefault();
+            skip({ focusDestination: true });
         };
+        const pointer = () => skip();
         const visibility = () => { if (document.hidden) interrupt(); };
         document.addEventListener('keydown', key, true);
-        document.addEventListener('pointerdown', skip, true);
+        document.addEventListener('pointerdown', pointer, true);
         document.addEventListener('visibilitychange', visibility);
         return () => {
             document.removeEventListener('keydown', key, true);
-            document.removeEventListener('pointerdown', skip, true);
+            document.removeEventListener('pointerdown', pointer, true);
             document.removeEventListener('visibilitychange', visibility);
         };
     }, [interrupt, playing, scene, skip]);
 
-    const skipTouch = playing && Platform.OS !== 'web' ? skip : undefined;
+    const skipTouch = playing && Platform.OS !== 'web' ? () => skip() : undefined;
     const Scene = scene?.FirstOpenScene;
     return (
         <View style={{ flex: 1, position: 'relative' }} onTouchStart={skipTouch}>
