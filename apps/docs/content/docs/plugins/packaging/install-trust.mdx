@@ -5,7 +5,8 @@ description: Review plugin code before execution and let the daemon own installe
 
 In 0.3 development, press **Install & Trust** on the plugin listing in Store or
 Settings to authorize the listed plugin on the selected machines. On Browse
-cards and rows, **+** opens a prompt with the same **Install & Trust** action.
+cards and rows, **+** installs on the Machine named by the **Install on** control.
+That press authorizes the installation.
 The daemon validates the package and manifest before executing plugin code and
 records the approved manifest at installation. Callers that require approval
 use the ordinary `plugins.install` approval in the Happier Inbox. It names the

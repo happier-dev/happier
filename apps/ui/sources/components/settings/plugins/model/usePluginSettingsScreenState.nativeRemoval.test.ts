@@ -486,7 +486,7 @@ describe('Plugin install/update originating approval state', () => {
         expect(censusReads).toHaveLength(0);
     });
 
-    it('opens a Browse quick install review without submitting and installs the pinned release on consent', async () => {
+    it('installs the pinned Browse release once when Install is pressed', async () => {
         const { storage, catalog, actionRequests, censusReads } = await renderRemovalOwner('disable', [], {
             catalog: true, browse: true, management: false,
         });
@@ -505,11 +505,8 @@ describe('Plugin install/update originating approval state', () => {
         await waitForControl(screen, plus);
         await vi.waitFor(() => expect(screen.findByTestId(plus)?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync(plus);
-        expect(actionRequests).toHaveLength(0);
-
-        await waitForControl(screen, `${plus}.confirm`);
-        await screen.pressByTestIdAsync(`${plus}.confirm`);
         await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        expect(screen.findByTestId(`${plus}.confirm`)).toBeNull();
         expect(actionRequests[0]).toMatchObject({ actionId: 'plugins.install', envelope: {
             target: { kind: 'machine', machineId: 'controller-1' },
             input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
