@@ -32,25 +32,18 @@ vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
 const nativePictures = vi.hoisted(() => ({ count: 0, disposed: 0 }));
-vi.mock('./glyph/glyphAtlas.native', () => ({
-  glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
-    const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
-    return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
-  },
+vi.mock('./glyph/glyphAtlas.native', async () => ({
+  glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
 }));
 vi.mock('@shopify/react-native-skia', async () => {
-  const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
-  const dispose = () => undefined;
-  return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 }, TileMode: { Clamp: 0, Repeat: 1 },
-    Skia: { ...boundary.Skia,
-      Data: { fromBytes: () => ({ dispose }) },
-      Image: { MakeImage: () => ({ dispose, makeShaderOptions: () => ({ dispose }) }) },
-      Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
-      Path: { Make: () => ({ dispose }) },
-    },
-    createPicture: () => {
-      nativePictures.count += 1;
-      return { dispose: () => { nativePictures.disposed += 1; } };
+  const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaGlyphMock({
+    onPicture: () => { nativePictures.count += 1; },
+  });
+  return {
+    ...boundary,
+    createPicture: (draw: Parameters<typeof boundary.createPicture>[0]) => {
+      const picture = boundary.createPicture(draw);
+      return { ...picture, dispose() { picture.dispose(); nativePictures.disposed += 1; } };
     },
   };
 });
@@ -129,6 +122,8 @@ describe('Home glyph subscription locality', () => {
       toFake: [
         'setInterval',
         'clearInterval',
+        'setTimeout',
+        'clearTimeout',
         'Date',
         'performance',
         'requestAnimationFrame',
@@ -262,10 +257,11 @@ describe('Home glyph subscription locality', () => {
   });
 
   it('firstOpen.01.F1.rest redraws only the digits leaf every two seconds and pauses for writing, focus and reduced motion', async () => {
-    let ticks = 0;
-    const interval = globalThis.setInterval;
-    vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args) =>
-      interval(() => { ticks += 1; callback(...args); }, delay));
+    const expectPaintsDuring = async (elapsedMs: number, paints: number) => {
+      const before = nativePictures.count;
+      await act(async () => { vi.advanceTimersByTime(elapsedMs); });
+      expect(nativePictures.count - before).toBe(paints);
+    };
     let homeRenders = 0;
     let unrelatedRenders = 0;
     function Content() {
@@ -314,7 +310,6 @@ describe('Home glyph subscription locality', () => {
     for (let tick = 0; tick < 30; tick++) {
       await act(async () => { vi.advanceTimersByTime(2000); });
     }
-    expect.soft(ticks).toBe(30);
     expect(nativePictures.count - initialPictures).toBe(30);
     // Ancestor-rendered outputs stay stable while only the drawing leaf updates.
     expect.soft(screen.findByType(GlyphSurface).props === canvasProps).toBe(true);
@@ -325,47 +320,31 @@ describe('Home glyph subscription locality', () => {
     expect(homeRenders).toBe(initialHomeRenders);
     expect(unrelatedRenders).toBe(initialContentRenders);
     await screen.update(<Home writing />);
-    const held = ticks;
-    await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(ticks).toBe(held);
+    await expectPaintsDuring(4000, 0);
     await screen.update(<Home />);
-    await act(async () => {
-      vi.advanceTimersByTime(2000);
-    });
-    expect(ticks).toBe(held + 1);
+    await expectPaintsDuring(2000, 1);
     await screen.update(<Home reducedMotion />);
-    await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(ticks).toBe(held + 1);
+    await expectPaintsDuring(4000, 0);
     await screen.update(<Home />);
-    await act(async () => { vi.advanceTimersByTime(2000); });
-    expect(ticks).toBe(held + 2);
+    await expectPaintsDuring(2000, 1);
     await screen.update(<Home hidden />);
-    await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(ticks).toBe(held + 2);
+    await expectPaintsDuring(4000, 0);
     await screen.update(<Home />);
     for (const key of ['visibility', 'appState'] as const) {
       await act(async () => {
         host[key] = key === 'visibility' ? 'hidden' : 'background';
         for (const listener of key === 'visibility' ? host.documentListeners : host.appListeners) listener();
       });
-      await act(async () => { vi.advanceTimersByTime(4000); });
-      expect(ticks).toBe(held + 2);
+      await expectPaintsDuring(4000, 0);
       await act(async () => {
         host[key] = key === 'visibility' ? 'visible' : 'active';
         for (const listener of key === 'visibility' ? host.documentListeners : host.appListeners) listener();
       });
     }
     await screen.update(<Home eligible={false} />);
-    const atBlur = ticks;
-    await act(async () => {
-      vi.advanceTimersByTime(2000);
-    });
-    expect(ticks).toBe(atBlur);
+    await expectPaintsDuring(2000, 0);
     await screen.update(<Home />);
-    await act(async () => {
-      vi.advanceTimersByTime(2000);
-    });
-    expect(ticks).toBe(atBlur + 1);
+    await expectPaintsDuring(2000, 1);
     await screen.unmount();
     expect(vi.getTimerCount()).toBe(0);
   });

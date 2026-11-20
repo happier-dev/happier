@@ -8,6 +8,9 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/components/atmosphere/glyph/glyphAtlas.native', async () => ({
+  glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
+}));
 
 const network = await installSessionOpsNetworkBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');

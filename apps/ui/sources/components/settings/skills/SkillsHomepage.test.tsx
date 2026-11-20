@@ -14,6 +14,9 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
     pathname: '/settings/skills', router: navigation }).module);
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/components/atmosphere/glyph/glyphAtlas.native', async () => ({
+    glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
+}));
 // Native modal presentation is the boundary; the opened Skills host/config remain real.
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 installDisconnectedServerSocketBoundary();
