@@ -207,10 +207,12 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
       <FieldItem label={t('projects.deployments.settingsSections.privateSharingService')}><ValueFieldSelect testID={`${id}.service`}
         label={t('projects.deployments.settingsSections.privateSharingService')} items={services.map(value => ({ id: value, title: value }))}
         selectedId={service} onSelect={value => { setService(value); setKey(value); setContainerPort(''); }} fill /></FieldItem>
+      {/* What is shared, then who reaches it: Happier network is the default and needs no setup (IROH-PRIVATE-ROUTE-1119
+          "Control for the Opus pass"); the technical fields follow. */}
+        <FieldItem label={t('projects.deployments.settingsSections.privateSharingNetwork')}>{reachTiles}</FieldItem>
       {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
       {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
       {field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'), scheme, setScheme)}
-        <FieldItem label={t('projects.deployments.settingsSections.privateSharingNetwork')}>{reachTiles}</FieldItem>
         {selectedNetwork ? <FieldItem label={t('projects.deployments.settingsSections.privateSharingAddress')}><ValueFieldSelect testID={`${id}.address`}
           label={t('projects.deployments.settingsSections.privateSharingAddress')}
           items={selectedNetwork.addresses.map(value => ({ id: value, title: value }))} selectedId={hostAddress} onSelect={setAddress} fill /></FieldItem> : null}
