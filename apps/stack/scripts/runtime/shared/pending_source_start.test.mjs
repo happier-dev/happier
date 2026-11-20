@@ -153,6 +153,8 @@ test('concurrent source preparation does not count completed local or remote sib
 
 test('failed source preparation cannot leave a competing preparing reload diagnostic', { timeout: 10000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-reload-preparation-diagnostic-' });
+  await mkdir(fixture.path('apps/stack/scripts'), { recursive: true });
+  await writeFile(fixture.path('apps/stack/scripts/stack.mjs'), 'export {};');
   let prepared;
   const ready = new Promise(resolve => { prepared = resolve; });
   let activate;
@@ -171,6 +173,13 @@ test('failed source preparation cannot leave a competing preparing reload diagno
   } finally {
     activate(false);
     await reloading;
+  }
+  const { error } = await reloading;
+  assert.match(error.message, /cancelled before selection/);
+  const { logPath } = JSON.parse(await readFile(fixture.path('source-runtime/reload.json'), 'utf8'));
+  const log = await readFile(logPath, 'utf8');
+  for (const phase of ['setup', 'component-preparation', 'web-selection', 'replacement-checks', 'activation-wait', 'total']) {
+    assert.match(log, new RegExp(`\\[source-reload\\] phase=${phase} elapsedMs=\\d+`));
   }
 });
 

@@ -163,7 +163,10 @@ test('PostgreSQL replacement migrates, boots and serves /health on a scratch Pos
     HANDY_MASTER_SECRET: '', HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'fixture-source',
     HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: fixture.path('retained.env'),
     HAPPIER_SERVER_LIGHT_DATA_DIR: fixture.path('retained-data') };
-  await smokeSourceRuntimeReload({ components: { server }, env, logger: { log() {} } });
+  const diagnostics = [];
+  await smokeSourceRuntimeReload({ components: { server }, env, logger: { log: line => diagnostics.push(line) } });
+  assert.deepEqual(diagnostics.map(line => line.match(/^\[source-reload\] phase=([a-z-]+) elapsedMs=\d+$/)?.[1]),
+    ['smoke-db-setup', 'smoke-migration', 'smoke-server-ready', 'smoke-health', 'smoke-cleanup']);
   assert.deepEqual((await readFile(witness, 'utf8')).trim().split('\n'), ['migrated', 'served']);
   await assert.rejects(access(fixture.path('retained-data')), { code: 'ENOENT' });
 

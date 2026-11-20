@@ -625,6 +625,7 @@ ${entry}
  */
 export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir, descriptorPath, components, env = process.env, signal, logger = console,
   requestBaseArchive }) {
+  const setupStarted = performance.now();
   const treesRoot = sourceRevisionTreesRoot(stackBaseDir);
   // The tree mounts the checkout's installation: bind it as a bundle does, so
   // launches refuse after a dependency change until the Stack reloads.
@@ -635,16 +636,24 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
   // Earlier preparations this Stack never selected (refused, cancelled or killed
   // reloads) hold a tree and pin its base; release them before writing a new one.
   await releaseStackSourceTrees({ stackBaseDir, components: components.map(({ component }) => component), signal, preparing: true });
+  logger.error(`[source-tree] phase=shared-setup elapsedMs=${Math.round(performance.now() - setupStarted)}`);
   const prepared = {};
   // A co-located daemon needs Plugin UI in the base. Prepare it first so the
   // server reuses that base and a server-only reload still skips Plugin UI.
   const preparationOrder = [...components].sort((left, right) => Number(right.component === 'daemon') - Number(left.component === 'daemon'));
   for (const { component, serverComponent = 'happier-server-light', dbProvider } of preparationOrder) {
     const started = performance.now();
+    let phaseStarted = started;
+    const finishPhase = phase => {
+      const now = performance.now();
+      logger.error(`[source-tree] phase=${phase} component=${component} elapsedMs=${Math.round(now - phaseStarted)}`);
+      phaseStarted = now;
+    };
     // Each preparation gets its own tree: the incumbent keeps running from its tree
     // until the restart retires it, and stop then releases every tree but the selected one.
     const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot, signal, descriptorPath, env, requestBaseArchive, preparePluginUi: component === 'daemon',
       treeDir: join(resolve(stackBaseDir), 'source-runtime', `tree-${component}-${randomUUID().slice(0, 8)}`) });
+    finishPhase('revision-tree');
     const t = tree.treeDir;
     const dependencyInstallDir = revisionInstallDir(treesRoot, tree.installIdentity);
     const identity = createHash('sha256').update(JSON.stringify([tree.key, component, serverComponent, dbProvider ?? null])).digest('hex').slice(0, 16);
@@ -690,6 +699,7 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
         env: { HAPPIER_DB_PROVIDER: provider, ...(provider === 'sqlite' ? { HAPPIER_SQLITE_MIGRATIONS_DIR: join(serverDir, 'prisma/sqlite/migrations') } : {}) },
         migration: { mode: 'external', command: migrate, args: [], cwd: serverDir } };
     }
+    finishPhase('role-launchers');
     const targets = component === 'daemon' || env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? readSourceGuestPayloadTargets(env) : null;
     if (targets) {
       // Payload staging rewrites copied scripts. Capture writable inputs through
@@ -697,21 +707,31 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
       const workspace = join(t, 'guest-workspace');
       try {
         const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
+        finishPhase('guest-input-capture');
         await setBundleReadOnly(workspace, false);
+        finishPhase('guest-input-permissions');
         // As in bundle preparation, the finite compiler owns its process env
         // and loader; tool subprocesses must inherit this host's build inputs.
         const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
-const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env });
-console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
+const timings = [];
+const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env, onTiming: timing => timings.push(timing) });
+console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify({ payload, timings }));`;
         const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
           args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
             dependencyRootDir: dependencyInstallDir, outputDir: t, targets, sourceCapture })] }),
         { cwd: t, env, signal });
         const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
         if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
-        record.guestPayload = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
+        const { payload, timings } = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
+        record.guestPayload = payload;
+        finishPhase('guest-payload-worker');
+        for (const { phase, target, elapsedMs } of timings) {
+          logger.error(`[source-tree] phase=${phase} component=${component} target=${target} elapsedMs=${elapsedMs}`);
+        }
       } finally {
+        phaseStarted = performance.now();
         await rm(workspace, { recursive: true, force: true });
+        finishPhase('guest-input-cleanup');
       }
       Object.assign(record.env, sourceGuestPayloadEnvironment(record.guestPayload));
     }
@@ -722,6 +742,7 @@ console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
       ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
       sourceTree: { dir: t, dependencyInstallDir, base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
     await writeOwnFile(join(t, 'source-bundle.json'), JSON.stringify(record, null, 2));
+    finishPhase('role-record');
     logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} nativeSupport=${tree.supportFingerprint} elapsedMs=${Math.round(performance.now() - started)}`);
     prepared[component] = record;
   }

@@ -35,6 +35,12 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
   if (dbProvider !== 'sqlite' && dbProvider !== 'pglite' && dbProvider !== 'postgres') {
     throw new Error(`[reload] cannot smoke ${dbProvider} without a separately authorized scratch database; incumbent retained`);
   }
+  let phaseStarted = performance.now();
+  const finishPhase = phase => {
+    const now = performance.now();
+    logger.log(`[source-reload] phase=${phase} elapsedMs=${Math.round(now - phaseStarted)}`);
+    phaseStarted = now;
+  };
   const scratch = await mkdtemp(join(tmpdir(), 'hstack-reload-smoke-'));
   const children = [];
   let database = null;
@@ -70,9 +76,11 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       database = await startScratchPostgres({ dir: join(scratch, 'postgres') });
       isolated.DATABASE_URL = database.url;
     }
+    finishPhase('smoke-db-setup');
     const { url, processChild } = await startSmokeServer({ server, ui, env, isolated, scratch, children,
-      signal: cancellation.signal });
+      signal: cancellation.signal, finishPhase });
     const health = await fetchHappierHealth(url, { signal: cancellation.signal });
+    finishPhase('smoke-health');
     if (!health.ok) throw new Error('[reload] replacement server did not expose canonical /health');
     if (ui) {
       smokeComponent = 'ui';
@@ -80,6 +88,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       await smokeSourceWebBoot({ repoDir: env.HAPPIER_STACK_REPO_DIR, url, env: {
         ...isolated, HAPPIER_CANONICAL_SERVER_URL: url, HAPPIER_PUBLIC_SERVER_URL: url,
       }, signal: cancellation.signal });
+      finishPhase('smoke-web-boot');
     }
     if (processChild.exitCode != null || processChild.signalCode != null) throw new Error('[reload] smoke server exited before admission');
   } catch (error) {
@@ -87,6 +96,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       repoDir: env.HAPPIER_STACK_REPO_DIR, env, signal });
     throw error;
   } finally {
+    phaseStarted = performance.now();
     signal?.removeEventListener('abort', cancel);
     for (const child of children) {
       if (child.exitCode == null && child.signalCode == null) await killProcessTree(child, 'SIGTERM');
@@ -94,10 +104,11 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     // Its server is gone: release the scratch PostgreSQL before its directory.
     await database?.stop();
     await rm(scratch, { recursive: true, force: true });
+    finishPhase('smoke-cleanup');
   }
 }
 
-async function startSmokeServer({ server, ui, env, isolated, scratch, children, signal }) {
+async function startSmokeServer({ server, ui, env, isolated, scratch, children, signal, finishPhase }) {
   const spec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: server });
   const timeout = Number(env.HAPPIER_STACK_SERVER_READY_TIMEOUT_MS);
   let nextPort = 40_000;
@@ -117,6 +128,7 @@ async function startSmokeServer({ server, ui, env, isolated, scratch, children, 
     let portInUse = false;
     const processChild = await spawnRuntimeServerAfterMigration({ serverLaunchSpec: spec, env: serverEnv, children,
       isCancellationRequested: () => signal.aborted,
+      onMigrationSettled: () => finishPhase('smoke-migration'),
       onServerLine({ stream, line }) {
         if (stream === 'stdout' && line.includes(`API ready on port http://localhost:${port}`)) bound = true;
         if (stream === 'stderr' && line.endsWith(`listen EADDRINUSE: address already in use 127.0.0.1:${port}`)) portInUse = true;
@@ -131,6 +143,8 @@ async function startSmokeServer({ server, ui, env, isolated, scratch, children, 
       await processChild.completion;
       if (signal.aborted || bound || !portInUse) throw error;
       nextPort = port + 1;
+    } finally {
+      finishPhase('smoke-server-ready');
     }
   }
 }

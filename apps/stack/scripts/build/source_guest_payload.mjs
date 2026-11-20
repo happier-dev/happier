@@ -75,7 +75,10 @@ export function sourceGuestPayloadEnvironment(payload) {
       ...(payload.archives ? { archives: payload.archives } : {}) }) };
 }
 
-export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal }) {
+export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal, onTiming }) {
+  const reportTiming = (phase, target, started) => onTiming?.({
+    phase, target: `${target.os}-${target.arch}`, elapsedMs: Math.round(performance.now() - started),
+  });
   const root = join(outputDir, 'guest-payload');
   const importedArchives = readSourceGuestPayloadArchiveImports(env);
   // The caller owns these captured inputs. Reuse canonical capture containment
@@ -108,21 +111,27 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependen
     for (const { target, relativeDir } of targets) {
       signal?.throwIfAborted();
       // The payload owner builds the Iroh addon and Session holders from repoDir's Rust sources.
+      const started = performance.now();
       const payload = await buildCliBinaryArtifactPayload({
         repoRoot: repoDir, payloadDir: join(root, relativeDir), target, runCommand,
       });
+      reportTiming('guest-native-payload', target, started);
       targetIdentities[`${target.os}-${target.arch}`] = payload.identity;
       if (env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
+        const archiveStarted = performance.now();
         const archive = await createScpReadyPayloadArchive(join(root, relativeDir));
         try {
           exportedArchives.push(await retainGuestArchive({ target,
             archivePath: join(archive.archiveStageRoot, archive.archiveFileName) }, outputDir, signal));
         } finally { await archive.cleanup(); }
+        reportTiming('guest-archive-export', target, archiveStarted);
       }
     }
     for (const archive of importedArchives) {
       signal?.throwIfAborted();
+      const started = performance.now();
       exportedArchives.push(await retainGuestArchive(archive, outputDir, signal));
+      reportTiming('guest-archive-import', archive.target, started);
     }
     const collection = targets.some(item => item.relativeDir);
     const identity = collection

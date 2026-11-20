@@ -1317,9 +1317,10 @@ async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, compone
 /** The source selection owner admits a complete replacement, without claiming
  * that its processes have loaded it. Preparation never writes these pointers.
  */
-export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = null, pending, env = process.env }) {
+export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = null, pending, env = process.env, logger = console }) {
   pending.signal.throwIfAborted();
   if (components.daemon) {
+    const started = performance.now();
     try {
       const incumbent = await readSelectedSourceRuntimeRecord({ stackBaseDir, component: 'daemon', required: false });
       await assertSourceReloadBundledPluginFailures({ replacementCliDir: components.daemon.runtimeDir, incumbentCliDir: incumbent?.runtimeDir });
@@ -1329,9 +1330,12 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
     } catch (error) {
       await diagnoseSourceReloadFailure(error, { component: 'daemon', repoDir: env.HAPPIER_STACK_REPO_DIR, env, signal: pending.signal });
       throw error;
+    } finally {
+      logSourceRuntimePhase('daemon', 'replacement-loader', started, undefined, logger);
     }
   }
   if (components.server || ui) {
+    const started = performance.now();
     try {
       // Replacement health smoke is service lifecycle; finite builders own admission.
       const repoDir = env.HAPPIER_STACK_REPO_DIR;
@@ -1342,6 +1346,8 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
     } catch (error) {
       await diagnoseSourceReloadFailure(error, { component: 'server', repoDir: env.HAPPIER_STACK_REPO_DIR, env, signal: pending.signal });
       throw error;
+    } finally {
+      logSourceRuntimePhase('server', 'replacement-smoke', started, undefined, logger);
     }
   }
   const sourceRoot = join(stackBaseDir, 'source-runtime');

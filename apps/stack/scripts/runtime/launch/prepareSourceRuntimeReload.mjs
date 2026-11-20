@@ -79,6 +79,7 @@ async function readReloadGreen({ request, repoDir, env }) {
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
   activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId,
   requestBaseArchive }) {
+  const started = performance.now();
   const request = resolveSourceRuntimeReloadArguments({ args });
   const { flags, kv, sourceCapturedAfter } = request;
   let revisionDir;
@@ -116,6 +117,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     return diagnosticInput.write(chunk);
   } };
   const logger = { ...console, error: (...values) => stderrStream.write(`${format(...values)}\n`) };
+  let phaseStarted = started;
+  const finishPhase = phase => {
+    const now = performance.now();
+    logger.error(`[source-reload] phase=${phase} elapsedMs=${Math.round(now - phaseStarted)}`);
+    phaseStarted = now;
+  };
   try {
     await mkdir(logDir, { recursive: true });
     // The live pending marker owns preparation, including a failed attempt
@@ -184,6 +191,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         ...(connection.startServer && !placement?.target ? [{ component: 'server', serverComponent, dbProvider }] : []),
         ...(daemonRequested ? [{ component: 'daemon' }] : []),
       ];
+      finishPhase('setup');
       const remotePreparation = (async () => {
         if (placement?.target || placement?.daemonTarget) {
           // Hosts without Git metadata receive one description of the revision.
@@ -212,6 +220,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       // coordinator holds no capacity while the independent preparations run.
       preparations = [localPreparation, remotePreparation];
       const [{ server, daemon }] = await Promise.all(preparations);
+      finishPhase('component-preparation');
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
       // Later revisions reuse only bases a preparation built (after a failed ancestor, the requested revision).
@@ -227,22 +236,26 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         revision: serverTree ? { revision: serverTree.sourceCapture.revision, overlayDigest: serverTree.sourceCapture.overlayDigest ?? null }
           : request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
           : revision })).built : null;
+      finishPhase('web-selection');
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
+      const check = () => admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
+        env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir }, logger });
       let admitted;
       try {
-        admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
-          env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+        admitted = await check();
       } catch (error) {
         pending.signal.throwIfAborted();
         // Readiness retries the finished capture, never producer preparation.
         // The probes keep their existing budget and cancellation signal.
         await log(`[reload] readiness failed; retrying adoption of the same producer capture:${formatSourceReloadRefusal(error, env)}`);
-        admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
-          env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+        admitted = await check();
       }
-      if (components.server && !String(serverEnv.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) await preflightSourceRuntimeMigrations({ server: components.server,
-        env: serverEnv, stackBaseDir, signal: pending.signal });
+      finishPhase('replacement-checks');
+      if (components.server && !String(serverEnv.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) {
+        await preflightSourceRuntimeMigrations({ server: components.server, env: serverEnv, stackBaseDir, signal: pending.signal });
+        finishPhase('retained-db-preflight');
+      }
       const sourceCaptures = { ...remote?.sourceCaptures, ...Object.fromEntries(Object.entries(components)
         .map(([component, built]) => [component, built.sourceCapture ?? null])) };
       if (ui) sourceCaptures.ui = ui.sourceCapture ?? null;
@@ -250,13 +263,16 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         .map(([component, capture]) => [component, capture?.capturedAt ?? null])) };
       await pending.setPhase({ phase: 'prepared' });
       await onPrepared({ ui, sourceTimes, sourceCaptures });
-      if (!await activation) throw new Error('[reload] preparation cancelled before selection; incumbent retained');
+      const selected = await activation;
+      finishPhase('activation-wait');
+      if (!selected) throw new Error('[reload] preparation cancelled before selection; incumbent retained');
       pending.signal.throwIfAborted();
       // The selection this activation replaces is the incumbent's revision. Its
       // restart owner restarts it if the replacement fails after retirement.
       await recordSourceSelectionRollback({ stackBaseDir, env });
       await remote?.activate();
       await admitted.activate();
+      finishPhase('selection');
       // Successful selection is already authoritative. A diagnostic write must
       // not mislabel a validated graph as a failed preparation afterwards.
       await writeJsonAtomic(statusPath, { status: 'ready', logPath, sourceTimes, sourceCaptures }).catch(error => console.error('[reload] diagnostic publication failed:', error));
@@ -279,6 +295,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
   } finally {
     if (revisionDir) await rm(revisionDir, { recursive: true, force: true });
     if (onHost && request.revisionDescriptorPath) await rm(request.revisionDescriptorPath, { force: true });
+    logger.error(`[source-reload] phase=total elapsedMs=${Math.round(performance.now() - started)}`);
     diagnosticInput.end();
     await diagnosticsClosed;
     await logWrites;
