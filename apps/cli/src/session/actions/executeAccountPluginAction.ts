@@ -1,12 +1,14 @@
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { ActionId } from '@happier-dev/protocol';
-import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime, type AccountExecutionRuntimeInput, type RetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { readPluginActionExecutionReference, type CurrentProcessPluginActionExecutionAttempt } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker,
-  createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+  createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps,
+  listRuntimeContributedActionDefinitions } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCredentialedTargetActionCurrentIntent } from './approvals/credentialedTargetActionCurrentIntent';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
@@ -21,21 +23,42 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 
-/** Selects Account custody for the incumbent runtime and invocation owners. */
-export async function executeAccountPluginAction(params: Readonly<{
+type AccountPluginActionRuntimeRequest = Readonly<{
   host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials'
     | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
     | 'runtimeActionMachineId' | 'serverIdentityId' | 'onApprovalRequested'
     | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>
       & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'> & CliActionExactHomeTarget;
-  deps: ActionExecutorDeps;
-  resolveContext?: ReturnType<typeof createCliActionExecutorHarness>['resolveContext'];
   actionId: string;
   input: unknown;
   context?: ActionExecutorContext;
   accountRuntime?: RetainedAccountExecutionRuntime;
   inheritedInvocation?: NonNullable<Parameters<typeof createCommittedContributedActionInvoker>[0]>['inheritedInvocation'];
-}>): Promise<CurrentProcessPluginActionExecutionAttempt> {
+}>;
+
+type AccountPluginActionRequest = AccountPluginActionRuntimeRequest & Readonly<{
+  deps: ActionExecutorDeps;
+  resolveContext?: ReturnType<typeof createCliActionExecutorHarness>['resolveContext'];
+}>;
+
+export function executeAccountPluginAction(params: AccountPluginActionRequest): Promise<CurrentProcessPluginActionExecutionAttempt> {
+  return withAccountPluginActionRuntime(params,
+    (runtime, allowUnmatched) => executeInAccountRuntime(params, runtime, allowUnmatched));
+}
+
+/** Private declaration read for trigger admission. The public Action spec omits the subject schema. */
+export async function readAccountPluginActionDefinition(host: AccountPluginActionRuntimeRequest['host'],
+  id: QualifiedPluginActionId, context?: ActionExecutorContext): Promise<ActionDefinitionV1 | null> {
+  const resolved = await withAccountPluginActionRuntime({ host, actionId: 'action.spec.get', input: { id }, ...(context ? { context } : {}) },
+    ({ registry }) => ({ definition: listRuntimeContributedActionDefinitions(registry, { id })[0] ?? null }));
+  return 'definition' in resolved ? resolved.definition : null;
+}
+
+/** Selects Account custody for both invocation and host-private declaration reads. */
+async function withAccountPluginActionRuntime<T extends CurrentProcessPluginActionExecutionAttempt | { definition: ActionDefinitionV1 | null }>(
+  params: AccountPluginActionRuntimeRequest,
+  useRuntime: (runtime: AccountExecutionRuntime, allowUnmatched?: boolean) => T | Promise<T>,
+): Promise<T | CurrentProcessPluginActionExecutionAttempt> {
   const credentials = params.host.credentials;
   if (!credentials || !params.host.serverHttpBaseUrl) return { matched: false };
   const serverId = params.host.serverId;
@@ -49,7 +72,7 @@ export async function executeAccountPluginAction(params: Readonly<{
   if (params.context?.signal?.aborted) return { matched: true,
     result: { ok: false, errorCode: 'cancelled', error: 'cancelled' } };
   if (params.accountRuntime) {
-    return await executeInAccountRuntime(params, await params.accountRuntime.read(), true);
+    return await useRuntime(await params.accountRuntime.read(), true);
   }
   if (params.host.isCredentialCurrent && !await params.host.isCredentialCurrent()) return { matched: true,
     result: { ok: false, errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired' } };
@@ -155,8 +178,8 @@ export async function executeAccountPluginAction(params: Readonly<{
     if (!runtime) return search ? { matched: false } : accountHandlerUnavailable;
     let retired: { attempt: CurrentProcessPluginActionExecutionAttempt; pluginId: string; custodyId: string };
     try {
-      const attempt = await executeInAccountRuntime(params, runtime);
-      if (!attempt.matched || attempt.result.ok || attempt.result.errorCode !== 'plugin_action_generation_retired'
+      const attempt = await useRuntime(runtime);
+      if ('definition' in attempt || !attempt.matched || attempt.result.ok || attempt.result.errorCode !== 'plugin_action_generation_retired'
         || attempt.result.effectAttempted !== false || !pluginId || params.actionId !== 'action.invoke'
         || params.inheritedInvocation || params.context?.expectedContributedActionOccurrenceId !== undefined
         || (params.input && typeof params.input === 'object' && 'expectedContributorOccurrenceId' in params.input)) return attempt;
@@ -178,7 +201,7 @@ export async function executeAccountPluginAction(params: Readonly<{
         return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
       }
       if (selection.custodyId === retired.custodyId) return retired.attempt;
-      return await executeInAccountRuntime(params, replacement);
+      return await useRuntime(replacement);
     } finally { await replacement?.registry.dispose(); }
   });
 }

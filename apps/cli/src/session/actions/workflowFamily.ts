@@ -79,7 +79,7 @@ import { readSessionLegacyMetadata } from './cliActionDeps/sessionStateReaders';
 
 export type CliWorkflowFamilyHost = Readonly<{
   readLocalActionSpec: ReadLocalWorkflowActionSpec;
-  listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
+  listContributedActionDefinitions?: Parameters<typeof createCliWorkflowTriggerActions>[0]['listContributedActionDefinitions'];
   nativeAccount?: Parameters<typeof createCliWorkflowTriggerActions>[0]['nativeAccount'];
   deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']>;
   roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;

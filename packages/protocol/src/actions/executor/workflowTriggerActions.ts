@@ -53,7 +53,8 @@ import {
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
 import { AutomationTriggerDefinitionInputSchema, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 import { ActionIdSchema } from '../actionIds.js';
-import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId, type QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import type { ActionDefinitionSummaryV1 } from '../actionDefinitionV1.js';
 import type { AutomationActionConsentTrigger } from '../../automations/automationActionTriggerV1.js';
 import { AutomationPullRequestTriggerSchema, type AutomationPullRequestTrigger } from '../../automations/pullRequestTrigger.js';
 import { admitAgentStartV1, type AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
@@ -143,7 +144,8 @@ export type WorkflowTriggerWorkflowContentV1 = Readonly<{
 }>;
 export type WorkflowTriggerActionsDependencies = Readonly<{
   automations: WorkflowTriggerAutomationOperations;
-  listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
+  listContributedActionDefinitions?: (selection: Readonly<{ id: QualifiedPluginActionId }>, caller?: Caller) =>
+    readonly ActionDefinitionSummaryV1[] | Promise<readonly ActionDefinitionSummaryV1[]>;
   nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
   /** Existing Home-bound Session-list transport; the shared resolver owns current led access. */
@@ -493,7 +495,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   };
   type TriggerWrite = Readonly<{ triggerId: string; trigger: AutomationTriggerDefinition | AutomationTriggerDefinitionInput }>;
   const assertTargetAccess = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1,
-    triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites: readonly TriggerWrite[] = []) => {
+    triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites: readonly TriggerWrite[] = [], caller?: Caller) => {
     for (const { trigger } of triggerWrites) {
       if (trigger.kind !== 'action' || 'consentFor' in trigger) continue;
       // Structural headers are host output. A caller cannot author admission facts.
@@ -505,8 +507,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const core = ActionIdSchema.safeParse(actionId);
         const contributed = core.success ? null : parseQualifiedPluginActionId(actionId);
         const contributedDefinition = contributed
-          ? deps.listContributedActionDefinitions?.({ id: formatQualifiedPluginActionId(contributed) })
-            .find(definition => definition.id === actionId) : undefined;
+          ? (await deps.listContributedActionDefinitions?.({ id: formatQualifiedPluginActionId(contributed) }, caller))
+            ?.find(definition => definition.id === actionId) : undefined;
+        caller?.signal?.throwIfAborted();
         const spec = core.success ? getActionSpec(core.data) : contributedDefinition;
         if (!spec) refuse('target_unavailable');
         if (!isActionEffectHookableV1(spec.sideEffectClass)) refuseInput('invalid_trigger_target');
@@ -537,7 +540,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     return resolved;
   };
   const assertWrite = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1, targetProject: WorkflowProjectTargetV1, caller?: Caller, sessionId?: string, creatingSession = false, runNow = false, admittedSession?: AdmittedSessionWrite, triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites?: readonly TriggerWrite[]) => {
-    const source = await assertTargetAccess(target, context, triggerEvents, triggerWrites);
+    const source = await assertTargetAccess(target, context, triggerEvents, triggerWrites, caller);
     const managed = readManagedMachineTriggerAction(target);
     if (managed) {
       if (!deps.resolveManagedMachine) refuse('target_unavailable');
@@ -1427,7 +1430,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && !current.context.actionApprovals?.some(approval => input.triggerId === undefined
           || approval.triggerId === input.triggerId || disabledSiblings.has(approval.triggerId))
         && Object.keys(input.patch).every((key) => key === 'enabled' || key === 'trigger')) {
-        const admittedSource = await assertTargetAccess(current.target, { ...current.context }, triggerEvents, triggerWrites);
+        const admittedSource = await assertTargetAccess(current.target, { ...current.context }, triggerEvents, triggerWrites, caller);
         const prepared = await prepareTriggerProjection(current, row.scopeSessionId, admittedSource);
         // The Automation owner advances the outer revision while retaining
         // the private recipe and complete placement census verbatim.

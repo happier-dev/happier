@@ -894,7 +894,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
   const workflowFamilyHost: CliWorkflowFamilyHost = {
-    listContributedActionDefinitions: selection => (readEffectiveDeps?.() ?? actionDeps).listContributedActionDefinitions?.(selection) ?? [],
+    listContributedActionDefinitions: async (selection, caller) => {
+      const definitions = (readEffectiveDeps?.() ?? actionDeps).listContributedActionDefinitions?.(selection);
+      if (definitions?.length) return definitions;
+      // A standalone Account Action has no committed Machine registry. Read
+      // the private declaration from the same Account runtime as invocation.
+      const { readAccountPluginActionDefinition } = await import('./executeAccountPluginAction');
+      const definition = await readAccountPluginActionDefinition(params, selection.id, caller);
+      return definition ? [definition] : [];
+    },
     readLocalActionSpec: async (input, target) => {
       const installedMachineId = localMachineId ?? (await readCurrentMachineControlIdentity()).machineId;
       if (target.machineId !== installedMachineId) return null;

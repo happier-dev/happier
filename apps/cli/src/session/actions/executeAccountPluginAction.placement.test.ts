@@ -38,6 +38,72 @@ import { encryptSessionPayload } from '@/session/transport/encryption/sessionEnc
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createRetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
+
+it('arms an after-Action trigger for an installed Account Action from the retained CLI executor', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-action-trigger-'));
+    const app = fastify();
+    const accountId = 'account-action-trigger-owner';
+    const serverId = 'account-action-trigger-home';
+    const serverHttpBaseUrl = 'http://account-action-trigger.test';
+    const homeFeatures = registerAccountHomeHttp(app, { accountId, serverId });
+    const authored = await registerAuthoredAccountActionRelease(app, accountId);
+    const saved = new Map<string, ReturnType<typeof AutomationDefinitionDetailSchema.parse>>();
+    app.get('/v3/automations', async () => ({ automations: [], nextCursor: null }));
+    app.post('/v3/automations', async request => {
+        const input = AutomationDefinitionCreateRequestSchema.parse(request.body);
+        const row = AutomationDefinitionDetailSchema.parse({
+            id: input.automationId, name: input.name, description: input.description ?? null, enabled: input.enabled,
+            executionRecipe: input.executionRecipe, targetType: null, existingSessionId: null, templateVersion: 1,
+            lastRunAt: null, createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
+            assignments: input.assignments?.map(assignment => ({ ...assignment, enabled: assignment.enabled ?? true,
+                priority: assignment.priority ?? 0, updatedAt: 1 })) ?? [],
+            triggers: input.triggers.map(({ triggerId, trigger }) => {
+                if (trigger.kind !== 'action' || !('triggerDefinitionEnvelope' in trigger)) throw new Error('Expected a sealed Action trigger');
+                return { ...trigger, id: triggerId, revision: 0, createdAt: 1, updatedAt: 1,
+                    reachesOthers: false, triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) };
+            }),
+        });
+        saved.set(row.id, row);
+        return row;
+    });
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    try {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const executor = createCliActionExecutor({ token, credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+            happyHomeDir, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId, serverHttpBaseUrl,
+            resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
+                features: { ...homeFeatures, features: { ...homeFeatures.features, automations: { enabled: true }, workflows: { enabled: true } } } }),
+        });
+        const machineId = 'workflow-machine';
+        const arm = (localId: string) => executor.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, {
+            project: { machineId, directory: '/workspace' },
+            target: { kind: 'inline', definition: { version: 1, blocks: [
+                { kind: 'action', id: 'read-policy', actionId: 'actions.policy.get', input: { profiles: { kind: 'literal', value: true } } },
+            ] } },
+            trigger: { kind: 'action', enabled: true, phase: 'after',
+                actionIds: [formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId })] },
+        }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            externalActionTarget: { kind: 'machine', machineId },
+            presentUserConfirmation: { actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID } });
+        expect(await arm('echo')).toMatchObject({ ok: true, result: { set: { triggers: [
+            { kind: 'action', phase: 'after', actionIds: [formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId: 'echo' })] },
+        ] } } });
+        expect(await arm('unknown')).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        authored.setEnabled(false);
+        expect(await arm('echo')).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(saved.size).toBe(1);
+    } finally {
+        restore();
+        await app.close();
+        resetActiveAccountSettingsSnapshotForTests();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
 
 it.each(['plain', 'e2ee'] as const)('routes declared and host-attached Session sources to their own Machine (%s)', async encryptionMode => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-session-source-'));
