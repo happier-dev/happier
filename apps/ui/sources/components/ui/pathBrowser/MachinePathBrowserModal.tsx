@@ -955,7 +955,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 serverId={deepSearchServerId ?? ''} machineId={props.machineId} title={t('newSession.pathPicker.machine')}
                 {...(workspace ? { managedName } : {})}
                 {...(props.onMachineChange ? { onSelectMachine: (machine: Readonly<{ id: string }>) => props.onMachineChange?.(machine.id) } : {})} />
-            <HappierPressable
+            {/* A workspace's tree cannot make folders here, so it offers no New folder control. */}
+            {workspace ? null : <HappierPressable
                 testID={PATH_BROWSER_CREATE_FOLDER_TEST_ID}
                 onPress={() => invokeBrowserCommand('createFolder')}
                 disabled={!canCreateFolder}
@@ -967,7 +968,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 accessibilityLabel={t('files.createFolderA11y')}
             >
                 <Icon name="folder" size={16} color={theme.colors.chrome.header.foreground} />
-            </HappierPressable>
+            </HappierPressable>}
             </>
         );
     }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, deepSearchServerId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome, workspace, managedName]);
@@ -1149,6 +1150,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     listRef={browserListRef}
                     onScrollToIndexFailed={handleScrollToIndexFailed}
                     renderRow={renderBrowserRow}
+                    // The virtualized list redraws its rows only when its data or extraData change: the row
+                    // renderer changes with the picked folder and the keyboard's active row, so a pick shows at once.
+                    extraData={renderBrowserRow}
                 />
                 <DropdownMenu
                     open={enableContextMenu && contextMenuDirectoryPath != null}

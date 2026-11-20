@@ -617,6 +617,8 @@ describe('MachinePathBrowserModal', () => {
         expect(screen.findByTestId(getPathBrowserRowTestId('/guest/.cache'))).toBeFalsy();
         expect(screen.findByTestId('path-browser-more')).toBeFalsy();
         expect(screen.findByTestId('path-browser-search')).toBeTruthy();
+        // The guest tree cannot make folders here, so no New folder control is offered.
+        expect(screen.findByTestId(PATH_BROWSER_CREATE_FOLDER_TEST_ID)).toBeFalsy();
     });
 
     it('can select the attached root itself when the guest directory is empty', async () => {

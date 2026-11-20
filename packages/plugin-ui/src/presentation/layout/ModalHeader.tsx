@@ -264,11 +264,12 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
           testID={`${testID}-actions-row`}
           style={{
             flexDirection: 'row',
-            flexWrap: 'wrap',
             alignItems: 'center',
             gap: space.s10,
+            minWidth: 0,
           }}
         >
+          {/* One line: a long chip gives way (truncates) rather than pushing a lone icon action onto a row of its own. */}
           {props.actions}
         </View>
       </View>
@@ -329,9 +330,10 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
           surfaceBinding.style,
         ]}
       >
+        {/* The title keeps its one line; a long chip beside it gives way (truncates) instead of wrapping the title. */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.s12 }}>
-          <View style={[titleWrap, titleLine]}>{title}</View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10 }}>
+          <View style={[{ flexGrow: 1, flexShrink: 0, maxWidth: '100%', gap: space.s2 }, titleLine]}>{title}</View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10, flexShrink: 1, minWidth: 0 }}>
             {props.actions}
             {close}
           </View>
