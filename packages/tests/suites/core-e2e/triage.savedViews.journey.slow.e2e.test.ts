@@ -13,6 +13,7 @@ import {
 } from '../../../plugins/triage/src/actions/savedViewsProtocol';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../../plugins/triage/src/corpus/query/smartPolicy';
 import { resolveTriageEffectiveView } from '../../../plugins/triage/src/settings/effectiveView';
+import { parseTriageSavedViews } from '../../../plugins/triage/src/settings/savedViews';
 import { TRIAGE_LIST_NO_FILTERS_V1, type SurfaceFilterSelectionV1 } from '../../../plugins/triage/src/projection/listWindow';
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
@@ -100,11 +101,13 @@ describe('core e2e: Triage saved views through the Account Action', () => {
       order: 'smart' as const, smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1, view: 'list' as const };
     const created = await write(clientA, { v: 1, kind: 'create', expectedRevision: initial.revision, ...draft });
     expect(created).toMatchObject({ status: 'applied', viewId: expect.any(String), revision: expect.any(String), views: [draft] });
-    if (created.status !== 'applied' || !created.viewId || !created.revision) throw new Error('Saved-view create did not apply');
+    if (created.status !== 'applied' || !created.viewId || !created.revision || !created.views) {
+      throw new Error('Saved-view create did not return the applied catalog');
+    }
     const createdId = created.viewId;
     const createdRevision = created.revision;
     expect((await read(clientA)).views).toEqual(created.views);
-    expect(resolveTriageEffectiveView({ saved: { kind: 'parsed', value: { v: 1, views: created.views! } },
+    expect(resolveTriageEffectiveView({ saved: parseTriageSavedViews({ v: 1, views: created.views }),
       selectedViewId: createdId, configuredSources: [] })).toMatchObject({ availability: 'saved', viewId: createdId,
       query: draft.query, order: draft.order, smartPolicy: draft.smartPolicy });
     pendingBoundary = 'connect second Triage Account client';

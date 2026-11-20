@@ -18,7 +18,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startServerLight } from '../../src/testkit/process/serverLight';
 import { startTestDaemon } from '../../src/testkit/daemon/daemon';
-import { startConnectedAccountTlsRecordingProxy } from '../../src/testkit/providers/connectedAccountTlsRecordingProxy';
+import { startConnectedAccountTlsRecordingProxy, type ConnectedAccountTlsResponse } from '../../src/testkit/providers/connectedAccountTlsRecordingProxy';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'triage-entry-detail-github' });
@@ -51,7 +51,7 @@ afterAll(async () => {
 
 beforeAll(async () => {
   github = await startConnectedAccountTlsRecordingProxy({ additionalDnsNames: ['api.github.com', 'github.com'],
-    responseForRequest(request) {
+    responseForRequest(request): ConnectedAccountTlsResponse {
       const path = new URL(request.path, 'https://api.github.com').pathname;
       if (path === '/user') return { statusCode: 200, headers: { 'x-oauth-scopes': 'repo' }, body: { login: 'detail-fixture', id: 72, name: 'Detail fixture' } };
       if (path === '/') return { statusCode: 200, body: { current_user_url: 'https://api.github.com/user' } };

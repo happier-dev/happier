@@ -12,7 +12,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startServerLight } from '../../src/testkit/process/serverLight';
 import { startTestDaemon } from '../../src/testkit/daemon/daemon';
-import { startConnectedAccountTlsRecordingProxy } from '../../src/testkit/providers/connectedAccountTlsRecordingProxy';
+import { startConnectedAccountTlsRecordingProxy, type ConnectedAccountTlsResponse } from '../../src/testkit/providers/connectedAccountTlsRecordingProxy';
 import { sanitizeCliTestEnv } from '../../src/testkit/process/cliTestEnv';
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
@@ -39,7 +39,7 @@ afterAll(async () => {
 
 beforeAll(async () => {
   github = await startConnectedAccountTlsRecordingProxy({ additionalDnsNames: ['api.github.com', 'github.com'],
-    async responseForRequest(request) {
+    async responseForRequest(request): Promise<ConnectedAccountTlsResponse> {
       if (request.path === '/user') {
         if (typeof mode === 'number') return { statusCode: mode,
           headers: mode === 429 ? { 'retry-after': '30' } : {},

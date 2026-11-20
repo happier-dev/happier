@@ -28,8 +28,13 @@ let server: Awaited<ReturnType<typeof startServerLight>> | undefined;
 let daemon: Awaited<ReturnType<typeof startTestDaemon>> | undefined;
 let github: Awaited<ReturnType<typeof startConnectedAccountTlsRecordingProxy>> | undefined;
 let caller: ReturnType<typeof spawnLoggedProcess> | undefined;
-const held = Promise.withResolvers<void>();
-const requestSeen = Promise.withResolvers<void>();
+function createLatch() {
+  let resolve = () => {};
+  const promise = new Promise<void>((release) => { resolve = release; });
+  return { promise, resolve };
+}
+const held = createLatch();
+const requestSeen = createLatch();
 let released = false;
 
 afterAll(async () => {

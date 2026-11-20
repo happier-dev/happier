@@ -9,7 +9,7 @@ import { buildAccountStoredContentCompatibilityHttpHeadersV1, createPlainSession
   createSessionOwnerMetadataV1, projectSessionSharedMetadataV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { normalizePluginAccountCollectionContractV1, PluginCollectionContentEnvelopeV1Schema,
+import { preparePluginAccountCollectionContractV1, PluginCollectionContentEnvelopeV1Schema,
   PluginCollectionProjectionV1Schema,
   PluginCollectionGetResultV1Schema, PluginCollectionMutationRequestV1Schema,
   PluginCollectionMutationErrorV1Schema, PluginCollectionMutationResultV1Schema,
@@ -41,8 +41,10 @@ import { waitFor } from '../../src/testkit/timing';
 const run = createRunDirs({ runLabel: 'triage-identity-disclosure' });
 const sourceRuntime = [process.env.NODE_OPTIONS, '--import', pathToFileURL(join(repoRootDir(),
   'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
-const contracts = PLUGIN_MANIFEST.contributes.accountCollections.map(contribution =>
-  normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_MANIFEST.id, contribution }));
+const collectionDeclarations = PLUGIN_MANIFEST.contributes.accountCollections;
+if (!collectionDeclarations?.length) throw new Error('Triage did not declare its Account collections');
+const contracts = collectionDeclarations.map(contribution =>
+  preparePluginAccountCollectionContractV1({ pluginId: PLUGIN_MANIFEST.id, contribution }).normalized);
 const entryRef = { source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
   kindId: 'issue', collisionScope: 'private-owner/repository|scope', entryId: 'private-item|4242' } as const;
 const components = [`${entryRef.source.pluginId}/${entryRef.source.localId}`, entryRef.kindId,

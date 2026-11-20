@@ -279,7 +279,7 @@ it('reads five external sources with exact Account bindings and pages a 500+3 so
     const originalUndiciFetch = undici.fetch;
     const external = (input: Parameters<typeof fetch>[0]) => providerHosts.includes(new URL(
       typeof input === 'object' && 'url' in input ? input.url : String(input)).hostname);
-    const proxyFetch: typeof fetch = (input, init) => originalUndiciFetch(input,
+    const proxyFetch = (input: RequestInfo | URL, init?: RequestInit) => originalUndiciFetch(input instanceof URL ? input.href : input,
       { ...init, dispatcher } as RequestInit); // Undici's public dispatcher extends the platform RequestInit.
     globalThis.fetch = (input, init) => external(input) ? proxyFetch(input, init) : originalFetch(input, init);
     undici.fetch = (input, init) => external(input) ? proxyFetch(input, init) : originalUndiciFetch(input, init);

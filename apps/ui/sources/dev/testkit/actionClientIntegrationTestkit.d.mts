@@ -175,6 +175,7 @@ export function connectUiActionClient(params: Readonly<{
         import('@happier-dev/deployments').DeploymentReadResultV1<import('@happier-dev/deployments/contracts/v1').DeploymentReceiptDetailV1>>;
     executeVoiceSpawn(input: unknown, effectId: string): Promise<string>;
     isAccountReady(): boolean;
+    waitForPluginAccountAvailability(): Promise<void>;
     readSessionAgentState(sessionId: string): import('@happier-dev/session-core/state').AgentState | null;
     isMachineActive(machineId: string): boolean;
     isMachineControlReady(machineId: string): boolean;
