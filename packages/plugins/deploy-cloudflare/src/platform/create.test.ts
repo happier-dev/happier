@@ -32,7 +32,8 @@ it.each(['pages-create', 'workers-create'])('retains %s exact native identity be
       ['POST', `/client/v4/accounts/account/${actionId === 'workers-create' ? 'workers/workers' : 'pages/projects'}`],
     ]);
     expect(JSON.parse(new TextDecoder().decode(requests[0].body))).toEqual(actionId === 'workers-create'
-      ? { name: 'reviewed-app' } : { name: 'reviewed-app', production_branch: 'trunk' });
+      ? { name: 'reviewed-app', subdomain: { enabled: true, previews_enabled: false } }
+      : { name: 'reviewed-app', production_branch: 'trunk' });
   } finally { await kit.dispose(); }
 });
 

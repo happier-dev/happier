@@ -39,7 +39,7 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   const reply = await request({ http, signal: context.signal, now: Date.now }, input.providerAccountId,
     product === 'pages' ? '/pages/projects' : '/workers/workers', 'link', ['write', 'POST'],
     { name: input.resourceName, ...(product === 'pages' ? { production_branch: input.productionBranch,
-      ...(source ? { source } : {}) } : {}) });
+      ...(source ? { source } : {}) } : { subdomain: { enabled: true, previews_enabled: false } }) });
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }), { phase: `deployment.cloudflare.${reply.phase}`,
       causeKind: 'native_failure', error: reply });
   const native = reply.value;
