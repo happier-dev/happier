@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamMembershipV1Schema } from '@happier-dev/protocol/teams/membership';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -173,15 +175,23 @@ describe('Team setup F: project defaults persistence', () => {
     expect(foreign).toMatchObject({ ok: true, result: { personalDefaultsRow: null } });
   });
 
-  it('TS.F.personalProject saves a deliberate project pick through the existing organization Action', async () => {
-    await fixture.assertKnownGoodSessionControl(admin, machine);
-    const projectRef = { serverId: fixture.serverId, projectKey: `project-${randomUUID()}` };
+  it('TS.F.personalProject saves a deliberate pick for a real Project and applies it to a new CLI Session', async () => {
+    const control = await fixture.assertKnownGoodSessionControl(admin, machine);
+    const opened = await admin.executeAsPerson('projects.open', { ...machine.target,
+      source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' } });
+    if (!opened.ok) throw new Error(`Opening the defaults Project refused (${opened.errorCode})`);
+    const project = OpenProjectResultV1Schema.parse(opened.result);
+    if (project.kind !== 'opened' || !project.facts?.projectKey) throw new Error('Opened Project omitted its canonical key');
+    const projectRef = { serverId: fixture.serverId, projectKey: project.facts.projectKey };
+    const model = { source: 'native', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'personal-project-model' } as const;
+    const personalDefaults = { ...defaults, placement: { kind: 'machine', target: machine.target },
+      modelByAgentTargetKey: { [model.agentTargetKey]: { v: 2, updatedAt: Date.now(), ref: model } } };
     const saved = await admin.executeReviewed('projects.organization.update', { projectRef, expectedRevision: 'absent',
-      sessionDefaults: { expectedRevision: 'absent', defaults } });
+      sessionDefaults: { expectedRevision: 'absent', defaults: personalDefaults } });
     // Initial behavioral RED: private project defaults are absent from the existing Action grammar.
     if (!saved.ok) throw new Error(`Personal defaults write refused (${saved.errorCode})`);
     expect(saved.ok).toBe(true);
-    expect(saved.result).toMatchObject({ ok: true, sessionDefaults: { revision: expect.any(Number), defaults } });
+    expect(saved.result).toMatchObject({ ok: true, sessionDefaults: { revision: expect.any(Number), defaults: personalDefaults } });
     const request = async (route: 'read' | 'list', input: unknown) => fetchJson<unknown>(
       `${fixture.server.baseUrl}/v1/account/project-rows/${route}`, { method: 'POST',
         headers: { Authorization: `Bearer ${admin.credentials.token}`, 'Content-Type': 'application/json' },
@@ -194,5 +204,16 @@ describe('Team setup F: project defaults persistence', () => {
     expect(census.data).toMatchObject({ status: 'listed', rows: expect.not.arrayContaining([
       expect.objectContaining({ key: expect.objectContaining({ kind: 'project-session-defaults' }) }),
     ]) });
+
+    const launched = await fixture.createSessionFromArgv(machine,
+      ['--project-context-json', JSON.stringify({ projectRef })], 'personal-project-defaults');
+    expect(launched).toMatchObject({ ok: true, kind: 'session_create', data: { session: { id: expect.any(String) } } });
+    if (!isRecord(launched.data) || !isRecord(launched.data.session) || typeof launched.data.session.id !== 'string') {
+      throw new Error('CLI did not return the personal Project Session identity');
+    }
+    const inherited = await admin.readSessionMetadata(launched.data.session.id);
+    expect(inherited).toMatchObject({ machineId: machine.target.machineId, path: machine.workspaceDir,
+      modelSelectionIntentV2: { v: 2, ref: model } });
+    expect(control.metadata.modelSelectionIntentV2?.ref).not.toEqual(model);
   });
 });

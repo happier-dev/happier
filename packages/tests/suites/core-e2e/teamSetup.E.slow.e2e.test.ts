@@ -176,14 +176,20 @@ it('TS.E.machineRows and TS.E.ambient retain ordered script rows through native 
   expect(ActionOperationGetV1ResponseSchema.parse(child.result)).toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
     kind: 'machineSetup', steps: [{ state: 'succeeded' }, { state: 'succeeded' }],
   } } });
-  await waitFor(() => [...actionOperationStore.getSnapshot().operationsByKey.values()].some(entry =>
-    entry.snapshot.operationId === native.operationId && entry.snapshot.originRunId === receipt.runId
-      && entry.snapshot.state === 'succeeded' && entry.snapshot.domainRef?.kind === 'machineSetup'
-      && entry.snapshot.domainRef.steps?.every(step => step.state === 'succeeded')), { timeoutMs: 60_000 });
-  const finalActivity = actionOperationStore.getSnapshot();
-  const activeOperations = actionOperationSelectors.selectActive(finalActivity)
-    .filter(operation => operation.observation === 'available')
-    .map(({ snapshot }) => ({ operationId: snapshot.operationId, actionId: snapshot.actionId, state: snapshot.state }));
-  expect(actionOperationSelectors.selectActivitySummary(finalActivity), JSON.stringify({ activeOperations }))
-    .toMatchObject({ activeCount: 0, hasAttention: true });
+  // The Run and its child reach the ambient store through separate pushes.
+  // The child's final state can be visible before the Run's final update.
+  await waitFor(() => {
+    const activity = actionOperationStore.getSnapshot();
+    const nativeSettled = [...activity.operationsByKey.values()].some(entry =>
+      entry.snapshot.operationId === native.operationId && entry.snapshot.originRunId === receipt.runId
+        && entry.snapshot.state === 'succeeded' && entry.snapshot.domainRef?.kind === 'machineSetup'
+        && entry.snapshot.domainRef.steps?.every(step => step.state === 'succeeded'));
+    if (!nativeSettled) return false;
+    const activeOperations = actionOperationSelectors.selectActive(activity)
+      .filter(operation => operation.observation === 'available')
+      .map(({ snapshot }) => ({ operationId: snapshot.operationId, actionId: snapshot.actionId, state: snapshot.state }));
+    expect(actionOperationSelectors.selectActivitySummary(activity), JSON.stringify({ activeOperations }))
+      .toMatchObject({ activeCount: 0, hasAttention: true });
+    return true;
+  }, { timeoutMs: 60_000, context: 'Native rows and ambient activity settle through operation pushes' });
 });
