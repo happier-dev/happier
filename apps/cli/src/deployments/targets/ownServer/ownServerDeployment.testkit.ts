@@ -187,9 +187,10 @@ const loadNativeModel = (file, noInterpolate = false) => {
     }
     return model;
 };
+const findNetwork = definition => state.networks.find(row => row.Name === definition.name || definition.external && row.Id === definition.name);
 const ensureNetworks = (model, project) => {
     for (const [key, definition] of Object.entries(model.networks || {})) {
-        if (state.networks.some(row => row.Name === definition.name)) continue;
+        if (findNetwork(definition)) continue;
         if (definition.external) throw new Error('fixture_external_network_unavailable');
         const gateway = Object.values(require('node:os').networkInterfaces()).flat()
             .find(address => address.family === 'IPv4' && !address.internal)?.address || '127.0.0.1';
@@ -263,6 +264,29 @@ else if (args[0] === 'version') {
 }
 else if (args[0] === 'info') write(args.at(-1) === '{{json .}}'
     ? { ID: state.engineId, OperatingSystem: state.operatingSystem } : state.engineId+'\n');
+else if (args[0] === 'image' && args[1] === 'pull' && /^docker\.io\/library\/haproxy@sha256:[a-f0-9]{64}$/.test(args[2])) {
+    (state.relayImages ||= {})[args[2]] = 'sha256:' + hash(args[2]); save();
+} else if (args[0] === 'image' && args[1] === 'inspect' && state.relayImages?.[args.at(-1)]) {
+    write(state.relayImages[args.at(-1)]);
+} else if (args[0] === 'container' && args[1] === 'ls' && args.includes('label=dev.happier.private-relay.directory')) {
+    const relay = Object.values(state.privateRelays || {}).find(row => args.includes('name=^/' + row.name + '$'));
+    if (relay) write(relay.id + ' ' + relay.directory);
+} else if (args[0] === 'container' && args[1] === 'create' && args.includes('haproxy')) {
+    const name = args[args.indexOf('--name') + 1];
+    const directory = args[args.indexOf('--label') + 1].split('=').slice(1).join('=');
+    const networkId = args[args.indexOf('--network') + 1];
+    if (!state.relayImages?.[args[args.indexOf('haproxy') - 1]] || !state.networks.some(row => row.Id === networkId)
+        || !fs.statSync(path.join(directory, 'forward.sock')).isSocket()) throw new Error('fixture_relay_unavailable');
+    const id = hash(name);
+    const relays = state.privateRelays ||= {};
+    if (relays[id]) throw new Error('fixture_relay_already_exists');
+    relays[id] = { id, name, directory };
+    save(); write(id);
+} else if (args[0] === 'container' && args[1] === 'start' && state.privateRelays?.[args[2]]) {
+    write(state.privateRelays[args[2]].name);
+} else if (args[0] === 'container' && args[1] === 'rm' && state.privateRelays?.[args.at(-1)]) {
+    delete state.privateRelays[args.at(-1)]; save();
+}
 else if (args[0] === 'container' && args[1] === 'ls' && args.includes('label=dev.happier.machine-setup.recipe=caddy@1')) {
     write(state.nativeCaddy ? JSON.stringify(state.nativeCaddy.Id)+'\n' : '');
 } else if (args[0] === 'container' && args[1] === 'inspect' && args.at(-1) === state.nativeCaddy?.Id) {
@@ -520,8 +544,9 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                             return { HostIp: port.host_ip || '0.0.0.0', HostPort: String(published) };
                         })])),
                 Networks: Object.fromEntries(Object.keys(definition.networks || {}).map(key => {
-                    const name = model.networks[key].name;
-                    return [name, { NetworkID: hash(name) }];
+                    const network = findNetwork(model.networks[key]);
+                    if (!network) throw new Error('fixture_network_unavailable');
+                    return [network.Name, { NetworkID: network.Id }];
                 })) } };
         });
     })];

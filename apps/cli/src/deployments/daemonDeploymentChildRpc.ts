@@ -29,6 +29,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
     resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<import('@/workspaces/projectSetup/projectFiniteAction').ProjectFiniteActionRuntime | null>;
     resolveInstalledRuntime(signal: AbortSignal, accountId: string): Promise<InstalledRuntime | null>;
     acquirePluginRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
+    acquireServiceExportForward?: import('./targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     captureNativeSetup?(): import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;
     signal?: AbortSignal;
@@ -121,6 +122,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
             serverHttpBaseUrl: requesterRuntime.serverHttpBaseUrl, machineId: host.machineId,
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials: installed.credentials,
                 ensureServiceObservations: host.ensureServiceObservations,
+                acquireServiceExportForward: host.acquireServiceExportForward,
                 resolveRequesterIdentity: host.resolveRequesterIdentity,
                 credentialProfileId: installed.serverId,
                 serverId: job.input.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl, machineId: host.machineId,

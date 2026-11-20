@@ -3340,6 +3340,7 @@ export class ApiMachineClient {
         registerDaemonDeploymentChildRpcHandler(this.rpcHandlerManager, {
             machineId: this.machine.id, signal: daemonWorkSignal,
             ...(executeManagedSnapshot ? { executeManagedSnapshot } : {}),
+            acquireServiceExportForward: this.lifecycleDependencies.acquireServiceExportForward,
             ensureServiceObservations: scope => this.ensureEnvironmentServices(scope),
             captureNativeSetup: () => {
                 const desired = this.captureMachineSetupDesired();

@@ -1,5 +1,6 @@
 import { isIPv6 } from 'node:net';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { MachineServicesListResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -134,11 +135,14 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
             // fall back to daemon Account authority for an external invocation.
             const credentials = authorization ? readRequesterAccountActionContext(authorization)?.credentials : host.credentials;
             if (!credentials) return unavailable();
-            const result = MachineServicesListResultV1Schema.parse(await callExactMachineRpc({ credentials,
+            const reply = readMachineActionRpcResult(await callExactMachineRpc({ credentials,
                 serverUrl: host.serverHttpBaseUrl, machineId: member.machineId, method: RPC_METHODS.MACHINES_SERVICE_LIST,
                 request: { serverId: input.homeServerIdentityId, machineId: member.machineId, environmentId: source.environmentId }, signal, requireCurrentMachine: true,
                 ...(authorization ? { externalAction: { context: input.context, effectActionId: RPC_METHODS.MACHINES_SERVICE_LIST,
                     installationId: input.installationId, privateKey: input.privateKey } } : {}) }));
+            const failure = readActionFailureEnvelope(reply);
+            if (failure) throw createActionExecuteFailureError(failure);
+            const result = MachineServicesListResultV1Schema.parse(reply);
             rows = result.kind === 'snapshot' ? result.services : [];
         }
         for (const row of rows) {

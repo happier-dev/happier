@@ -2,7 +2,13 @@ import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHostActionOperationRuntime } from '../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
+import { createCliApprovalsArtifactStore } from '../../../../cli/src/session/actions/approvals/artifactStore';
+import { createCliActionExecutorFromCredentials } from '../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { registerDaemonLocalServicesMachineRpcHandlers } from '../../../../cli/src/rpc/handlers/daemonLocalServices';
+import { createMachineServicesRuntime } from '../../../../cli/src/daemon/local/services/launch/machineServices';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { resolvePrivateServiceExportAdmissionForHost } from '../../../../cli/src/deployments/targets/ownServer/privateServiceReference';
@@ -105,7 +111,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
     DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -113,7 +119,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_DESCRIBE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/deployments';
@@ -2048,6 +2054,273 @@ describe('deployment children retain their controller Action authority', () => {
             });
         }, { authentication: 'real' }).finally(() => rm(directory, { recursive: true, force: true }));
     }, 40_000);
+
+    it.skipIf(process.platform !== 'linux')('activates the approved CLI Deploy on both installed runtime Machines with a saved Iroh reference', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, sourceWithoutRepository: true });
+        const directory = await mkdtemp(join(tmpdir(), 'deployment-reference-review-'));
+        const engineId = 'saved-reference-docker';
+        const docker = await createOwnServerDockerBoundary(join(directory, 'tools'), { engineId });
+        const image = await docker.registerImage('app', 'review');
+        const document = JSON.stringify({ services: { app: { image: image.registryReference, environment: { ORIGIN_URL: '${ORIGIN_URL}' } } } });
+        const definition = { kind: 'stored' as const, document, contentRevision: 1,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] };
+        const originNativeDocument = JSON.stringify({ services: { app: { image: image.registryReference, pull_policy: 'never',
+            ports: [{ target: 3000, published: 30080, host_ip: '127.0.0.1', protocol: 'tcp' }] } } });
+        const originDefinition = { ...definition, document: originNativeDocument,
+            composeDigest: `sha256:${createHash('sha256').update(originNativeDocument).digest('hex')}` };
+        const exported = createDeploymentEnvironmentDetailV1().content;
+        exported.definition = originDefinition;
+        exported.ownServer!.serviceExports = [{ key: 'origin', service: 'app', containerPort: 3000,
+            scheme: 'http', exposure: 'loopback', transport: { kind: 'iroh' } }];
+        const origin = await db.deploymentEnvironment.create({ data: { projectSourceId: f.environment.projectSourceId,
+            createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.member.id, buildMachineId: f.member.id, referencedSavedSecretRevisions: [],
+            ...await f.content('deployment-environment.v1', exported) } });
+        const originLink = await db.deploymentTargetLink.create({ data: { environmentId: origin.id, createdByAccountId: f.account.id,
+            role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'deployed',
+            machines: { create: { machineId: f.member.id, installationId: f.member.installationId, position: 0, state: 'active' } },
+            ...await f.content('deployment-target-link.v1', {}) } });
+        const consumer = createDeploymentEnvironmentDetailV1().content;
+        consumer.definition = definition;
+        const grantBinding = { purpose: 'variable', phase: 'runtime', grantRef: crypto.randomUUID() } as const;
+        const reference = { kind: 'reference', environmentId: origin.id, export: 'origin', via: 'privateNetwork' } as const;
+        consumer.bindings = [{ ...grantBinding, name: 'ORIGIN_URL', source: reference }];
+        await db.deploymentEnvironment.update({ where: { id: origin.id }, data: { runtimeTargetLinkId: originLink.id } });
+        await db.deployment.delete({ where: { id: f.receipt.id } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { edgeMachineId: null,
+            buildMachineId: f.controller.id, referencedSavedSecretRevisions: [], ...await f.content('deployment-environment.v1', consumer) } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { state: 'configured', ...await f.content('deployment-target-link.v1', {}),
+            machines: { updateMany: { where: { machineId: f.member.id }, data: { position: 1, state: 'joining' } },
+                create: { machineId: f.controller.id, installationId: f.controller.installationId, position: 0, state: 'joining' } } } });
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id,
+            grants: [f.controller, f.member].map(machine => sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
+                environmentId: f.environment.id, machineId: machine.id, installationId: machine.installationId, binding: grantBinding },
+                installationPublicKey: machine.keys.publicKey, content: { kind: 'environmentValues',
+                    binding: { ...grantBinding, name: 'ORIGIN_URL' }, definition: reference } })) }));
+        const actionId = DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+            authentication, actionId, machineId: f.controller.id, installationId: f.controller.installationId,
+            custodianAccountId: f.account.id, admittedMachineRole: 'manage', target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const credentials = { token: await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' }), encryption: null };
+        const exchanges: Array<{ route: string; status: number; effect?: unknown; forwarded?: boolean }> = [];
+        await withAuthenticatedTestApp(app => {
+            registerDeploymentRoutes(app); projectSourceRoutes(app); artifactsRoutes(app); machinesRoutes(app);
+            registerAccountEncryptionRoutes(app); registerAccountProfileRoute(app); registerAccountSettingsRoutes(app);
+            changesRoutes(app); featuresRoutes(app); registerAutomationV3Routes(app);
+            app.addHook('onResponse', async (request, reply) => {
+                exchanges.push({ route: `${request.method} ${request.routeOptions.url}`, status: reply.statusCode,
+                    effect: request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER],
+                    forwarded: request.headers[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER] !== undefined });
+            });
+        }, async app => {
+            const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            await withConfiguredDaemonTestHome({ prefix: 'two-machine-reference-review-', env: {
+                HAPPIER_SERVER_URL: baseUrl, HAPPIER_ACTIVE_SERVER_ID: serverId,
+                PATH: `${join(directory, 'tools')}${delimiter}${process.env.PATH ?? ''}` } }, async () => {
+                const profile = await addServerProfile({ name: 'review-home', serverUrl: baseUrl, webappUrl: baseUrl });
+                await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+                    descriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: baseUrl, revision: 1,
+                        endpoints: [{ kind: 'https', url: baseUrl }] } });
+                const channel = await createRequesterCurrentnessSocketHarness();
+                const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+                    runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+                const acquireRegistry = () => runtime.controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => runtime.registry });
+                const machineScope = new AsyncLocalStorage<typeof f.controller>();
+                // Each installed Machine has its own release and stage-log filesystem.
+                const home = configuration.happyHomeDir;
+                const memberHome = join(directory, 'member-home');
+                await mkdir(memberHome, { mode: 0o700 });
+                const installedRequester = (machine: typeof f.controller) => {
+                    const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => serverId,
+                        resolveHostIdentity: async () => ({ machineId: machine.id, installationId: machine.installationId,
+                            custodianAccountId: f.account.id }) });
+                    return async (context: Parameters<NonNullable<typeof admission.resolveActionRequester>>[0]) => {
+                        const requester = await admission.resolveActionRequester!(context);
+                        try { return requester.identity; } finally { await requester.dispose(); }
+                    };
+                };
+                const managed = runtime.registry.projectManagedServices;
+                const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: memberHome,
+                    serverId, environmentId: origin.id });
+                const originCompose = join(directory, 'origin-compose.json');
+                await writeFile(originCompose, originNativeDocument);
+                execFileSync(docker.executablePath, ['compose', '--project-name', identity.projectName, '--project-directory', directory, '--file', originCompose,
+                    'up', '--no-build', '--pull', 'never']);
+                const release = await createDeploymentSourceMaterializationPort({ async admit() {
+                    return { ...identity, environmentId: origin.id, deploymentId: 'origin-release', machineId: f.member.id,
+                        installationId: f.member.installationId, artifactDirectory: join(directory, 'origin-artifacts'),
+                        definition: originDefinition, async assertCurrent() {} };
+                } }).materialize({ environmentId: origin.id, deploymentId: 'origin-release' });
+                await release.commit();
+                const originService = { kind: 'deployment' as const, machineId: f.member.id, environmentId: origin.id,
+                    environmentInstanceId: identity.environmentInstanceId, composeService: 'app', serviceId: `${identity.environmentInstanceId}/app` };
+                const observation = await managed.superviseProject({ ...originService, kind: 'environment', serverId,
+                    deploymentId: 'origin-release', release, appliedServiceExports: exported.ownServer!.serviceExports,
+                    specIdentity: 'origin-container', isCurrent: () => true, async releaseObservation() {}, nativeEffects: { keys: [] },
+                    processSpec: { mode: { kind: 'native', builtinLifecycle: {
+                        async inspect() { return { phase: 'running', readiness: 'ready', endpoint: null }; },
+                        nativeContainers: () => [{ id: 'origin-container', composeProject: identity.projectName,
+                            service: 'app', containerName: `${identity.projectName}-app-1`, networkNames: [`${identity.projectName}_default`] }],
+                        async nativeDocker() { return { engineId, async run() { throw new Error('The source capture only supplies engine identity'); } }; },
+                        runtimeFacts() { return { observedAt: Date.now(), freshness: 'current', configuration: { name: 'app',
+                            replicas: null, resources: { cpus: null, memory: null }, restartPolicy: 'unless-stopped', healthcheck: 'absent',
+                            mounts: [], ports: [{ target: 3000, published: 30080, bindAddress: '127.0.0.1', protocol: 'tcp' }] } }; },
+                        async stop() { return { status: 'stopped' }; },
+                    } } } });
+                const requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: baseUrl, isCurrent: async () => true });
+                const services = createMachineServicesRuntime({ target: { serverId, machineId: f.member.id },
+                    readMetadata: () => ({ status: 'unavailable' }),
+                    captureMetadataPort() { throw new Error('The exact inventory read does not edit Machine metadata'); },
+                });
+                const homeProperty = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+                Object.defineProperty(configuration, 'happyHomeDir', { configurable: true, enumerable: true,
+                    get: () => machineScope.getStore()?.id === f.member.id ? memberHome : home });
+                const installation = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(() => {
+                    const machine = machineScope.getStore() ?? f.controller;
+                    return { version: 1, createdAt: 1, installationId: machine.installationId,
+                        publicKey: Buffer.from(machine.keys.publicKey).toString('base64url'), privateKey: Buffer.from(machine.keys.secretKey).toString('base64url') };
+                });
+                try {
+                    if (!requester) throw new Error('Expected original CLI requester custody');
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: baseUrl, target, installationId: f.controller.installationId,
+                        privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                    if (!authorization) throw new Error('Expected controller-signed CLI requester projection');
+                    const serviceMethod = `${f.member.id}:${RPC_METHODS.MACHINES_SERVICE_LIST}`;
+                    const childMethod = `${f.member.id}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+                    const rpcMethods: string[] = [];
+                    const rpcOutcomes: Array<{ method: string; kind?: unknown; code?: unknown; keys?: string[]; type?: string }> = [];
+                    const projectRpcOutcome = (value: unknown): Omit<(typeof rpcOutcomes)[number], 'method'> => {
+                        if (!value || typeof value !== 'object') return { type: value === null ? 'null' : typeof value };
+                        if ('result' in value && 'v' in value) return projectRpcOutcome(value.result);
+                        return { keys: Object.keys(value), ...('kind' in value ? { kind: value.kind } : {}),
+                            ...('errorCode' in value ? { code: value.errorCode } : 'code' in value ? { code: value.code } : {}) };
+                    };
+                    const createReceiver = (machine: typeof f.controller) => createRpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id,
+                        encryptionMode: 'plain', logger: () => {},
+                        prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
+                            purpose: request.purpose ?? { kind: 'external_action' }, machineId: machine.id,
+                            serverId, serverHttpBaseUrl: baseUrl, ownCredentials: credentials,
+                            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId: machine.id }),
+                            createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+                        }), authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                            machineId: machine.id, resolveCustodianAccountId: async () => f.account.id,
+                            resolveInstallationId: () => machine.installationId, verifyMachineAdmission: admission =>
+                                verifyMachineRpcAdmissionCurrent({ ...admission, privateKey: machine.keys.secretKey,
+                                    daemonToken: credentials.token, serverHttpBaseUrl: baseUrl }),
+                        }, source) });
+                    const forwards: unknown[] = [];
+                    const acquireServiceExportForward: NonNullable<
+                        Parameters<typeof createOwnServerDeploymentRuntimeForHost>[0]['acquireServiceExportForward']
+                    > = async ({ targetMachineId, serviceExport }) => {
+                        forwards.push({ targetMachineId, serviceExport });
+                        return { host: '127.0.0.1', port: 32080, observedPath: 'direct', async close() {} };
+                    };
+                    const registered = [f.controller, f.member].map(machine => {
+                        const receiver = createReceiver(machine);
+                        if (machine.id === f.member.id) {
+                            const serviceExecutor = createCliActionExecutorFromCredentials({ credentials, machineId: machine.id,
+                                serverId, serverApiUrl: baseUrl, admittedAccountEncryptionMode: 'plain',
+                                machineActionDirectTargetTransport: { machineId: machine.id, machineServiceAction: request => services.execute(request),
+                                    invoke: (method, request, options) => receiver.invokeLocal(method, request, options) } });
+                            registerDaemonLocalServicesMachineRpcHandlers(receiver, { machineId: machine.id, serverId,
+                                accountId: f.account.id, projectManagedServices: managed,
+                                resolveLauncherActionExecutor: () => serviceExecutor });
+                        }
+                        registerDaemonDeploymentChildRpcHandler(receiver, { machineId: machine.id,
+                            resolveRequesterIdentity: installedRequester(machine),
+                            resolveRequesterRuntime: ingress => resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId,
+                                machineId: machine.id, installationId: machine.installationId, isInstalledCurrent: () => true }),
+                            resolveInstalledRuntime: async () => ({ serverId, machineId: machine.id, accountId: f.account.id,
+                                credentials, serverHttpBaseUrl: baseUrl, isCurrent: async () => true }),
+                            acquirePluginRuntimeRegistryLease: acquireRegistry, acquireServiceExportForward });
+                        const socket = { id: `runtime-${machine.id}`, data: { clientType: 'machine-scoped', machineId: machine.id,
+                            verifiedMachineInstallationId: machine.installationId }, timeout: () => ({
+                            emitWithAck: async (_event: string, payload: Parameters<typeof receiver.handleRequest>[0]) => {
+                                rpcMethods.push(payload.method);
+                                const acknowledged: unknown = await machineScope.run(machine, () => receiver.handleRequest(payload, undefined, 'authenticated_home_socket'));
+                                rpcOutcomes.push({ method: payload.method, ...projectRpcOutcome(acknowledged) });
+                                return acknowledged;
+                            },
+                        }) };
+                        qualifyCurrentAccountStoredContentSocket(socket);
+                        return socket;
+                    });
+                    const sender = Object.assign(createAuthenticatedFakeSocket({ id: 'two-machine-review-sender', data: {
+                        userId: f.account.id, clientType: 'user-scoped', clientPurpose: 'scoped-rpc', authTokenKind: 'account' } }),
+                        { handshake: { auth: { token: credentials.token } } });
+                    qualifyCurrentAccountStoredContentSocket(sender);
+                    registerSocketRpcHandlers({ userId: f.account.id, socket: sender as unknown as Socket, io: createSocketRoomDiscoveryHarness(async room =>
+                        registered.filter(socket => [socket.id, `rpc:${f.account.id}:${socket.data.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`,
+                            ...(socket.data.machineId === f.member.id ? [`rpc:${f.account.id}:${serviceMethod}`] : [])].includes(room))) });
+                    channel.server.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL,
+                        (request: unknown, acknowledge: (result: unknown) => void) => triggerSocketHandler(sender, SOCKET_RPC_EVENTS.CALL, request, acknowledge)));
+                    const controllerHost = { credentials, serverId, serverHttpBaseUrl: baseUrl, machineId: f.controller.id,
+                        resolveRequesterIdentity: installedRequester(f.controller), acquirePluginRuntimeRegistryLease: acquireRegistry };
+                    const native = createOwnServerDeploymentRuntimeForHost({ ...controllerHost, acquireServiceExportForward });
+                    const deployment = createDaemonDeploymentActionDeps({ ...controllerHost, runtime: native });
+                    const approvals = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: baseUrl });
+                    const operations = createHostActionOperationRuntime({ serverId, machineId: f.controller.id,
+                        custodyBinding: { serverId, installationId: f.controller.installationId }, resolveAccountId: async () => f.account.id });
+                    const signApproval = (request: Parameters<NonNullable<import('@happier-dev/protocol').ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
+                        signExternalActionApprovalInputV1({ ...request, authorizationToken: root.token, privateKey: f.controller.keys.secretKey });
+                    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deployment,
+                        serverId, machineId: f.controller.id, runActionOperation: operations.runActionOperation,
+                        actionAutomations: createCliActionAutomationPortV1({ token: credentials.token, serverHttpBaseUrl: baseUrl }),
+                        approvalsCreate: approvals.approvalsCreate, approvalsGet: approvals.approvalsGet, approvalsUpdate: approvals.approvalsUpdate,
+                        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.accountId === f.account.id && origin.requestId === envelope.requestId,
+                        prepareApprovalExecutionAuthorization: async ({ authorization: stored }) => stored.token === root.token
+                            ? { authorization, signExternalActionApprovalInput: signApproval } : null });
+                    const response = await runWithServerHttpBaseUrl(baseUrl, () => executor.execute(actionId, input, {
+                        surface: 'cli', authority: 'present_user', runtimeAccountId: f.account.id, actionCaller: { kind: 'host' },
+                        actionRequestId: envelope.requestId, originalActionEnvelope: envelope, serverId, serverIdentityId: serverId,
+                        externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+                        signExternalActionApprovalInput: signApproval,
+                    }));
+                    expect(response, JSON.stringify({ error: response.ok ? undefined : response.errorCode, exchanges, rpcMethods }))
+                        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                    if (!response.ok || typeof response.result !== 'object' || !response.result || !('artifactId' in response.result)
+                        || typeof response.result.artifactId !== 'string') throw new Error('Deployment did not create an Ask');
+                    const artifactId = response.result.artifactId;
+                    const opened = await runWithServerHttpBaseUrl(baseUrl, () => approvals.approvalsGet({ artifactId, serverId }));
+                    expect(opened).toMatchObject({ actionId,
+                        actionArgs: { environmentId: f.environment.id, targetLinkId: f.link.id },
+                        preview: { deploymentReview: { runtimeMachines: expect.arrayContaining([
+                            { machineId: f.controller.id, review: expect.anything() }, { machineId: f.member.id, review: expect.anything() },
+                        ]) } } });
+                    expect(rpcMethods).toEqual(expect.arrayContaining([serviceMethod, childMethod]));
+                    expect(exchanges).toEqual(expect.arrayContaining([expect.objectContaining({ effect: RPC_METHODS.MACHINES_SERVICE_LIST, status: 200, forwarded: false })]));
+                    expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(0);
+                    const decided = await runWithServerHttpBaseUrl(baseUrl, () => executor.execute(APPROVAL_REQUEST_DECIDE_ACTION_ID_V1,
+                        { artifactId, decision: 'approve' }, { surface: 'cli', authority: 'present_user', runtimeAccountId: f.account.id,
+                            actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId }));
+                    const settled = await runWithServerHttpBaseUrl(baseUrl, () => approvals.approvalsGet({ artifactId, serverId }));
+                    const receipt = await db.deployment.findFirst({ where: { environmentId: f.environment.id } });
+                    const activations = (await docker.readInvocations())
+                        .filter(call => call.args.includes('up') && !call.args.includes(originCompose)).length;
+                    expect(settled?.execution, JSON.stringify({ decision: decided.ok ? 'ok' : decided.errorCode,
+                        error: settled?.execution?.ok === false ? settled.execution.errorCode : undefined,
+                        state: receipt?.state, activations, rpcOutcomes, nativeFailures: await docker.readFailures() })).toMatchObject({ ok: true });
+                    expect(receipt).toMatchObject({ state: 'succeeded' });
+                    expect(activations).toBe(2);
+                    expect(forwards).toContainEqual({ targetMachineId: f.member.id, serviceExport: expect.objectContaining({
+                        exportKey: 'origin', installationId: f.member.installationId, service: originService,
+                        destination: { host: '127.0.0.1', port: 30080 } }) });
+                } finally {
+                    await requester?.dispose(); await observation.dispose(); await channel.close();
+                    installation.mockRestore();
+                    Object.defineProperty(configuration, 'happyHomeDir', homeProperty);
+                    await services.dispose(); await runtime.dispose();
+                }
+            });
+        }, { authentication: 'real' }).finally(() => rm(directory, { recursive: true, force: true }));
+    }, 180_000);
 
     it('refuses another Account saved-reference Environment and Artifact without content custody', async () => {
         const f = await fixture('account', 'account', { readableEnvironment: true });

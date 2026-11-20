@@ -6,6 +6,7 @@ import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machin
 import { MachineReachabilityConfigureFailureDetailsV1Schema, MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
@@ -437,7 +438,10 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
             }
             const effectSessionId = inputSessionId ?? envelopeDefaultSessionId;
+            // Saved-reference reads also carry their parent deployment child. Only the
+            // declared archive methods consume that packet as filesystem authority.
             const deploymentArchiveAdmission = context?.workspaceSyncSourceExecution?.externalActionExecution.deploymentChildExecution
+                && readDeploymentArchiveRpcEffectV1(method)
                 ? await (await import('@/deployments/targets/ownServer/archiveFilesystemAdmission'))
                     .readDeploymentArchiveRpcAdmission(context, method) : null;
             if (effectSessionId && spec.sideEffectClass && spec.sideEffectClass !== 'read' && spec.sideEffectClass !== 'none') {
