@@ -31,8 +31,7 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
-import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
-import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { SshConfiguredHostPicker, SshHostChip } from '@/components/ssh/SshConfiguredHostPicker';
 import { resolveRemoteRelayCompletionUrl } from '@/components/systemTasks/remoteSshBootstrap/remoteSshBootstrapTask';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
@@ -769,7 +768,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 suggestions={filteredConfiguredHostSuggestions}
                 onRefresh={configuredHostSuggestions.refresh}
                 onSelectSuggestion={handleSelectConfiguredHostSuggestion}
-                trailingChip={<WelcomeActionCard testID={`${testID}-new-host`} presentation="pill" iconName="plus" escape
+                trailingChip={<SshHostChip testID={`${testID}-new-host`} iconName="plus"
                     title={t('setupOnboarding.remoteHosts.newHostOption')} onPress={() => setCredentialEntryChosen(true)} />}
             />
         </View>;

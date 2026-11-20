@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,7 +11,7 @@ import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { t } from '@/text';
 
 import type { SshConfiguredHostSuggestion } from './filterConfiguredSshHostSuggestions';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type ApplySshConfiguredHostSuggestion = (suggestion: SshConfiguredHostSuggestion) => void;
 
@@ -78,14 +79,12 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                 // The detected hosts as one centred row of chips, the step's own chip last (lab direction A "Which
                 // machine?"); each names where it was found as its hint.
                 <View style={styles.suggestions}>
-                    {props.suggestions.map((suggestion) => <WelcomeActionCard
+                    {props.suggestions.map((suggestion) => <SshHostChip
                         key={suggestion.id}
                         testID={`${props.testID}-${suggestion.id}`}
-                        presentation="pill"
                         iconName="terminal"
                         title={suggestion.alias}
-                        subtitle={describeSuggestion(suggestion)}
-                        escape
+                        hint={describeSuggestion(suggestion)}
                         onPress={() => props.onSelectSuggestion(suggestion)}
                     />)}
                     {props.trailingChip}
@@ -164,6 +163,26 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
         </View>
     );
 });
+
+/**
+ * One chip of the row: the small control as a 28 px capsule with its glyph (lab direction A `.r3-chip`), the same
+ * object for a detected host and the step's "New host".
+ */
+export function SshHostChip(props: Readonly<{ testID: string; iconName: IconName; title: string; hint?: string; onPress: () => void }>) {
+    const { theme } = useUnistyles();
+    return (
+        <RoundButton
+            testID={props.testID}
+            size="small"
+            display="secondary"
+            capsuleHeight={HAPPIER_PAGE_METRICS.smallControlHeightPx}
+            leading={<Icon name={props.iconName} size={14} color={theme.colors.text.secondary} />}
+            title={props.title}
+            accessibilityHint={props.hint}
+            onPress={props.onPress}
+        />
+    );
+}
 
 const styles = StyleSheet.create((theme) => ({
     suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.s8 },
