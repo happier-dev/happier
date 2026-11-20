@@ -62,7 +62,7 @@ async function setup() {
 }
 
 describe('Theme runtime synchronization', () => {
-    it('cold-loads the saved plugin theme through its Machine theme section without opening a catalog', async () => {
+    it('cold-loads the saved plugin theme and falls back when its Machine reports uninstall with the catalog closed', async () => {
         const fixture = await setup();
         const { AppShellPluginUiProjectionProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -88,14 +88,15 @@ describe('Theme runtime synchronization', () => {
             } } }, registrySources: { family: 'registrySources', entriesById: {} } },
         });
         const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection });
+        let currentProjection = deferred;
         const sectionReads: string[] = [];
         shared.machineRpc.mockImplementation(async ({ method, payload }) => {
             expect(method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload);
-            if (!request.sectionRead) return deferred.manifest;
+            if (!request.sectionRead) return currentProjection.manifest;
             const { digest, offset, includeDigests } = request.sectionRead;
             sectionReads.push(digest, ...includeDigests ?? []);
-            return deferred.read(digest, offset, includeDigests);
+            return currentProjection.read(digest, offset, includeDigests);
         });
         onTestFinished(() => { shared.machineRpc.mockReset(); clearPluginAccountAvailabilityProjection(); });
         storage.setState({ endpointStatus: 'online', isDataReady: true });
@@ -124,7 +125,38 @@ describe('Theme runtime synchronization', () => {
             expect({ demandedFamilies, canvas: shared.themes!.light.colors.background.canvas })
                 .toEqual({ demandedFamilies: ['familiesById.themes'], canvas: '#224466' });
         });
-        await cold.unmount();
+        const reference = { kind: 'plugin', pluginId, contributionId: 'paper' };
+        const { readCurrentAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const readTheme = () => readCurrentAppShellPluginUiProjection({ scope: fixture.scope, declarationsOnly: true })
+            ?.themesById[`${pluginId}/paper`];
+        const installedTheme = readTheme();
+        expect(installedTheme?.definition.theme.name).toBe('Paper');
+        try {
+            const sectionReadsBeforeUninstall = sectionReads.length;
+            await act(async () => {
+                replacePluginAccountAvailabilityProjection({ scope: fixture.scope, snapshot: { availabilityCursor: 2,
+                    intentReads: [], materializations: [], snapshots: [], inventoryComplete: false } });
+            });
+            expect(readTheme()).toBe(installedTheme);
+            currentProjection = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'b'.repeat(64),
+                projection: { ...projection, generation: 2, installedPackagesById: {},
+                    familiesById: { ...projection.familiesById, themes: { family: 'themes', entriesById: {} } } } });
+            await act(async () => {
+                replacePluginAccountAvailabilityProjection({ scope: fixture.scope, snapshot: { availabilityCursor: 3,
+                    intentReads: [], materializations: [], snapshots: [{ serverIdentityId: fixture.scope.serverId,
+                        machineId, materializations: [] }] } });
+            });
+            await act(async () => {
+                await publishMachineInventoryForTest(fixture.scope, [{ ...machine, daemonStateVersion: 2,
+                    daemonState: { contributionRegistryProjectionRevision: 2 } }]);
+            });
+            await vi.waitFor(() => {
+                expect(readTheme()).toBeUndefined();
+                expect(shared.themes!.light.colors.background.canvas).toBe(lightTheme.colors.background.canvas);
+            });
+            expect(sectionReads).toHaveLength(sectionReadsBeforeUninstall);
+            expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual(reference);
+        } finally { await cold.unmount(); }
     });
 
     it('applies each mode press once when its settings publication flushes synchronously', async () => {

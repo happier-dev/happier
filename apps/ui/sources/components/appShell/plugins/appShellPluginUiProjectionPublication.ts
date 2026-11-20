@@ -141,6 +141,15 @@ function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, 
     return model;
 }
 
+function withdrawUninstalledThemes(projection: PluginUiProjectionModel | null,
+    installations: InstalledMachineDeclarations['materializationsByPluginId'] | undefined): PluginUiProjectionModel | null {
+    if (!projection) return projection;
+    const themes = Object.entries(projection.themesById);
+    const installed = themes.filter(([, theme]) => installations && Object.hasOwn(installations, theme.pluginId));
+    return installed.length === themes.length ? projection
+        : Object.freeze({ ...projection, themesById: Object.freeze(Object.fromEntries(installed)) });
+}
+
 const EMPTY_UNION: PluginUiProjectionUnion = Object.freeze({ pluginUiProjection: null, phase: 'establishing',
     interactionEnabled: false, hasEstablishingMembers: false, machineId: null, serverId: null });
 export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime: null,
@@ -194,6 +203,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     let explicitSelections: PluginUiProjectionUnionOriginSelections = new Map();
     let installedInput: InstalledPlugins | undefined;
     let installedByMachineId: ReadonlyMap<string, InstalledMachineDeclarations> = new Map();
+    let reportedMachines: PluginAccountUiProjectionInputs['reportedMachines'];
+    let reportedHomeByMachineId: ReadonlyMap<string, string> = new Map();
     let targetBasis: readonly unknown[] = [];
     let sourcePluginIds = NO_IDS;
     const reportedPluginSupply = new Map<string, number>();
@@ -260,6 +271,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         explicitSelections = new Map();
         installedInput = undefined;
         installedByMachineId = new Map();
+        reportedMachines = undefined;
+        reportedHomeByMachineId = new Map();
         targetBasis = [];
         sourcePluginIds = NO_IDS;
         reportedPluginSupply.clear();
@@ -379,6 +392,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const { accountLifetime, availabilityInputs } = sources;
         const previous = snapshot;
         const previousDeclarations = installedByMachineId;
+        const previousReportedHomes = reportedHomeByMachineId;
+        if (reportedMachines !== availabilityInputs?.reportedMachines) {
+            reportedMachines = availabilityInputs?.reportedMachines;
+            reportedHomeByMachineId = new Map(reportedMachines?.map(({ machineId, serverIdentityId }) => [machineId, serverIdentityId]));
+        }
         const nextIdentityBasis = [sources.activeServerId, sources.serverProfilesGeneration];
         if (nextIdentityBasis.some((value, index) => value !== identityBasis[index]) || identityBasis.length === 0) {
             activeServerIdentity = resolvePortableServerIdentityForRoutingId(sources.activeServerId) ?? undefined;
@@ -521,9 +539,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const current = currentness.get(target.machineId);
             const declaration = installedByMachineId.get(target.machineId);
             const serverIdentityId = declaration?.serverIdentityId ?? activeServerIdentity;
+            const reportedHome = reportedHomeByMachineId.get(target.machineId);
             const selectableExecutionOrigins = selectableByMachine.get(target.machineId)?.origins;
             if (old && old.serverId === target.serverId && old.serverIdentityId === serverIdentityId
                 && old.selectableExecutionOrigins === selectableExecutionOrigins
+                && reportedHome === previousReportedHomes.get(target.machineId)
                 && (installedByMachineId === previousDeclarations || declaration === previousDeclarations.get(target.machineId))
                 && changedMachineId !== target.machineId) return old;
             let merge = machineMerges.get(target.machineId);
@@ -535,14 +555,18 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const registrySourcesRead = current?.registrySourcesCurrent === true;
             const themesRead = current?.themesCurrent === true && read !== null
                 && (Object.keys(read.themesById).length > 0 || Object.keys(presentedProjection?.themesById ?? {}).length > 0);
+            const presentation = read && (registrySourcesRead || themesRead)
+                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, themesRead) : presentedProjection;
+            // The last theme demand can leave when its installation is withdrawn.
+            // An exact Home report retires cached themes even without another theme section read.
+            const themesAdmitted = reportedHome && (!serverIdentityId || reportedHome === serverIdentityId)
+                ? withdrawUninstalledThemes(presentation, declaration?.materializationsByPluginId) : presentation;
             const member: PluginUiProjectionUnionMember = {
                 machineId: target.machineId, serverId: target.serverId,
                 serverIdentityId,
                 materializationsByPluginId: declaration?.materializationsByPluginId,
                 selectableExecutionOrigins,
-                projection: merge.publish(declaration?.models ?? NO_MODELS,
-                    read && (registrySourcesRead || themesRead)
-                        ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, themesRead) : presentedProjection,
+                projection: merge.publish(declaration?.models ?? NO_MODELS, themesAdmitted,
                     declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds),
                 ...(presentedPluginIds ? { currentPluginIds: presentedPluginIds } : {}),
                 phase: current?.phase === 'unavailable' || current?.phase === 'retainedOffline' ? current.phase

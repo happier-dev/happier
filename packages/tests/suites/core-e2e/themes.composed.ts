@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, vi } from 'vitest';
 import { ThemeProfileV1Schema } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createThemeProfileFile } from '@happier-dev/protocol/account/settings/themeProfileFile';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { RegistryProvenanceV1Schema } from '@happier-dev/protocol/registries/registryItemsV1';
 import type { RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registries/registryUpstreamV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -364,7 +365,11 @@ async function enrollPlatformCredentials() {
     expect(await TokenStorage.setCredentialsForServerUrl(home!.baseUrl, { serverId: ui!.serverId }, uiCredentials)).toBe(true);
 }
 
-async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'light' | 'dark') {
+async function mountThemeRuntime(
+    platform: 'web' | 'ios',
+    themePreference?: 'light' | 'dark',
+    options?: Readonly<{ withAppShellActions?: boolean }>,
+) {
     // Import through the composed runner's app-aware resolver without making
     // the CLI-oriented test compiler reinterpret the UI's @/* imports.
     const runtimePath = '../../../../apps/ui/sources/theme/ThemeProfileRuntimeSync';
@@ -375,7 +380,10 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
     const reactPath = 'react';
     const runtime = await import(runtimePath) as { ThemeProfileRuntimeSync: unknown };
     const renderer = await import(renderPath) as { renderScreen(element: unknown): Promise<{ unmount(): Promise<void> }> };
-    const { createElement } = await import(reactPath) as { createElement(component: unknown): unknown };
+    const { createElement, Fragment } = await import(reactPath) as {
+        Fragment: unknown;
+        createElement(component: unknown, props?: null, ...children: unknown[]): unknown;
+    };
     const { Platform } = await import(nativePath) as { Platform: { OS: string } };
     type RuntimeTheme = { colors: { background: { canvas: string } };
         surfaces?: { sidebar?: { root?: { base: { borderTopLeftRadius?: number } } } } };
@@ -387,6 +395,7 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
         localSettings: { uiFontScale: number }; applyLocalSettings(input: { uiFontScale?: number; themePreference?: 'light' | 'dark' }): void;
     } } };
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    const changesCredentialStore = Platform.OS !== platform;
     // Expo's native HTTP adapter needs the device runtime. Node fetch preserves
     // the real Home transport while substituting only that OS boundary.
     if (platform === 'ios') vi.doMock('expo/fetch', () => ({ fetch: globalThis.fetch.bind(globalThis) }));
@@ -404,9 +413,18 @@ async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'lig
     const systemBackground = vi.spyOn(systemUi, 'setBackgroundColorAsync').mockResolvedValue(undefined);
     let mounted: Awaited<ReturnType<typeof renderer.renderScreen>> | undefined;
     try {
-        await enrollPlatformCredentials();
+        if (changesCredentialStore) await enrollPlatformCredentials();
         if (themePreference) storage.getState().applyLocalSettings({ themePreference });
-        mounted = await renderer.renderScreen(createElement(runtime.ThemeProfileRuntimeSync));
+        const observer = createElement(runtime.ThemeProfileRuntimeSync);
+        if (options?.withAppShellActions) {
+            const contextPath = '../../../../apps/ui/sources/dev/testkit/harness/mountedCurrentUiContext';
+            const { createMountedCurrentUiContextWrapper } = await import(contextPath);
+            const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: true });
+            // The production root mounts its paint observer beside the shell.
+            mounted = await renderer.renderScreen(createElement(Fragment, null, observer, createElement(AppShell)));
+        } else {
+            mounted = await renderer.renderScreen(observer);
+        }
         updates.mockClear();
     } catch (error) {
         updates.mockRestore();
@@ -836,8 +854,6 @@ export async function runF5() {
 }
 
 export async function runF6() {
-    const { applyTrustedLocalPluginFixture, uninstallTrustedLocalPluginFixture } =
-        await import('../../src/testkit/externalSessionLiveLifecycleFixture');
     // First Share has no reachable Machine; a typed unavailable result must
     // arrive at the app rather than a generic action_failed or false success.
     await connectFreshAccount();
@@ -850,24 +866,77 @@ export async function runF6() {
         .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(artifactWrites()).toHaveLength(0);
     await ui!.close();
+    ui = undefined;
+    const nativePath = 'react-native';
+    const { Platform } = await import(nativePath) as { Platform: { OS: string } };
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    try {
+        await runPluginThemeLifecycle();
+    } finally {
+        try { await ui?.close(); } finally {
+            ui = undefined;
+            if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
+        }
+    }
+}
+
+async function runPluginThemeLifecycle() {
     uiCredentials = controlCredentials;
     ui = await connectUiActionClient({ serverUrl: home!.baseUrl, credentials: uiCredentials });
     await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+
+    // A presented plugin catalog acquires Machine sections. The app shell
+    // observes the shared answer and publishes it to the theme Actions.
+    const contextPath = '../../../../apps/ui/sources/dev/testkit/harness/mountedCurrentUiContext';
+    const demandPath = '../../../../apps/ui/sources/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+    const scopePath = '../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope';
+    const reactPath = 'react';
+    const [{ renderMountedCurrentUiContext }, { PluginSurfaceProjectionDemand }, { getActiveServerAccountScope }, { createElement }] =
+        await Promise.all([import(contextPath), import(demandPath), import(scopePath), import(reactPath)]);
+    const catalog = await renderMountedCurrentUiContext(createElement(PluginSurfaceProjectionDemand, {
+        accountScope: getActiveServerAccountScope(), presents: 'allInstallations',
+    }), { withAppShellActions: true });
+    let applied: Awaited<ReturnType<typeof installAndApplyPluginTheme>>;
+    try { applied = await installAndApplyPluginTheme(); } finally { await catalog.unmount(); }
+
+    // Restart the UI connection and application shell with the device's saved
+    // selection. Leave the catalog closed so only the paint runtime requests
+    // the selected theme from the daemon.
+    await ui!.close();
+    ui = undefined;
+    ui = await connectUiActionClient({ serverUrl: home!.baseUrl, credentials: uiCredentials });
+    // Prove the reconnected client's real encrypted Machine route is usable
+    // before asking the paint observer to acquire the selected theme section.
+    await knownGoodControl();
+    await ui.waitForPluginAccountAvailability();
+    try {
+        await verifyColdPluginThemeAndUninstall(applied);
+    } finally {
+        // Independently check the share route even if cold paint or uninstall fails.
+        await verifyShareArchive();
+    }
+}
+
+async function installAndApplyPluginTheme() {
+    const { applyTrustedLocalPluginFixture } =
+        await import('../../src/testkit/externalSessionLiveLifecycleFixture');
     await theme('list', {});
     const pluginId = 'org.example.theme-composed';
     const pluginRoot = resolve(testDir, 'contributed-theme');
     await mkdir(resolve(pluginRoot, '.happier-plugin'), { recursive: true });
     await writeFile(resolve(pluginRoot, 'package.json'), JSON.stringify({ name: pluginId, version: '1.0.0', private: true,
         type: 'module', main: './index.mjs' }));
+    const cliPackage = JSON.parse(await readFile(resolve(repoRootDir(), 'apps/cli/package.json'), 'utf8')) as { version: string };
     const manifest = { schemaVersion: 2,
-        id: pluginId, version: '1.0.0', displayName: 'Contributed theme', engines: { happier: '^0.2.0' },
+        id: pluginId, version: '1.0.0', displayName: 'Contributed theme', engines: { happier: cliPackage.version },
         runtime: { apiVersion: 1 }, entrypoints: { development: './index.mjs', daemon: './index.mjs' },
-        contributes: { themes: [{ id: 'paper', theme: document('Plugin paper').profile }] } };
+        contributes: { themes: [{ id: 'paper', theme: { ...document('Plugin paper').profile, assetAppearance: 'dark' } }] } };
     await writeFile(resolve(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
     await writeFile(resolve(pluginRoot, 'index.mjs'), `export const manifest = ${JSON.stringify(manifest)};\nexport async function activate() {}\n`);
-    home!.clear();
     await applyTrustedLocalPluginFixture({ daemonPort: daemon!.state.httpPort, controlToken: daemon!.state.controlToken,
         pluginRoot, pluginId, interactionId: 'themes-composed-install' });
+    await ui!.waitForPluginAccountAvailability();
     const ref: Ref = { kind: 'plugin', pluginId, contributionId: 'paper' };
     await waitFor(async () => (await theme<{ themes: Entry[] }>('list', {})).themes.some(entry =>
         entry.reference.kind === 'plugin' && entry.reference.pluginId === pluginId), { timeoutMs: 60_000 });
@@ -876,25 +945,68 @@ export async function runF6() {
         const actPath = 'react-test-renderer';
         const { act } = await import(actPath) as { act(callback: () => Promise<void>): Promise<void> };
         const baseCanvas = runtime.readCanvas('dark');
+        home!.clear();
         await act(async () => { await theme('apply', { ref, mode: 'dark' }); });
         await waitFor(() => runtime.readCanvas('dark') === '#182028', { timeoutMs: 60_000 });
         expect(baseCanvas).not.toBe('#182028');
-        const selectedPlugin = await selection();
+        const persistencePath = '../../../../apps/ui/sources/sync/domains/state/settingsPersistence';
+        const { loadLocalSettings } = await import(persistencePath) as {
+            loadLocalSettings(): { themeProfileSelection: { dark: Ref | null } | null };
+        };
+        expect(loadLocalSettings().themeProfileSelection?.dark).toEqual(ref);
         expect(artifactWrites()).toHaveLength(0);
-        home!.clear();
-        await act(async () => {
-            await uninstallTrustedLocalPluginFixture({ daemonPort: daemon!.state.httpPort,
-                controlToken: daemon!.state.controlToken, pluginId });
-            await waitFor(async () => !(await theme<{ themes: Entry[] }>('list', {})).themes.some(entry =>
-                entry.reference.kind === 'plugin' && entry.reference.pluginId === pluginId), { timeoutMs: 60_000 });
-        });
-        await waitFor(() => runtime.readCanvas('dark') === baseCanvas, { timeoutMs: 60_000 });
-        expect(await dispatch('appearance.themes.get', { ref })).toMatchObject({ ok: false, errorCode: 'theme_not_found' });
-        // T11: the mounted runtime falls back without rewriting selection.
-        expect(await selection()).toEqual(selectedPlugin);
-        expect(accountSettingsWrites()).toHaveLength(0);
-        expect(artifactWrites()).toHaveLength(0);
+        return { ref, baseCanvas };
     } finally { await runtime.close(); }
+}
+
+async function verifyColdPluginThemeAndUninstall({ ref, baseCanvas }: Awaited<ReturnType<typeof installAndApplyPluginTheme>>) {
+    expect(await selection()).toEqual(ref);
+    const runtime = await mountThemeRuntime('web', undefined, { withAppShellActions: true });
+    try {
+        await waitFor(() => runtime.readCanvas('dark') === '#182028',
+            { timeoutMs: 60_000, context: 'saved plugin canvas paints after browser-platform reconnect' });
+        console.info('THEMES F6: saved plugin canvas paints after UI restart with the catalog closed');
+        await verifyUninstallTheme(ref, baseCanvas, runtime);
+    } finally { await runtime.close(); }
+}
+
+async function verifyUninstallTheme(ref: Extract<Ref, { kind: 'plugin' }>, baseCanvas: string,
+    runtime: Awaited<ReturnType<typeof mountThemeRuntime>>) {
+    const actPath = 'react-test-renderer';
+    const { act } = await import(actPath) as { act(callback: () => Promise<void>): Promise<void> };
+    home!.clear();
+    await act(async () => {
+        const uninstall = await action('plugins.uninstall', { machineId, pluginId: ref.pluginId }, true);
+        expect(uninstall).toMatchObject({ ok: true, change: { kind: 'committed' } });
+    });
+    // The daemon publishes its Home inventory after the local commit.
+    // Then join the client's canonical Account Availability refresh.
+    await waitFor(async () => {
+        const path = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'];
+        const response = await fetch(`${home!.baseUrl}${path}`, { method: 'POST',
+            headers: { Authorization: `Bearer ${uiCredentials.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pluginIds: [ref.pluginId] }) });
+        if (!response.ok) return false;
+        const inventory = PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(await response.json());
+        return inventory.inventoryComplete !== false && inventory.snapshots.some(snapshot =>
+            snapshot.machineId === machineId && snapshot.materializations.every(row => row.pluginId !== ref.pluginId));
+    }, { timeoutMs: 60_000, context: 'Home availability inventory withdrew the uninstalled plugin' });
+    await act(async () => { await ui!.waitForPluginAccountAvailability(); });
+    await waitFor(async () => {
+        await act(async () => {});
+        return !(await theme<{ themes: Entry[] }>('list', {})).themes.some(entry =>
+            entry.reference.kind === 'plugin' && entry.reference.pluginId === ref.pluginId);
+    }, { timeoutMs: 60_000, context: 'uninstalled plugin theme withdrawn from the library' });
+    await waitFor(() => runtime.readCanvas('dark') === baseCanvas, { timeoutMs: 60_000 });
+    expect(await dispatch('appearance.themes.get', { ref })).toMatchObject({ ok: false, errorCode: 'theme_not_found' });
+    // T11: the mounted runtime falls back without rewriting selection.
+    expect(await selection()).toEqual(ref);
+    expect(accountSettingsWrites()).toHaveLength(0);
+    expect(artifactWrites()).toHaveLength(0);
+    console.info('THEMES F6: uninstalled plugin theme withdrawn and canvas falls back without a selection write');
+}
+
+async function verifyShareArchive() {
     const saved = await theme<Kept>('save', { document: document('Shared') });
     const path = resolve(testDir, 'shared-theme-plugin');
     home!.clear();
@@ -922,4 +1034,5 @@ export async function runF6() {
     ] } });
     expect(artifactWrites()).toHaveLength(0);
     expect(home!.entries().filter(row => /plugins.*(?:install|publish)/.test(row.path))).toHaveLength(0);
+    console.info('THEMES F6: share produced a readable archive with the expected digest and no install or publish request');
 }

@@ -555,6 +555,8 @@ export type PluginAccountUiProjectionInputs = Readonly<{
     unavailableReasonCode?: PluginAccountAvailabilityInitialFailure['code'];
     materializations: readonly PluginMachineMaterializationV1[];
     installedPlugins: Extract<PluginAccountInstalledPluginsAdmission, { kind: 'available' }>['plugins'] | undefined;
+    /** Machines with a Home inventory report, including reports with no installations. */
+    reportedMachines?: readonly Pick<PluginMachineMaterializationSnapshotV1, 'serverIdentityId' | 'machineId'>[];
     accountUiProjection: PluginUiProjectionModel | null;
 }>;
 
@@ -2538,15 +2540,17 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
             nextProjection.installed.kind === 'available' ? nextProjection.installed.plugins : undefined,
             sameScope && derived?.installed.kind === 'available' ? derived.installed.plugins : undefined);
         const accountUiProjection = nextProjection.accountUi.model;
-        const uiInputs = previousInputs && previousInputs.materializations === materializations
-            && previousInputs.installedPlugins === installedPlugins && previousInputs.accountUiProjection === accountUiProjection
-            && state!.snapshot.inventoryComplete === nextState.snapshot.inventoryComplete
-            && sameStrictJsonValue(state!.retiredPluginIds ?? [], nextState.retiredPluginIds ?? [])
-            ? previousInputs : Object.freeze({ materializations, installedPlugins, accountUiProjection });
-        const nextDerived = Object.freeze({ ...nextProjection, uiInputs });
         const nextObservations = deriveAvailabilityObservations(nextState, nextProjection.accountUi.selections, nextProjection.installed,
             sameScope ? observations : undefined,
             state?.snapshot.availabilityCursor);
+        const reportedMachines = nextObservations.empty.value.machines;
+        const uiInputs = previousInputs && previousInputs.materializations === materializations
+            && previousInputs.installedPlugins === installedPlugins && previousInputs.accountUiProjection === accountUiProjection
+            && previousInputs.reportedMachines === reportedMachines
+            && state!.snapshot.inventoryComplete === nextState.snapshot.inventoryComplete
+            && sameStrictJsonValue(state!.retiredPluginIds ?? [], nextState.retiredPluginIds ?? [])
+            ? previousInputs : Object.freeze({ materializations, installedPlugins, reportedMachines, accountUiProjection });
+        const nextDerived = Object.freeze({ ...nextProjection, uiInputs });
         state = nextState;
         const initialFailure = initialReadiness.getSnapshot();
         if (initialFailure && nextState.intentCensusIncomplete && areServerAccountScopesEqual(initialFailure.scope, nextState.scope)) {
