@@ -71,7 +71,15 @@ async function readLinuxMobility(system: HomeHostSystem): Promise<'portable' | '
     if (/docker|kubepods|containerd|libpod/u.test(await system.readText('/proc/1/cgroup'))) return null;
   } catch { /* No cgroup evidence. */ }
   try {
-    if (/\/var\/lib\/(?:containerd|docker)|kubepods|\/containers\/storage/u.test(await system.readText('/proc/1/mountinfo'))) return null;
+    const containerStorage = /\/var\/lib\/(?:containerd|docker)|kubepods|\/containers\/storage/u;
+    const mounts = (await system.readText('/proc/1/mountinfo')).split('\n');
+    const namespaceUsesContainerStorage = mounts.some((mount) => {
+      // The fifth field is the mount point. Mounts inside the container store
+      // can belong to child containers while PID 1 runs on the host.
+      const mountPoint = mount.split(' ', 5)[4] ?? '';
+      return containerStorage.test(mount) && !containerStorage.test(mountPoint);
+    });
+    if (namespaceUsesContainerStorage) return null;
   } catch { /* No mount-namespace evidence. */ }
   try {
     const chassis = (await system.readText('/sys/class/dmi/id/chassis_type')).trim();

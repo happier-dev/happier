@@ -44,6 +44,23 @@ describe('Home host OS fact', () => {
     }))).toEqual({ kind: 'unknown' });
   });
 
+  it('recognizes a Linux host with Docker child mounts', async () => {
+    expect(await detectHomeHostFactFromSystem(fixture('linux', {
+      '/proc/1/mountinfo': [
+        '12 3 8:1 / / rw - ext4 /dev/sda1 rw',
+        '13 12 0:1 / /var/lib/docker/overlay2/id/merged rw - overlay overlay rw,upperdir=/var/lib/docker/overlay2/id/diff',
+      ].join('\n'),
+      '/sys/class/dmi/id/chassis_type': '23\n',
+    }))).toEqual({ kind: 'known', machineName: 'Studio', platform: 'linux', mobility: 'stationary' });
+  });
+
+  it('keeps a Linux container unknown when a namespace file is backed by container storage', async () => {
+    expect(await detectHomeHostFactFromSystem(fixture('linux', {
+      '/proc/1/mountinfo': '13 12 8:1 /var/lib/docker/containers/id/hostname /etc/hostname rw - ext4 /dev/sda1 rw\n',
+      '/sys/class/dmi/id/chassis_type': '23\n',
+    }))).toEqual({ kind: 'unknown' });
+  });
+
   it('uses a Linux battery as portable evidence when DMI is unavailable', async () => {
     expect(await detectHomeHostFactFromSystem(fixture('linux', { '/sys/class/power_supply/BAT0/type': 'Battery\n' })))
       .toMatchObject({ kind: 'known', mobility: 'portable' });
