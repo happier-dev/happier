@@ -1,23 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import axios from 'axios';
+import fastify, { type FastifyInstance } from 'fastify';
 
 import { ApiClient } from './api';
+import { createDeferred } from '@/testkit/async/deferred';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
 import { resetServerEndpointFailureLogSamplingForTests } from './client/serverEndpointFailureLog';
 import {
   type ConnectedServiceQuotaRecoveryCreditsV1,
 } from '@happier-dev/protocol';
-
-const { mockPost, mockGet } = vi.hoisted(() => ({
-  mockPost: vi.fn(),
-  mockGet: vi.fn(),
-}));
-
-vi.mock('axios', () => ({
-  default: { post: mockPost, get: mockGet, isAxiosError: vi.fn(() => true) },
-  isAxiosError: vi.fn(() => true),
-}));
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -68,145 +61,118 @@ const canonicalRecoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 = {
   }],
 };
 
+const credential = {
+  token: 'happy-token',
+  encryption: { type: 'legacy', secret: new Uint8Array(32) },
+} as const;
+
+const plainCredential = { ...credential, encryption: null };
+
+const encryptionPath = '/v1/account/encryption';
+const quotaPath = '/v3/connect/openai-codex/profiles/work/quotas';
+
 describe('ApiClient connected services quotas v3', () => {
+  let app: FastifyInstance;
+  let restoreAdapter: () => void;
+  let requests: Array<{ method: string; url: string }>;
+
   beforeEach(() => {
-    mockGet.mockReset();
-    mockPost.mockReset();
     vi.clearAllMocks();
     resetServerEndpointFailureLogSamplingForTests();
+    requests = [];
+    app = fastify();
+    app.addHook('onRequest', async ({ method, url }) => { requests.push({ method, url }); });
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
   });
 
-  it('shares concurrent and fresh account encryption mode lookups', async () => {
-    let resolveMode: ((value: unknown) => void) | undefined;
-    mockGet.mockReturnValueOnce(new Promise((resolve) => {
-      resolveMode = resolve;
-    }));
+  afterEach(async () => {
+    restoreAdapter();
+    await app.close();
+  });
 
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
+  it('reads persisted mode independently for callers without an admitted currentness observation', async () => {
+    const reply = createDeferred<{ mode: 'plain'; updatedAt: number }>();
+    app.get(encryptionPath, () => reply.promise);
+    const api = await ApiClient.create(plainCredential);
 
-    const first = (api as any).getAccountEncryptionMode();
-    const second = (api as any).getAccountEncryptionMode();
-
-    expect(mockGet).toHaveBeenCalledTimes(1);
-
-    resolveMode?.({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    const first = api.getAccountEncryptionMode();
+    const second = api.getAccountEncryptionMode();
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    reply.resolve({ mode: 'plain', updatedAt: 1 });
 
     await expect(first).resolves.toBe('plain');
     await expect(second).resolves.toBe('plain');
-
-    await expect((api as any).getAccountEncryptionMode()).resolves.toBe('plain');
-    expect(mockGet).toHaveBeenCalledTimes(1);
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('plain');
+    expect(requests).toHaveLength(3);
+    expect(requests.every(request => request.method === 'GET' && request.url === encryptionPath)).toBe(true);
   });
 
-  it('starts a fresh account encryption mode lookup while an older shared lookup is in flight', async () => {
-    let resolveOlder: ((value: unknown) => void) | undefined;
-    let resolveFresh: ((value: unknown) => void) | undefined;
-    mockGet
-      .mockReturnValueOnce(new Promise((resolve) => {
-        resolveOlder = resolve;
-      }))
-      .mockReturnValueOnce(new Promise((resolve) => {
-        resolveFresh = resolve;
-      }));
+  it('starts a fresh Account-mode lookup while an older lookup is in flight', async () => {
+    const olderReply = createDeferred<{ mode: 'e2ee'; updatedAt: number }>();
+    const freshReply = createDeferred<{ mode: 'plain'; updatedAt: number }>();
+    const replies = [olderReply.promise, freshReply.promise];
+    app.get(encryptionPath, () => replies.shift() ?? { mode: 'plain', updatedAt: 3 });
+    const api = await ApiClient.create(plainCredential);
 
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    const older = (api as any).getAccountEncryptionMode();
-    const fresh = (api as any).getAccountEncryptionMode({ refresh: true });
-
-    expect(mockGet).toHaveBeenCalledTimes(2);
-    resolveFresh?.({ status: 200, data: { mode: 'plain', updatedAt: 2 } });
+    const older = api.getAccountEncryptionMode();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const fresh = api.getAccountEncryptionMode({ refresh: true });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    freshReply.resolve({ mode: 'plain', updatedAt: 2 });
     await expect(fresh).resolves.toBe('plain');
 
-    resolveOlder?.({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
+    olderReply.resolve({ mode: 'e2ee', updatedAt: 1 });
     await expect(older).resolves.toBe('e2ee');
 
-    await expect((api as any).getAccountEncryptionMode()).resolves.toBe('plain');
-    expect(mockGet).toHaveBeenCalledTimes(2);
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('plain');
+    expect(requests).toHaveLength(3);
+    expect(requests.every(request => request.method === 'GET' && request.url === encryptionPath)).toBe(true);
   });
 
   it('returns persisted plain Account mode without feature discovery', async () => {
-    mockGet.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy', secret: new Uint8Array(32) },
-    });
+    app.get(encryptionPath, async () => ({ mode: 'plain', updatedAt: 1 }));
+    const api = await ApiClient.create(plainCredential);
     await expect(api.getAccountEncryptionMode()).resolves.toBe('plain');
-    expect(mockGet).toHaveBeenCalledTimes(1);
-    expect(mockGet).toHaveBeenCalledWith(
-      expect.stringContaining('/v1/account/encryption'),
-      expect.any(Object),
-    );
+    expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
   });
 
   it.each(['e2ee', 'unknown'] as const)(
     'does not require stored-content protocol admission for %s account mode',
     async (mode) => {
-      mockGet.mockResolvedValue({ status: 200, data: { mode, updatedAt: 1 } });
-      const api = await ApiClient.create({
-        token: 'happy-token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-      } as any);
-
+      app.get(encryptionPath, async () => ({ mode, updatedAt: 1 }));
+      const api = await ApiClient.create(credential);
       await expect(api.getAccountEncryptionMode()).resolves.toBe(mode);
+      expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
     },
   );
 
   it('returns unknown when the account encryption mode probe fails with a non-404 status', async () => {
-    mockGet.mockRejectedValue({
-      response: {
-        status: 503,
-        headers: { 'retry-after': '1' },
-      },
-    });
-
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    await expect((api as any).getAccountEncryptionMode()).resolves.toBe('unknown');
+    app.get(encryptionPath, async (_request, reply) => reply.code(503).header('retry-after', '1').send());
+    const api = await ApiClient.create(credential);
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+    expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
   });
 
   it('samples transient account encryption mode failures without error-labeled logs', async () => {
-    mockGet.mockRejectedValue({
-      response: {
-        status: 503,
-        headers: { 'retry-after': '2' },
-        data: { error: 'server_unavailable' },
-      },
-    });
-
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    await expect((api as any).getAccountEncryptionMode()).resolves.toBe('unknown');
+    app.get(encryptionPath, async (_request, reply) => reply.code(503).header('retry-after', '2')
+      .send({ error: 'server_unavailable' }));
+    const api = await ApiClient.create(credential);
+    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+    expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
 
     expect(logger.debug).toHaveBeenCalledTimes(1);
-    expect((logger.debug as any).mock.calls[0]?.[0]).toContain('temporarily unavailable');
-    expect((logger.debug as any).mock.calls[0]?.[0]).not.toContain('[ERROR]');
-    expect((logger.debug as any).mock.calls[0]?.[1]).toMatchObject({
-      classification: {
-        kind: 'server_error',
-        retryable: true,
-        statusCode: 503,
-        retryAfterMs: 2_000,
-      },
+    const [label, details] = vi.mocked(logger.debug).mock.calls[0]!;
+    expect(label).toContain('temporarily unavailable');
+    expect(label).not.toContain('[ERROR]');
+    expect(details).toMatchObject({
+      classification: { kind: 'server_error', retryable: true, statusCode: 503 },
     });
   });
 
   it('gets plaintext quota snapshots from the v3 connected services quotas endpoint', async () => {
-    mockGet.mockResolvedValue({
-      status: 200,
-      data: {
+    app.get(quotaPath, async (request) => {
+      expect(request.headers.authorization).toBe('Bearer ' + credential.token);
+      return {
         content: {
           t: 'plain',
           v: {
@@ -222,71 +188,41 @@ describe('ApiClient connected services quotas v3', () => {
           },
         },
         metadata: { fetchedAt: 1, staleAfterMs: 300_000, status: 'ok' },
-      },
+      };
     });
+    const api = await ApiClient.create(credential);
 
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    const res = await (api as any).getConnectedServiceQuotaSnapshotPlain({ serviceId: 'openai-codex', profileId: 'work' });
-    expect(res?.content?.v?.serviceId).toBe('openai-codex');
-    expect(res?.content?.v?.recoveryCredits).toEqual(canonicalRecoveryCredits);
-    expect(axios.get).toHaveBeenCalledWith(
-      expect.stringContaining('/v3/connect/openai-codex/profiles/work/quotas'),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer happy-token',
-        }),
-      }),
-    );
+    const result = await api.getConnectedServiceQuotaSnapshotPlain({ serviceId: 'openai-codex', profileId: 'work' });
+    expect(result?.content.v.serviceId).toBe('openai-codex');
+    expect(result?.content.v.recoveryCredits).toEqual(canonicalRecoveryCredits);
+    expect(requests).toEqual([{ method: 'GET', url: quotaPath }]);
   });
 
   it('does not expose the retired plaintext connected-service quota writer', async () => {
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
+    const api = await ApiClient.create(credential);
 
     expect('registerConnectedServiceQuotaSnapshotPlain' in api).toBe(false);
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
   });
 
   it('preserves status, retry-after, and cause for failed plaintext quota reads', async () => {
-    const cause = {
-      response: {
+    app.get(quotaPath, async (_request, reply) => reply.code(429).header('retry-after-ms', '1500')
+      .send({ error: 'rate_limited' }));
+    const api = await ApiClient.create(credential);
+
+    await expect(api.getConnectedServiceQuotaSnapshotPlain({ serviceId: 'openai-codex', profileId: 'work' }))
+      .rejects.toMatchObject({
         status: 429,
-        headers: { 'retry-after-ms': '1500' },
-        data: { error: 'rate_limited' },
-      },
-    };
-    mockGet.mockRejectedValue(cause);
-
-    const api = await ApiClient.create({
-      token: 'happy-token',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
-    } as any);
-
-    await expect((api as any).getConnectedServiceQuotaSnapshotPlain({
-      serviceId: 'openai-codex',
-      profileId: 'work',
-    })).rejects.toMatchObject({
-      status: 429,
-      retryAfterMs: 1_500,
-      cause,
-    });
-    expect(logger.debug).toHaveBeenCalledTimes(1);
-    expect((logger.debug as any).mock.calls[0]?.[0]).toContain('temporarily unavailable');
-    expect((logger.debug as any).mock.calls[0]?.[0]).not.toContain('[ERROR]');
-    expect((logger.debug as any).mock.calls[0]?.[1]).toMatchObject({
-      classification: {
-        kind: 'rate_limited',
-        retryable: true,
-        statusCode: 429,
         retryAfterMs: 1_500,
-      },
+        cause: { name: 'AxiosError', response: { status: 429, data: { error: 'rate_limited' } } },
+      });
+    expect(requests).toEqual([{ method: 'GET', url: quotaPath }]);
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    const [label, details] = vi.mocked(logger.debug).mock.calls[0]!;
+    expect(label).toContain('temporarily unavailable');
+    expect(label).not.toContain('[ERROR]');
+    expect(details).toMatchObject({
+      classification: { kind: 'rate_limited', retryable: true, statusCode: 429, retryAfterMs: 1_500 },
     });
   });
-
 });

@@ -1,6 +1,6 @@
-import axios from "axios";
+import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from "@/api/clientCompatibility/cliClientCompatibility";
 
@@ -30,15 +30,6 @@ import {
     writeQualifiedProviderAccountUsageV4,
 } from "./qualifiedConnectedAccountApi";
 
-vi.mock("axios", () => ({
-    default: {
-        defaults: {},
-        get: vi.fn(),
-        patch: vi.fn(),
-        post: vi.fn(),
-        delete: vi.fn(),
-    },
-}));
 vi.mock("./serverHttpBaseUrl", () => ({
     resolveServerHttpBaseUrl: () => "https://server.example",
 }));
@@ -51,44 +42,27 @@ const service = {
     localId: "service/with/path",
 } as const;
 
-/**
- * Answers like the real Axios boundary: a status the caller's `validateStatus`
- * does not accept is raised as an error instead of returned. Without this the
- * endpoint could stop accepting 409 and every assertion below would still pass
- * while production went back to discarding the conflict body.
- */
-function mockAxiosMutationOnce(response: Readonly<{ status: number; data: unknown }>, method: "post" | "patch" = "post"): void {
-    vi.mocked(axios[method]).mockImplementationOnce(async (
-        _url: unknown,
-        _body: unknown,
-        config?: { validateStatus?: ((status: number) => boolean) | null },
-    ) => {
-        if (config?.validateStatus && !config.validateStatus(response.status)) {
-            const error = new Error(`Request failed with status code ${response.status}`) as Error & {
-                response: typeof response;
-                status: number;
-            };
-            error.name = "AxiosError";
-            error.response = response;
-            error.status = response.status;
-            throw error;
-        }
-        return response;
-    });
+type HttpReply = Readonly<{ status: number; data: unknown }>;
+type ReadRequest = [url: string, config: InternalAxiosRequestConfig];
+type WriteRequest = [url: string, body: unknown, config: InternalAxiosRequestConfig];
+
+const getResponse = vi.fn<(...request: ReadRequest) => Promise<HttpReply>>();
+const deleteResponse = vi.fn<(...request: ReadRequest) => Promise<HttpReply>>();
+const postResponse = vi.fn<(...request: WriteRequest) => Promise<HttpReply>>();
+const patchResponse = vi.fn<(...request: WriteRequest) => Promise<HttpReply>>();
+
+function replyToMutationOnce(response: HttpReply, method: "post" | "patch" = "post"): void {
+    const handler = method === "post" ? postResponse : patchResponse;
+    handler.mockResolvedValueOnce(response);
 }
 
 describe("qualified Connected Account V4 API", () => {
     it.each(['quota', 'refresh', 'source', 'record'] as const)('preserves ownership refusal for %s reads', async (operation) => {
         const response = { status: 409, data: { error: 'ownership_unproven' } };
         if (operation === 'refresh') {
-            mockAxiosMutationOnce(response);
+            replyToMutationOnce(response);
         } else {
-            vi.mocked(axios.get).mockImplementationOnce(async (_url, config) => {
-                if (!config?.validateStatus?.(response.status)) {
-                    throw Object.assign(new Error('Request failed with status code 409'), { response, status: 409 });
-                }
-                return response;
-            });
+            getResponse.mockResolvedValueOnce(response);
         }
         const ref = { service, accountId: 'work' };
         const result = operation === 'quota'
@@ -108,30 +82,30 @@ describe("qualified Connected Account V4 API", () => {
             service: { ...service, localId: 'second' }, accountId: 'work',
         }];
         const signal = new AbortController().signal;
-        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accounts: [] } });
+        getResponse.mockResolvedValue({ status: 200, data: { accounts: [] } });
         await expect(listQualifiedConnectedAccountsV4({ token: 'fixture', accounts, signal }))
             .resolves.toEqual({ accounts: [] });
-        expect(axios.get).toHaveBeenCalledTimes(1);
-        const [url, config] = vi.mocked(axios.get).mock.calls[0] ?? [];
+        expect(getResponse).toHaveBeenCalledTimes(1);
+        const [url, config] = getResponse.mock.calls[0] ?? [];
         const query = new URL(String(url)).searchParams;
         expect([...query.keys()]).toEqual(['accounts']);
         expect(JSON.parse(query.get('accounts') ?? 'null')).toEqual(accounts);
         expect(config?.signal).toBe(signal);
         await expect(listQualifiedConnectedAccountsV4({ token: 'fixture', accounts: [] }))
             .resolves.toEqual({ accounts: [] });
-        expect(axios.get).toHaveBeenCalledTimes(1);
+        expect(getResponse).toHaveBeenCalledTimes(1);
     });
 
     it('attributes qualified-list reads through the existing request-purpose header', async () => {
-        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { service, accounts: [] } });
+        getResponse.mockResolvedValue({ status: 200, data: { service, accounts: [] } });
         await listQualifiedConnectedAccountsV4({ token: 'fixture', service });
-        expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({
+        expect(getResponse.mock.calls[0]?.[1]?.headers).toMatchObject({
             'X-Happier-Request-Purpose': 'connected-accounts:qualification',
         });
     });
 
     it('attributes credential, configuration and quota reads without adding or skipping requests', async () => {
-        vi.mocked(axios.get).mockResolvedValue({ status: 404, data: {} });
+        getResponse.mockResolvedValue({ status: 404, data: {} });
         const ref = { service, accountId: 'work' };
         await readQualifiedConnectedAccountCredentialV4({ token: 'fixture', ref,
             requestPurpose: 'connected-accounts:purpose-binding' });
@@ -139,13 +113,13 @@ describe("qualified Connected Account V4 API", () => {
             requestPurpose: 'connected-accounts:persistence' });
         await readQualifiedConnectedAccountQuotaV4({ token: 'fixture', ref,
             requestPurpose: 'connected-accounts:quota-qualification' });
-        expect(vi.mocked(axios.get).mock.calls.map(([, config]) => config?.headers?.['X-Happier-Request-Purpose']))
+        expect(getResponse.mock.calls.map(([, config]) => config?.headers?.['X-Happier-Request-Purpose']))
             .toEqual(['connected-accounts:purpose-binding', 'connected-accounts:persistence', 'connected-accounts:quota-qualification']);
     });
 
     it('retains request-scoped usage authorization while attributing all usage reads', async () => {
         const { readQualifiedProviderAccountUsageHistoryV4 } = await import('./qualifiedConnectedAccountApi');
-        vi.mocked(axios.get).mockResolvedValue({ status: 404, data: {} });
+        getResponse.mockResolvedValue({ status: 404, data: {} });
         const recordId = buildProviderAccountUsageRecordId({ providerId: 'codex', accountSubjectId: 'account',
             subjectKind: 'account', quotaScope: 'account' });
         const transport = { token: 'fixture', requestPurpose: 'connected-accounts:quota-qualification' as const,
@@ -153,8 +127,8 @@ describe("qualified Connected Account V4 API", () => {
         await resolveQualifiedProviderAccountUsageSourceV4({ ...transport, source: { ref: { service, accountId: 'work' }, bindingKind: 'account' } });
         await readQualifiedProviderAccountUsageRecordV4({ ...transport, recordId });
         await readQualifiedProviderAccountUsageHistoryV4({ ...transport, query: { recordId, history: { range: { startAtMs: 0, endAtMs: 1 }, pageSize: 1 } } });
-        expect(axios.get).toHaveBeenCalledTimes(3);
-        for (const [, config] of vi.mocked(axios.get).mock.calls) expect(config?.headers).toMatchObject({
+        expect(getResponse).toHaveBeenCalledTimes(3);
+        for (const [, config] of getResponse.mock.calls) expect(config?.headers).toMatchObject({
             Authorization: 'Bearer request-scoped-fixture', 'X-Existing-Authority': 'fixture',
             'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification',
         });
@@ -162,7 +136,7 @@ describe("qualified Connected Account V4 API", () => {
 
     it.each(['accounts', 'groups', 'group', 'credential', 'configuration'] as const)(
         'classifies malformed %s responses without retaining their payload', async kind => {
-            vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { private: 'secret-payload' } });
+            getResponse.mockResolvedValue({ status: 200, data: { private: 'secret-payload' } });
             const ref = { service, accountId: 'work' };
             const request = kind === 'accounts' ? listQualifiedConnectedAccountsV4({ token: 'fixture', service })
                 : kind === 'groups' ? listQualifiedConnectedAccountGroupsV4({ token: 'fixture', service })
@@ -171,11 +145,46 @@ describe("qualified Connected Account V4 API", () => {
                 : readQualifiedConnectedAccountConfigurationV4({ token: 'fixture', target: { kind: 'account', ref } });
             await expect(request).rejects.toMatchObject({ code: 'connected_account_v4_contract_violation' });
         });
+    let originalAdapter: typeof axios.defaults.adapter;
     beforeEach(() => {
-        vi.mocked(axios.get).mockReset();
-        vi.mocked(axios.patch).mockReset();
-        vi.mocked(axios.post).mockReset();
-        vi.mocked(axios.delete).mockReset();
+        getResponse.mockReset();
+        patchResponse.mockReset();
+        postResponse.mockReset();
+        deleteResponse.mockReset();
+        originalAdapter = axios.defaults.adapter;
+        // This boundary can model aborted requests and a lost write acknowledgement.
+        // Axios still prepares the actual HTTP request and applies credential scope.
+        axios.defaults.adapter = async config => {
+            const url = axios.getUri(config);
+            if (new URL(url).origin !== "https://server.example") {
+                throw new Error("Unexpected HTTP origin");
+            }
+            const method = config.method?.toLowerCase();
+            let fixture: HttpReply | undefined;
+            if (method === "get" || method === "delete") {
+                const handler = method === "get" ? getResponse : deleteResponse;
+                fixture = await handler(url, config);
+            } else if (method === "post" || method === "patch") {
+                const handler = method === "post" ? postResponse : patchResponse;
+                const body: unknown = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                fixture = await handler(url, body, config);
+            }
+            if (!fixture) throw new Error("Missing HTTP response fixture for " + method + " " + url);
+            const response = { ...fixture, config, headers: {}, statusText: "" };
+            if (config.validateStatus && !config.validateStatus(response.status)) {
+                throw new AxiosError(
+                    "Request failed with status code " + response.status,
+                    response.status >= 500 ? AxiosError.ERR_BAD_RESPONSE : AxiosError.ERR_BAD_REQUEST,
+                    config,
+                    undefined,
+                    response,
+                );
+            }
+            return response;
+        };
+    });
+    afterEach(() => {
+        axios.defaults.adapter = originalAdapter;
     });
 
     it('cancels provider usage HTTP without starting acknowledgement reconciliation', async () => {
@@ -188,7 +197,7 @@ describe("qualified Connected Account V4 API", () => {
         const cancelled = new Error('quota loop stopped');
         let release: () => void = () => {};
         let requestAborted = false;
-        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, config) => {
+        postResponse.mockImplementationOnce(async (_url, _body, config) => {
             await new Promise<void>((resolve, reject) => {
                 release = resolve;
                 config?.signal?.addEventListener?.('abort', () => { requestAborted = true; reject(cancelled); }, { once: true });
@@ -204,7 +213,7 @@ describe("qualified Connected Account V4 API", () => {
         try {
             expect(requestAborted).toBe(true);
             expect(await pending).toBe(cancelled);
-            expect(axios.get).not.toHaveBeenCalled();
+            expect(getResponse).not.toHaveBeenCalled();
         } finally { release(); await pending; }
     });
 
@@ -223,19 +232,19 @@ describe("qualified Connected Account V4 API", () => {
             ...(accountMode === 'plain' ? { payloadMode: 'plain_json_v1', snapshot }
                 : { payloadMode: 'sealed_account_scoped_v1', sealedPayload: sealed }) };
         const timeout = Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
-        vi.mocked(axios.post).mockRejectedValue(timeout);
-        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { sources: [source],
+        postResponse.mockRejectedValue(timeout);
+        getResponse.mockResolvedValue({ status: 200, data: { sources: [source],
             content: accountMode === 'plain' ? { t: 'plain', v: snapshot } : { t: 'encrypted', c: sealed.ciphertext },
             metadata: { status: 'ok', fetchedAt: 1000, staleAfterMs: 300_000 } } });
         await expect(writeQualifiedProviderAccountUsageV4({ token: 'token', write, ...(accountMode === 'e2ee' ? { material } : {}) }))
             .resolves.toMatchObject({ success: true, source: { status: 'linked' } });
-        expect(axios.post).toHaveBeenCalledTimes(1);
-        expect(axios.get).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({
+        expect(postResponse).toHaveBeenCalledTimes(1);
+        expect(getResponse).toHaveBeenCalledTimes(1);
+        expect(getResponse.mock.calls[0]?.[1]?.headers).toMatchObject({
             'X-Happier-Request-Purpose': 'connected-accounts:usage-persistence',
         });
-        expect(vi.mocked(axios.post).mock.calls[0]?.[1]).not.toHaveProperty('material');
-        vi.mocked(axios.get).mockRejectedValue(new Error('reconciliation read unavailable'));
+        expect(postResponse.mock.calls[0]?.[1]).not.toHaveProperty('material');
+        getResponse.mockRejectedValue(new Error('reconciliation read unavailable'));
         await expect(writeQualifiedProviderAccountUsageV4({ token: 'token', write, ...(accountMode === 'e2ee' ? { material } : {}) }))
             .rejects.toBe(timeout);
     });
@@ -253,17 +262,17 @@ describe("qualified Connected Account V4 API", () => {
         const conflict = failure === 'conflict'
             ? { response: { status: 503, data: { error: 'database_transaction_conflict_exhausted' } } }
             : Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
-        vi.mocked(axios.post).mockRejectedValue(conflict);
+        postResponse.mockRejectedValue(conflict);
         for (const record of [
             { content: { t: 'plain', v: { ...snapshot, planLabel: 'different' } }, sources: [source] },
             { content: { t: 'plain', v: snapshot }, sources: [{ ...source, ref: { ...source.ref, accountId: 'other' } }] },
         ]) {
-            vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { ...record,
+            getResponse.mockResolvedValue({ status: 200, data: { ...record,
                 metadata: { fetchedAt: 1000, staleAfterMs: 300_000, status: 'ok' } } });
             await expect(writeQualifiedProviderAccountUsageV4({ token: 'token', write })).rejects.toBe(conflict);
         }
-        expect(axios.post).toHaveBeenCalledTimes(2);
-        expect(axios.get).toHaveBeenCalledTimes(2);
+        expect(postResponse).toHaveBeenCalledTimes(2);
+        expect(getResponse).toHaveBeenCalledTimes(2);
     });
 
     it("preserves retained native review facts and serializes exact removal dispositions", async () => {
@@ -272,9 +281,8 @@ describe("qualified Connected Account V4 API", () => {
             allocation: 'may-exist', recovery: { reference: 'native-paid-id', reason: 'manual_recovery' },
             cleanup: { disposition: 'unavailable', reason: 'credential_missing' } };
         // Axios rejects 409 unless the actual HTTP owner opts in to parsing it.
-        vi.mocked(axios.delete).mockImplementationOnce(async (_url, config) => {
-            if (!config?.validateStatus?.(409)) throw new Error('Request failed with status code 409');
-            return { status: 409, data: { error: 'managed_resources_review_required', resources: [resource] } };
+        deleteResponse.mockResolvedValueOnce({
+            status: 409, data: { error: 'managed_resources_review_required', resources: [resource] },
         });
         const dispositions = [{ managedId: 'retained-id', expectedIntentRevision: 3, responsibility: 'manual', expectedAllocation: 'may-exist',
             expectedRecovery: { reference: 'native-paid-id', reason: 'manual_recovery' } }];
@@ -282,13 +290,13 @@ describe("qualified Connected Account V4 API", () => {
             ref: { service, accountId: 'work' }, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
             cleanupGroupReferences: true, reviewOnly: true, managedResourceDispositions: dispositions,
         } })).rejects.toMatchObject({ code: 'managed_resources_review_required', resources: [resource] });
-        const url = new URL(String(vi.mocked(axios.delete).mock.calls[0]?.[0]));
+        const url = new URL(String(deleteResponse.mock.calls[0]?.[0]));
         expect(url.searchParams.get('reviewOnly')).toBe('true');
         expect(JSON.parse(url.searchParams.get('managedResourceDispositions') ?? 'null')).toEqual(dispositions);
     });
 
     it("uses the shared structured-query codec and validates the response", async () => {
-        vi.mocked(axios.get).mockResolvedValue({
+        getResponse.mockResolvedValue({
             status: 200,
             data: { service, accounts: [] },
         });
@@ -298,7 +306,7 @@ describe("qualified Connected Account V4 API", () => {
             service,
         })).resolves.toEqual({ service, accounts: [] });
 
-        const [url] = vi.mocked(axios.get).mock.calls[0] ?? [];
+        const [url] = getResponse.mock.calls[0] ?? [];
         expect(url).toContain(
             "/v4/connect/qualified/accounts?service=%7B",
         );
@@ -308,7 +316,7 @@ describe("qualified Connected Account V4 API", () => {
     });
 
     it("uses exact structured group list/read queries", async () => {
-        vi.mocked(axios.get)
+        getResponse
             .mockResolvedValueOnce({
                 status: 200,
                 data: { groups: [] },
@@ -328,10 +336,10 @@ describe("qualified Connected Account V4 API", () => {
         })).resolves.toBeNull();
 
         const listUrl = new URL(String(
-            vi.mocked(axios.get).mock.calls[0]?.[0],
+            getResponse.mock.calls[0]?.[0],
         ));
         const readUrl = new URL(String(
-            vi.mocked(axios.get).mock.calls[1]?.[0],
+            getResponse.mock.calls[1]?.[0],
         ));
         expect(listUrl.pathname).toBe(
             "/v4/connect/qualified/groups",
@@ -347,7 +355,7 @@ describe("qualified Connected Account V4 API", () => {
     });
 
     it("rejects a group read projection for a different qualified identity", async () => {
-        vi.mocked(axios.get).mockResolvedValueOnce({
+        getResponse.mockResolvedValueOnce({
             status: 200,
             data: {
                 group: {
@@ -390,7 +398,7 @@ describe("qualified Connected Account V4 API", () => {
         } as const;
         const recordId = buildProviderAccountUsageRecordId(recordKey);
         const source = { ref, bindingKind: "account" } as const;
-        vi.mocked(axios.get)
+        getResponse
             .mockResolvedValueOnce({
                 status: 200,
                 data: {
@@ -434,7 +442,7 @@ describe("qualified Connected Account V4 API", () => {
                     sources: [source],
                 },
             });
-        vi.mocked(axios.post).mockResolvedValueOnce({
+        postResponse.mockResolvedValueOnce({
             status: 200,
             data: { success: true },
         });
@@ -450,7 +458,7 @@ describe("qualified Connected Account V4 API", () => {
             content: { t: "plain" },
             sources: [source],
         });
-        vi.mocked(axios.get).mockResolvedValueOnce({
+        getResponse.mockResolvedValueOnce({
             status: 409,
             data: {
                 error:
@@ -469,10 +477,10 @@ describe("qualified Connected Account V4 API", () => {
         })).resolves.toEqual({ success: true });
 
         const sourceUrl = new URL(String(
-            vi.mocked(axios.get).mock.calls[0]?.[0],
+            getResponse.mock.calls[0]?.[0],
         ));
         const readUrl = new URL(String(
-            vi.mocked(axios.get).mock.calls[1]?.[0],
+            getResponse.mock.calls[1]?.[0],
         ));
         expect(sourceUrl.pathname).toBe(
             "/v4/connect/qualified/provider-account-usage/sources/resolve",
@@ -482,10 +490,10 @@ describe("qualified Connected Account V4 API", () => {
             "/v4/connect/qualified/provider-account-usage/record",
         );
         expect(readUrl.searchParams.get("recordId")).toBe(recordId);
-        expect(String(vi.mocked(axios.post).mock.calls[0]?.[0])).toContain(
+        expect(String(postResponse.mock.calls[0]?.[0])).toContain(
             "/v4/connect/qualified/provider-account-usage/record/refresh",
         );
-        expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toEqual({ recordId });
+        expect(postResponse.mock.calls[0]?.[1]).toEqual({ recordId });
     });
 
     it("sets the active qualified group account with runtime-state CAS", async () => {
@@ -503,7 +511,7 @@ describe("qualified Connected Account V4 API", () => {
             updatedAt: 200,
             members: [],
         };
-        vi.mocked(axios.post).mockResolvedValue({
+        postResponse.mockResolvedValue({
             status: 200,
             data: { group },
         });
@@ -526,7 +534,7 @@ describe("qualified Connected Account V4 API", () => {
             },
         })).resolves.toMatchObject(group);
 
-        expect(vi.mocked(axios.post)).toHaveBeenCalledWith(
+        expect(postResponse).toHaveBeenCalledWith(
             "https://server.example/v4/connect/qualified/group/active-account",
             {
                 group: group.ref,
@@ -579,7 +587,7 @@ describe("qualified Connected Account V4 API", () => {
                 }],
             },
         };
-        vi.mocked(axios.patch)
+        patchResponse
             .mockResolvedValueOnce({
                 status: 200,
                 data: { group },
@@ -609,10 +617,10 @@ describe("qualified Connected Account V4 API", () => {
                 "connected_service_auth_group_runtime_state_revision_conflict",
         } satisfies Partial<QualifiedConnectedAccountGroupConflictError>);
 
-        expect(vi.mocked(axios.patch).mock.calls[0]?.[0]).toBe(
+        expect(patchResponse.mock.calls[0]?.[0]).toBe(
             "https://server.example/v4/connect/qualified/group/runtime-state",
         );
-        expect(vi.mocked(axios.patch).mock.calls[0]?.[1]).toEqual(patch);
+        expect(patchResponse.mock.calls[0]?.[1]).toEqual(patch);
     });
 
     it("preserves the server's closed credential-conflict discriminator at the HTTP boundary", async () => {
@@ -632,7 +640,7 @@ describe("qualified Connected Account V4 API", () => {
             { error: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
                 credentialRevision: null, configurationRevision: null },
         ] as const) {
-            mockAxiosMutationOnce({ status: 409, data: body });
+            replyToMutationOnce({ status: 409, data: body });
             await expect(mutateQualifiedConnectedAccountCredentialV4({
                 token: "token",
                 mutation,
@@ -648,7 +656,7 @@ describe("qualified Connected Account V4 API", () => {
             } satisfies Partial<QualifiedConnectedAccountCredentialConflictError>);
         }
 
-        mockAxiosMutationOnce({ status: 409, data: { error: "not-a-known-code" } });
+        replyToMutationOnce({ status: 409, data: { error: "not-a-known-code" } });
         await expect(mutateQualifiedConnectedAccountCredentialV4({
             token: "token",
             mutation,
@@ -667,7 +675,7 @@ describe("qualified Connected Account V4 API", () => {
         { body: { error: 'private-secret', reason: 'private-account', token: 'private-token' },
           diagnostic: 'connected_account_credential_conflict_response_invalid' },
     ])('preserves only the closed health HTTP409 cause: $diagnostic', async ({ body, diagnostic }) => {
-        mockAxiosMutationOnce({ status: 409, data: body }, "patch");
+        replyToMutationOnce({ status: 409, data: body }, "patch");
         const error = await mutateQualifiedConnectedAccountCredentialHealthV4({
             token: 'fixture-token', patch: { ref: { service, accountId: 'fixture-account' },
                 expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', expectedConfigurationRevision: null,
@@ -701,10 +709,10 @@ describe("qualified Connected Account V4 API", () => {
                 v: { region: "eu" },
             },
         };
-        vi.mocked(axios.get)
+        getResponse
             .mockResolvedValueOnce({ status: 200, data: credential })
             .mockResolvedValueOnce({ status: 200, data: configuration });
-        vi.mocked(axios.patch).mockResolvedValue({
+        patchResponse.mockResolvedValue({
             status: 200,
             data: {
                 success: true,
@@ -756,16 +764,16 @@ describe("qualified Connected Account V4 API", () => {
             configurationRevision: "next-configuration-revision",
         });
 
-        expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toContain(
+        expect(getResponse.mock.calls[0]?.[0]).toContain(
             "/v4/connect/qualified/credential?ref=%7B",
         );
-        expect(vi.mocked(axios.get).mock.calls[1]?.[0]).toContain(
+        expect(getResponse.mock.calls[1]?.[0]).toContain(
             "/v4/connect/qualified/configuration?target=%7B",
         );
-        expect(vi.mocked(axios.patch).mock.calls[0]?.[0]).toContain(
+        expect(patchResponse.mock.calls[0]?.[0]).toContain(
             "/v4/connect/qualified/configuration",
         );
-        expect(vi.mocked(axios.patch).mock.calls[1]?.[0]).toContain(
+        expect(patchResponse.mock.calls[1]?.[0]).toContain(
             "/v4/connect/qualified/credential/health",
         );
     });
@@ -779,7 +787,7 @@ describe("qualified Connected Account V4 API", () => {
             subjectKind: "account" as const,
             quotaScope: "account" as const,
         };
-        vi.mocked(axios.post)
+        postResponse
             .mockResolvedValueOnce({
                 status: 200,
                 data: {
@@ -797,7 +805,7 @@ describe("qualified Connected Account V4 API", () => {
                 status: 200,
                 data: { success: true },
             });
-        vi.mocked(axios.delete)
+        deleteResponse
             .mockResolvedValueOnce({
                 status: 200,
                 data: { success: true },
@@ -806,7 +814,7 @@ describe("qualified Connected Account V4 API", () => {
                 status: 200,
                 data: { success: true },
             });
-        vi.mocked(axios.get).mockResolvedValueOnce({
+        getResponse.mockResolvedValueOnce({
             status: 200,
             data: {
                 ref,
@@ -871,22 +879,22 @@ describe("qualified Connected Account V4 API", () => {
             },
         })).resolves.toEqual({ success: true });
 
-        expect(String(vi.mocked(axios.post).mock.calls[0]?.[0])).toContain(
+        expect(String(postResponse.mock.calls[0]?.[0])).toContain(
             "/credential/refresh-lease",
         );
-        expect(String(vi.mocked(axios.delete).mock.calls[0]?.[0])).toContain(
+        expect(String(deleteResponse.mock.calls[0]?.[0])).toContain(
             "cleanupGroupReferences=false",
         );
-        for (const [, config] of vi.mocked(axios.delete).mock.calls) {
-            expect(config?.headers).toEqual({
+        for (const [, config] of deleteResponse.mock.calls) {
+            expect(config.headers).toMatchObject({
                 ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 Authorization: "Bearer token",
             });
         }
-        expect(String(vi.mocked(axios.get).mock.calls[0]?.[0])).toContain(
+        expect(String(getResponse.mock.calls[0]?.[0])).toContain(
             "/v4/connect/qualified/quotas?ref=%7B",
         );
-        expect(String(vi.mocked(axios.post).mock.calls[2]?.[0])).toContain(
+        expect(String(postResponse.mock.calls[2]?.[0])).toContain(
             "/v4/connect/qualified/provider-account-usage",
         );
     });
@@ -897,7 +905,7 @@ describe("qualified Connected Account V4 API", () => {
             error: "provider_account_usage_storage_mode_mismatch",
         };
 
-        vi.mocked(axios.get).mockResolvedValueOnce({
+        getResponse.mockResolvedValueOnce({
             status: 409,
             data: conflict,
         });
@@ -908,7 +916,7 @@ describe("qualified Connected Account V4 API", () => {
             QualifiedProviderAccountUsageReadConflictError,
         );
 
-        vi.mocked(axios.delete).mockResolvedValueOnce({
+        deleteResponse.mockResolvedValueOnce({
             status: 409,
             data: conflict,
         });
@@ -919,7 +927,7 @@ describe("qualified Connected Account V4 API", () => {
             QualifiedProviderAccountUsageReadConflictError,
         );
 
-        vi.mocked(axios.post).mockResolvedValueOnce({
+        postResponse.mockResolvedValueOnce({
             status: 409,
             data: conflict,
         });
@@ -930,7 +938,7 @@ describe("qualified Connected Account V4 API", () => {
             QualifiedProviderAccountUsageReadConflictError,
         );
 
-        vi.mocked(axios.post).mockResolvedValueOnce({
+        postResponse.mockResolvedValueOnce({
             status: 409,
             data: conflict,
         });
