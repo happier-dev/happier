@@ -46,7 +46,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   readHomeDomainAction?(): ActionExecutorDeps['homeDomainAction'];
   resolveHeaders(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Readonly<Record<string, string>> | null;
-  callMachineAction(input: Readonly<{ machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal;
+  callMachineAction(input: Readonly<{ machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal; timeoutMs?: number | null;
     authority?: ActionExecutorContext['authority']; authorization?: ActionExecutorContext['rpcSessionAuthorization'];
     context?: ActionExecutorContext; effectActionId?: string; exactMachine?: true }>): Promise<unknown>;
 }>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
@@ -379,7 +379,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
         });
         return ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.parse(await params.callMachineAction({
           machineId, ...(params.serverId ? { serverId: params.serverId } : {}),
-          method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME, request, ...(signal ? { signal } : {}),
+          method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME, request, timeoutMs: null, ...(signal ? { signal } : {}),
         }));
       },
       readQuota: async (input) => {

@@ -1268,7 +1268,7 @@ describe('native connected-service Action adapter', () => {
     const input = { machineId: 'machine-work', serviceId: 'openai-codex' as const, profileId: 'account-work', providerCreditId: 'credit-1', sourceSnapshotFetchedAtMs: 10 };
     expect(await action({ actionId: 'connectedServices.quota.reset', input, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } }))
       .toEqual({ ok: false, errorCode: 'reset_unavailable', error: 'reset_unavailable' });
-    expect(observed).toEqual([{ machineId: 'machine-work', serverId: 'home-work', method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME, request: {
+    expect(observed).toEqual([{ machineId: 'machine-work', serverId: 'home-work', method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME, timeoutMs: null, request: {
       serviceId: 'happier.agent.codex/openai-codex', profileId: input.profileId, providerCreditId: input.providerCreditId,
       idempotencyKey: buildRecoveryCreditConsumeIdempotencyKey(input),
     } }]);

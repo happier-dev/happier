@@ -2037,6 +2037,33 @@ describe('callMachineRpc', () => {
     }
   });
 
+  it('keeps the CLI quota reset acknowledgement open beyond the generic machine RPC deadline', async () => {
+    vi.useFakeTimers();
+    const credentials = { token: 'plain-token', encryption: null };
+    axiosGet.mockResolvedValueOnce({ data: { machine: { storageMode: 'plain', id: 'machine-plain',
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } });
+    const result = { ok: true, snapshot: null, receipt: { status: 'consumed', idempotencyKey: 'approved-reset' } };
+    socket.emit.mockImplementationOnce((_event, _payload, ack) => {
+      setTimeout(() => ack({ ok: true, result }), 20_001);
+    });
+    const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: '', mode: 'plain', ctx: null });
+    const pending = deps.connectedServiceAction!({
+      actionId: 'connectedServices.quota.reset',
+      input: { machineId: 'machine-plain', serviceId: 'openai-codex', profileId: 'reset-profile' },
+      context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
+    }).then(value => ({ value }), error => ({ error }));
+    try {
+      await vi.dynamicImportSettled();
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await pending).toEqual({ value: result });
+      const calls = socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[1]).toMatchObject({ method: `machine-plain:${RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME}` });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['memory.status', 'search.settings.get'] as const)(
     'preserves a missing local handler refusal through the real %s Action', async actionId => {
       const machineId = 'missing-memory-machine';

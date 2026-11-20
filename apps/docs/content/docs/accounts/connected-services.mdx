@@ -742,10 +742,13 @@ redemption request. For subscription pools, automatic reset use must be explicit
 enabled and the grant must cover a currently exhausted allowance selected by the
 pool. A reset for another window cannot authorize automatic spending.
 
-If the provider's answer is uncertain, Happier holds further manual and automatic
-reset attempts for that account instead of retrying the debit with another key.
-Availability, expiry and grant quantities come from Claude. Applying a reset is
-irreversible and leaves the ordinary weekly reset schedule unchanged; see
+If Happier could not confirm a reset, the request may already have used a credit.
+Use **Check** to reread the account's usage and credit inventory without applying
+another reset. An empty inventory alone leaves the outcome unknown. While the
+daemon holds an unconfirmed receipt, further manual and automatic reset attempts
+for that account stay on hold. Availability, expiry and grant quantities come from
+Claude. Applying a reset is irreversible and leaves the ordinary weekly reset
+schedule unchanged. See
 [Claude's limit-reset guidance](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset).
 
 This integration uses an undocumented provider endpoint. Read-only discovery was

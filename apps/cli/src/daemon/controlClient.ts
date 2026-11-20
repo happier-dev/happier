@@ -858,13 +858,13 @@ export async function notifyDaemonConnectedServiceQuotaRecoveryCreditConsume(
     providerCreditId?: string;
   }>,
   options: DaemonControlRequestOptions = {},
-): Promise<{ error?: string } | any> {
+): Promise<unknown> {
   return await daemonPost('/connected-service-quota-recovery-credit/consume', {
     serviceId: body.serviceId,
     profileId: body.profileId,
     idempotencyKey: body.idempotencyKey,
     ...(body.providerCreditId ? { providerCreditId: body.providerCreditId } : {}),
-  }, options);
+  }, { timeoutMs: null, ...options, mutation: true });
 }
 
 export async function notifyDaemonProviderAccountUsageSnapshot(

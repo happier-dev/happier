@@ -5,6 +5,12 @@ import axios from 'axios';
 import credentialAxios from '@/api/client/credentialAxios';
 import { buildProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { ApiClient } from '@/api/api';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { registerMachineConnectedServiceQuotaRpcHandlers } from '@/api/machine/rpcHandlers.connectedServiceQuotas';
+import type { RpcHandler } from '@/api/rpc/types';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import type { Socket } from 'node:net';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { PushNotificationClient } from '@/api/pushNotifications';
 import { logger } from '@/ui/logger';
@@ -2284,7 +2290,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reconcile_redeemed', 'manual_reconcile_unproven', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     let now = 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
@@ -2300,6 +2306,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const settlementInitialization = recoveryMode.startsWith('settlement_init_') || completionObservationMode;
     const accountMode = recoveryMode === 'settlement_init_unconfigured_e2ee' || recoveryMode === 'enumerated' || recoveryMode === 'completion_observation_e2ee' || recoveryMode === 'settlement_init_e2ee' || recoveryMode === 'discovery_inventory_e2ee' || recoveryMode === 'persistence_unchanged_e2ee' || recoveryMode === 'quota_data_key' || recoveryMode === 'quota_error_deferred_request_e2ee' ? 'e2ee' as const : 'plain' as const;
     const manual = recoveryMode.startsWith('manual_');
+    const reconciliationMode = recoveryMode.startsWith('manual_reconcile_');
+    const loopbackMode = recoveryMode.endsWith('_acknowledgement');
     const expectedProviderCreditId = recoveryMode.startsWith('enumerated') || recoveryMode === 'manual_next'
       ? 'earliest'
       : recoveryMode === 'manual_selected' || recoveryMode === 'manual_not_available' ? 'later' : manual ? 'earliest' : undefined;
@@ -2320,8 +2328,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-quota-plugin-'));
     const recoveryInvocationMarker = join(pluginRoot, 'recovery-invoked');
     const recoveryConsumeMarker = join(pluginRoot, 'recovery-consume-attempts');
+    const recoveryInventoryReadMarker = join(pluginRoot, 'recovery-inventory-reads');
     const quotaInvocationMarker = join(pluginRoot, 'quota-invoked');
     const automaticRefusalRelease = join(pluginRoot, 'release-automatic-refusal');
+    const acknowledgementRelease = join(pluginRoot, 'release-acknowledgement');
     const profile: QualifiedConnectedAccountProfileV4 = {
       ref: {
         service,
@@ -2395,6 +2405,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
               { providerCreditId: 'grant-a', kind: 'usage_limit_reset', status: 'unknown', title: 'Saved reset', providerResetType: 'cedar_ember', expiresAtMs: ${now + 2000} },
               { providerCreditId: 'spent', kind: 'usage_limit_reset', status: 'redeemed', redeemedAtMs: ${now - 100} }
             ], recoveryCreditDetails: { 'grant-a': { remainingCount: 2, appliesToProviderLimitIds: ['five_hour', 'seven_day'], unavailableReason: 'cooldown' }, spent: { remainingCount: 0, appliesToProviderLimitIds: [], unavailableReason: 'consumed' } } };` : ''}
+            ${reconciliationMode ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(recoveryInventoryReadMarker)}, 'read\\n');` : ''}
+            ${recoveryMode === 'manual_reconcile_redeemed' ? `if (consumed) return { observedAtMs: ${now}, availableCount: 1, credits: [
+              { providerCreditId: 'earliest', status: 'redeemed' }, { providerCreditId: 'later', status: 'available' },
+            ] };` : ''}
+            ${recoveryMode === 'manual_reconcile_unproven' ? `if (consumed) return { observedAtMs: ${now}, availableCount: 0, credits: [] };` : ''}
             ${recoveryMode === 'read_failure' ? "throw new Error('inventory unavailable');" : ''}
             return { observedAtMs: ${now} + ++inventoryReadCount, availableCount: 3, credits: ${recoveryMode === 'enumerated_no_expiry' ? "[{ providerCreditId: 'earliest', status: 'available', expiresAtMs: null }]" : recoveryMode === 'enumerated' || manual ? `[
               { providerCreditId: 'expired', status: 'available', expiresAtMs: ${now - 1} },
@@ -2406,6 +2421,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             ${recoveryMode === 'manual_distinct' ? "if (!['earliest', 'later'].includes(request.providerCreditId)) throw new Error('wrong credit');" : `if (request.providerCreditId !== ${JSON.stringify(expectedProviderCreditId) ?? 'undefined'}) throw new Error('wrong credit');`}
             if (consumedCreditIds.has(request.providerCreditId)) throw new Error('duplicate consumption');
             ${recoveryMode === 'not_available' || recoveryMode === 'nothing_to_reset' ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(recoveryConsumeMarker)}, String(++consumeAttemptCount));` : ''}
+            ${reconciliationMode || loopbackMode ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(recoveryConsumeMarker)}, 'debit\\n');` : ''}
             ${recoveryMode === 'manual_known_no_effect_error' ? "if (++consumeAttemptCount === 1) throw Object.assign(new Error('No debit attempted'), { recoveryCreditConsumeOutcomeUnknown: false });" : ''}
             ${recoveryMode.startsWith('automatic_pending_') ? `if (request.providerLimitIds?.length === 0) {
               automaticRefusalPending = true;
@@ -2421,7 +2437,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             ${recoveryMode.startsWith('automatic_') ? "if (request.providerLimitIds !== undefined && request.providerLimitIds.length === 0) return { status: 'nothing_to_reset' };" : ''}
             ${recoveryMode === 'not_available' || recoveryMode === 'nothing_to_reset' || recoveryMode === 'manual_not_available' ? '' : `consumed = true;
             consumedCreditIds.add(request.providerCreditId);`}
-            ${recoveryMode === 'manual_unknown_error' ? "throw Object.assign(new Error('Response lost after debit'), { recoveryCreditConsumeOutcomeUnknown: true });" : recoveryMode === 'manual_predecessor_error' ? "throw new Error('Response lost after debit');" : ''}
+            ${loopbackMode ? `const fs = await import('node:fs/promises');
+            while (await fs.readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') !== 'release') {
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }` : ''}
+            ${recoveryMode === 'manual_unknown_error' || reconciliationMode ? "throw Object.assign(new Error('Response lost after debit'), { recoveryCreditConsumeOutcomeUnknown: true });" : recoveryMode === 'manual_predecessor_error' ? "throw new Error('Response lost after debit');" : ''}
             ${['manual_distinct', 'manual_same_selector', 'manual_aggregate_selected'].includes(recoveryMode) ? "if (request.providerCreditId === 'earliest') await new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(new Error('Provider debit acknowledgement unknown')), { once: true }); });" : ''}
             ${recoveryMode === 'aggregate_network' ? "throw new Error('response lost after debit');" : ''}
             ${recoveryMode === 'aggregate_timeout' ? "await new Promise((resolve, reject) => { options.signal.addEventListener('abort', () => reject(new Error('provider result unknown')), { once: true }); });" : ''}
@@ -2752,7 +2772,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       recordDiagnostic: (event) => { quotaDiagnostics.push(event); },
       quotaPersistenceMinFreshnessMs: 60_000,
       fetchTimeoutMs: recoveryMode === 'quota_timeout_configured' ? 1_000
-        : recoveryMode === 'quota_timeout_absent' ? undefined : 5_000,
+        : recoveryMode === 'quota_timeout_absent' || loopbackMode ? undefined : 5_000,
       onAutomaticQuotaResetConsumed: async (event) => {
         notifications.push(event);
         await dispatchConnectedServiceAutomaticQuotaResetNotificationAsync({
@@ -3451,6 +3471,85 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         await expect(consume()).resolves.toMatchObject({ ok: false });
         expect(accountUsageStore.resolveBySource({ serviceId: serviceKey, profileId: request.profileId, bindingKind: 'profile' }))
           .toMatchObject({ meters: [expect.objectContaining({ used: 25, remaining: 75 })] });
+        return;
+      }
+      if (loopbackMode) {
+        const env = createEnvKeyScope(['HAPPIER_DAEMON_HTTP_TIMEOUT']);
+        env.patch({ HAPPIER_DAEMON_HTTP_TIMEOUT: '10000' });
+        onTestFinished(env.restore);
+        const oldClientTimeout = new AbortController();
+        const realTimeout = AbortSignal.timeout.bind(AbortSignal);
+        if (recoveryMode === 'manual_late_acknowledgement') {
+          const clock = vi.spyOn(AbortSignal, 'timeout').mockImplementation(delay =>
+            delay === 10_000 ? oldClientTimeout.signal : realTimeout(delay));
+          onTestFinished(() => clock.mockRestore());
+        }
+        const { createDaemonControlApp } = await import('@/daemon/controlServer');
+        const persistence = await import('@/persistence');
+        const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine', controlToken: 'reset-test-token',
+          stopSession: async () => ({ status: 'not_found' }),
+          spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+          requestShutdown: () => {}, onHappySessionWebhook: () => {},
+          handleConnectedServiceQuotaRecoveryCreditConsume: request => coordinator.consumeRecoveryCreditForProfile(request),
+        });
+        let socket: Socket | undefined;
+        app.addHook('onRequest', (request, _reply, done) => { socket = request.raw.socket; done(); });
+        try {
+          const address = await app.listen({ host: '127.0.0.1', port: 0 });
+          const daemonState = vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({
+            pid: process.pid, httpPort: Number(new URL(address).port), controlToken: 'reset-test-token',
+            startedAt: Date.now(), startedWithCliVersion: '0.3.0',
+          });
+          onTestFinished(() => daemonState.mockRestore());
+          let invoke: ((raw: unknown) => Promise<unknown>) | undefined;
+          registerMachineConnectedServiceQuotaRpcHandlers({ rpcHandlerManager: {
+            registerHandler: <TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) => {
+              if (method === RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME) {
+                invoke = async raw => await handler(raw as TRequest);
+              }
+            },
+          } });
+          if (!invoke) throw new Error('Missing recovery credit RPC');
+          const debit = { serviceId: serviceKey, profileId: request.profileId, idempotencyKey: 'confirmed-reset' };
+          const pending = invoke(debit);
+          await vi.waitFor(async () => expect(await readFile(recoveryConsumeMarker, 'utf8')).toBe('debit\n'));
+          if (recoveryMode === 'manual_late_acknowledgement') {
+            oldClientTimeout.abort(new DOMException('The operation timed out', 'TimeoutError'));
+            await writeFile(acknowledgementRelease, 'release');
+            await expect(pending).resolves.toMatchObject({ ok: true, receipt: {
+              status: 'consumed', idempotencyKey: 'confirmed-reset', providerCreditId: 'earliest',
+            } });
+          } else {
+            if (!socket) throw new Error('Missing issued loopback request');
+            socket.destroy();
+            await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown', receipt: {
+              status: 'unknown_after_timeout', idempotencyKey: 'confirmed-reset',
+            } });
+            await writeFile(acknowledgementRelease, 'release');
+            await expect(invoke(debit)).resolves.toMatchObject({ ok: true, receipt: {
+              status: 'consumed', idempotencyKey: 'confirmed-reset', providerCreditId: 'earliest',
+            } });
+          }
+          expect(await readFile(recoveryConsumeMarker, 'utf8')).toBe('debit\n');
+        } finally {
+          await writeFile(acknowledgementRelease, 'release');
+          await app.close();
+        }
+        return;
+      }
+      if (reconciliationMode) {
+        const before = (await readFile(recoveryInventoryReadMarker, 'utf8').catch(() => '')).length;
+        const first = await consume();
+        expect(first).toMatchObject(recoveryMode === 'manual_reconcile_redeemed'
+          ? { ok: true, receipt: { status: 'already_consumed', providerCreditId: 'earliest' } }
+          : { ok: false, errorCode: 'outcome_unknown', receipt: { status: 'unknown_after_timeout', providerCreditId: 'earliest' } });
+        expect((await readFile(recoveryInventoryReadMarker, 'utf8')).slice(before)).toBe('read\nread\n');
+        expect(await consume()).toEqual(first);
+        if (recoveryMode === 'manual_reconcile_unproven') {
+          await expect(coordinator.consumeRecoveryCreditForProfile({ serviceId: serviceKey, profileId: request.profileId,
+            idempotencyKey: 'new-confirmation', providerCreditId: 'later' })).resolves.toEqual(first);
+        }
+        expect(await readFile(recoveryConsumeMarker, 'utf8')).toBe('debit\n');
         return;
       }
       if (recoveryMode === 'manual_persistence_failed') {

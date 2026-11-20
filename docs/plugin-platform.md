@@ -11457,11 +11457,16 @@ another debit path. Automatic requests carry the current exhausted provider-limi
 identities and check them against fresh provider usage and grant applicability.
 Manual requests use the same provider preflight. Named recovery keys include the
 quota observation for later legitimate uses; explicit caller keys remain opaque.
-Unknown debit receipts hold all further reset attempts for that profile through
-the existing receipt lifecycle, including changed observations and manual actions.
-Definitive automatic no-effect refusals do not block a waiting manual request or
-a request for a different exhausted allowance: those requests re-enter the same
-consume owner after settlement. Successful or uncertain debits remain shared.
+The daemon loopback follows the quota operation's deadline. After issuance the
+transport classifies a timeout, abort or socket loss as an unknown outcome.
+Proven connection failure before dispatch and cancellation before issuance
+leave the effect unattempted. When a provider acknowledgement is lost, the consume
+owner makes one qualified quota read if it has an exact grant ID. A matching redeemed grant confirms that the grant was
+used. An empty inventory or an aggregate count cannot settle that receipt.
+An unsettled receipt holds further manual and automatic reset attempts for the
+profile for the life of the daemon. Definitive automatic no-effect refusals allow
+a waiting manual request or a request for another exhausted allowance to re-enter
+the same consume owner after settlement.
 
 Inventory status and count remain the sole action authority. Optional
 `recoveryCreditDetails` supplies saved quantities, applicability and reasons to the

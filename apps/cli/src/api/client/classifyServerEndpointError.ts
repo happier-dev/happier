@@ -31,6 +31,7 @@ export const NETWORK_ERROR_CODES = [
   'ENOTFOUND',
   'ERR_NETWORK',
   'ETIMEDOUT',
+  'UND_ERR_SOCKET',
 ] as const;
 
 const networkErrorCodeSet: ReadonlySet<string> = new Set(NETWORK_ERROR_CODES);
