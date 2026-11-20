@@ -2,7 +2,7 @@ import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createServer, request as httpRequest, type Agent, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -684,21 +684,36 @@ export type LocalSessionHostAdmission = Readonly<{
    */
   handOver(): boolean;
   /**
-   * Keep the host for a Session that is about to be created (its daemon saw a New Session intent):
-   * the host loads the runner code now and does not end while held. Returns the release. Throws
-   * `SessionHostClosingError` when the host no longer admits.
+   * Keep the host alive until the returned release is called. A New Session intent also preloads
+   * the runner by default. Throws `SessionHostClosingError` when the host no longer admits.
    */
-  hold(): () => void;
+  hold(preloadRunner?: boolean): () => void;
   /** The daemon that launched this host (or adopted it after a restart): the only caller admitted. */
   readTrustedCaller(): Promise<ProcessBirthWitness | null>;
 }>;
 
-/**
- * One descriptor per host process: a host started before a CLI update keeps serving its Sessions
- * while the updated daemon starts a current host for new ones.
- */
+// A detached host publishes one descriptor of its own before admitting any Sessions.
+const HOST_DESCRIPTOR_PREFIX = 'session-host-';
+const HOST_DESCRIPTOR_SUFFIX = '.json';
+
 function resolveHostDescriptorPath(hostPid: number): string {
-  return join(resolveDescriptorDirectory(), `session-host-${hostPid}.json`);
+  return join(resolveDescriptorDirectory(), `${HOST_DESCRIPTOR_PREFIX}${hostPid}${HOST_DESCRIPTOR_SUFFIX}`);
+}
+
+/** Candidate hosts for daemon startup. Each endpoint is verified when it is opened. */
+export async function listLocalSessionHostPids(): Promise<number[]> {
+  const files = await readdir(resolveDescriptorDirectory()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const pids: number[] = [];
+  for (const file of files) {
+    if (!file.startsWith(HOST_DESCRIPTOR_PREFIX) || !file.endsWith(HOST_DESCRIPTOR_SUFFIX)) continue;
+    const name = file.slice(HOST_DESCRIPTOR_PREFIX.length, -HOST_DESCRIPTOR_SUFFIX.length);
+    const pid = Number(name);
+    if (Number.isSafeInteger(pid) && pid > 0 && String(pid) === name) pids.push(pid);
+  }
+  return pids;
 }
 
 function parseSessionHostAddRequest(body: unknown): SessionHostAddRequest | null {
@@ -739,9 +754,10 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     return;
   }
   if (request.url === HOST_HOLD_PATH) {
+    const preloadRunner = (body as { preloadRunner?: unknown } | null)?.preloadRunner !== false;
     let release: () => void;
     try {
-      release = host.hold();
+      release = host.hold(preloadRunner);
     } catch (error) {
       if (!(error instanceof SessionHostClosingError)) throw error;
       reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });
@@ -918,23 +934,24 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
 }
 
 /**
- * Hold the session host `hostPid` for a Session that is about to be created. `held` is true once the
- * host admitted the hold; it lasts until `release()` (or this process ends) closes the connection.
- * `closed` settles when the hold connection is gone (released, refused, or the host ended).
+ * Hold the session host `hostPid`. `held` is true once the host admitted the hold; it lasts until
+ * `release()` (or this process ends) closes the connection. Pass `preloadRunner: false` for idle
+ * reconciliation. `closed` settles when the hold connection is gone.
  */
-export function holdLocalSessionHost(input: Readonly<{ hostPid: number }>): Readonly<{
+export function holdLocalSessionHost(input: Readonly<{ hostPid: number; preloadRunner?: false }>): Readonly<{
   held: Promise<boolean>;
   closed: Promise<void>;
   release(): void;
 }> {
   const descriptor = readHostDescriptor(input.hostPid);
   if (!descriptor) return { held: Promise.resolve(false), closed: Promise.resolve(), release: () => {} };
+  const body = input.preloadRunner === false ? JSON.stringify({ preloadRunner: false }) : '{}';
   let resolveHeld!: (held: boolean) => void;
   const held = new Promise<boolean>(resolve => { resolveHeld = resolve; });
   const outgoing = httpRequest({
     socketPath: descriptor.endpoint.path, path: HOST_HOLD_PATH, method: 'POST',
     agent: process.platform === 'win32' ? createLocalSessionRpcAgent(descriptor.endpoint.path, 'win32', false) : false,
-    headers: { 'content-type': 'application/json', 'content-length': 2 },
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
   }, incoming => {
     resolveHeld(incoming.statusCode === 200);
     incoming.resume();
@@ -943,7 +960,7 @@ export function holdLocalSessionHost(input: Readonly<{ hostPid: number }>): Read
     outgoing.once('close', () => { resolveHeld(false); resolve(); });
   });
   outgoing.once('error', () => resolveHeld(false));
-  outgoing.end('{}');
+  outgoing.end(body);
   return { held, closed, release: () => { outgoing.destroy(); } };
 }
 

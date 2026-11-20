@@ -8265,6 +8265,12 @@ longer runs is observed as ended; a broken connection is the host's death
 (`process-missing`, respawn as above). A live host of the daemon's current runtime
 takes new Sessions.
 
+Startup also discovers host descriptors in the active server directory when there
+are no Session markers or no Session watch was admitted. The daemon opens and
+releases an authenticated host hold. The host's existing idle rule ends it if
+it has no Sessions or other holds. Current hosts can take this hold without
+preloading the runner.
+
 For each admitted watch, re-adoption reads the Session's recorded Archive and
 explicit Stop hold in its Account context. It uses the ordinary exact-runner
 Stop to end only that Session. An offline Archive response can carry a

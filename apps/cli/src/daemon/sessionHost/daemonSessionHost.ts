@@ -11,6 +11,7 @@ import {
   endLocalSessionHostSession,
   handOverLocalSessionHost,
   holdLocalSessionHost,
+  listLocalSessionHostPids,
   removeExitedSessionHostDescriptor,
   watchLocalSessionHostSession,
   type LocalSessionHostSession,
@@ -68,6 +69,7 @@ export type DaemonSessionHost = Readonly<{
    * Daemon restart: the reattached Sessions whose process is a live session host (marker pid,
    * birth and command identity) are hosted Sessions again — Stop goes through the host and each
    * Session's end is observed for that Session only — and that host takes new Sessions.
+   * Also reconciles host descriptors that have no live Session to re-observe.
    * Returns how many Sessions were adopted.
    */
   adoptReattachedSessions(input: Readonly<{
@@ -246,7 +248,7 @@ export function createDaemonSessionHost(params: Readonly<{
       return second.status === 'closing' ? { status: 'failed' as const, result: second.result } : second;
     },
     adoptReattachedSessions: ({ trackedSessions, observeExit, readPersistedLifecycle, stopReattachedSession, isCurrentRuntime }) => {
-      type AdoptedHost = Readonly<{ host: RunningHost; markLost(): void; current: boolean; reconciled: Array<Promise<void>> }>;
+      type AdoptedHost = Readonly<{ host: RunningHost; markLost(): void; current: boolean; reconciled: Array<Promise<boolean>> }>;
       const adoptedHosts = new Map<number, AdoptedHost>();
       const adoptHost = (pid: number, processCommand: string): AdoptedHost => {
         const known = adoptedHosts.get(pid);
@@ -278,18 +280,21 @@ export function createDaemonSessionHost(params: Readonly<{
         adopted += 1;
         const sessionId = tracked.happySessionId;
         reconciled.push(watched.admitted.then(async (admitted) => {
-          if (!admitted || !sessionId) return;
-          const state = await readPersistedLifecycle(sessionId, tracked);
-          const admission = resolveSessionAutoResumeAdmissionV1({
-            ...state, machineAvailable: true, authorityAvailable: state.metadata !== null,
-          });
-          if (admission === 'archived' || admission === 'held_by_person') {
-            await stopReattachedSession(sessionId, tracked);
+          if (!admitted || !sessionId) return admitted;
+          try {
+            const state = await readPersistedLifecycle(sessionId, tracked);
+            const admission = resolveSessionAutoResumeAdmissionV1({
+              ...state, machineAvailable: true, authorityAvailable: state.metadata !== null,
+            });
+            if (admission === 'archived' || admission === 'held_by_person') {
+              await stopReattachedSession(sessionId, tracked);
+            }
+          } catch {
+            logger.warn('[DAEMON RUN] Could not apply recorded lifecycle to a reattached hosted Session', {
+              trackingKey: tracked.trackingKey,
+            });
           }
-        }).catch(() => {
-          logger.warn('[DAEMON RUN] Could not apply recorded lifecycle to a reattached hosted Session', {
-            trackingKey: tracked.trackingKey,
-          });
+          return true;
         }));
         void (async () => {
           const trackingKey = tracked.trackingKey;
@@ -321,20 +326,42 @@ export function createDaemonSessionHost(params: Readonly<{
           });
         }).finally(resolveObserved);
       }
+      const checkHostIdle = async (hostPid: number): Promise<void> => {
+        // Let the host's existing last-hold release decide if it can exit. Only it knows whether
+        // a Session or another hold is still live, even if there is no usable Session marker.
+        const hold = holdLocalSessionHost({ hostPid, preloadRunner: false });
+        try {
+          if (!await hold.held) params.logDebug('[DAEMON RUN] Session host idle check not admitted', { hostPid });
+        } finally {
+          hold.release();
+        }
+        await hold.closed;
+      };
       for (const { host, current, reconciled } of adoptedHosts.values()) {
-        if (current) continue;
-        // A host of an older runtime (CLI update): after applying recorded lifecycle changes, it
-        // hands them over and exits; each Session then takes the crash path (unexpected end → spare
-        // its held Agent → respawn into the current host → adopt), so live Sessions move with no gap.
-        void Promise.all(reconciled).then(async () => {
+        void Promise.all(reconciled).then(async (admitted) => {
+          if (!admitted.some(Boolean)) {
+            await checkHostIdle(host.pid);
+            return;
+          }
+          if (current) return;
+          // After applying recorded lifecycle changes, hand watched Sessions over through the
+          // existing crash recovery path so the current host can adopt their held Agents.
           const handingOver = await handOverLocalSessionHost({ hostPid: host.pid });
           logger.debug('[DAEMON RUN] Session host of an older runtime asked to hand over', { hostPid: host.pid, handingOver });
         }).catch((error: unknown) => {
-          logger.warn('[DAEMON RUN] Session host handover request failed', {
+          logger.warn('[DAEMON RUN] Session host reconciliation failed', {
             hostPid: host.pid, error: error instanceof Error ? error.message : String(error),
           });
         });
       }
+      // A detached host publishes its own descriptor before any Session can write its marker.
+      void listLocalSessionHostPids().then(async (pids) => {
+        await Promise.all(pids.filter(pid => !adoptedHosts.has(pid)).map(checkHostIdle));
+      }).catch((error: unknown) => {
+        logger.warn('[DAEMON RUN] Session host descriptor reconciliation failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
       return adopted;
     },
   };
@@ -364,9 +391,6 @@ export function createSessionHostPlacement(params: Readonly<{
   return {
     place,
     prestart: async (signal) => { await place()?.prestart(signal); },
-    adoptReattachedSessions: (input) => {
-      const hosted = [...input.trackedSessions].filter(tracked => isSessionHostProcessCommand(tracked.processCommand));
-      return hosted.length === 0 ? 0 : daemonHost().adoptReattachedSessions({ ...input, trackedSessions: hosted });
-    },
+    adoptReattachedSessions: (input) => place()?.adoptReattachedSessions(input) ?? 0,
   };
 }

@@ -771,6 +771,27 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(host.exit).toHaveBeenCalledWith(0);
   });
 
+  it('ends an empty host on daemon replacement when only its host descriptor was published', { timeout: 120_000 }, async () => {
+    const previous = await createHarness();
+    const preloadsBeforeReplacement = census.runnerPreloads;
+    // The old daemon disappeared after the detached host published its descriptor, before it
+    // could hold the host or add a Session. There is no per-Session marker to reattach.
+    await census.startHost!();
+    const stranded = previous.hosts[0]!;
+    expect(previous.tracked.size).toBe(0);
+
+    const replacement = createSessionHostPlacement({ processEnv: process.env, logDebug: () => {} });
+    expect(replacement.adoptReattachedSessions({
+      trackedSessions: [],
+      observeExit: () => { throw new Error('No Session exit to observe'); },
+      readPersistedLifecycle: async () => { throw new Error('No Session lifecycle to read'); },
+      stopReattachedSession: async () => { throw new Error('No Session to stop'); },
+    })).toBe(0);
+
+    await vi.waitFor(() => expect(stranded.exit).toHaveBeenCalledWith(0), { timeout: 5_000 });
+    expect(census.runnerPreloads).toBe(preloadsBeforeReplacement);
+  });
+
   it('lets a prestarted host end when the intent ends with no Session, and starts a new host for the next Session', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const harness = await createHarness();
@@ -817,11 +838,11 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
 
   it('ends an idle prestarted host when its daemon goes away (the hold connection breaks)', { timeout: 120_000 }, async () => {
     const harness = await createHarness();
+    const preloadsBeforeIntent = census.runnerPreloads;
     const intent = new AbortController();
     void harness.sessionHost.prestart(intent.signal);
-    await vi.waitFor(() => expect(harness.hosts).toHaveLength(1), { timeout: 60_000 });
-    // Wait for the hold to be admitted before the daemon "dies".
-    await vi.waitFor(() => expect(hostSockets.size).toBeGreaterThan(0), { timeout: 60_000 });
+    // A connected socket can still be awaiting admission. Preload starts inside the accepted hold.
+    await vi.waitFor(() => expect(census.runnerPreloads).toBe(preloadsBeforeIntent + 1), { timeout: 60_000 });
     for (const socket of hostSockets) socket.destroy();
     await harness.hosts[0]!.host.whenEnded;
     expect(harness.hosts[0]!.exit).toHaveBeenCalledWith(0);

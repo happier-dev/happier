@@ -118,13 +118,15 @@ export async function startSessionHost(params: Readonly<{
       ? 'termination_requested' : 'termination_unavailable' };
   };
   const watchSession = (trackingKey: string) => sessions.get(trackingKey)?.ended ?? null;
-  const hold = (): (() => void) => {
+  const hold = (preloadRunner = true): (() => void) => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     holds += 1;
-    runnerPreload ??= (params.preloadSessionRunner?.() ?? Promise.resolve()).catch((error: unknown) => {
-      // The Session command loads the same code itself; a failed preload only loses the head start.
-      logger.warn('[session-host] Runner preload failed', { error: error instanceof Error ? error.message : String(error) });
-    });
+    if (preloadRunner) {
+      runnerPreload ??= (params.preloadSessionRunner?.() ?? Promise.resolve()).catch((error: unknown) => {
+        // The Session command loads the same code itself; a failed preload only loses the head start.
+        logger.warn('[session-host] Runner preload failed', { error: error instanceof Error ? error.message : String(error) });
+      });
+    }
     let released = false;
     return () => {
       if (released) return;
