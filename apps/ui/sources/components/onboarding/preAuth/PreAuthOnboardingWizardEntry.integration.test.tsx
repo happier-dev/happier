@@ -711,6 +711,9 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
 
         expect(screen.findByTestId('unauth-shell-route-restore')).toBeTruthy();
         expect(screen.findByTestId('restore-route-content')).toBeTruthy();
+        // Approve on the Home already in use chooses nothing: no re-selection that would
+        // turn the welcome corner from "Run your own Home" into that Home's address.
+        expect(activeServerSwitchMock).not.toHaveBeenCalled();
         expect(screen.findByTestId('unauth-shell-back-chevron')).toBeTruthy();
         expect(screen.findAllByTestId('welcome-scan-existing-home')).toHaveLength(0);
 
@@ -719,7 +722,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
 
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('welcome-use-different-home');
+        await screen.pressByTestIdAsync('welcome-self-hosting');
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByTestId('unauth-shell-route-setup-pre-auth')).toBeTruthy();

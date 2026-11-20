@@ -1131,6 +1131,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const fallbackRelayUrl = welcomeRelayUrl ? String(welcomeRelayUrl).trim() : '';
         const candidate = rawRelayUrl || fallbackRelayUrl;
         if (!candidate) return true;
+        // Signing in to the Home already in use chooses no Home. Re-selecting it would mark the
+        // selection explicit and turn the welcome corner into that Home's address.
+        if (activeServerSnapshot.serverUrl && isSameServerUrl(candidate, activeServerSnapshot.serverUrl)) return true;
 
         if (canonicalCloudProfile && isSameServerUrl(canonicalCloudProfile.serverUrl, candidate)) {
             const ensuredCloudProfile = canonicalCloudProfile.serverId
@@ -1143,7 +1146,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
 
         return (await connectAndFocusHomeAddress(candidate)) != null;
-    }, [canonicalCloudProfile, connectAndFocusHomeAddress, state.context.relaySelection.serverUrl, welcomeRelayUrl]);
+    }, [activeServerSnapshot.serverUrl, canonicalCloudProfile, connectAndFocusHomeAddress, state.context.relaySelection.serverUrl, welcomeRelayUrl]);
 
     const handleWelcomeLogin = React.useCallback(async () => {
         if (!await ensureActiveServerForAuth()) return;
