@@ -9,6 +9,7 @@ import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { WorkflowDefinitionCreateResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { prepareCliPrivateLabel } from '../../../../apps/cli/src/api/privateLabels';
@@ -20,7 +21,7 @@ describe('Team setup F: Artifact resource discovery', () => {
   let owner: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
   let member: typeof owner;
   let admin: typeof owner;
-  let machine: Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
+  let prepareMachine: ReturnType<TeamSetupFFixture['prepareSessionControl']>;
   let agent: Awaited<ReturnType<typeof createIsolatedFakeClaudeControlShim>>;
   let teamId: string;
   let groupId: string;
@@ -41,78 +42,91 @@ describe('Team setup F: Artifact resource discovery', () => {
     fixture = await startTeamSetupFFixture({ testDir,
       observeActionRequests: true,
       dbProvider: process.env.HAPPIER_E2E_DB_PROVIDER === 'sqlite' ? 'sqlite' : 'postgres' });
-    owner = await fixture.createAccount('artifact-owner');
-    member = await fixture.createAccount('artifact-member');
-    admin = await fixture.createAccount('artifact-admin');
-    agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'agent'),
-      invocationId: 'artifact-resource-use', captureEnvironmentKeys: [], logFullStdin: false, captureStartupInstructions: true });
-    machine = await fixture.enrollDaemon(member, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
-    // P04: the actual admitted native path must work before feature setup can
-    // produce a meaningful missing-resource RED.
-    await fixture.assertKnownGoodSessionControl(member, machine);
-    await waitForFakeClaudeInvocation(agent.logPath, invocation => invocation.mode === 'sdk');
+    [owner, member, admin, agent] = await Promise.all([
+      fixture.createAccount('artifact-owner'),
+      fixture.createAccount('artifact-member'),
+      fixture.createAccount('artifact-admin'),
+      createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'agent'),
+        invocationId: 'artifact-resource-use', captureEnvironmentKeys: [], logFullStdin: false, captureStartupInstructions: true }),
+    ]);
+    prepareMachine = fixture.prepareSessionControl(member, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
     expect((await fixture.claimHomeOwner(owner)).result.status).toBe('claimed');
-    teamId = TeamSummaryV1Schema.parse(await invoke(owner, 'teams.create', {
-      v: 1, name: 'Artifact discovery', requestKey: randomUUID(), initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token),
-    })).id;
-    for (const [account, role] of [[member, 'member'], [admin, 'admin']] as const) {
-      await invoke(owner, 'teams.members.add', { v: 1, teamId, role,
-        accountId: readAccountIdFromToken(account.credentials.token), historyAccess: 'from_membership' });
-    }
-    groupId = randomUUID();
-    const name = await prepareCliPrivateLabel({ endpoint: fixture.server.baseUrl, token: owner.credentials.token,
-      accountId: readAccountIdFromToken(owner.credentials.token), accountMode: 'e2ee',
-      recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, owner: { kind: 'team', teamId },
-      binding: teamGroupLabelBinding(groupId, 'name'), value: 'Project readers' });
-    await invoke(owner, 'teams.groups.create', { v: 1, teamId, groupId, name, requestKey: randomUUID() });
-    await invoke(owner, 'teams.groups.members.add', { v: 1, teamId, groupId,
-      accountId: readAccountIdFromToken(member.credentials.token), historyAccess: 'from_membership' });
-    const prompt = async (title: string) => {
-      const created = ArtifactActionOutputSchemasV1['artifact.create'].parse(await invoke(owner, 'artifact.create', {
-        header: { v: 1, kind: 'prompt_doc.v2', title },
-        body: JSON.stringify({ v: 1, markdown: title, createdAtMs: 1, updatedAtMs: 1 }),
-      }));
-      return created.artifactId;
-    };
-    promptId = await prompt('Selected Team prompt');
-    documentId = await prompt('Selected Project document');
-    privateGroupId = await prompt('Group only');
-    const artifact = async (header: Record<string, unknown>, artifactId = randomUUID()) => {
-      return ArtifactActionOutputSchemasV1['artifact.create'].parse(await invoke(owner, 'artifact.create', {
-        artifactId, header, body: '{}',
-      })).artifactId;
-    };
-    workflowId = randomUUID();
-    await artifact({ kind: 'workflow-definition.v1', definitionId: workflowId,
-      revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Selected Workflow' } }, workflowId);
-    otherId = await artifact({ kind: 'contributed.team-fixture.v1', title: 'Contributed ordinary Artifact' });
-    await prompt('Unshared prompt');
-    for (const artifactId of [promptId, documentId, workflowId, otherId]) {
-      await invoke(owner, 'artifact.access.grants.set', { artifactId, principal: { kind: 'team', teamId }, accessLevel: 'view' });
-    }
-    for (const artifactId of [promptId, privateGroupId]) {
-      await invoke(owner, 'artifact.access.grants.set', { artifactId,
-        principal: { kind: 'group', teamId, groupId }, accessLevel: 'view' });
-    }
-    const source = ProjectSourcesReadOutputV1Schema.parse(await invoke(owner, 'projects.sources.create', {
-      serverId: fixture.serverId, owner: { kind: 'team', teamId }, name: 'Document project', requestKey: randomUUID(),
-    }));
-    if (!source.ok) throw new Error(`Source creation refused (${source.error})`);
-    await invoke(owner, 'projects.sources.update', { serverId: fixture.serverId, sourceId: source.source.id,
-      expectedRevision: source.source.revision, patch: { attachment: { kind: 'attach', attachment: {
-        purpose: 'context', entry: { id: 'document', ref: { kind: 'doc', artifactId: documentId },
-          enabled: true, placement: 'system_append' },
-      } } } });
-    const selectedDocument = ArtifactActionOutputSchemasV1['artifact.get'].parse(await invoke(owner, 'artifact.get', {
-      artifactId: documentId,
-    })).artifact;
-    if (!selectedDocument) throw new Error('Shared document disappeared before owner edit');
-    await invoke(owner, 'artifact.update', { artifactId: documentId, expectedRevision: selectedDocument.revision,
-      header: selectedDocument.header,
-      body: JSON.stringify({ v: 1, markdown: 'Edited shared document context', createdAtMs: 1, updatedAtMs: 2 }),
-    });
+    await prepareResources();
   });
   afterAll(async () => { await fixture?.stop(); });
+
+  async function prepareResources() {
+    return owner.withPersonActionClient(async execute => {
+      const seed = async (actionId: ActionId, input: unknown) => {
+        const result = await execute(actionId, input);
+        if (!result.ok) throw new Error(`Artifact fixture ${actionId} refused (${result.errorCode})`);
+        return result.result;
+      };
+      teamId = TeamSummaryV1Schema.parse(await seed('teams.create', {
+        v: 1, name: 'Artifact discovery', requestKey: randomUUID(), initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token),
+      })).id;
+      for (const [account, role] of [[member, 'member'], [admin, 'admin']] as const) {
+        await seed('teams.members.add', { v: 1, teamId, role,
+          accountId: readAccountIdFromToken(account.credentials.token), historyAccess: 'from_membership' });
+      }
+      groupId = randomUUID();
+      const name = await prepareCliPrivateLabel({ endpoint: fixture.server.baseUrl, token: owner.credentials.token,
+        accountId: readAccountIdFromToken(owner.credentials.token), accountMode: 'e2ee',
+        recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, owner: { kind: 'team', teamId },
+        binding: teamGroupLabelBinding(groupId, 'name'), value: 'Project readers' });
+      await seed('teams.groups.create', { v: 1, teamId, groupId, name, requestKey: randomUUID() });
+      await seed('teams.groups.members.add', { v: 1, teamId, groupId,
+        accountId: readAccountIdFromToken(member.credentials.token), historyAccess: 'from_membership' });
+      const prompt = async (title: string) => {
+        const created = ArtifactActionOutputSchemasV1['artifact.create'].parse(await seed('artifact.create', {
+          header: { v: 1, kind: 'prompt_doc.v2', title },
+          body: JSON.stringify({ v: 1, markdown: title, createdAtMs: 1, updatedAtMs: 1 }),
+        }));
+        return created.artifactId;
+      };
+      promptId = await prompt('Selected Team prompt');
+      documentId = await prompt('Selected Project document');
+      privateGroupId = await prompt('Group only');
+      const savedWorkflow = WorkflowDefinitionCreateResultV1Schema.parse(await seed('workflow.definition.create', {
+        definitionId: randomUUID(), metadata: { title: 'Selected Workflow' },
+        definition: { version: 1,
+          defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            conversation: { kind: 'fresh' }, terminal: { mode: 'plain' } },
+          blocks: [{ kind: 'step', id: 'selected-workflow', inputMode: 'none',
+            document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+        },
+      }));
+      workflowId = savedWorkflow.definitionId;
+      otherId = ArtifactActionOutputSchemasV1['artifact.create'].parse(await seed('artifact.create', {
+        artifactId: randomUUID(), header: { kind: 'contributed.team-fixture.v1', title: 'Contributed ordinary Artifact' }, body: '{}',
+      })).artifactId;
+      await prompt('Unshared prompt');
+      for (const artifactId of [promptId, documentId, workflowId, otherId]) {
+        await seed('artifact.access.grants.set', { artifactId, principal: { kind: 'team', teamId }, accessLevel: 'view' });
+      }
+      for (const artifactId of [promptId, privateGroupId]) {
+        await seed('artifact.access.grants.set', { artifactId,
+          principal: { kind: 'group', teamId, groupId }, accessLevel: 'view' });
+      }
+      const source = ProjectSourcesReadOutputV1Schema.parse(await seed('projects.sources.create', {
+        serverId: fixture.serverId, owner: { kind: 'team', teamId }, name: 'Document project', requestKey: randomUUID(),
+      }));
+      if (!source.ok) throw new Error(`Source creation refused (${source.error})`);
+      await seed('projects.sources.update', { serverId: fixture.serverId, sourceId: source.source.id,
+        expectedRevision: source.source.revision, patch: { attachment: { kind: 'attach', attachment: {
+          purpose: 'context', entry: { id: 'document', ref: { kind: 'doc', artifactId: documentId },
+            enabled: true, placement: 'system_append' },
+        } } } });
+      const selectedDocument = ArtifactActionOutputSchemasV1['artifact.get'].parse(await seed('artifact.get', {
+        artifactId: documentId,
+      })).artifact;
+      if (!selectedDocument) throw new Error('Shared document disappeared before owner edit');
+      await seed('artifact.update', { artifactId: documentId, expectedRevision: selectedDocument.revision,
+        header: selectedDocument.header,
+        body: JSON.stringify({ v: 1, markdown: 'Edited shared document context', createdAtMs: 1, updatedAtMs: 2 }),
+      });
+    }, { surface: 'coreAction' });
+  }
 
   async function list(account: typeof owner, kind: string, limit = 50, cursor?: string) {
     fixture.takeRequestObservations();
@@ -132,7 +146,8 @@ describe('Team setup F: Artifact resource discovery', () => {
   }
 
   it('TS.F.kindPaging discovers one Artifact bucket, applies Group privacy and uses the selected document on the daemon', async () => {
-    await fixture.assertKnownGoodSessionControl(member, machine);
+    const machine = await prepareMachine();
+    await waitForFakeClaudeInvocation(agent.logPath, invocation => invocation.mode === 'sdk');
     const workflows = await list(member, 'workflows', 1);
     expect(workflows.items.map(item => item.artifactId)).toEqual([workflowId]);
     const documents = await list(member, 'projectDocuments');
@@ -169,7 +184,7 @@ describe('Team setup F: Artifact resource discovery', () => {
   });
 
   it('TS.F.summaryDemand counts disjoint Artifact buckets without granting an administrator Group access', async () => {
-    await fixture.assertKnownGoodSessionControl(member, machine);
+    await prepareMachine();
     const summary = await invoke(admin, 'teams.sharedResources.summary' as ActionId, { v: 1, teamId });
     expect(summary).toMatchObject({ teamId, kinds: expect.arrayContaining([
       { kind: 'projectDocuments', status: 'available', count: 1 },
