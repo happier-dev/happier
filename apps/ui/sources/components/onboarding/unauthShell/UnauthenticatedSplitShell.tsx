@@ -48,11 +48,6 @@ export type UnauthenticatedSplitShellProps = Readonly<{
     allowMobileBrandHero?: boolean;
 
     /**
-     * Callback for "Use your own Relay" in the welcome footer.
-     */
-    onOpenRelayCustomFlow: () => void;
-
-    /**
      * Callback for the "Get started" button on the mobile brand hero
      * prelude. Records the timestamp in device history through
      * `useApplyBrandHeroSeen()` from this folder. The shell re-renders into
@@ -131,7 +126,6 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 isWelcomeStep={props.isWelcomeStep}
                 showMobileWordmark={props.showMobileWordmark}
                 retentionDisclosure={props.retentionDisclosure}
-                onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                 onBack={props.onBack}
                 transitionKey={props.stepId}
                 presentation={props.workflowPresentation ?? 'padded'}

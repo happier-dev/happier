@@ -120,7 +120,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="restore"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <RecoveryDraft />
@@ -145,7 +144,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -178,7 +176,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="relay_select"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="relay" />
@@ -196,7 +193,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={onBrandHeroGetStarted}
             >
                 <FakeBody label="welcome" />
@@ -220,7 +216,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -239,7 +234,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -260,7 +254,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
                 onBack={() => {}}
             >
@@ -287,7 +280,6 @@ describe('UnauthenticatedSplitShell', () => {
                 stepId="auth_restore"
                 isWelcomeStep={false}
                 workflowPresentation="fullBleed"
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
@@ -309,7 +301,6 @@ describe('UnauthenticatedSplitShell', () => {
                 stepId="welcome"
                 isWelcomeStep
                 retentionDisclosure={{ kind: 'summary', summary: 'This relay cleans up subagent transcripts after 7 days.' }}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -323,7 +314,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
@@ -341,7 +331,6 @@ describe('UnauthenticatedSplitShell', () => {
                     stepId="welcome"
                     isWelcomeStep
                     footerAccessory={accessory}
-                    onOpenRelayCustomFlow={() => {}}
                     onBrandHeroGetStarted={() => {}}
                 >
                     <FakeBody label="welcome" />
@@ -357,7 +346,6 @@ describe('UnauthenticatedSplitShell', () => {
                     stepId="auth_restore"
                     isWelcomeStep={false}
                     footerAccessory={accessory}
-                    onOpenRelayCustomFlow={() => {}}
                     onBrandHeroGetStarted={() => {}}
                     onBack={() => {}}
                 >
@@ -389,7 +377,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
@@ -405,7 +392,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
                 onBack={onBack}
             >
@@ -426,7 +412,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -437,12 +422,10 @@ describe('UnauthenticatedSplitShell', () => {
 
     it('does not expose the focused Home as a welcome auth authority and keeps footer links at their design size', async () => {
         setLayoutFixture('split');
-        const onOpenRelayCustomFlow = vi.fn();
         const screen = await renderScreen(
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onOpenRelayCustomFlow={onOpenRelayCustomFlow}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
@@ -450,7 +433,6 @@ describe('UnauthenticatedSplitShell', () => {
         );
 
         expect(screen.findAllByTestId('welcome-footer-relay-action')).toEqual([]);
-        expect(onOpenRelayCustomFlow).not.toHaveBeenCalled();
         for (const testID of [
             'welcome-footer-github-action',
             'welcome-footer-discord-action',

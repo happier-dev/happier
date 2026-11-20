@@ -16206,6 +16206,7 @@ settingsSession: {
         handoffPlatformLinuxLabel: 'Linux',
         handoffPlatformWindowsLabel: 'Windows',
         webDesktopOnlySetupCommandTitle: 'Diesen Rechner über die CLI einrichten',
+        webDesktopConnectComputer: 'Diesen Computer verbinden',
         webDesktopOnlySetupCommandSubtitle: 'Führe diesen interaktiven Befehl aus, um den Rechner mit dem ausgewählten Home zu verbinden und den Hintergrunddienst zu installieren.',
         webDesktopOnlySetupRemotePrereqsSubtitle: 'Führe diesen interaktiven Befehl aus, um eine Verbindung mit dem ausgewählten Home herzustellen, bevor du einen Remote-Rechner über SSH einrichtest.',
         webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier kann nicht bestätigen, dass dieses reine Iroh-Home über den ausgewählten Anmeldedienst verfügbar ist. Kopiere den nicht geheimen Deskriptor, speichere ihn als happier-home.json im Terminalordner und führe dann den folgenden Befehl aus.',

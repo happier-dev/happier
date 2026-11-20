@@ -25,7 +25,7 @@ import { readNewSessionDraftProjectionFromRepository } from '../../../../apps/ui
 import { createNewSessionComposerDocumentOwner } from '../../../../apps/ui/sources/components/sessions/composer/newSessionComposerDocumentOwner';
 import { resetRuntimeFetch, setRuntimeFetch } from '../../../../apps/ui/sources/utils/system/runtimeFetch';
 import { prepareLocalSessionDraftScope } from '../../../../apps/ui/sources/sync/ops/sessionDrafts/sessionDraftRepository';
-import { parseOnboardingScanPayload } from '../../../../apps/ui/sources/components/onboarding/state/scanPayload';
+import { classifyPairingLink } from '../../../../apps/ui/sources/auth/pairing/classifyPairingLink';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -123,7 +123,7 @@ it('TS.D.join continues the admitted Account into setup instead of ending at Ope
     expectedAccountId: admittedScope.accountId, actionCaller: { kind: 'host' } } as const;
   // The owner-principal projects.open control ran before this fresh Account was created.
   expect(Object.keys(storage.getState().machines)).toEqual([]);
-  expect.soft(parseOnboardingScanPayload(invitationUrl)).toMatchObject({ kind: 'team_join' });
+  expect.soft(classifyPairingLink(invitationUrl)).toMatchObject({ kind: 'team_join' });
   const requests: string[] = [];
   setRuntimeFetch(async (input, init) => {
     requests.push(new URL(input instanceof Request ? input.url : String(input)).pathname);

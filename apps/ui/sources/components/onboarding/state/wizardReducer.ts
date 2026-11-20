@@ -57,11 +57,6 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
                 ...state,
                 resumeState: action.resumeState,
             };
-        case 'wizard/setParsedScanPayload':
-            return {
-                ...state,
-                parsedScanPayload: action.parsedScanPayload,
-            };
         case 'wizard/setRelaySelection':
             return {
                 ...state,
@@ -78,14 +73,6 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
                     relayAccessProviderId: action.providerId,
                 },
             };
-        case 'wizard/setRelayLockConfirmationPending':
-            return {
-                ...state,
-                context: {
-                    ...state.context,
-                    relayLockConfirmationPending: action.pending,
-                },
-            };
         case 'wizard/setRelaySwitchConfirmationPending':
             return {
                 ...state,
@@ -100,14 +87,6 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
                 context: {
                     ...state.context,
                     authIntent: action.authIntent,
-                },
-            };
-        case 'wizard/setScanStepEnabled':
-            return {
-                ...state,
-                context: {
-                    ...state.context,
-                    scanStepEnabled: action.enabled,
                 },
             };
         default:

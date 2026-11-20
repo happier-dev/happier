@@ -384,16 +384,6 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findByType('UnauthenticatedSplitShell' as never).props.footerAccessory ?? null).toBeNull();
     });
 
-    it('routes the shell footer relay action to the wizard relay selection step', async () => {
-        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
-        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
-
-        const shell = screen.findByType('UnauthenticatedSplitShell' as never);
-        await shell.props.onOpenRelayCustomFlow?.();
-
-        expect(wizardControllerMock.goToStep).toHaveBeenCalledWith('relay_select');
-    });
-
     it('writes the shell-local brand hero seen flag without changing wizard step history', async () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));

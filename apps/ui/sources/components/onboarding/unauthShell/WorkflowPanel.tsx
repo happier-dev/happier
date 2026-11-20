@@ -79,7 +79,6 @@ export type WorkflowPanelProps = Readonly<{
     /** Shows the compact mobile product mark on focused public entry flows. */
     showMobileWordmark?: boolean;
     retentionDisclosure?: RelayRetentionDisclosureState | null;
-    onOpenRelayCustomFlow: () => void;
     onBack?: () => void;
     transitionKey: string;
     presentation?: WorkflowPanelPresentation;

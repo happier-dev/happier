@@ -16394,6 +16394,7 @@ settingsSession: {
           handoffPlatformLinuxLabel: 'Linux',
           handoffPlatformWindowsLabel: 'Windows',
           webDesktopOnlySetupCommandTitle: 'Configura questa macchina usando la CLI',
+          webDesktopConnectComputer: 'Collega questo computer',
           webDesktopOnlySetupCommandSubtitle: 'Esegui questo comando interattivo per collegare la macchina all’Home selezionato e installare il servizio in background.',
           webDesktopOnlySetupRemotePrereqsSubtitle: 'Esegui questo comando interattivo per collegarti all’Home selezionato prima di configurare una macchina remota tramite SSH.',
           webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier non può confermare che questo Home accessibile solo tramite Iroh sia disponibile attraverso il servizio di accesso selezionato. Copia il descrittore non segreto, salvalo come happier-home.json nella cartella del terminale, quindi esegui il comando seguente.',

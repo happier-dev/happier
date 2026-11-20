@@ -15891,6 +15891,7 @@ settingsSession: {
           handoffPlatformLinuxLabel: 'Linuksa',
           handoffPlatformWindowsLabel: 'Windows',
           webDesktopOnlySetupCommandTitle: 'Skonfiguruj tę maszynę za pomocą CLI',
+          webDesktopConnectComputer: 'Połącz ten komputer',
           webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier nie może potwierdzić, że ten Home dostępny wyłącznie przez Iroh jest dostępny za pośrednictwem wybranej usługi logowania. Skopiuj jego niejawny deskryptor, zapisz go jako happier-home.json w folderze terminala, a następnie uruchom poniższe polecenie.',
           webDesktopHandoffDesktopAppOption: 'Korzystaj z aplikacji desktopowej (Polecane)',
           webDesktopHandoffCliOption: 'Korzystaj z terminala (CLI)',

@@ -269,17 +269,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         <UnauthenticatedSplitShell
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
-            // On a phone every later step keeps the compact mark above it, like the standalone
-            // signed-out routes; the full-bleed scanner owns its whole viewport.
-            showMobileWordmark={controller.stepId !== 'scan_code'}
             allowMobileBrandHero={controller.stepId === 'welcome'}
             retentionDisclosure={authEntryOptions.retentionDisclosure}
-            onOpenRelayCustomFlow={() => {
-                controller.goToStep('relay_select');
-            }}
             onBrandHeroGetStarted={applyBrandHeroSeen}
             onBack={controller.onBack ?? undefined}
-            workflowPresentation={controller.stepId === 'scan_code' ? 'fullBleed' : 'padded'}
             footerAccessory={workflowFooterAccessory}
             testID={shellTestID}
         >

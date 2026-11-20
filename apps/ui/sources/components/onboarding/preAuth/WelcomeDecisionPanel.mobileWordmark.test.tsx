@@ -24,7 +24,6 @@ function renderPanel(variant: 'desktop' | 'mobile') {
         <WorkflowPanel
             variant={variant}
             isWelcomeStep
-            onOpenRelayCustomFlow={vi.fn()}
             transitionKey="welcome"
             transitionDirection="replace"
         >

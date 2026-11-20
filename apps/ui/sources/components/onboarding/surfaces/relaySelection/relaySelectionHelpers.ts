@@ -133,23 +133,6 @@ export function buildDefaultRelaySelection(): WizardRelaySelection {
     };
 }
 
-export function resolveRelayProfileIdForServerUrl(params: Readonly<{
-    serverUrl: string | null;
-    canonicalCloudUrl: string;
-}>): string | null {
-    const raw = typeof params.serverUrl === 'string' ? params.serverUrl.trim() : '';
-    const normalized = raw ? (normalizeServerUrl(raw) ?? raw) : '';
-    if (!normalized) return null;
-    if (params.canonicalCloudUrl && isSameServerUrl(normalized, params.canonicalCloudUrl)) return null;
-
-    const match = listServerProfiles().find((profile) => {
-        const profileUrl = profile?.serverUrl ? normalizeServerUrl(profile.serverUrl) : '';
-        return Boolean(profileUrl) && isSameServerUrl(profileUrl, normalized);
-    });
-
-    return match?.id ?? 'active';
-}
-
 export function resolveRelaySwitchUrl(params: Readonly<{
     relayRuntimeUrl: string | null;
     relayAccessShareUrl: string | null;

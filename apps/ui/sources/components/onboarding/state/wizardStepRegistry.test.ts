@@ -8,8 +8,8 @@ describe('wizardStepRegistry', () => {
         const context: WizardContext = {
             mode: 'onboarding',
             platform: 'native',
-            canScanQr: false,
-            scanStepEnabled: false,
+
+
             canRunSystemTasks: false,
             relaySelection: {
                 choiceId: 'thisComputer',
@@ -18,7 +18,7 @@ describe('wizardStepRegistry', () => {
                 locked: false,
             },
             relayAccessProviderId: null,
-            relayLockConfirmationPending: false,
+
             relaySwitchConfirmationPending: false,
             authIntent: 'standard',
         };
@@ -29,10 +29,10 @@ describe('wizardStepRegistry', () => {
 
     it('keeps Home hosting, access and switch confirmation in pre-auth onboarding', () => {
         const context: WizardContext = {
-            mode: 'onboarding', platform: 'desktop', canScanQr: false, scanStepEnabled: false,
+            mode: 'onboarding', platform: 'desktop',
             canRunSystemTasks: true,
             relaySelection: { choiceId: 'thisComputer', serverUrl: 'https://relay.local.test', locked: false },
-            relayAccessProviderId: 'lan', relayLockConfirmationPending: false,
+            relayAccessProviderId: 'lan',
             relaySwitchConfirmationPending: true, authIntent: 'standard',
         };
         for (const step of ['host_relay_local', 'relay_access', 'relay_access_prereqs', 'confirm_switch_relay'] as const) {

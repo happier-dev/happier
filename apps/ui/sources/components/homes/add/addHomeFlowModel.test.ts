@@ -21,6 +21,16 @@ describe('Add Home flow model', () => {
         expect(transitionAddHomePane({ pane: 'other_service' }, { kind: 'connect_as_home', address })).toEqual({ pane: 'direct', initialAddress: address });
     });
 
+    it('projects the same Home paths into the signed-out place chooser', () => {
+        expect(resolveAddHomePaths({
+            entry: 'signed_out', cloudAvailable: true, localAvailable: false, sshAvailable: true, directAvailable: true,
+        })).toEqual([
+            { id: 'service', state: 'ready' },
+            { id: 'server_home', state: 'ready', place: 'ssh' },
+            { id: 'direct', state: 'ready' },
+        ]);
+    });
+
     it('focuses the first usable Home or a return to a Home usable at flow entry', () => {
         expect(shouldFocusConnectedHome([])).toBe(true);
         expect(shouldFocusConnectedHome(['existing-home'])).toBe(false);

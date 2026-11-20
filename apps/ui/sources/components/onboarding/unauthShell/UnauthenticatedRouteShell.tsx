@@ -27,7 +27,6 @@ export function UnauthenticatedRouteShell(props: Readonly<{
             isWelcomeStep={false}
             showMobileWordmark
             allowMobileBrandHero={false}
-            onOpenRelayCustomFlow={NOOP}
             onBrandHeroGetStarted={NOOP}
             onBack={props.onBack}
         >

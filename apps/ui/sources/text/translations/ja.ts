@@ -16340,6 +16340,7 @@ settingsSession: {
           handoffPlatformLinuxLabel: 'Linux',
           handoffPlatformWindowsLabel: 'Windows',
           webDesktopOnlySetupCommandTitle: 'CLI でこのマシンをセットアップ',
+          webDesktopConnectComputer: 'このコンピューターを接続',
           webDesktopOnlyDescriptorFileRequiredSubtitle: 'この Iroh 専用 Home が選択したサインインサービス経由で利用できることを確認できません。秘密情報を含まないディスクリプターをコピーし、ターミナルのフォルダーに happier-home.json として保存してから、下のコマンドを実行してください。',
           webDesktopHandoffDesktopAppOption: 'デスクトップアプリを使う（推奨）',
           webDesktopHandoffCliOption: 'ターミナル（CLI）を使う',

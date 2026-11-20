@@ -78,7 +78,6 @@ describe('WorkflowPanel Android Back', () => {
         variant="mobile"
         isWelcomeStep={false}
         transitionKey={step}
-        onOpenRelayCustomFlow={() => {}}
       >
         {step === 'auth_restore' ? <PairingStep /> : null}
       </WorkflowPanel>
@@ -95,7 +94,6 @@ describe('WorkflowPanel Android Back', () => {
       <WorkflowPanel
         variant="mobile"
         isWelcomeStep={false}
-        onOpenRelayCustomFlow={() => {}}
         onBack={back}
         transitionKey="connect_home"
       >

@@ -10,8 +10,6 @@ const baseRelayStep: Pick<WizardStepDefinition, 'kind' | 'surface' | 'canSkip'> 
 const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): boolean => {
     if (context.mode !== 'onboarding') return false;
     switch (stepId) {
-        case 'scan_code':
-            return context.canScanQr && context.scanStepEnabled;
         case 'relay_select':
         case 'auth':
         case 'auth_restore':
@@ -45,30 +43,11 @@ const wizardStepRegistryEntries = [
         visibleWhen: onboardingVisible('welcome'),
     },
     {
-        id: 'scan_code',
-        titleKey: 'setupOnboarding.scanQrCode',
-        kind: 'choice',
-        surface: 'onboarding',
-        canSkip: true,
-        visibleWhen: onboardingVisible('scan_code'),
-    },
-    {
         id: 'relay_select',
         titleKey: 'setupOnboarding.preAuthTitle',
         subtitleKey: 'setupOnboarding.preAuthBody',
         ...baseRelayStep,
         visibleWhen: onboardingVisible('relay_select'),
-    },
-    {
-        id: 'confirm_relay_lock',
-        titleKey: 'setupOnboarding.confirmSwitchRelayTitle',
-        subtitleKey: 'setupOnboarding.confirmSwitchRelaySubtitle',
-        kind: 'choice',
-        surface: 'onboarding',
-        canSkip: false,
-        visibleWhen: (context) => {
-            return context.mode === 'onboarding' && context.relayLockConfirmationPending;
-        },
     },
     {
         id: 'desktop_handoff',

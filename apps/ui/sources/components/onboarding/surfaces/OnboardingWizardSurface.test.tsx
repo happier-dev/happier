@@ -623,6 +623,34 @@ describe('OnboardingWizardSurface', () => {
         }
     });
 
+    it('starts desktop approval with the exact Home selected on Welcome', async () => {
+        const homeUrl = 'https://pairing-welcome.example.test';
+        const homeServerIdentityId = 'srv_pairing_welcome';
+        const selected = await profiles.adoptHomeProfile({
+            descriptor: {
+                v: 1, homeServerIdentityId, canonicalServerUrl: homeUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: homeUrl }],
+            },
+            source: 'url',
+            descriptorAuthority: 'current_connection_observation',
+        });
+        await profiles.setActiveServerId(selected.id, { scope: 'device' });
+        reactNativeMockState.window = { width: 1440, height: 900, scale: 1, fontScale: 1 };
+
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
+            layout: 'portrait', initialStepId: 'auth_restore', authEntryOptions: baseAuthOptions,
+        }));
+        try {
+            const restore = screen.findByType(RestoreIndexEmbedded as never);
+            expect(restore.props.initialView).toBe('qr');
+            expect(restore.props.reverseTargetProfileId).toBe(selected.id);
+        } finally {
+            await screen.unmount();
+            reactNativeMockState.window = { width: 390, height: 844, scale: 1, fontScale: 1 };
+        }
+    });
+
     const enterRemoteRelayAccess = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
         await pressOnboarding(screen, 'onboarding-wizard-relay:remoteComputer');
         await pressOnboarding(screen, 'onboarding-wizard-primary');
@@ -1790,16 +1818,14 @@ describe('OnboardingWizardSurface', () => {
         browser?.reconfigureUrl('https://app.happier.dev');
     };
 
-    const renderPreAuthRelayMatrix = async (platform: PreAuthMatrixPlatform) => {
+    const renderPreAuthRelayMatrix = async (platform: PreAuthMatrixPlatform, localAdmission = platform === 'desktop') => {
         await setPreAuthMatrixPlatform(platform);
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         return renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: platform === 'desktop',
-                authEntryOptions: baseAuthOptions,
-                initialStepId: 'relay_select',
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={localAdmission ? vi.fn() : null}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell={platform === 'desktop'}
+                    authEntryOptions={baseAuthOptions} initialStepId="relay_select" />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
     };
 
@@ -1816,6 +1842,13 @@ describe('OnboardingWizardSurface', () => {
     const getOnboardingStepId = (screen: RenderedOnboardingScreen) => (
         screen.findByType(WizardModalShell as never).props.contentTransitionKey
     );
+
+    it('offers SSH and an existing address while local Home creation is unavailable', async () => {
+        const screen = await renderPreAuthRelayMatrix('desktop', false);
+        expect(screen.findByTestId('onboarding-wizard-relay:thisComputer')).toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-relay:remoteComputer')).not.toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-relay:customUrl')).not.toBeNull();
+    });
 
     it.each([
         { branch: 'cloud', platform: 'desktop', rowTestID: 'onboarding-wizard-relay:cloud', expectedStepId: 'auth' },

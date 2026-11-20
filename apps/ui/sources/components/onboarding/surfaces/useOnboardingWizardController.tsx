@@ -47,16 +47,13 @@ import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks'
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
-import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
 import { resolveWizardCapabilities } from '../capabilities/resolveWizardCapabilities';
 import { canSkipWizardStep, getWizardProgress } from '../state/wizardSelectors';
 import { createWizardState, wizardReducer } from '../state/wizardReducer';
 import type { WizardPlatform, WizardRelaySelection, WizardStepId } from '../state/wizardTypes';
 import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
-import { parseOnboardingScanPayload } from '../state/scanPayload';
-import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
-import { promptAccountConnectApprovalRequired } from '@/components/account/restore/accountConnectApprovalGuidance';
-import { resolveReverseQrTargetProfileId, useLoginScansFirst } from '@/components/onboarding/restore/loginWays';
+import { resolveReverseQrTargetProfileId, useLoginLeadsWithLink } from '@/components/onboarding/restore/loginWays';
+import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { useEndpointReadinessMap } from '../hooks/useEndpointReadinessMap';
 import {
     setOnboardingWizardAwaitingAuthResumeIntent,
@@ -74,13 +71,12 @@ import {
     ensureCanonicalCloudRelayProfile,
     isWebMixedContentBlockedEndpoint,
     resolveCanonicalCloudRelayProfile,
-    resolveRelayProfileIdForServerUrl,
     resolveRelaySwitchUrl,
     resolveTrueLocalRelayRuntimeBindUrl,
 } from './relaySelection/relaySelectionHelpers';
 import { useWizardChromeOverrides } from '../hooks/useWizardChromeOverrides';
 import type { WizardChoice, WizardProfileChoice } from './relaySelection/relaySelectionTypes';
-import { buildRelayChoices } from './relaySelection/buildRelayChoices';
+import { resolveAddHomePaths } from '@/components/homes/add/addHomeFlowModel';
 import { buildRelayProfileChoices } from './relaySelection/buildRelayProfileChoices';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -173,8 +169,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
     }, [snapshotRelayUrl]);
 
-    // Whether this device starts Login on its camera is Login's own decision (loginWays), not a screen-size guess.
-    const canScanQr = useLoginScansFirst();
+    const loginLeadsWithLink = useLoginLeadsWithLink();
+    const canScanQr = loginLeadsWithLink && canUseCurrentDeviceQrScanner();
 
     const [urlDraft, setUrlDraft] = React.useState('');
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
@@ -196,12 +192,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const context = {
             mode: 'onboarding',
             platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
-            canScanQr,
-            scanStepEnabled: false,
             canRunSystemTasks: props.isDesktopShell,
             relaySelection: buildDefaultRelaySelection(),
             relayAccessProviderId: null,
-            relayLockConfirmationPending: false,
             relaySwitchConfirmationPending: false,
             authIntent: 'standard',
         } as const;
@@ -218,7 +211,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             currentStepId: initialStepId,
             history: [],
             resumeState: null,
-            parsedScanPayload: null,
         });
     });
     const currentState = React.useRef(state);
@@ -242,8 +234,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             commit,
         });
     }, []);
-    const canCreatePersonalHome = requestPersonalHomeBootstrap != null
-        && !state.context.relaySelection.locked;
+    const canCreatePersonalHome = requestPersonalHomeBootstrap != null;
 
 
     const handleSelectAccountService = React.useCallback<AccountServiceSelectionFormProps['onSelect']>(async (url, options) => {
@@ -441,10 +432,13 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     // Note: capability is captured at init time; if device size changes, we tolerate it until reload.
 
-    const relayChoices: readonly WizardChoice[] = React.useMemo(() => buildRelayChoices({
-        wizardCapabilities,
-        setupPolicy,
-    }), [setupPolicy, wizardCapabilities]);
+    const addHomePaths = React.useMemo(() => resolveAddHomePaths({
+        entry: 'signed_out',
+        cloudAvailable: setupPolicy.relay.allowHappierCloud,
+        localAvailable: props.isDesktopShell ? canCreatePersonalHome : setupPolicy.relay.allowLocalRelayHost,
+        sshAvailable: wizardCapabilities.allowRemoteSshRelayChoice,
+        directAvailable: canConnectHomeByAddress(setupPolicy),
+    }), [canCreatePersonalHome, props.isDesktopShell, setupPolicy, wizardCapabilities.allowRemoteSshRelayChoice]);
 
     const serverProfilesGeneration = useServerProfilesGeneration();
     const profileChoices = React.useMemo((): WizardProfileChoice[] => {
@@ -651,9 +645,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     };
 
     const buildManualRelayChoiceItem = (): WizardChoiceListItem | null => {
-        if (!canConnectHomeByAddress(setupPolicy)) {
-            return null;
-        }
         const rawServerUrl = state.context.relaySelection.serverUrl
             ? String(state.context.relaySelection.serverUrl).trim()
             : '';
@@ -759,7 +750,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessRemoteHost?: RelayAccessControlOptions['remoteHost'];
         mode: 'remoteMachine' | 'remoteRelayHost';
     }>) => {
-        const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
+        const relayUrl = payload.relayRuntimeUrl;
         if (!relayUrl) {
             return;
         }
@@ -791,11 +782,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, []);
 
     const handleBack = React.useCallback(() => {
-        if (stepId === 'scan_code') {
-            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-        }
         dispatch({ type: 'wizard/back' });
-    }, [stepId]);
+    }, [dispatch]);
 
     const handleBackToWelcome = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'welcome' }, 'back');
@@ -823,56 +811,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
         dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
     }, [setupPolicy.relay.allowRelaySelection]);
-
-    const handleScan = React.useCallback(async (data: string) => {
-        const parsed = parseOnboardingScanPayload(data);
-        if (parsed.kind === 'team_join' || parsed.kind === 'source_setup') {
-            homeRouter.push(parsed.path);
-            return;
-        }
-        relayAccessRunnerRef.current = undefined;
-        relayAccessRemoteHostRef.current = undefined;
-        setRelayAccessTarget(null);
-        setRelayAccessShareUrl(null);
-        if (parsed.kind === 'legacy_pairing_update_required') {
-            dispatch({ type: 'wizard/setParsedScanPayload', parsedScanPayload: null });
-            const action = await promptLegacyPairingUpdateRequired();
-            if (action === 'cancel') {
-                dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-                dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
-            }
-            return;
-        }
-        if (parsed.kind === 'account_connect') {
-            // A legacy account link cannot be approved; the recovery is this
-            // device's own QR, offered only when there is a Home to show it for.
-            const action = await promptAccountConnectApprovalRequired({
-                showQr: resolveReverseQrTargetProfileId() !== null,
-            });
-            if (action !== 'showQr') return;
-            dispatch({ type: 'wizard/setParsedScanPayload', parsedScanPayload: parsed });
-            dispatch({ type: 'wizard/setAuthIntent', authIntent: 'restore' });
-            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-            dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
-            return;
-        }
-        dispatch({ type: 'wizard/setParsedScanPayload', parsedScanPayload: parsed });
-        if (parsed.kind === 'home_qr_invite') {
-            dispatch({ type: 'wizard/setAuthIntent', authIntent: 'restore' });
-            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-            dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
-            return;
-        }
-        if (parsed.kind === 'relay_url') {
-            const relayProfileId = resolveRelayProfileIdForServerUrl({ serverUrl: parsed.serverUrl, canonicalCloudUrl });
-            dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'customUrl', serverUrl: parsed.serverUrl, relayProfileId, locked: false } });
-            dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: true });
-            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-            dispatch({ type: 'wizard/goToStep', stepId: 'confirm_relay_lock' });
-            return;
-        }
-        await Modal.alert(t('common.error'), t('modals.invalidAuthUrl'));
-    }, [canonicalCloudUrl, homeRouter]);
 
     const handleSaveCustomRelayUrl = React.useCallback(async () => {
         const trimmed = urlDraft.trim();
@@ -906,11 +844,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const primaryLabel =
         stepId === 'welcome'
             ? t('setupOnboarding.letsStart')
-            : stepId === 'confirm_relay_lock'
-                ? t('setupOnboarding.confirmSwitchRelaySwitchTitle')
             : stepId === 'desktop_handoff'
                 ? t('setupOnboarding.webDesktopOnlyPrimary')
-            : t('common.continue');
+                : stepId === 'background_service_handoff'
+                    ? t('setupOnboarding.webDesktopConnectComputer')
+                    : t('common.continue');
 
     const selectedRelayFooterUrl = React.useMemo(() => {
         if (stepId !== 'relay_select') return null;
@@ -942,7 +880,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     // way: a footer summary in the card, one quiet line in the welcome pane's header.
     const homeContext = React.useMemo((): OnboardingWizardHomeContext | null => {
         // The email/password step names its Home in its own heading block.
-        if (stepId === 'scan_code' || stepId === 'auth_email_password' || stepId === 'connect_home') return null;
+        if (stepId === 'auth_email_password' || stepId === 'connect_home') return null;
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
@@ -1296,28 +1234,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     ? handleSaveCustomRelayUrl
                     : stepId === 'relay_select'
                         ? handleRelaySelectAdvance
-                        : stepId === 'confirm_relay_lock'
-                        ? async () => {
-                            const relayUrl = state.context.relaySelection.serverUrl ? String(state.context.relaySelection.serverUrl).trim() : '';
-                            if (!relayUrl) {
-                                dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
-                                return;
-                            }
-                            const profile = await connectAndFocusHomeAddress(relayUrl);
-                            if (!profile) return;
-                            dispatch({
-                                type: 'wizard/setRelaySelection',
-                                relaySelection: {
-                                    ...state.context.relaySelection,
-                                    serverUrl: profile.serverUrl,
-                                    relayProfileId: profile.id,
-                                    locked: true,
-                                },
-                            });
-                            dispatch({ type: 'wizard/setRelayLockConfirmationPending', pending: false });
-                            setOnboardingWizardAwaitingAuthResumeIntent(profile.serverUrl);
-                            dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' });
-                        }
                     : stepId === 'desktop_handoff'
                         ? () => {
                             dispatch({ type: 'wizard/setRelaySelection', relaySelection: { choiceId: 'thisComputer', serverUrl: null, relayProfileId: null, locked: false } });
@@ -1403,32 +1319,33 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessShareUrl,
         relayAccessTarget,
     });
-    const initialPairingLink =
-        state.parsedScanPayload
-        && typeof state.parsedScanPayload === 'object'
-        && 'kind' in state.parsedScanPayload
-        && state.parsedScanPayload.kind === 'home_qr_invite'
-        && 'rawLink' in state.parsedScanPayload
-        && typeof state.parsedScanPayload.rawLink === 'string'
-            ? state.parsedScanPayload.rawLink
-            : null;
-    // "Show QR instead" chosen for a scanned legacy account link. Otherwise a phone that can scan starts on its
-    // camera, and every other device opens Login's one screen (recovery key, pairing link, camera when it has one).
-    const restoreInitialView =
-        state.parsedScanPayload
-        && typeof state.parsedScanPayload === 'object'
-        && 'kind' in state.parsedScanPayload
-        && state.parsedScanPayload.kind === 'account_connect'
-            ? 'qr' as const
-            : initialPairingLink ? undefined : canScanQr ? 'scanner' as const : 'paste' as const;
     const relaySelectBody = renderWizardChoiceList({
         accessibilityLabel: t('setupOnboarding.preAuthTitle'),
         items: [
             ...profileChoices.map(buildRelayChoiceItem),
-            ...relayChoices.map(buildRelayChoiceItem),
-            buildManualRelayChoiceItem(),
+            ...addHomePaths.map((path) => {
+                if (path.id === 'direct') return buildManualRelayChoiceItem();
+                if (path.id === 'service') return buildRelayChoiceItem({
+                    id: 'cloud', title: t('setupOnboarding.relayCloudTitle'),
+                    subtitle: t('setupOnboarding.relayCloudSubtitle'), icon: 'cloud', badge: t('setupOnboarding.recommendedBadge'),
+                });
+                if (path.place === 'ssh') return buildRelayChoiceItem({
+                    id: 'remoteComputer', title: t('addFlows.pathSshTitle'),
+                    subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'), icon: 'desktop',
+                });
+                const isYourComputer = wizardCapabilities.thisComputerLabelVariant === 'your';
+                return buildRelayChoiceItem({
+                    id: 'thisComputer',
+                    title: t(isYourComputer ? 'setupOnboarding.relayOnYourComputerTitle' : 'setupOnboarding.relayOnThisComputerTitle'),
+                    subtitle: t(isYourComputer ? 'setupOnboarding.relayOnYourComputerSubtitle' : 'setupOnboarding.relayOnThisComputerSubtitle'),
+                    icon: 'laptop',
+                });
+            }),
         ],
     });
+    const restoreTargetProfileId = stepId === 'auth_restore'
+        ? resolveReverseQrTargetProfileId(activeServerSnapshot.serverId) ?? undefined
+        : undefined;
     body = renderOnboardingWizardStepBody({
         stepId,
         testIDPrefix: props.testID ?? 'onboarding-wizard',
@@ -1449,8 +1366,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             dispatch({ type: 'wizard/back' });
         },
         accountEntryReturnTo: props.accountEntryReturnTo,
-        initialPairingLink,
-        restoreInitialView,
+        restoreInitialView: canScanQr ? 'scanner' : !loginLeadsWithLink && restoreTargetProfileId ? 'qr' : 'paste',
+        restoreTargetProfileId,
         canScanQr,
         welcomeHasKnownRelay,
         welcomeHasAuthActions,
@@ -1499,11 +1416,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onOpenAccountDirectoryHomeAuthentication: handleOpenAccountDirectoryHomeAuthentication,
         onAccountDirectoryHomeAuthenticationResult: handleAccountDirectoryHomeAuthenticationResult,
         onAccountDirectoryHomeAuthenticationBack: handleAccountDirectoryHomeAuthenticationBack,
-        onCancelScan: () => {
-            dispatch({ type: 'wizard/setScanStepEnabled', enabled: false });
-            dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
-        },
-        onScan: handleScan,
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
         onOpenConnectHome: canConnectHomeByAddress(setupPolicy) ? handleOpenConnectHome : undefined,
         onBackToWelcome: handleBackToWelcome,
@@ -1514,10 +1426,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onOpenRestore: handleOpenRestore,
         onOpenLostAccess: handleOpenLostAccess,
         onOpenSecretKeyLogin: handleOpenSecretKeyLogin,
-        onRestoreBackToAuth: () => {
-            dispatch({ type: 'wizard/setParsedScanPayload', parsedScanPayload: null });
-            dispatch({ type: 'wizard/back' });
-        },
+        onRestoreBackToAuth: handleBack,
         onRestoreNavigationLockChange: setRestoreNavigationLocked,
         onRelayAccessAdvance: handleRelayAccessAdvance,
         onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),

@@ -10,13 +10,35 @@ export type AddHomePathAvailability =
     | Readonly<{ id: 'service'; state: 'ready' | 'checking' }>
     | Readonly<{ id: 'service'; state: 'unavailable'; reason: 'unreachable' | 'unsupported' }>
     | Readonly<{ id: Exclude<AddHomePath, 'service'>; state: 'ready' }>;
+type WelcomeHomePath =
+    | Readonly<{ id: 'service'; state: 'ready' }>
+    | Readonly<{ id: 'direct'; state: 'ready' }>
+    | Readonly<{ id: 'server_home'; state: 'ready'; place: 'thisComputer' | 'ssh' }>;
+type WelcomeHomeAvailability = Readonly<{
+    entry: 'signed_out';
+    cloudAvailable: boolean;
+    localAvailable: boolean;
+    sshAvailable: boolean;
+    directAvailable: boolean;
+}>;
 export type AddHomeAvailabilityInput = Readonly<{
+    entry?: 'signed_in';
     serviceStatus: AccountServiceEntryOptions['status'];
     serviceHostsHome: boolean;
     canSetUpServerHome: boolean;
 }>;
 
-export function resolveAddHomePaths(input: AddHomeAvailabilityInput): readonly AddHomePathAvailability[] {
+export function resolveAddHomePaths(input: AddHomeAvailabilityInput): readonly AddHomePathAvailability[];
+export function resolveAddHomePaths(input: WelcomeHomeAvailability): readonly WelcomeHomePath[];
+export function resolveAddHomePaths(input: AddHomeAvailabilityInput | WelcomeHomeAvailability): readonly (AddHomePathAvailability | WelcomeHomePath)[] {
+    if (input.entry === 'signed_out') {
+        const paths: WelcomeHomePath[] = [];
+        if (input.cloudAvailable) paths.push({ id: 'service', state: 'ready' });
+        if (input.localAvailable) paths.push({ id: 'server_home', state: 'ready', place: 'thisComputer' });
+        if (input.sshAvailable) paths.push({ id: 'server_home', state: 'ready', place: 'ssh' });
+        if (input.directAvailable) paths.push({ id: 'direct', state: 'ready' });
+        return paths;
+    }
     const paths: AddHomePathAvailability[] = [];
     if (input.serviceStatus === 'ready') paths.push({ id: 'service', state: 'ready' });
     else if (input.serviceStatus === 'loading') paths.push({ id: 'service', state: 'checking' });

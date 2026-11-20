@@ -16062,6 +16062,7 @@ settingsSession: {
           handoffPlatformLinuxLabel: 'linux',
           handoffPlatformWindowsLabel: 'Windows',
           webDesktopOnlySetupCommandTitle: 'Configura esta máquina usando la CLI',
+          webDesktopConnectComputer: 'Conecta este ordenador',
           webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier no puede confirmar que este Home que solo usa Iroh esté disponible mediante el servicio de inicio de sesión seleccionado. Copia su descriptor no secreto, guárdalo como happier-home.json en la carpeta del terminal y ejecuta el comando siguiente.',
           webDesktopHandoffDesktopAppOption: 'Usar la app de escritorio (recomendado)',
           webDesktopHandoffCliOption: 'Usar el terminal (CLI)',

@@ -14999,6 +14999,7 @@ settingsSession: {
         handoffPlatformLinuxLabel: 'Linux',
         handoffPlatformWindowsLabel: 'Windows',
         webDesktopOnlySetupCommandTitle: 'Configura aquesta màquina amb la CLI',
+        webDesktopConnectComputer: 'Connecta aquest ordinador',
         webDesktopOnlySetupCommandSubtitle: 'Executa aquesta ordre interactiva per connectar la màquina al Home seleccionat i instal·lar el servei en segon pla.',
         relayOnRemoteComputerTitle: 'Crea un Home personal en una màquina remota',
         webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier no pot confirmar que aquest Home només amb Iroh estigui disponible mitjançant el servei d’inici de sessió seleccionat. Copia el descriptor no secret, desa’l com a happier-home.json a la carpeta del terminal i executa l’ordre següent.',

@@ -15724,6 +15724,7 @@ settingsSession: {
           handoffPlatformLinuxLabel: 'Linux',
           handoffPlatformWindowsLabel: 'Windows',
           webDesktopOnlySetupCommandTitle: '使用 CLI 设置这台机器',
+          webDesktopConnectComputer: '连接此电脑',
           webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier 无法确认这个仅通过 Iroh 连接的 Home 是否可通过所选登录服务访问。请复制其非机密描述符，在终端目录中保存为 happier-home.json，然后运行下面的命令。',
           webDesktopHandoffDesktopAppOption: '使用桌面应用（推荐）',
           webDesktopHandoffCliOption: '使用终端（CLI）',

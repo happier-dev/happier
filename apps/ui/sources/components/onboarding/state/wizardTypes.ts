@@ -7,10 +7,8 @@ export type WizardPlatform = 'web' | 'native' | 'desktop';
 
 export type WizardStepId =
     | 'welcome'
-    | 'scan_code'
     | 'relay_select'
     | 'relay_enter_url'
-    | 'confirm_relay_lock'
     | 'desktop_handoff'
     | 'background_service_handoff'
     | 'host_relay_local'
@@ -40,12 +38,9 @@ export type WizardAuthIntent = 'standard' | 'restore' | 'lost_access';
 export type WizardContext = Readonly<{
     mode: WizardMode;
     platform: WizardPlatform;
-    canScanQr: boolean;
-    scanStepEnabled: boolean;
     canRunSystemTasks: boolean;
     relaySelection: WizardRelaySelection;
     relayAccessProviderId: RelayAccessProviderId | null;
-    relayLockConfirmationPending: boolean;
     relaySwitchConfirmationPending: boolean;
     authIntent: WizardAuthIntent;
 }>;
@@ -81,7 +76,6 @@ export type WizardState = Readonly<{
     currentStepId: WizardStepId;
     history: readonly WizardStepId[];
     resumeState: WizardResumeState | null;
-    parsedScanPayload: unknown | null;
 }>;
 
 export type WizardAction =
@@ -89,10 +83,7 @@ export type WizardAction =
     | Readonly<{ type: 'wizard/back' }>
     | Readonly<{ type: 'wizard/goToStep'; stepId: WizardStepId }>
     | Readonly<{ type: 'wizard/setResumeState'; resumeState: WizardResumeState | null }>
-    | Readonly<{ type: 'wizard/setParsedScanPayload'; parsedScanPayload: unknown | null }>
     | Readonly<{ type: 'wizard/setRelaySelection'; relaySelection: WizardRelaySelection }>
     | Readonly<{ type: 'wizard/setRelayAccessProviderId'; providerId: RelayAccessProviderId | null }>
-    | Readonly<{ type: 'wizard/setRelayLockConfirmationPending'; pending: boolean }>
     | Readonly<{ type: 'wizard/setRelaySwitchConfirmationPending'; pending: boolean }>
-    | Readonly<{ type: 'wizard/setAuthIntent'; authIntent: WizardAuthIntent }>
-    | Readonly<{ type: 'wizard/setScanStepEnabled'; enabled: boolean }>;
+    | Readonly<{ type: 'wizard/setAuthIntent'; authIntent: WizardAuthIntent }>;

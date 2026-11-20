@@ -13121,6 +13121,7 @@ settingsSession: {
         handoffPlatformLinuxLabel: 'Linux',
         handoffPlatformWindowsLabel: 'Windows',
         webDesktopOnlySetupCommandTitle: '使用 CLI 設定這台機器',
+        webDesktopConnectComputer: '連接這台電腦',
         webDesktopOnlyDescriptorFileRequiredSubtitle: 'Happier 無法確認這個僅透過 Iroh 連線的 Home 是否可透過所選登入服務存取。請複製其非機密描述項，在終端機目錄中儲存為 happier-home.json，然後執行下方指令。',
         webDesktopOnlyOptionalNextTitle: '可選：安全存取與供應商',
         webDesktopOnlyOptionalNextBody: '安裝 Happier 後，可在 設定 → 安全存取 (Tailscale) 連接手機，並在 設定 → 供應商 安裝你偏好的工具。',

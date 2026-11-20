@@ -1,4 +1,3 @@
-export * from './state/scanPayload';
 export * from './state/wizardPersistence';
 export * from './state/wizardReducer';
 export * from './state/wizardResume';

@@ -5,19 +5,19 @@ import { canSkipWizardStep, getNextWizardStepId, getPreviousWizardStepId, getVis
 const onboardingContext = {
     mode: 'onboarding' as const,
     platform: 'web' as const,
-    canScanQr: true,
-    scanStepEnabled: false,
+
+
     canRunSystemTasks: false,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
     relayAccessProviderId: null,
-    relayLockConfirmationPending: false,
+
     relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
 };
 
 
 describe('wizardSelectors', () => {
-    it('derives onboarding step order without scan step by default', () => {
+    it('derives onboarding step order with the embedded restore step', () => {
         expect(getVisibleWizardStepIds(onboardingContext)).toEqual([
             'welcome',
             'relay_select',
@@ -29,40 +29,13 @@ describe('wizardSelectors', () => {
         ]);
     });
 
-    it('includes the scan step only when the user opted into scanning', () => {
-        expect(getVisibleWizardStepIds({ ...onboardingContext, scanStepEnabled: true })).toEqual([
-            'welcome',
-            'scan_code',
-            'relay_select',
-            'auth',
-            'auth_restore',
-            'auth_secret_key',
-            'auth_service_select',
-            'auth_lost_access',
-        ]);
-    });
-
-    it('includes the relay lock confirmation step only when required by scan intent', () => {
-        expect(getVisibleWizardStepIds({ ...onboardingContext, relayLockConfirmationPending: true })).toEqual([
-            'welcome',
-            'relay_select',
-            'confirm_relay_lock',
-            'auth',
-            'auth_restore',
-            'auth_secret_key',
-            'auth_service_select',
-            'auth_lost_access',
-        ]);
-    });
-
     it('shows the relay url step only when a custom relay has not been resolved yet', () => {
         expect(getVisibleWizardStepIds({
             ...onboardingContext,
-            scanStepEnabled: true,
+
             relaySelection: { choiceId: 'customUrl' as const, serverUrl: 'https://relay.example.com', locked: false },
         })).toEqual([
             'welcome',
-            'scan_code',
             'relay_select',
             'auth',
             'auth_restore',
@@ -73,11 +46,10 @@ describe('wizardSelectors', () => {
 
         expect(getVisibleWizardStepIds({
             ...onboardingContext,
-            scanStepEnabled: true,
+
             relaySelection: { choiceId: 'customUrl' as const, serverUrl: null, locked: false },
         })).toEqual([
             'welcome',
-            'scan_code',
             'relay_select',
             'auth',
             'auth_restore',

@@ -36,22 +36,22 @@ function buildState(params: Readonly<{
         context: {
             mode: params.mode,
             platform,
-            canScanQr: false,
-            scanStepEnabled: false,
+
+
             canRunSystemTasks: params.canRunSystemTasks ?? platform === 'desktop',
             relaySelection: {
                 ...baseRelaySelection,
                 ...params.relaySelection,
             },
             relayAccessProviderId: null,
-            relayLockConfirmationPending: false,
+
             relaySwitchConfirmationPending: false,
             authIntent: params.authIntent ?? 'standard',
         },
         currentStepId: params.stepId,
         history: [],
         resumeState: null,
-        parsedScanPayload: null,
+
     };
 }
 

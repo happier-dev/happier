@@ -9,7 +9,6 @@ import { t } from '@/text';
 
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 
-import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
 import { MachineArrivalCard } from '@/components/onboarding/detection/MachineArrivalCard';
@@ -141,8 +140,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onAccountDirectoryHomeAuthenticationResult: (result: AccountPostAuthResult, input?: AccountPostAuthInput) => Promise<void> | void;
     onAccountDirectoryHomeAuthenticationBack: () => void;
 
-    onCancelScan: () => void;
-    onScan: (payload: string) => void;
 
     onOpenRelaySelectionFromWelcome: () => void;
     /** Absent when setup policy does not allow adding a Home by its address. */
@@ -159,8 +156,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onOpenSecretKeyLogin: () => void;
     onRestoreBackToAuth: () => void;
     onRestoreNavigationLockChange: (locked: boolean) => void;
-    initialPairingLink: string | null;
-    restoreInitialView?: 'qr' | 'paste';
+    restoreInitialView?: 'qr' | 'scanner' | 'paste';
+    restoreTargetProfileId?: string;
 
     onRelayAccessAdvance: () => void;
     onHostRelayRemoteAdvance: () => void;
@@ -224,19 +221,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         ) : null;
     }
 
-    if (params.stepId === 'scan_code') {
-        return (
-            <QrCodeScannerView
-                testIDPrefix={`${params.testIDPrefix}-scan`}
-                title={t('setupOnboarding.scanQrCode')}
-                permissionRequiredMessage={t('modals.cameraPermissionsRequiredToScanQr')}
-                embedded
-                onCancel={params.onCancelScan}
-                onScan={params.onScan}
-            />
-        );
-    }
-
     if (params.stepId === 'auth_service_select') {
         return (
             <AccountServiceSelectionForm
@@ -251,19 +235,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         return (
             <View testID="relay-select-route-content" style={params.styles.relaySelectRouteContent}>
                 {params.relaySelectBody}
-            </View>
-        );
-    }
-
-    if (params.stepId === 'confirm_relay_lock') {
-        return (
-            <View
-                testID={`${params.testIDPrefix}-confirm-relay-lock`}
-                style={params.styles.confirmRelayLockCard}
-            >
-                <Text style={params.styles.confirmRelayLockText}>
-                    {t('setupOnboarding.confirmSwitchRelayWarning')}
-                </Text>
             </View>
         );
     }
@@ -461,8 +432,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                     entryIntent="enter_home"
                     onBack={params.onRestoreBackToAuth}
                     onOpenSecretKeyLogin={params.onOpenSecretKeyLogin}
-                    initialPairingLink={params.initialPairingLink}
                     initialView={params.restoreInitialView}
+                    reverseTargetProfileId={params.restoreTargetProfileId}
                     onNavigationLockChange={params.onRestoreNavigationLockChange}
                 />
             </View>

@@ -19306,6 +19306,7 @@ const enSetupOnboarding = {
   webDesktopOnlyBody:
     'Open the desktop app to set up this machine. The web app can show status, but it can’t install or configure the background service.',
   webDesktopOnlyPrimary: 'I have a Home address',
+  webDesktopConnectComputer: 'Connect this computer',
   webDesktopOnlyDesktopAppTitle: 'Continue this setup in the desktop app',
   webDesktopOnlyDesktopAppSubtitle:
     'Download and open Happier to set up this machine with a guided flow.',

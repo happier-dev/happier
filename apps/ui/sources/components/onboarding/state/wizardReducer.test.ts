@@ -6,12 +6,12 @@ import type { WizardState } from './wizardTypes';
 const onboardingContext = {
     mode: 'onboarding' as const,
     platform: 'web' as const,
-    canScanQr: true,
-    scanStepEnabled: false,
+
+
     canRunSystemTasks: false,
     relaySelection: { choiceId: null, serverUrl: null, locked: false },
     relayAccessProviderId: null,
-    relayLockConfirmationPending: false,
+
     relaySwitchConfirmationPending: false,
     authIntent: 'standard' as const,
 };
@@ -22,7 +22,7 @@ function makeState(overrides?: Partial<WizardState>): WizardState {
         currentStepId: 'welcome',
         history: [],
         resumeState: null,
-        parsedScanPayload: null,
+
         ...overrides,
     });
 }

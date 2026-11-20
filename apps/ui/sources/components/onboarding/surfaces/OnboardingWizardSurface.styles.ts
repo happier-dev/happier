@@ -26,21 +26,6 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         lineHeight: 24,
         color: theme.colors.text.secondary,
     },
-    confirmRelayLockCard: {
-        width: '100%',
-        borderWidth: 1,
-        borderColor: theme.colors.state.warning.border,
-        backgroundColor: theme.colors.state.warning.background,
-        borderRadius: 14,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: 14,
-    },
-    confirmRelayLockText: {
-        ...Typography.default(),
-        fontSize: 16,
-        lineHeight: 24,
-        color: theme.colors.state.warning.textForeground,
-    },
     relayGroupTitle: {
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.secondary,
