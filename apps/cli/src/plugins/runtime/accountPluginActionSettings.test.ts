@@ -52,7 +52,7 @@ it.each([
                     } } } : {}),
             });
             expect(result, result.ok ? 'ok' : result.errorCode).toMatchObject(retirement === 'rotate' || retirement === 'revoke'
-                ? { ok: false, errorCode: 'plugin_settings_persistence_unavailable' }
+                ? { ok: false, errorCode: 'plugin_settings_account_context_changed' }
                 : { ok: true, result: {
                 value: 'https://configured.example', readerMethods: ['describe', 'get', 'snapshot', 'watch'],
             } });
