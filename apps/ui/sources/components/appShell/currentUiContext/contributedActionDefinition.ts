@@ -1,6 +1,7 @@
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { projectPluginActionReadOnlySideEffectClass } from '@happier-dev/protocol/plugins/actions/readOnly';
 import { readPluginActionApprovalScopeSubjectKindV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
 import { resolvePluginActionExecutionPlacementV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
@@ -28,7 +29,7 @@ export function projectedActionToDefinition(action: PluginProjectedActionV2, pro
     });
     const subjectKind = readPluginActionApprovalScopeSubjectKindV1({ declaration: action.approvalScope,
         pluginId: action.pluginId, subjectKinds: Object.values(projection?.subjectKindsById ?? {}) });
-    const sideEffectClass = actionSideEffectClass(action.dangerLevel);
+    const sideEffectClass = projectPluginActionReadOnlySideEffectClass(action.readOnly) ?? actionSideEffectClass(action.dangerLevel);
     const approval: NonNullable<ActionDefinitionSummaryV1['approval']> = action.dangerLevel === 'safe'
         ? { result: 'none' } : { result: 'required', flow: 'blocking' };
     return Object.freeze({

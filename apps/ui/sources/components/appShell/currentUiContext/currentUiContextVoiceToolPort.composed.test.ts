@@ -2148,6 +2148,20 @@ describe('current UI context Voice tool port', () => {
         expect(daemonRequests).toEqual([]);
     });
 
+    it('keeps unconditional plugin reads out of effect triggers while predicates remain hookable', async () => {
+        const { projectedActionToDefinition } = await import('./contributedActionDefinition');
+        const { projectActionAutomationChoices } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const projection = createDaemonActionProjection({ surfaces: ['ui'] });
+        const action = Object.values(projection.actionsById)[0]!;
+        for (const readOnly of [true, false, { op: 'eq', path: 'mode', value: 'preview' }] as const) {
+            const definition = projectedActionToDefinition({ ...action, readOnly }, projection);
+            expect(projectActionAutomationChoices(definition)).toMatchObject({
+                before: readOnly !== true, after: readOnly !== true,
+            });
+            expect(definition.sideEffectClass).toBe(readOnly === true ? 'read' : 'external');
+        }
+    });
+
     it('preserves client and daemon placement in the shared discovery definition', async () => {
         const { projectedActionToDefinition } = await import('./contributedActionDefinition');
         const daemon = createDaemonActionProjection({ surfaces: ['agent'] });

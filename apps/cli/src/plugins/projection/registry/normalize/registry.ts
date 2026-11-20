@@ -3,6 +3,7 @@ import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plug
 import { resolvePluginLocalizedStringV2Text as displayText } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { projectTargetedContributionActionDefinition } from '@happier-dev/cli-common/plugins/registration';
 import { spreadPreservingDeferredFields } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
+import { projectPluginActionReadOnlySideEffectClass } from '@happier-dev/protocol/plugins/actions/readOnly';
 import { projectPluginActionInputDefinition, projectPluginActionLocalizedPresentation } from './actionInput';
 import { admitPluginContributionGraph, type AdmittedPluginContributionGraph } from './admission';
 import { readPluginSemanticContributions, type PluginContributionCanonicalizer } from './semantic';
@@ -314,7 +315,7 @@ export function toActionDefinition(definition: PluginActionContributionV2): Reso
     ...(definition.approvalInputCustody === undefined ? {} : { approvalInputCustody: definition.approvalInputCustody }),
     ...(definition.secretInputPaths === undefined ? {} : { secretInputPaths: definition.secretInputPaths }),
     ...(definition.readOnly === undefined ? {} : { readOnly: definition.readOnly,
-      sideEffectClass: definition.readOnly === true ? 'read' as const : 'external' as const }),
+      sideEffectClass: projectPluginActionReadOnlySideEffectClass(definition.readOnly) }),
     ...(definition.operation ? { operation: definition.operation } : {}),
     scopes: definition.scopes,
     ...(definition.placementBindings ? { placementBindings: [...definition.placementBindings] } : {}),
