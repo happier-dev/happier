@@ -1067,12 +1067,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const handleWelcomeLogin = React.useCallback(async () => {
         if (!await ensureActiveServerForAuth()) return;
-        const relayUrl = getActiveServerSnapshot().serverUrl ?? welcomeRelayUrl;
-        if (relayUrl) {
-            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-        }
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_restore' });
-    }, [ensureActiveServerForAuth, welcomeRelayUrl]);
+    }, [dispatch, ensureActiveServerForAuth]);
     const handleOpenRestore = handleWelcomeLogin;
 
     const handleOpenLostAccess = React.useCallback(() => {

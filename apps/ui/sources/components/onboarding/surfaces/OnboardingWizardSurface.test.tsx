@@ -1328,7 +1328,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
     });
 
-    it('fast-paths from welcome to the restore login screen when a non-cloud relay is already selected', async () => {
+    it('opens restore for a selected Home without scheduling machine setup after sign-in', async () => {
         await focusHomeAtAddress('https://relay.example.test');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
@@ -1350,11 +1350,7 @@ describe('OnboardingWizardSurface', () => {
         });
 
         expect(screen.findAllByType(RestoreIndexEmbedded as never)).toHaveLength(1);
-        expect(getPendingSetupIntent()).toEqual({
-            branch: 'thisComputer',
-            phase: 'awaiting_auth',
-            relayUrl: 'https://relay.example.test',
-        });
+        expect(getPendingSetupIntent()).toBeNull();
 
         const backButton = screen.findByTestId('onboarding-wizard-back')!;
         await act(async () => {
