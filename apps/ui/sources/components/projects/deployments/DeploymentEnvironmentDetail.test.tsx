@@ -2466,9 +2466,10 @@ describe('Project deployments page', () => {
         // Ports, scheme and export name wait under Advanced (PAGE-ACCEPT-176 R7-D1).
         if (!screen.findByTestId(`${id}.hostPort`)) await screen.pressByTestIdAsync(`${id}.advanced.header`);
         await act(async () => {
-        screen.findByTestId(`${id}.hostPort`)!.props.onChangeText(hostPort);
-        screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
-        screen.findByTestId(`${id}.scheme`)!.props.onChangeText('postgres'); }); };
+          screen.findByTestId(`${id}.hostPort`)!.props.onChangeText(hostPort);
+          screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
+        });
+      };
       const saved = async (count: number) => { await screen.pressByTestIdAsync(`${id}.save`);
         await waitForHomeGovernance(() => expect(updates, JSON.stringify({ text: screen.getTextContent(),
           refusals: screen.root.findAll(node => node.props.testID === `${id}.refused`)
@@ -2485,6 +2486,10 @@ describe('Project deployments page', () => {
       await screen.pressByTestIdAsync(`${id}.advanced.header`);
       // The port the stored Compose service declares fills Container port (PAGE-ACCEPT-176 D29).
       await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.containerPort`)?.props.value).toBe('5432'));
+      expect(screen.findByTestId(`${id}.scheme`)).toBeNull();
+      const schemeFact = screen.findHostByTestId(`${id}.schemeFact`);
+      expect(schemeFact?.findAll(node => typeof node.type === 'string' && node.props.children === 'postgres').length)
+        .toBeGreaterThan(0);
       // Review sharing says what it still needs instead of staying disabled without a reason (D29).
       expect(screen.findByTestId(`${id}.needs`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();

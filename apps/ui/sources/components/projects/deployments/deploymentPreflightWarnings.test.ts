@@ -66,7 +66,8 @@ describe('deployment preflight warnings', () => {
         } }))).toEqual({ services: ['app', 'api', 'worker'], containerPorts: [
             { service: 'app', containerPort: 80 }, { service: 'app', containerPort: 9000 },
             { service: 'api', containerPort: 3000 }, { service: 'api', containerPort: 4000 }, { service: 'api', containerPort: 5000 },
-        ] });
+        ], serviceImages: new Map([['app', 'nginx'], ['worker', 'busybox']]),
+            tcpContainerPorts: new Map([['app', [80]], ['api', [3000, 4000, 5000]]]) });
     });
     it('compares variable identities including phase, without requiring matching secret refs or exposing their values', () => {
         const destination: EnvironmentSecretBindingV1[] = [{ purpose: 'variable', name: 'ORIGIN', phase: 'runtime', source: value }];

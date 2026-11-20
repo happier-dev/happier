@@ -84,6 +84,8 @@ export async function readDeploymentAddDeclaredInputs(document: string, services
 export async function readDeploymentComposeServiceFacts(document: string): Promise<Readonly<{
     services: readonly string[];
     containerPorts: ReadonlyArray<Readonly<{ service: string; containerPort: number }>>;
+    serviceImages: ReadonlyMap<string, string>;
+    tcpContainerPorts: ReadonlyMap<string, readonly number[]>;
 }>> {
     const source = await parseDeploymentComposeSourceV1(document);
     const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -93,12 +95,24 @@ export async function readDeploymentComposeServiceFacts(document: string): Promi
         return port.success ? port.data : null;
     };
     const declarations = record(source.services) ? source.services : {};
+    const serviceImages = new Map<string, string>();
+    const tcpContainerPorts = new Map<string, readonly number[]>();
     const containerPorts = Object.entries(declarations).flatMap(([service, declaration]) => {
         if (!record(declaration)) return [];
+        if (typeof declaration.image === 'string') serviceImages.set(service, declaration.image);
         const entries = [...(Array.isArray(declaration.expose) ? declaration.expose : []),
-            ...(Array.isArray(declaration.ports) ? declaration.ports.map(port => record(port) ? port.target : port) : [])];
-        const ports = new Set(entries.map(literal).filter((port): port is number => port !== null));
+            ...(Array.isArray(declaration.ports) ? declaration.ports : [])];
+        const ports = new Set<number>();
+        const tcp = new Set<number>();
+        for (const entry of entries) {
+            const containerPort = literal(record(entry) ? entry.target : entry);
+            if (containerPort === null) continue;
+            ports.add(containerPort);
+            const protocol = record(entry) ? entry.protocol : typeof entry === 'string' ? entry.split('/')[1] : undefined;
+            if (protocol === undefined || protocol === 'tcp') tcp.add(containerPort);
+        }
+        if (tcp.size > 0) tcpContainerPorts.set(service, [...tcp]);
         return [...ports].map(containerPort => ({ service, containerPort }));
     });
-    return { services: Object.keys(declarations), containerPorts };
+    return { services: Object.keys(declarations), containerPorts, serviceImages, tcpContainerPorts };
 }

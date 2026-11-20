@@ -25,7 +25,7 @@ import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { Text } from '@/components/ui/text/Text';
 import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
-  type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
+  readPrivateServiceSharingScheme, type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
 const id = 'project-deployments.environment.privateSharing';
 const readPrivateNetworks = (machine: Machine | null): unknown => machine?.daemonState?.reachability?.privateNetworks;
@@ -102,19 +102,21 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const [containerPort, setContainerPort] = React.useState('');
   // The port the stored Compose service declares fills Container port, as Add a domain does (D29); typed values stay.
   const storedDocument = props.detail.content.definition.kind === 'stored' ? props.detail.content.definition.document : null;
-  const [declaredPorts, setDeclaredPorts] = React.useState<ReadonlyArray<Readonly<{ service: string; containerPort: number }>>>([]);
+  const [compose, setCompose] = React.useState<Awaited<ReturnType<typeof readDeploymentComposeServiceFacts>> | null>(null);
   React.useEffect(() => {
     if (!storedDocument) return;
     let current = true;
-    void readDeploymentComposeServiceFacts(storedDocument).then(facts => { if (current) setDeclaredPorts(facts.containerPorts); },
+    void readDeploymentComposeServiceFacts(storedDocument).then(facts => { if (current) setCompose(facts); },
       () => { /* Compose that does not parse declares no port; the field stays typed. */ });
     return () => { current = false; };
   }, [storedDocument]);
   React.useEffect(() => {
-    const ports = [...new Set(declaredPorts.filter(entry => entry.service === service).map(entry => entry.containerPort))];
+    const ports = [...new Set(compose?.containerPorts.filter(entry => entry.service === service).map(entry => entry.containerPort))];
     if (ports.length === 1) setContainerPort(currentPort => currentPort === '' ? String(ports[0]) : currentPort);
-  }, [declaredPorts, service]);
-  const [scheme, setScheme] = React.useState('');
+  }, [compose, service]);
+  const [schemeOverride, setSchemeOverride] = React.useState('');
+  const inferredScheme = readPrivateServiceSharingScheme(props.detail.content, service, Number(containerPort), compose);
+  const scheme = inferredScheme ?? schemeOverride;
   const [reachId, setReachId] = React.useState<string | null>(null);
   const [address, setAddress] = React.useState<string | null>(null);
   const [hostPort, setHostPort] = React.useState('');
@@ -209,7 +211,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
         </> : <>
       <FieldItem label={t('projects.deployments.settingsSections.privateSharingService')}><ValueFieldSelect testID={`${id}.service`}
         label={t('projects.deployments.settingsSections.privateSharingService')} items={services.map(value => ({ id: value, title: value }))}
-        selectedId={service} onSelect={value => { setService(value); setKey(value); setContainerPort(''); }} fill /></FieldItem>
+        selectedId={service} onSelect={value => { setService(value); setKey(value); setContainerPort(''); setSchemeOverride(''); }} fill /></FieldItem>
       {/* What is shared, then who may use it, then one sentence of what sharing does (PAGE-ACCEPT-176 R7-D1). The
           default view speaks no networking; export name, ports and scheme wait under Advanced with their values shown. */}
       <FieldItem label={t('projects.deployments.settingsSections.privateSharingWho')}>{reachTiles}</FieldItem>
@@ -229,7 +231,9 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
         <View style={deploymentSheetStyles.fields}>
           {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
           {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
-          {field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'), scheme, setScheme)}
+          {inferredScheme === null ? field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'),
+            schemeOverride, setSchemeOverride) : <Item testID={`${id}.schemeFact`}
+              title={t('projects.deployments.settingsSections.privateSharingScheme')} detail={inferredScheme} mode="info" />}
           {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort)}
         </View>
       </ExpandableItem>

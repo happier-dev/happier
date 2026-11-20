@@ -3,6 +3,7 @@ import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments
 import { isMap, isSeq, parseDocument } from 'yaml';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import { DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import type { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 /** How other Machines reach the shared service: Happier's own network, or a network this Machine joined. */
@@ -54,6 +55,31 @@ export function listPrivateServiceExportServices(content: DeploymentEnvironmentC
   if (document.errors.length || !isMap(services)) return [];
   const selected = content.definition.services;
   return services.items.map(item => String(item.key)).filter(name => !selected.length || selected.includes(name));
+}
+
+const DATABASE_CONNECTION_SCHEMES = new Map([
+  ['postgres', 'postgres'], ['mysql', 'mysql'], ['mariadb', 'mysql'], ['mongo', 'mongodb'], ['redis', 'redis'],
+]);
+const HTTP_IMAGES = new Set(['nginx', 'httpd', 'caddy']);
+const CONVENTIONAL_TCP_SCHEMES = new Map([
+  [80, 'http'], [443, 'https'], [3306, 'mysql'], [5432, 'postgres'], [6379, 'redis'], [27017, 'mongodb'],
+]);
+
+/** Infer only from declared service facts. An unknown scheme stays editable. */
+export function readPrivateServiceSharingScheme(content: DeploymentEnvironmentContentV1, service: string, port: number,
+  compose: Awaited<ReturnType<typeof readDeploymentComposeServiceFacts>> | null): string | null {
+  const engine = content.template?.data?.find(entry => entry.service === service)?.engine;
+  if (engine) return DATABASE_CONNECTION_SCHEMES.get(engine) ?? null;
+  const image = compose?.serviceImages.get(service);
+  if (image) {
+    const official = /^(?:(?:docker\.io\/|index\.docker\.io\/)?library\/)?([a-z0-9_-]+)(?::[^@/]+)?(?:@[^/]+)?$/u.exec(image)?.[1];
+    if (official) {
+      const database = DATABASE_CONNECTION_SCHEMES.get(official);
+      if (database) return database;
+      if (HTTP_IMAGES.has(official) && port !== 443) return 'http';
+    }
+  }
+  return compose?.tcpContainerPorts.get(service)?.includes(port) ? CONVENTIONAL_TCP_SCHEMES.get(port) ?? null : null;
 }
 
 function publicationTarget(value: unknown): Readonly<{ target: number; protocol: string }> {
