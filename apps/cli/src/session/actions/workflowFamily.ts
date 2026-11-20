@@ -37,7 +37,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
 import type { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import type { createWorkflowRunActionOwner } from './workflowRunActions';
-import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { WorkflowAccountRunActionDeps, WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { CombinedMachineSetupInvocationRead } from '@/machines/setup/composeMachineSetup';
 import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
@@ -391,6 +391,35 @@ export function createCliWorkflowFamily(
       const workflowRunStorage = createWorkflowRunStorage(combined
         ? { parent: combined.parent, context: args.context } : args, retainedRequesterContext);
       const [{ createWorkflowActionExecutor }, { logger }, { createWorkflowRunActionOwner }, { createCommittedInputTypeDeps }, { doesWorkflowImmediateEligibleStepTargetSession }] = await Promise.all([import("./workflowActionExecutor"), import("@/ui/logger"), import("./workflowRunActions"), import("@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps"), import("@/daemon/workflows/coordinator")]);
+      const admitManagedProject = async ({ projectTarget, executionTargetKind, accountId, signal = new AbortController().signal }:
+        Parameters<NonNullable<WorkflowAccountRunActionDeps['admitInPlaceWorkspace']>>[0]) => {
+        const placement = projectTarget.sessionPlacement;
+        if (placement?.kind !== 'in_place') return { ok: false as const, code: 'workspace_unavailable' as const };
+        const requester = readRequesterAccountActionContext(args.context.externalActionExecutionAuthorization);
+        const credentials = requester?.credentials ?? params.credentials;
+        if (!credentials || readAccountIdFromToken(credentials.token) !== accountId) {
+          return { ok: false as const, code: 'workspace_unavailable' as const };
+        }
+        const currentServerId = await resolveProjectHomeIdentity();
+        const [{ readManagedWorkspaceRefForAddress }, { admitWorkflowProjectWorkspace }] = await Promise.all([
+          import("@/workspaces/acceptedManagedWorkspace"), import("@/daemon/workflows/resolveWorkflowWorkspace"),
+        ]);
+        const admitted = await admitWorkflowProjectWorkspace({ projectTarget, executionTargetKind, accountId, currentServerId, signal,
+          resolveWorkspaceRef: async () => (await readManagedWorkspaceRefForAddress({
+            credentials, serverId: params.serverId ?? projectHomeId,
+            serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? workflowRunServerHttpBaseUrl,
+          }, placement.workspace, signal)).ref,
+          restoreManagedWorkspaceSource: (workspace, scopeSignal) => params.restoreManagedWorkflowWorkspaceSource?.({
+            workspace, requesterAccountId: accountId, signal: scopeSignal,
+          }) ?? Promise.resolve(null),
+        });
+        if (!admitted.ok) return admitted;
+        const workspaceSource = admitted.workspaceSource;
+        return workspaceSource ? { ...admitted, workspaceSource } : { ok: false as const, code: 'workspace_unavailable' as const };
+      };
+      // One executor serves one authorized request. All restored descriptors in
+      // that request share the exact same admitted Project source.
+      let restoreManagedProject: ReturnType<typeof admitManagedProject> | undefined;
       const execute = createWorkflowActionExecutor({
         onFailureDiagnostic: diagnostic => logger.infoFile(JSON.stringify(diagnostic)),
         isWorkflowFeatureEnabled: async () => {
@@ -615,6 +644,16 @@ export function createCliWorkflowFamily(
             });
             await writer.commitObservation(invocation, observation);
           },
+          admitInPlaceWorkspace: async input => {
+            const admitted = await admitManagedProject(input);
+            if (!admitted.ok) return admitted;
+            const { workspaceSource } = admitted;
+            const [{ readRepositoryWorkflow }, { runWithWorkspaceSourceDemand }] = await Promise.all([
+              import("./repositoryWorkflow"), import("@/workspaces/source/workspaceSource"),
+            ]);
+            return { ok: true, prepareWorkspace: admitted.prepare,
+              readRepositoryWorkflow: request => runWithWorkspaceSourceDemand(workspaceSource, () => readRepositoryWorkflow(request)) };
+          },
           prepareWorkspace: async ({ projectTarget, definition }) => {
             if (!projectTarget.workspaceRefId) {
               const { prepareWorkflowAcceptedWorkspaceTarget } = await import("@/daemon/workflows/resolveWorkflowWorkspace");
@@ -634,9 +673,16 @@ export function createCliWorkflowFamily(
               ),
             });
           },
-          restoreWorkspace: async (workspace) => {
+          restoreWorkspace: async (workspace, accepted) => {
             const { restoreRecordedWorkflowWorkspace } = await import("@/daemon/workflows/resolveWorkflowWorkspace");
-            return await restoreRecordedWorkflowWorkspace({ workspace });
+            const placement = accepted?.workspaceTarget.sessionPlacement;
+            if (!accepted || placement?.kind !== 'in_place') return await restoreRecordedWorkflowWorkspace({ workspace });
+            const admitted = await (restoreManagedProject ??= admitManagedProject({
+              projectTarget: { ...accepted.workspaceTarget.project, sessionPlacement: placement },
+              executionTargetKind: accepted.executionTargetKind, accountId: accepted.accountId, signal: accepted.signal }));
+            if (!admitted.ok) return { ok: false, code: 'workflow_workspace_restore_unavailable' };
+            const { runWithWorkspaceSourceDemand } = await import("@/workspaces/source/workspaceSource");
+            return await runWithWorkspaceSourceDemand(admitted.workspaceSource, () => restoreRecordedWorkflowWorkspace({ workspace }));
           },
           ...(params.workflowAcceptedAuthorizationCurrentness
             ? { isAcceptedAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness }

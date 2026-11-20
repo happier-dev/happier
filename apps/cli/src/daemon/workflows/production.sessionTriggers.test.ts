@@ -1,3 +1,6 @@
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, admitAgentStartV1,
@@ -5,9 +8,23 @@ import {
   openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
   type WorkflowDefinitionV1,
 } from '@happier-dev/protocol';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import * as scm from '@/scm/readWorktreeChangeFingerprint';
+import { runScmCommand, createHostScmCommandRunner } from '@/scm/runtime';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
+import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { runWithRealGitScmRuntime } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { realizeWorkspaceCheckoutWithScmWorkspaceSource } from '@/scm/workspace/workspaceCheckoutOperations';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createProductionWorkflowRunCoordinator, type WorkflowProductionExecutionDeps } from './production';
-import { createPlainWorkflowRunKeyCensusFixture } from './workflowRunStorage.testkit';
+import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspace';
 import type { WorkflowClaimForCoordination } from './worker';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -54,14 +71,21 @@ function previousCheckpoint(endFingerprint?: string) {
 }
 
 function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorkspaceTarget = async () => ({ ok: true, workspaceTarget: { project } }),
-  resolveDeploymentPreviewWorkflow?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['resolveDeploymentPreviewWorkflow']) {
+  resolveDeploymentPreviewWorkflow?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['resolveDeploymentPreviewWorkflow'],
+  workspaceTransport?: Readonly<{
+    resolveCurrentWorkspaceRefs: () => Promise<readonly ManagedWorkspaceRefV2[]>;
+    restoreManagedWorkspaceSource: () => Promise<WorkspaceSource | null>;
+  }>,
+) {
   const snapshots: unknown[] = [];
+  const acceptedEnvelopes: string[] = [];
   const effects: string[] = [];
   const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId,
     resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
     resolveAccountEncryption: async () => ({ kind: 'available', witness }), isAcceptedAuthorizationCurrent: async () => true,
     execution: execution(), onCommittedTransition: () => {},
     prepareAcceptedWorkspaceTarget: prepareWorkspace,
+    ...workspaceTransport,
     ...(resolveDeploymentPreviewWorkflow ? { resolveDeploymentPreviewWorkflow } : {}),
     resolveMaterializationHost: async ({ runId: id, workDepth, directory }) => ({
       effects: { resolveTargetAvailability: async () => true,
@@ -83,10 +107,11 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
         envelope: parseWorkflowStoredContentEnvelopeV1(operation.acceptedEnvelope) });
       if (opened.kind !== 'available') throw new Error('Accepted snapshot unavailable');
       snapshots.push(opened.content);
+      acceptedEnvelopes.push(operation.acceptedEnvelope);
       throw captured;
     } },
   });
-  return { coordinate, snapshots, effects };
+  return { coordinate, snapshots, effects, acceptedEnvelopes };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -282,6 +307,134 @@ describe('scoped workflow claim admission', () => {
     expect(harness.snapshots[0]).toMatchObject({ inputs: {} });
     expect(harness.snapshots[0]).toHaveProperty('origin');
     expect((harness.snapshots[0] as { origin: object }).origin).not.toHaveProperty('originSessionId');
+  });
+
+  it('seals the admitted guest HEAD and dirty fingerprint and creates the worktree only in the guest', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'workflow-project-source-'));
+    const controller = join(scratch, 'controller');
+    const guest = join(scratch, 'guest');
+    async function git(cwd: string, args: string[]) {
+      const result = await runScmCommand({ bin: 'git', cwd, args });
+      if (!result.success) throw new Error(result.stderr);
+      return result.stdout.trim();
+    }
+    try {
+      for (const [root, content] of [[controller, 'controller'], [guest, 'guest']] as const) {
+        await mkdir(root);
+        await git(root, ['init', '--initial-branch=main']);
+        await writeFile(join(root, 'tracked.txt'), content);
+        await git(root, ['add', '--', 'tracked.txt']);
+        await git(root, ['-c', 'user.name=Workflow Test', '-c', 'user.email=workflow@example.invalid',
+          '-c', 'commit.gpgsign=false', 'commit', '-m', content]);
+        await writeFile(join(root, 'tracked.txt'), `${content} edited`);
+      }
+      const guestHead = await git(guest, ['rev-parse', 'HEAD']);
+      expect(await git(controller, ['rev-parse', 'HEAD'])).not.toBe(guestHead);
+      const controllerFingerprint = await scm.readWorktreeChangeFingerprint(controller);
+      const guestFingerprint = await scm.readWorktreeChangeFingerprint(guest);
+      if (controllerFingerprint.kind !== 'available' || guestFingerprint.kind !== 'available') {
+        throw new Error('Both Git fixtures must produce fingerprints');
+      }
+      expect(guestFingerprint.fingerprint).not.toBe(controllerFingerprint.fingerprint);
+
+      const ref: ManagedWorkspaceRefV2 = {
+        v: 2, kind: 'managed', id: 'workspace-ref', serverId: 'server-1',
+        controller: { machineId, installationId: 'controller-installation' }, managedId: 'guest',
+        rootPath: controller, createdAtMs: 1,
+      };
+      // Substitute the guest transport's path space. Git and file reads still
+      // run against two real repositories, including both dirty file contents.
+      const toGuest = (path: string) => join(guest, relative(controller, path));
+      const toAdmitted = (path: string) => join(controller, relative(guest, path));
+      const guestSource: WorkspaceSource = {
+        ...localWorkspaceSource, kind: 'target', id: 'workflow-guest',
+        commandPaths: { toCommandPath: toGuest, fromCommandPath: toAdmitted },
+        spawn: request => localWorkspaceSource.spawn({
+          ...request, cwd: request.cwd ? toGuest(request.cwd) : guest,
+        }),
+        stat: path => localWorkspaceSource.stat(toGuest(path)),
+        lstat: path => localWorkspaceSource.lstat(toGuest(path)),
+        realpath: async path => toAdmitted(await localWorkspaceSource.realpath(toGuest(path))),
+        mkdir: (path, options) => localWorkspaceSource.mkdir(toGuest(path), options),
+        readdir: path => localWorkspaceSource.readdir(toGuest(path)),
+        rename: (from, to) => localWorkspaceSource.rename(toGuest(from), toGuest(to)),
+        rm: (path, options) => localWorkspaceSource.rm(toGuest(path), options),
+        readFile: path => localWorkspaceSource.readFile(toGuest(path)),
+        open: (path, options) => localWorkspaceSource.open(toGuest(path), options),
+      };
+      const source: WorkflowDefinitionV1 = { ...definition,
+        defaults: { ...definition.defaults, workspace: { kind: 'new_worktree', source: { kind: 'original' }, displayName: 'workflow-guest' } },
+        inputs: [{ name: 'diffFingerprint', valueType: 'string', required: false }],
+      };
+      const occurrence = { ...claim(source, previousCheckpoint(controllerFingerprint.fingerprint)),
+        definitionEnvelope: JSON.stringify({ t: 'plain', v: { inlineDefinition: source,
+          workspace: { directory: controller, workspaceRefId: ref.id,
+            sessionPlacement: { kind: 'in_place', workspace: workspaceAddressFromRefV2(ref) } },
+          executionTarget: { kind: 'session' },
+        } }),
+      };
+      const registration = createGitScmBackendRuntimeRegistration();
+      const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+        definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+        executableDefinition: registration.runtime!, registration,
+        scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+        hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+      })]);
+      const harness = admissionHarness(input => prepareWorkflowAcceptedWorkspaceTarget({
+        ...input, inspectLocation: location => inspectWorkspaceLocationWithScmWorkspace({ ...location, registry }),
+      }), undefined, {
+        resolveCurrentWorkspaceRefs: async () => [ref],
+        restoreManagedWorkspaceSource: async () => guestSource,
+      });
+      await expect(harness.coordinate(occurrence)).rejects.toBe(captured);
+      expect(harness.snapshots[0]).toMatchObject({
+        workspaceTarget: { project: { directory: controller }, originalCommittedRevision: guestHead },
+        inputs: { diffFingerprint: guestFingerprint.fingerprint },
+      });
+      const probe = '.dev/worktree/source-probe';
+      const physicalGuest = await runWithWorkspaceSource(guestSource, () => runWithRealGitScmRuntime(
+        () => realizeWorkspaceCheckoutWithScmWorkspaceSource({ sourcePath: controller, registry,
+          checkoutCreation: { kind: 'git_worktree', displayName: 'source-probe', baseRef: guestHead, branchMode: 'new' } }),
+      ));
+      await expect.soft(lstat(join(controller, '.dev'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect.soft(readFile(join(guest, probe, 'tracked.txt'), 'utf8')).resolves.toBe('guest');
+      expect(physicalGuest?.realization.targetPath).toBe(join(controller, probe));
+
+      const [acceptedEnvelope] = harness.acceptedEnvelopes;
+      if (!acceptedEnvelope) throw new Error('Expected the Automation to admit the guest');
+      const workspaceTransport = await pluginReloadController.acquireRuntimeRegistry({
+        resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ pluginIds: ['happier.scm.backend.git'] }),
+      });
+      try {
+        const storage = createWorkflowRunStorageTestkit({ runId, machineId, acceptedEnvelope, origin: { kind: 'direct' } });
+        const execute = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
+          resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+          resolveAccountEncryption: async () => ({ kind: 'available', witness }),
+          isAcceptedAuthorizationCurrent: async () => true,
+          execution: execution(), onCommittedTransition: () => {},
+          restoreManagedWorkspaceSource: async () => guestSource,
+        });
+        const outcome = await execute({ runId, attempt: 0, expectedRevision: 0, accountCurrentness: witness, acceptedEnvelope });
+        await expect.soft(lstat(join(controller, '.dev'))).rejects.toMatchObject({ code: 'ENOENT' });
+        const worktree = join('.dev', 'worktree', 'workflow-guest');
+        await expect(readFile(join(guest, worktree, 'tracked.txt'), 'utf8'), JSON.stringify(outcome)).resolves.toBe('guest');
+        expect(await git(join(guest, worktree), ['rev-parse', 'HEAD'])).toBe(guestHead);
+      } finally {
+        await workspaceTransport.release();
+        await pluginReloadController.shutdown();
+      }
+
+      const stopped = admissionHarness(prepareWorkflowAcceptedWorkspaceTarget, undefined, {
+        resolveCurrentWorkspaceRefs: async () => [ref],
+        restoreManagedWorkspaceSource: async () => null,
+      });
+      await expect(stopped.coordinate(occurrence)).resolves.toMatchObject({
+        state: 'failed', reason: 'workspace_unavailable', admission: 'refused',
+      });
+      expect(stopped.snapshots).toEqual([]);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
   });
 
   it('skips an unchanged claimed tree without freezing a snapshot or starting work', async () => {

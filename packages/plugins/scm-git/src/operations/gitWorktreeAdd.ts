@@ -1,4 +1,7 @@
+import { isAbsolute } from 'node:path';
+
 import { runScmCommand, type ScmExecResult } from '../runtime.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { withGitWorktreeMutation } from './worktreeMutationQueue.js';
 
@@ -58,12 +61,16 @@ export async function runGitWorktreeAdd(input: Readonly<{
     baseRef?: string | null;
     force?: boolean;
 }>): Promise<ScmExecResult> {
+    const paths = readRepositoryFileSystem().commandPaths;
+    const worktreePath = paths && isAbsolute(input.worktreePath)
+        ? paths.toCommandPath(input.worktreePath)
+        : input.worktreePath;
     return await withGitWorktreeMutation(input.repoRoot, () => runScmCommand({
         bin: 'git',
         cwd: input.repoRoot,
         args: buildGitWorktreeAddArgs({
             branchName: input.branchName,
-            worktreePath: input.worktreePath,
+            worktreePath,
             branchMode: input.branchMode,
             baseRef: input.baseRef ?? null,
             force: input.force,

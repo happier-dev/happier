@@ -67,6 +67,24 @@ async function finiteContract(actionId: 'projects.script.run' | 'projects.comput
 function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {}) {
   return materializeWorkflowAcceptedSnapshotV1({ definition, context, admission: { kind: 'user' }, effects: { resolveTargetAvailability: available }, ...overrides });
 }
+it('refuses an effective detached step in a managed in-place Session Run', async () => {
+  const mixedDefinition = { ...definition, blocks: [...definition.blocks,
+    { ...definition.blocks[0], id: 'background', execution: { executionTarget: { kind: 'detached_run' } } }] };
+  await expect(materialize({ definition: mixedDefinition })).resolves.toMatchObject({
+    ok: true, snapshot: { materializedLeaves: [
+      { blockId: 'work', executionTarget: { kind: 'session' } },
+      { blockId: 'background', executionTarget: { kind: 'detached_run' } },
+    ] },
+  });
+  await expect(materialize({ definition: mixedDefinition, context: { ...context,
+    workspaceTarget: { ...context.workspaceTarget, sessionPlacement: { kind: 'in_place', workspace: {
+      v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest', managedId: 'sandbox',
+      controller: { machineId: context.machineId, installationId: 'installation' }, rootPath: '/project',
+    } } },
+  } })).resolves.toMatchObject({ ok: false,
+    error: { code: 'target_unavailable', blockId: 'background', errorCode: 'workflow_in_place_not_available' } });
+});
+
 it('admits complete Action contracts beyond the unrelated Automation field ceiling', async () => {
   const outputSchema = { type: 'string', description: 'x'.repeat(512 * 1024 + 1) };
   const result = await materialize({ definition: { version: 1, defaults: {}, blocks: [

@@ -1,4 +1,3 @@
-import { lstat, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -18,6 +17,7 @@ import {
 import { getScmCommandIndeterminateErrorCode, normalizeCommitRef, runScmCommand } from '../runtime.js';
 import { inspectGitCheckoutIdentity, isGitLinkedWorktreeIdentity } from '../checkoutIdentity.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import { repairGitWorktreeAdminReference } from './repairGitWorktreeAdminReference.js';
 import { buildWorktreeTargetPath } from './worktreeName.js';
@@ -394,7 +394,7 @@ async function addGitWorktree(input: Readonly<{
     branchMode: 'new' | 'existing';
     force?: boolean;
 }>): Promise<void> {
-    await mkdir(dirname(input.targetPath), { recursive: true });
+    await readRepositoryFileSystem().mkdir(dirname(input.targetPath), { recursive: true });
 
     const result = await runCanonicalGitWorktreeAdd({
         repoRoot: input.repoRoot,
@@ -413,7 +413,7 @@ async function addGitWorktree(input: Readonly<{
 
 async function pathExists(path: string): Promise<boolean> {
     try {
-        await lstat(path);
+        await readRepositoryFileSystem().lstat(path);
         return true;
     } catch {
         return false;
@@ -425,7 +425,7 @@ async function isDirectoryEmpty(path: string): Promise<boolean> {
         return true;
     }
 
-    return (await readdir(path)).length === 0;
+    return (await readRepositoryFileSystem().readdir(path)).length === 0;
 }
 
 async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
@@ -436,9 +436,10 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
     branchMode: 'new' | 'existing';
     assertFilesystemPathAuthorized?: (targetPath: string) => void;
 }>): Promise<string> {
+    const files = readRepositoryFileSystem();
     const temporaryTargetPath = `${input.targetPath}.happier-materialize-tmp`;
     input.assertFilesystemPathAuthorized?.(temporaryTargetPath);
-    await rm(temporaryTargetPath, { recursive: true, force: true });
+    await files.rm(temporaryTargetPath, { recursive: true, force: true });
 
     await addGitWorktree({
         repoRoot: input.repoRoot,
@@ -454,7 +455,7 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
             throw new Error('Failed to inspect temporary git worktree identity');
         }
 
-        await rename(join(temporaryTargetPath, '.git'), join(input.targetPath, '.git'));
+        await files.rename(join(temporaryTargetPath, '.git'), join(input.targetPath, '.git'));
         await repairGitWorktreeAdminReference({
             identity: temporaryIdentity,
             targetPath: input.targetPath,
@@ -462,7 +463,7 @@ async function materializeGitWorktreeIntoExistingDirectory(input: Readonly<{
 
         return await resolveGitMaterializedWorktreeTargetPath({ targetPath: input.targetPath });
     } finally {
-        await rm(temporaryTargetPath, { recursive: true, force: true });
+        await files.rm(temporaryTargetPath, { recursive: true, force: true });
     }
 }
 
@@ -470,7 +471,9 @@ async function resolveGitMaterializedWorktreeTargetPath(input: Readonly<{
     targetPath: string;
 }>): Promise<string> {
     const identity = await inspectGitCheckoutIdentity({ cwd: input.targetPath });
-    return identity?.registeredWorktreePath ?? identity?.worktreePath ?? input.targetPath;
+    if (!identity) return input.targetPath;
+    const path = identity.registeredWorktreePath;
+    return readRepositoryFileSystem().commandPaths?.fromCommandPath(path) ?? path;
 }
 
 async function inspectReusableGitWorktree(input: Readonly<{
@@ -554,20 +557,22 @@ async function inspectGitWorktreeBranchRegistration(input: Readonly<{
     });
     if (!listed.success) return { existingPath: null, missingAtTarget: false };
 
+    const files = readRepositoryFileSystem();
     const registered = parseGitWorktreeListPorcelain({
         worktreesOutput: listed.stdout,
         currentWorktreePath: input.repoRoot,
         mainWorktreePath: input.repoRoot,
+        fromCommandPath: files.commandPaths?.fromCommandPath,
     });
     const branchPath = registered.find((worktree) => worktree.branch === input.branchName)?.path ?? null;
     if (branchPath && await pathExists(branchPath)) return { existingPath: branchPath, missingAtTarget: false };
 
     const canonicalizeMissingTarget = async (path: string): Promise<string> => {
         try {
-            return await realpath(path);
+            return await files.realpath(path);
         } catch {
             try {
-                return join(await realpath(dirname(path)), basename(path));
+                return join(await files.realpath(dirname(path)), basename(path));
             } catch {
                 return resolve(path);
             }

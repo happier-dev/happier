@@ -12,6 +12,7 @@ import {
   WorkflowProgressEnvelopeV1Schema,
 } from '@happier-dev/protocol';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowAcceptedWorkspaceTargetV1 } from '@happier-dev/protocol/workflows';
 import { createProductionWorkflowRunCoordinator, DurableWorkflowCoordinatorStore } from './production';
 import { workflowInvocationKey } from './coordinator';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
@@ -28,7 +29,8 @@ const encryption = { witness: { mode: 'plain' as const, version: 1, contentKeyFi
 
 async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attention', claimOrigin: 'direct' | 'automation' = 'direct',
   condition: 'onlyWhen' | 'runWhen' = 'onlyWhen', authoredDefinition?: unknown,
-  executionTarget: 'session' | 'detached_run' = 'detached_run') {
+  executionTarget: 'session' | 'detached_run' = 'detached_run',
+  sessionPlacement?: WorkflowAcceptedWorkspaceTargetV1['sessionPlacement']) {
   const origin = claimOrigin === 'direct' ? { kind: 'direct' as const }
     : { kind: 'automation' as const, automationId: 'automation-1' };
   const definition = WorkflowDefinitionV1Schema.parse(authoredDefinition ?? { version: 1, inputs: [], blocks: [
@@ -39,7 +41,8 @@ async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attenti
   ] });
   const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
     context: { source: origin.kind === 'direct' ? { kind: 'inline' } : origin, inputs: {}, machineId, executionTarget: { kind: executionTarget },
-      workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+      workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
+        ...(sessionPlacement ? { sessionPlacement } : {}) },
       ...(origin.kind === 'direct' ? { origin } : {}), authorization: { principal: { kind: 'host' } } },
     admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
   if (!accepted.ok) throw new Error(accepted.error.code);
@@ -74,7 +77,9 @@ async function interruptedRoot(lifecycle: 'pending' | 'running' | 'needs_attenti
   return { acceptedEnvelope, storage, store, rootKey, readRoot, reader, checkpoint };
 }
 
-function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorageTestkit>) {
+function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorageTestkit>,
+  ports?: Partial<Pick<Parameters<typeof createProductionWorkflowRunCoordinator>[0],
+    'isAcceptedAuthorizationCurrent' | 'restoreManagedWorkspaceSource'>>) {
   return createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
     execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
       machineAdmissionTransport: async () => { throw new Error('unexpected_session_input'); },
@@ -85,8 +90,44 @@ function recoveredCoordinator(storage: ReturnType<typeof createWorkflowRunStorag
     resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
     resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
     isAcceptedAuthorizationCurrent: async () => true,
+    ...ports,
   });
 }
+
+it('settles a denied Resume without opening the retained guest workspace', async () => {
+  const fixture = await interruptedRoot('pending', 'direct', 'onlyWhen', undefined, 'session', {
+    kind: 'in_place', workspace: {
+      v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId, installationId: 'installation-1' }, rootPath: '/repo',
+    },
+  });
+  const restoreManagedWorkspaceSource = vi.fn(async () => null);
+  const coordinate = recoveredCoordinator(fixture.storage, {
+    isAcceptedAuthorizationCurrent: async () => false,
+    restoreManagedWorkspaceSource,
+  });
+  const revision = fixture.storage.run().revision;
+  await expect(coordinate({ runId, attempt: 0, expectedRevision: revision,
+    workflowResumeRequestedRevision: revision,
+    acceptedEnvelope: fixture.acceptedEnvelope, accountCurrentness: encryption.witness }))
+    .resolves.toMatchObject({ state: 'paused', reason: 'run_access_denied' });
+  expect(restoreManagedWorkspaceSource).not.toHaveBeenCalled();
+});
+
+it.each(['direct', 'automation'] as const)('persists a blocked recovery when the retained guest is unavailable for a %s Run', async origin => {
+  const fixture = await interruptedRoot('pending', origin, 'onlyWhen', undefined, 'session', {
+    kind: 'in_place', workspace: {
+      v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId, installationId: 'installation-1' }, rootPath: '/repo',
+    },
+  });
+  const coordinate = recoveredCoordinator(fixture.storage, { restoreManagedWorkspaceSource: async () => null });
+  await expect(coordinate({ runId, attempt: 0, expectedRevision: fixture.storage.run().revision,
+    acceptedEnvelope: fixture.acceptedEnvelope, accountCurrentness: encryption.witness }))
+    .resolves.toMatchObject({ state: 'paused', reason: 'workspace_unavailable' });
+  expect(fixture.storage.run().state).toBe('paused');
+  await expect(fixture.readRoot()).resolves.toMatchObject({ progress: { reason: { code: 'workspace_unavailable' } } });
+});
 
 async function heldHeartbeatRun(options: { holdAfterOpen?: boolean; delayedClaimOrigin?: 'direct' | 'automation' } = {}) {
   const h = await interruptedRoot('pending', options.delayedClaimOrigin);

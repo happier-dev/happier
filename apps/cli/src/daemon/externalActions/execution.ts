@@ -161,6 +161,7 @@ runtimeActionExecute?: RuntimeActionExecute;
 acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
 managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
 executeTeamCredentialBrokerAction?: import('@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission').ExecuteTeamCredentialBrokerAction;
+restoreManagedWorkflowWorkspaceSource?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['restoreManagedWorkflowWorkspaceSource'];
 workflowAcceptedAuthorizationCurrentness?: Parameters<
       typeof createCliActionExecutorFromCredentials
     >[0]['workflowAcceptedAuthorizationCurrentness'];
@@ -1393,6 +1394,7 @@ resolveServerFeaturesSnapshot?: () =>
           return apiMachine ? apiMachine.executeMachineGuardAction(request)
             : { ok: false, errorCode: 'scope-retired', error: 'scope-retired' };
         },
+        ...(params.restoreManagedWorkflowWorkspaceSource ? { restoreManagedWorkflowWorkspaceSource: params.restoreManagedWorkflowWorkspaceSource } : {}),
         ...(params.workflowAcceptedAuthorizationCurrentness
           ? {
               workflowAcceptedAuthorizationCurrentness:

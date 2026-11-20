@@ -7,9 +7,14 @@ import type {
   WorkflowAcceptedWorkspaceTargetPreparation,
   WorkflowProjectTargetV1,
 } from '@happier-dev/protocol/workflows';
-import type { WorkflowDefinitionV1, WorkflowProgressEnvelopeV1, WorkflowStep, WorkflowWorkspaceProgressV1 } from '@happier-dev/protocol';
+import type { WorkflowAcceptedSnapshotV1, WorkflowDefinitionV1, WorkflowProgressEnvelopeV1, WorkflowStep, WorkflowWorkspaceProgressV1 } from '@happier-dev/protocol';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol';
-import { realpath, stat } from 'node:fs/promises';
+import { matchesAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWorkspace';
+import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import {
+  currentWorkspaceSource, runWithWorkspaceSourceDemand, selectWorkspaceSource,
+  type WorkspaceSource, type WorkspaceSourcePlacement,
+} from '@/workspaces/source/workspaceSource';
 
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
@@ -68,7 +73,7 @@ function creationDisplayName(runId: string, logicalInvocationRecordId: string, s
 async function canonicalExistingPathsEqual(left: string, right: string): Promise<boolean> {
   const canonicalize = async (path: string) => {
     try {
-      return await realpath(path);
+      return await currentWorkspaceSource().realpath(path);
     } catch {
       return path;
     }
@@ -105,7 +110,7 @@ export async function verifyWorkflowWorkspaceCurrentness(
 ): Promise<'available' | 'missing' | 'conflict'> {
   const pathIsDirectory = input.pathIsDirectory ?? (async (path: string) => {
     try {
-      return (await stat(path)).isDirectory();
+      return (await currentWorkspaceSource().stat(path)).isDirectory();
     } catch {
       return false;
     }
@@ -182,24 +187,61 @@ export function normalizeWorkflowProjectTarget(input: Readonly<{
   };
 }
 
-/**
- * Resolves the selected project on the exact target daemon before the accepted
- * Run snapshot is sealed. Definitions remain portable; the resulting absolute
- * path/root and optional original Git revision do not.
- */
-export async function prepareWorkflowAcceptedWorkspaceTarget(input: Readonly<{
+type ManagedWorkflowWorkspace = NonNullable<WorkspaceSourcePlacement['workspace']>;
+export type RestoreManagedWorkflowWorkspaceSource = (
+  workspace: ManagedWorkflowWorkspace, signal?: AbortSignal,
+) => Promise<WorkspaceSource | null>;
+
+type WorkflowWorkspacePreparation = WorkflowAcceptedWorkspaceTargetPreparation & Readonly<{ workspaceSource?: WorkspaceSource }>;
+type WorkflowProjectWorkspaceAdmission = Readonly<{
+  ok: true;
+  workspaceSource?: WorkspaceSource;
+  prepare(definition: WorkflowDefinitionV1): Promise<WorkflowWorkspacePreparation>;
+}> | Extract<WorkflowAcceptedWorkspaceTargetPreparation, { ok: false }>;
+
+/** Open the already-admitted source through the shared workspace routing owner. */
+export async function selectManagedWorkflowWorkspaceSource(input: Readonly<{
+  workspace: ManagedWorkflowWorkspace;
+  accountId: string;
+  restore?: RestoreManagedWorkflowWorkspaceSource;
+  signal?: AbortSignal;
+}>): Promise<WorkspaceSource | null> {
+  try {
+    return await selectWorkspaceSource({ workspace: input.workspace, requesterAccountId: input.accountId },
+      resolveSessionTargetWorkspace, undefined, workspace => input.restore?.(workspace, input.signal) ?? Promise.resolve(null));
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    if (error instanceof Error && 'code' in error) {
+      switch (error.code) {
+        case 'workspace_target_unavailable':
+        case 'managed_power_required':
+        case 'admission_unavailable':
+        case 'managed_target_access_unavailable':
+          return null;
+      }
+    }
+    throw error;
+  }
+}
+
+/** Bind the selected Project once, before a repo_file definition can read its filesystem. */
+export async function admitWorkflowProjectWorkspace(input: Readonly<{
   projectTarget: WorkflowProjectTargetV1;
-  definition: WorkflowDefinitionV1;
+  executionTargetKind?: WorkflowAcceptedSnapshotV1['executionTarget']['kind'];
   currentServerId?: string;
-  resolveWorkspaceRef?: (workspaceRefId: string) => WorkspaceRefV1 | null;
+  accountId?: string;
+  restoreManagedWorkspaceSource?: RestoreManagedWorkflowWorkspaceSource;
+  signal?: AbortSignal;
+  resolveWorkspaceRef?: (workspaceRefId: string) => WorkspaceRefV1 | null | Promise<WorkspaceRefV1 | null>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   inspectLocation?: (input: Readonly<{ candidatePath: string }>) => Promise<Readonly<{
     inspection: Readonly<{ rootPath: string; committedRevision?: string }>;
   }> | null>;
   pathIsDirectory?: (path: string) => Promise<boolean>;
-}>): Promise<WorkflowAcceptedWorkspaceTargetPreparation> {
-  if (input.projectTarget.sessionPlacement?.kind === 'in_place') {
+}>): Promise<WorkflowProjectWorkspaceAdmission> {
+  // Detached Run admission currently carries a controller cwd, not a guest address.
+  if (input.projectTarget.sessionPlacement?.kind === 'in_place' && input.executionTargetKind === 'detached_run') {
     return { ok: false, code: 'workflow_in_place_not_available' };
   }
   const normalizedTarget = normalizeWorkflowProjectTarget({
@@ -208,47 +250,68 @@ export async function prepareWorkflowAcceptedWorkspaceTarget(input: Readonly<{
     platform: input.platform,
   });
   if (!normalizedTarget) return { ok: false, code: 'workspace_unavailable' };
-  const pathIsDirectory = input.pathIsDirectory ?? (async (path: string) => {
-    try {
-      return (await stat(path)).isDirectory();
-    } catch {
-      return false;
-    }
-  });
-  if (!await pathIsDirectory(normalizedTarget.directory)) return { ok: false, code: 'workspace_unavailable' };
+  const placement = normalizedTarget.sessionPlacement;
+  const managed = placement?.kind === 'in_place' ? placement.workspace : undefined;
+  const refId = managed?.workspaceId ?? normalizedTarget.workspaceRefId;
+  if (managed && (input.currentServerId !== managed.serverId || normalizedTarget.machineId !== managed.controller.machineId
+    || (normalizedTarget.workspaceRefId && normalizedTarget.workspaceRefId !== refId)
+    || getPathRemainderWithinBase(normalizedTarget.directory, managed.rootPath) === null)) {
+    return { ok: false, code: 'workspace_conflict' };
+  }
+  const workspaceRef = refId ? await input.resolveWorkspaceRef?.(refId) ?? null : null;
+  let workspaceSource: WorkspaceSource | undefined;
+  if (managed) {
+    if (!input.accountId || !matchesAcceptedManagedWorkspaceRef(workspaceRef, managed)) return { ok: false, code: 'workspace_conflict' };
+    workspaceSource = await selectManagedWorkflowWorkspaceSource({ workspace: managed,
+      accountId: input.accountId, restore: input.restoreManagedWorkspaceSource, signal: input.signal }) ?? undefined;
+    if (!workspaceSource) return { ok: false, code: 'workspace_unavailable' };
+  } else if (refId && (!workspaceRef
+    || (input.currentServerId !== undefined && workspaceRef.serverId !== input.currentServerId)
+    || workspaceRef.machineId !== normalizedTarget.machineId)) {
+    return { ok: false, code: 'workspace_conflict' };
+  }
 
-  const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
-    candidatePath: normalizedTarget.directory,
-  });
-  let checkoutRootPath = inspected?.inspection.rootPath ?? normalizedTarget.directory;
-  if (input.projectTarget.workspaceRefId) {
-    const workspaceRef = input.resolveWorkspaceRef?.(input.projectTarget.workspaceRefId) ?? null;
-    if (!workspaceRef
-      || (input.currentServerId !== undefined && workspaceRef.serverId !== input.currentServerId)
-      || workspaceRef.machineId !== input.projectTarget.machineId
-      || (inspected
-        ? getPathRemainderWithinBase(workspaceRef.rootPath, inspected.inspection.rootPath) !== ''
-        : getPathRemainderWithinBase(normalizedTarget.directory, workspaceRef.rootPath) === null)) {
+  const prepare = async (definition: WorkflowDefinitionV1): Promise<WorkflowWorkspacePreparation> => {
+    const pathIsDirectory = input.pathIsDirectory ?? (async (path: string) => {
+      try {
+        return (await currentWorkspaceSource().stat(path)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    if (!await pathIsDirectory(normalizedTarget.directory)) return { ok: false, code: 'workspace_unavailable' };
+    const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
+      candidatePath: normalizedTarget.directory,
+    });
+    if (workspaceRef && (inspected
+      ? getPathRemainderWithinBase(workspaceRef.rootPath, inspected.inspection.rootPath) !== ''
+      : getPathRemainderWithinBase(normalizedTarget.directory, workspaceRef.rootPath) === null)) {
       return { ok: false, code: 'workspace_conflict' };
     }
-    // Plain accepted folders have no SCM inspection; their Account ref owns
-    // the root, including when the selected working directory is nested.
-    checkoutRootPath = inspected?.inspection.rootPath ?? workspaceRef.rootPath;
-  }
-  const project: WorkflowWorkspaceDescriptor = {
-    machineId: input.projectTarget.machineId,
-    directory: normalizedTarget.directory,
-    checkoutRootPath,
-    ...(input.projectTarget.workspaceRefId ? { workspaceRefId: input.projectTarget.workspaceRefId } : {}),
+    const project: WorkflowWorkspaceDescriptor = {
+      machineId: normalizedTarget.machineId,
+      directory: normalizedTarget.directory,
+      checkoutRootPath: inspected?.inspection.rootPath ?? workspaceRef?.rootPath ?? normalizedTarget.directory,
+      ...(refId ? { workspaceRefId: refId } : {}),
+    };
+    const target = { project, ...(placement ? { sessionPlacement: placement } : {}) };
+    const originalCommittedRevision = workflowUsesOriginalCommittedRevision(definition)
+      ? inspected?.inspection.committedRevision ?? null : undefined;
+    if (originalCommittedRevision === null) return { ok: false, code: 'committed_revision_unavailable' };
+    return { ok: true,
+      workspaceTarget: { ...target, ...(originalCommittedRevision ? { originalCommittedRevision } : {}) },
+      ...(workspaceSource ? { workspaceSource } : {}),
+    };
   };
-  const placement = normalizedTarget.sessionPlacement ? { sessionPlacement: normalizedTarget.sessionPlacement } : {};
-  if (!workflowUsesOriginalCommittedRevision(input.definition)) {
-    return { ok: true, workspaceTarget: { project, ...placement } };
-  }
-  const originalCommittedRevision = inspected?.inspection.committedRevision;
-  return originalCommittedRevision
-    ? { ok: true, workspaceTarget: { project, originalCommittedRevision, ...placement } }
-    : { ok: false, code: 'committed_revision_unavailable' };
+  return { ok: true, ...(workspaceSource ? { workspaceSource } : {}),
+    prepare: definition => workspaceSource ? runWithWorkspaceSourceDemand(workspaceSource, () => prepare(definition)) : prepare(definition) };
+}
+
+/** Freeze the admitted Project path, SCM root, and optional original Git revision. */
+export async function prepareWorkflowAcceptedWorkspaceTarget(input: Parameters<typeof admitWorkflowProjectWorkspace>[0]
+  & Readonly<{ definition: WorkflowDefinitionV1 }>): Promise<WorkflowWorkspacePreparation> {
+  const admitted = await admitWorkflowProjectWorkspace(input);
+  return admitted.ok ? await admitted.prepare(input.definition) : admitted;
 }
 
 async function realizeWorktree(intent: WorkflowWorkspaceCreationIntent): Promise<Readonly<{
@@ -267,6 +330,7 @@ async function realizeWorktree(intent: WorkflowWorkspaceCreationIntent): Promise
       sourceDirectory: intent.sourceDirectory,
       sourceRootPath: realized.sourceRootPath,
       checkoutRootPath: realized.realization.targetPath,
+      source: currentWorkspaceSource(),
     });
   } catch (error) {
     if (error instanceof DirectoryInCheckoutError) return null;
@@ -416,13 +480,7 @@ export async function resolveWorkflowWorkspace(input: Readonly<{
   return { ok: true, workspace };
 }
 
-/** Binds the pure workspace policy adapter to the coordinator's one row-local persistence owner. */
-export function createCoordinatorWorkspaceResolver(input: Readonly<{
-  store: WorkflowCoordinatorStore;
-  projectWorkspace: WorkflowWorkspaceDescriptor;
-  originalCommittedRevision?: string;
-  scm?: Pick<Dependencies, 'inspectLocation' | 'inspectCommittedRevision' | 'realizeWorktree' | 'verifyRecordedWorkspace'>;
-}>): (params: Readonly<{
+type CoordinatorWorkspaceResolveInput = Readonly<{
   runId: string;
   definition: WorkflowDefinitionV1;
   step: Pick<WorkflowStep, 'id' | 'execution'>;
@@ -434,8 +492,17 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
   conversationWorkspace?: WorkflowConversationWorkspace;
   useConversationWorkspace?: boolean;
   projectWorkspace?: WorkflowWorkspaceSource;
-}>) => Promise<WorkflowWorkspaceResolution> {
-  return async (params) => {
+}>;
+
+/** Binds the pure workspace policy adapter to the coordinator's one row-local persistence owner. */
+export function createCoordinatorWorkspaceResolver(input: Readonly<{
+  store: WorkflowCoordinatorStore;
+  projectWorkspace: WorkflowWorkspaceDescriptor;
+  workspaceSource?: WorkspaceSource;
+  originalCommittedRevision?: string;
+  scm?: Pick<Dependencies, 'inspectLocation' | 'inspectCommittedRevision' | 'realizeWorktree' | 'verifyRecordedWorkspace'>;
+}>): (params: CoordinatorWorkspaceResolveInput) => Promise<WorkflowWorkspaceResolution> {
+  const resolve = async (params: CoordinatorWorkspaceResolveInput): Promise<WorkflowWorkspaceResolution> => {
     const selection: WorkflowWorkspaceSelection = params.step.execution?.workspace ?? { kind: 'inherit' };
     const defaultSelection: WorkflowWorkspaceSelection = params.definition.defaults.workspace ?? { kind: 'project_checkout' };
     const frameProject = params.invocation.blockKind === 'workflow';
@@ -575,4 +642,6 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
         ...(workflowWorkspace && selection.kind === 'inherit' ? { inheritedWorkspace: workflowWorkspace } : {}),
       }, conversationWorkspace, frameProject);
   };
+  const source = input.workspaceSource;
+  return source ? params => runWithWorkspaceSourceDemand(source, () => resolve(params)) : resolve;
 }

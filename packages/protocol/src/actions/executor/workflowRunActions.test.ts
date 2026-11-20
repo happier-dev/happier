@@ -468,28 +468,66 @@ describe('shared Account workflow run owner', () => {
     } })).rejects.toMatchObject({ code: 'currentness_conflict' });
   });
 
-  it('refuses a managed Workflow before reading a repository definition without an admitted source', async () => {
-    let reads = 0;
+  it('freezes the admitted guest repository definition even with a controller repository at the same path', async () => {
+    const directory = '/repo';
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-workspace', managedId: 'guest',
+      controller: { machineId: 'machine-a', installationId: 'installation' }, rootPath: directory } as const;
+    const projectTarget = { machineId: 'machine-a', directory,
+      sessionPlacement: { kind: 'in_place' as const, workspace } };
+    const commit = 'b'.repeat(40);
+    const depot = new Map<string, ReturnType<typeof runSnapshot>>();
+    let controllerReads = 0;
+    let guestReads = 0;
+    const admission = {
+      admitInPlaceWorkspace: async (input: Parameters<NonNullable<WorkflowAccountRunActionDeps['admitInPlaceWorkspace']>>[0]) => {
+        expect(input.projectTarget).toEqual(projectTarget);
+        expect(input.accountId).toBe('account-1');
+        return {
+          ok: true as const,
+          readRepositoryWorkflow: async () => {
+            guestReads += 1;
+            return { json: JSON.stringify({ kind: 'happier.workflow', version: 1,
+              definition: { version: 1, defaults: definition.defaults, blocks: ['guest definition'] } }), commit };
+          },
+          prepareWorkspace: async () => ({ ok: true as const, workspaceTarget: {
+            project: { machineId: projectTarget.machineId, directory, checkoutRootPath: directory, workspaceRefId: workspace.workspaceId },
+            sessionPlacement: projectTarget.sessionPlacement,
+          } }),
+        };
+      },
+    };
     const owner = createWorkflowAccountRunActionOwner({
-      ...ownerDeps({ execute: async () => { throw Object.assign(new Error('missing'), { code: 'run_not_found' }); } }),
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') {
+          const previous = depot.get(String(operation.runId));
+          if (previous) return previous;
+          throw Object.assign(new Error('missing'), { code: 'run_not_found' });
+        }
+        if (operation.operation === 'invocations.list') return { invocations: [] };
+        if (operation.operation !== 'admit') throw new Error('unexpected_storage_operation');
+        const base = runSnapshot();
+        const snapshot = { ...base, run: { ...base.run, id: String(operation.runId) },
+          keyCensus: { ...base.keyCensus, runId: String(operation.runId) }, acceptedEnvelope: String(operation.acceptedEnvelope) };
+        depot.set(snapshot.run.id, snapshot);
+        return { run: snapshot.run, kind: 'created' };
+      } }),
       readRepositoryWorkflow: async () => {
-        reads += 1;
+        controllerReads += 1;
         throw new Error('unexpected controller repository read');
       },
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      ...admission,
     });
-    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-workspace', managedId: 'guest',
-      controller: { machineId: 'machine-a', installationId: 'installation' }, rootPath: '/repo' } as const;
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', callerPermissionMode: 'default', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: projectTarget } };
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'repo_file', path: 'workflow.json' } });
-    const result = await owner.execute({ actionId: 'workflow.run.start', input, context: {
-      surface: 'cli', authority: 'present_user', callerPermissionMode: 'default', serverId: 'home',
-      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: {
-        machineId: 'machine-a', directory: '/repo', sessionPlacement: { kind: 'in_place', workspace },
-      } },
-    } }).catch(normalizeWorkflowActionThrownError);
-    expect(reads).toBe(0);
-    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: {
-      errorCode: 'workflow_in_place_not_available',
-    } });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
+    const detail = WorkflowRunGetResultV1Schema.parse(await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context }));
+    expect(detail.acceptedContext.source).toEqual({ kind: 'repo_file', path: 'workflow.json', commit });
+    expect(detail.definition.blocks[0]).toMatchObject({ document: { text: 'guest definition' } });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'existing' });
+    expect(guestReads).toBe(1);
+    expect(controllerReads).toBe(0);
   });
 
   it.each([false, true])('starts a repository workflow document and rejoins its frozen source without rereading the file (Discussion=%s)', async fromDiscussion => {

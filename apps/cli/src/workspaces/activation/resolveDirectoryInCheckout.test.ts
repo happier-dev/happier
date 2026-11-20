@@ -1,11 +1,44 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { resolveDirectoryInCheckout } from './resolveDirectoryInCheckout';
 
 describe('resolveDirectoryInCheckout', () => {
+  it('refuses a checkout escape in the admitted guest even when the same controller path stays inside', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-guest-checkout-'));
+    try {
+      const controller = join(root, 'controller');
+      const guest = join(root, 'guest');
+      for (const backing of [controller, guest]) {
+        await mkdir(join(backing, 'source', 'project'), { recursive: true });
+        await mkdir(join(backing, 'checkout'));
+      }
+      await mkdir(join(controller, 'checkout', 'project'));
+      const outside = join(guest, 'outside');
+      await mkdir(outside);
+      await symlink(outside, join(guest, 'checkout', 'project'), process.platform === 'win32' ? 'junction' : 'dir');
+      const paths = {
+        sourceDirectory: join(controller, 'source', 'project'),
+        sourceRootPath: join(controller, 'source'),
+        checkoutRootPath: join(controller, 'checkout'),
+      };
+      await expect(resolveDirectoryInCheckout(paths)).resolves.toBe(join(controller, 'checkout', 'project'));
+      // Only the guest filesystem transport is replaced. Both real link trees exist.
+      const guestSource = {
+        realpath: async (path: string) => {
+          const physical = await realpath(join(guest, relative(controller, path)));
+          return join(controller, relative(await realpath(guest), physical));
+        },
+      };
+      await expect(resolveDirectoryInCheckout({ ...paths, source: guestSource }))
+        .rejects.toMatchObject({ code: 'directory_outside_checkout' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('maps the selected nested directory into the materialized checkout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-checkout-directory-'));
     try {

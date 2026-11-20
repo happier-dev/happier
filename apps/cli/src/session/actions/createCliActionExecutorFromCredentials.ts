@@ -903,6 +903,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   workspaceFilesReplacePreview?: ActionExecutorDeps['workspaceFilesReplacePreview'];
   languageIntelligenceApply?: ActionExecutorDeps['languageIntelligenceApply'];
   skillMachineActionExecute?: ActionExecutorDeps['skillMachineActionExecute'];
+  restoreManagedWorkflowWorkspaceSource?: Parameters<typeof createCliActionDeps>[0]['restoreManagedWorkflowWorkspaceSource'];
   workflowAcceptedAuthorizationCurrentness?: Parameters<typeof createCliActionExecutor>[0]['workflowAcceptedAuthorizationCurrentness'];
   sessionActionConfirmation?: ActionExecutorDeps['sessionActionConfirmation'];
   /** Current committed contributed Action declarations for catalog discovery. */
@@ -1309,6 +1310,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.machineGuardAction ? { machineGuardAction: params.machineGuardAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
       ...(params.registerWorkflowTriggerList ? { registerWorkflowTriggerList: params.registerWorkflowTriggerList } : {}),
+      ...(params.restoreManagedWorkflowWorkspaceSource ? { restoreManagedWorkflowWorkspaceSource: params.restoreManagedWorkflowWorkspaceSource } : {}),
       ...(params.workflowAcceptedAuthorizationCurrentness
         ? { workflowAcceptedAuthorizationCurrentness: params.workflowAcceptedAuthorizationCurrentness }
         : {}),

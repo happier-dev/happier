@@ -48,6 +48,7 @@ import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { readManagedMachines } from '@/machines/managed/readManagedMachine';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { ensureAcceptedManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { StoredCredentials } from '@/persistence';
 import { waitForDaemonAdmission, type DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
@@ -292,6 +293,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
       runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
       managedMachineAction?: import('@happier-dev/protocol').ActionExecutorDeps['managedMachineAction'];
+      openManagedProjectWorkspace?: Parameters<typeof ensureAcceptedManagedWorkspaceTarget>[0]['openTarget'];
       sessionActionRpcTransport?: import('@/session/actions/createCliActionDeps').SessionActionRpcTransport;
       installationIdentity?: Readonly<{ installationId: string; privateKey: import('@/api/externalActionExecutionAuthorization').ExternalActionMachineRequestSigningKey }>;
       serverIdentityId?: string;
@@ -406,6 +408,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           ...(onUnavailable ? { onUnavailable } : {}),
         });
       };
+      const openTarget = input.openManagedProjectWorkspace;
       return createProductionWorkflowRunCoordinator({
         token: params.credentials.token,
         ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
@@ -423,6 +426,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           ...(signal ? { signal } : {}),
         }),
         resolveMaterializationHost,
+        ...(openTarget ? { restoreManagedWorkspaceSource: (workspace, signal) =>
+          ensureAcceptedManagedWorkspaceTarget({ workspace, requesterAccountId: params.accountId, openTarget, signal }) } : {}),
         resolveDeploymentPreviewWorkflow: async ({ templateRef, evidence, runId, signal }) => {
           const opened = AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidence);
           const payload = opened.success ? opened.data.payload : null;

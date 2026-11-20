@@ -368,6 +368,8 @@ export type CliActionDepsParams = Readonly<{
   /** Session bearer for content Actions only; never grants Account Artifact/settings authority. */
   sessionContentCredentials?: StoredCredentials;
   /** Existing daemon authority owner shared with coordinator effect currentness. */
+  restoreManagedWorkflowWorkspaceSource?: (input: Omit<Parameters<typeof import('@/daemon/sessions/sessionTargetWorkspaces').ensureAcceptedManagedWorkspaceTarget>[0], 'openTarget'>) =>
+    ReturnType<typeof import('@/daemon/sessions/sessionTargetWorkspaces').ensureAcceptedManagedWorkspaceTarget>;
   workflowAcceptedAuthorizationCurrentness?: (input: Readonly<{
     authorization: import('@happier-dev/protocol').WorkflowAcceptedAuthorizationV1;
     reservation?: import('@/daemon/workflows/recovery').WorkflowDiscussionModelReservationReplay;

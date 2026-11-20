@@ -2650,6 +2650,10 @@ export async function startDaemon(
       serverId: configuration.activeServerId,
       get serverBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
       runtimeActionExecute: browserRuntimeActionExecute,
+      restoreManagedWorkflowWorkspaceSource: async input => {
+        const { ensureAcceptedManagedWorkspaceTarget } = await import('./sessions/sessionTargetWorkspaces');
+        return await ensureAcceptedManagedWorkspaceTarget({ ...input, openTarget: openManagedProjectWorkspace });
+      },
       ...(getWorkflowRuntime
         ? {
             workflowAcceptedAuthorizationCurrentness:
@@ -3736,6 +3740,11 @@ export async function startDaemon(
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     publicProfileRefreshHandle = runtimeBootstrap.publicProfileRefreshHandle;
     daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
+    const openManagedProjectWorkspace: NonNullable<ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']> =
+      request => managedMachinePolicyAdapter.openProjectWorkspaceTarget({
+        ...request, lifetime: AbortSignal.any([request.lifetime, homeTransportCancellation.signal]),
+        holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts },
+      });
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,
       credentials,
@@ -4389,10 +4398,7 @@ export async function startDaemon(
         isShuttingDown: isDaemonQuiescing,
         admissionDrain,
         managedActivity: { activity: managedActivity, admissionDrain },
-        openManagedProjectWorkspace: (request) => managedMachinePolicyAdapter.openProjectWorkspaceTarget({
-          ...request, lifetime: AbortSignal.any([request.lifetime, homeTransportCancellation.signal]),
-          holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts },
-        }),
+        openManagedProjectWorkspace,
         machineReboot: {
           nativeAdmission: machineNativeEffectAdmission,
           vitals: { host: () => machineVitals?.host() ?? null },
@@ -4486,7 +4492,7 @@ export async function startDaemon(
                   : createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials, accountId: selectedAccountId,
                     serverId: requesterRuntimeServerId, secretSources: daemonSecretSources, admissionDrain });
                 const installation = readInstallationIdentityIfExistsSync();
-                return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter,
+                return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter, openManagedProjectWorkspace,
                   postWorkflowMessage,
                   sessionStartup: async request => {
                     const client = apiMachineForSessions;

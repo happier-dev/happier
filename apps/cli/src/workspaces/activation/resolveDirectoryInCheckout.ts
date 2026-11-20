@@ -1,10 +1,11 @@
-import { realpath } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 
 import {
   isCanonicalAbsolutePathInsideRoot,
   resolveCanonicalAbsolutePath,
 } from '@/utils/path/expandHomeDirPath';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import type { WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export class DirectoryInCheckoutError extends Error {
   readonly code = 'directory_outside_checkout';
@@ -20,10 +21,12 @@ export async function resolveDirectoryInCheckout(input: Readonly<{
   sourceDirectory: string;
   sourceRootPath: string | undefined;
   checkoutRootPath: string;
+  source?: Pick<WorkspaceSource, 'realpath'>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }>): Promise<string> {
   const platform = input.platform ?? process.platform;
+  const source = input.source ?? localWorkspaceSource;
   const sourceRoot = input.sourceRootPath
     ? resolveCanonicalAbsolutePath(input.sourceRootPath, {
         env: input.env,
@@ -44,7 +47,7 @@ export async function resolveDirectoryInCheckout(input: Readonly<{
 
   const resolveExistingPath = async (path: string) => {
     try {
-      return await realpath(path);
+      return await source.realpath(path);
     } catch {
       return path;
     }
@@ -75,7 +78,7 @@ export async function resolveDirectoryInCheckout(input: Readonly<{
     const suffix: string[] = [];
     for (;;) {
       try {
-        return pathApi.join(await realpath(ancestor), ...suffix);
+        return pathApi.join(await source.realpath(ancestor), ...suffix);
       } catch (error) {
         if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
         const parent = pathApi.dirname(ancestor);

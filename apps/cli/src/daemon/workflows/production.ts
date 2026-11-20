@@ -37,6 +37,7 @@ import { ReviewPreparedRoundV1Schema } from '@happier-dev/protocol/reviews/revie
 import type { CliReviewServices } from '@/session/actions/createCliActionExecutor';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
+import { runWithWorkspaceSourceDemand } from '@/workspaces/source/workspaceSource';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
 import { readWorkflowRunStorageFailure } from './workflowRunStorageClient';
 import { readWorkflowDiscussionRoundBindingV1, WorkflowDiscussionRoundProjectResultV1Schema,
@@ -69,8 +70,7 @@ import {
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { resolveWorkflowAuthorizedSession } from './invocationRecoveryObserver';
 import { materializeWorkflowSessionReview } from './reviewSessionStep';
-import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
-import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspace';
+import { createCoordinatorWorkspaceResolver, prepareWorkflowAcceptedWorkspaceTarget, selectManagedWorkflowWorkspaceSource } from './resolveWorkflowWorkspace';
 import { bindAutomationWorkflowInputs, resolveAutomationWorkflowOccurrenceSeed, WorkflowInputResolutionError } from './input';
 import { resolveDeploymentTriggerOccurrence, admitDeploymentTriggerOccurrence } from './deploymentTrigger';
 import { shouldPublishWorkflowSharedConversation, type WorkflowConversationBinding } from './workflowConversation';
@@ -1442,6 +1442,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     admitLeaf: Extract<MaterializeWorkflowAcceptedSnapshotV1Input['admission'], { kind: 'trigger' }>['admitLeaf'];
   }>>;
   prepareAcceptedWorkspaceTarget?: typeof prepareWorkflowAcceptedWorkspaceTarget;
+  restoreManagedWorkspaceSource?: import('./resolveWorkflowWorkspace').RestoreManagedWorkflowWorkspaceSource;
   /**
    * The SCM/worktree boundary reached through the daemon-applied plugin
    * runtime. Production omits it and uses the canonical owners; composed tests
@@ -1501,6 +1502,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : refuseWorkflowTriggerAdmission('content_unavailable');
     }
     let resolvedAcceptedEnvelope = claim.acceptedEnvelope;
+    let workspaceSource: import('@/workspaces/source/workspaceSource').WorkspaceSource | undefined;
     // Admission happens once. A reclaim/Continue uses the same immutable
     // snapshot and recipient key custody as a direct Run, not the live source.
     if (claim.definitionEnvelope !== undefined && resolvedAcceptedEnvelope === undefined) {
@@ -1599,7 +1601,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       if (deploymentOccurrence.kind === 'skipped') return { state: 'skipped', reason: 'filtered', admission: 'refused' };
       const prepareClaimWorkspace = async () => {
         let workspaceRefs: readonly import('@happier-dev/protocol').WorkspaceRefV1[] = [];
-        if (storedDefinition.data.workspace.workspaceRefId) {
+        if (storedDefinition.data.workspace.workspaceRefId || storedDefinition.data.workspace.sessionPlacement?.kind === 'in_place') {
           try {
             workspaceRefs = await params.resolveCurrentWorkspaceRefs?.(claim.signal) ?? [];
           } catch {
@@ -1610,8 +1612,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         const workspaceServerId = params.execution.serverIdentityId ?? params.execution.serverId;
         return (params.prepareAcceptedWorkspaceTarget ?? prepareWorkflowAcceptedWorkspaceTarget)({
           projectTarget: { machineId: params.machineId, ...storedDefinition.data.workspace },
+          executionTargetKind: storedDefinition.data.executionTarget.kind,
           definition: source.definition,
           currentServerId: workspaceServerId,
+          accountId: params.accountId,
+          restoreManagedWorkspaceSource: params.restoreManagedWorkspaceSource,
+          signal: claim.signal,
           resolveWorkspaceRef: (workspaceRefId) => resolveWorkspaceRefById(workspaceRefs, workspaceRefId, workspaceServerId),
         });
       };
@@ -1620,9 +1626,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const fingerprintWorkspace = originSessionId && source.definition.inputs.some((input) => input.name === 'diffFingerprint')
         ? await prepareClaimWorkspace() : undefined;
       if (fingerprintWorkspace?.ok === false) return refuse('workspace', fingerprintWorkspace.code);
-      const fingerprint = fingerprintWorkspace?.ok
-        ? await readWorktreeChangeFingerprint(fingerprintWorkspace.workspaceTarget.project.directory)
-        : undefined;
+      const fingerprint = fingerprintWorkspace?.ok ? await (async () => {
+        const read = () => readWorktreeChangeFingerprint(fingerprintWorkspace.workspaceTarget.project.directory);
+        return fingerprintWorkspace.workspaceSource ? await runWithWorkspaceSourceDemand(fingerprintWorkspace.workspaceSource, read) : await read();
+      })() : undefined;
       claim.signal?.throwIfAborted();
       const diffFingerprint = fingerprint?.kind === 'available' ? fingerprint.fingerprint : undefined;
       let inputs: ReturnType<typeof bindAutomationWorkflowInputs>;
@@ -1640,6 +1647,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       }
       const workspace = fingerprintWorkspace ?? await prepareClaimWorkspace();
       if (!workspace.ok) return refuse('workspace', workspace.code);
+      workspaceSource = workspace.workspaceSource;
       if (!params.resolveMaterializationHost) return refuse('materialization_host', 'target_unavailable');
       let reportPolicy: Awaited<ReturnType<typeof readRunReportPolicy>> | undefined;
       if (storedDefinition.data.onComplete?.kind === 'originating_session' && originSessionId) {
@@ -1875,10 +1883,16 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         return code.data;
       }
     };
-    const controllerFailure = claim.workflowResumeRequestedRevision === undefined
+    let recoveryFailure: Awaited<ReturnType<typeof checkResumeSourceCurrentness>> | 'workspace_unavailable' = claim.workflowResumeRequestedRevision === undefined
       ? undefined
       : await checkResumeSourceCurrentness(claim.signal);
 
+    const placement = accepted.workspaceTarget.sessionPlacement;
+    if (!recoveryFailure && placement?.kind === 'in_place' && !workspaceSource) {
+      workspaceSource = await selectManagedWorkflowWorkspaceSource({ workspace: placement.workspace,
+        accountId: params.accountId, restore: params.restoreManagedWorkspaceSource, signal: claim.signal }) ?? undefined;
+      if (!workspaceSource) recoveryFailure = 'workspace_unavailable';
+    }
     let checkpoint: WorkflowCheckpointEnvelopeV1;
     let rootRecordId: string;
     let revision = initial.run.revision;
@@ -1922,7 +1936,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       rootRecordId = checkpoint.rootRecordId;
     }
 
-    if (!controllerFailure && checkpoint.frontier.paused) {
+    if (!recoveryFailure && checkpoint.frontier.paused) {
       checkpoint = { ...checkpoint, frontier: { ...checkpoint.frontier, paused: false } };
     }
     const durableStore = await DurableWorkflowCoordinatorStore.load({
@@ -1941,11 +1955,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     if (!rootAtStart) throw new Error('workflow_root_invocation_missing');
     rootRecordId = rootAtStart.id;
     let discussionPublicationPending = false;
-    if (controllerFailure) {
+    if (recoveryFailure) {
       const root = await durableStore.readByLogicalInvocation(rootRecordId);
       if (!root) throw new Error('workflow_root_invocation_missing');
       await durableStore.commitFact({ key: root.key, lifecycle: root.lifecycle,
-        reason: controllerFailure, reasonMessage: `Couldn't resume: ${controllerFailure}` });
+        reason: recoveryFailure, reasonMessage: recoveryFailure === 'workspace_unavailable'
+          ? 'The retained workspace is unavailable'
+          : `Couldn't resume: ${recoveryFailure}` });
       const active = await durableStore.listByLifecycle({ runId: claim.runId,
         lifecycles: ['admitting', 'running', 'waiting_for_approval', 'needs_attention', 'cancel_requested', 'outcome_uncertain'] });
       const hasInputCustody = active.some(row => (row.blockKind === 'step' || row.blockKind === 'action')
@@ -1954,14 +1970,14 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const state = control === 'cancel_requested' ? 'cancelled' : hasInputCustody ? 'interrupted' : 'paused';
       // A denied resumed boundary owns no input. Reclaimed active custody must
       // remain recoverable rather than being mislabeled a quiescent pause.
-      if (state === 'cancelled') return await settleCoordinatorResult({ state: 'cancelled', reason: controllerFailure });
+      if (state === 'cancelled') return await settleCoordinatorResult({ state: 'cancelled', reason: recoveryFailure });
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
         checkpoint: { ...durableStore.checkpoint, frontier: { ...durableStore.checkpoint.frontier, paused: state === 'paused' } },
       }));
       await storage.execute({ operation: 'transition', runId: claim.runId, parentAttempt: claim.attempt,
         accountCurrentness: encryption.witness, expectedRevision: durableStore.revision, state, checkpointEnvelope });
-      return { state, reason: controllerFailure };
+      return { state, reason: recoveryFailure };
     }
     await prepareRecipients(claim.signal);
     if (rootAtStart.lifecycle === 'pending' || initial.run.state === 'claimed') {
@@ -2256,6 +2272,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       resolveWorkspace: createCoordinatorWorkspaceResolver({
         store: durableStore,
         projectWorkspace: accepted.workspaceTarget.project,
+        ...(workspaceSource ? { workspaceSource } : {}),
         ...(accepted.workspaceTarget.originalCommittedRevision
           ? { originalCommittedRevision: accepted.workspaceTarget.originalCommittedRevision }
           : {}),
@@ -2361,7 +2378,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
 
     async function settleCoordinatorResult(result: WorkflowCoordinatorResult): Promise<WorkflowCoordinatorResult> {
       const cancelledResult: WorkflowCoordinatorResult = { state: 'cancelled',
-        ...(controllerFailure ? { reason: controllerFailure } : {}) };
+        ...(recoveryFailure ? { reason: recoveryFailure } : {}) };
       // Cancellation is the terminal authority even when it races the last
       // admitted leaf. A pause that arrives after all authored work completed is
       // intentionally allowed to settle that completed work normally.

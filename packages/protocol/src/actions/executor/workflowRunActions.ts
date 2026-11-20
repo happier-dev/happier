@@ -207,10 +207,12 @@ function workflowProjectTarget(context: RunArgs['context']): WorkflowMachineTarg
 function normalizeProjectTargetForComparison(target: NonNullable<WorkflowMachineTarget['project']>, normalizeAbsolutePath: WorkflowAccountRunActionDeps['normalizeAbsolutePath']) {
   const resolved = normalizeAbsolutePath(target.directory);
   if (!resolved) return null;
+  const workspaceRefId = target.workspaceRefId
+    ?? (target.sessionPlacement?.kind === 'in_place' ? target.sessionPlacement.workspace.workspaceId : undefined);
   return {
     machineId: target.machineId,
     directory: resolved,
-    ...(target.workspaceRefId ? { workspaceRefId: target.workspaceRefId } : {}),
+    ...(workspaceRefId ? { workspaceRefId } : {}),
   };
 }
 
@@ -550,9 +552,25 @@ export type WorkflowAccountRunActionDeps = Readonly<{
     directory: string;
   }>, readAgentStartContext: () => ReturnType<typeof resolveActionAgentStartContextV1>) => Promise<Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>>;
   assertCurrent?: () => void;
+  /** Host effect bound once to the exact requester and attached Project. */
+  admitInPlaceWorkspace?: (input: Readonly<{
+    projectTarget: WorkflowProjectTargetV1;
+    executionTargetKind: WorkflowAcceptedSnapshotV1['executionTarget']['kind'];
+    accountId: string;
+    signal?: AbortSignal;
+  }>) => Promise<Readonly<{
+    ok: true;
+    readRepositoryWorkflow: NonNullable<WorkflowAccountRunActionDeps['readRepositoryWorkflow']>;
+    prepareWorkspace: (definition: WorkflowDefinitionV1) => Promise<WorkflowAcceptedWorkspaceTargetPreparation>;
+  }> | Extract<WorkflowAcceptedWorkspaceTargetPreparation, { ok: false }>>;
   prepareWorkspace?: (input: Readonly<{ projectTarget: NonNullable<WorkflowMachineTarget['project']>; definition: WorkflowDefinitionV1 }>) =>
     Promise<WorkflowAcceptedWorkspaceTargetPreparation>;
-  restoreWorkspace?: (workspace: NonNullable<WorkflowProgressEnvelopeV1['workspace']>) => Promise<
+  restoreWorkspace?: (workspace: NonNullable<WorkflowProgressEnvelopeV1['workspace']>, accepted?: Readonly<{
+    workspaceTarget: WorkflowAcceptedSnapshotV1['workspaceTarget'];
+    executionTargetKind: WorkflowAcceptedSnapshotV1['executionTarget']['kind'];
+    accountId: string;
+    signal?: AbortSignal;
+  }>) => Promise<
     Readonly<{ ok: true }> | Readonly<{ ok: false; code: 'workflow_workspace_restore_unavailable' | 'workflow_workspace_restore_failed' }>>;
   observeRecovery?: (input: WorkflowInvocationRecoveryObservationInput) => Promise<WorkflowInvocationRecoveryEvidence>;
   reattachInvocation?: (input: WorkflowInvocationRecoveryObservationInput) => Promise<void>;
@@ -834,9 +852,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       deps.assertCurrent?.();
       return result;
     } } : {}),
-    ...(restoreWorkspace ? { restoreWorkspace: async (input) => {
+    ...(restoreWorkspace ? { restoreWorkspace: async (input, accepted) => {
       deps.assertCurrent?.();
-      const result = await restoreWorkspace(input);
+      const result = await (accepted ? restoreWorkspace(input, accepted) : restoreWorkspace(input));
       deps.assertCurrent?.();
       return result;
     } } : {}),
@@ -986,7 +1004,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     projectTarget: WorkflowProjectTargetV1, ingressContext: WorkflowIngressContextV1 | undefined,
     replaySource: Awaited<ReturnType<typeof readAccepted>> | undefined,
     checkedInline: ReturnType<typeof validateWorkflowDefinition> | undefined,
-    projectExisting?: () => Promise<PreparedStart>) => {
+    projectExisting?: () => Promise<PreparedStart>,
+    readRepositoryWorkflow = deps.readRepositoryWorkflow) => {
     const input = args.input;
     const inputSource = input.source;
     const normalizedInline = checkedInline?.normalizedDefinition;
@@ -1045,8 +1064,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       source = { kind: 'saved', definitionId: inputSource.definitionId, revision: inputSource.revision,
         savedBy: saved.savedBy ?? null };
     } else if (inputSource.kind === 'repo_file') {
-      if (!deps.readRepositoryWorkflow) throw workflowError('source_unavailable');
-      const file = await deps.readRepositoryWorkflow({ path: inputSource.path, projectTarget,
+      if (!readRepositoryWorkflow) throw workflowError('source_unavailable');
+      const file = await readRepositoryWorkflow({ path: inputSource.path, projectTarget,
         ...(args.context.signal ? { signal: args.context.signal } : {}) });
       args.context.signal?.throwIfAborted();
       const parsed = parseWorkflowDocumentJsonIngressV1(file.json, ingressContext);
@@ -1325,12 +1344,19 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
-    if (!replaySource && projectTarget.sessionPlacement?.kind === 'in_place') {
-      throw workflowError('target_unavailable', {
-        ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
-        errorCode: 'workflow_in_place_not_available',
-      });
-    }
+    const inPlaceWorkspace = !replaySource && projectTarget.sessionPlacement?.kind === 'in_place'
+      ? await measureActionStartPhaseV1(args.context, 'workflow_workspace', async () => {
+        deps.assertCurrent?.();
+        const admitted = await deps.admitInPlaceWorkspace?.({ projectTarget, executionTargetKind: executionTarget.kind, accountId,
+          ...(args.context.signal ? { signal: args.context.signal } : {}) });
+        deps.assertCurrent?.();
+        args.context.signal?.throwIfAborted();
+        return admitted ?? { ok: false as const, code: 'workspace_unavailable' as const };
+      }) : null;
+    if (inPlaceWorkspace?.ok === false) throw workflowError('target_unavailable', {
+      ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
+      errorCode: inPlaceWorkspace.code,
+    });
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
     let agentStartContext: ReturnType<typeof resolveActionAgentStartContextV1> | undefined;
     const readAgentStartContext = () => agentStartContext ??= resolveActionAgentStartContextV1(deps, args.context);
@@ -1339,7 +1365,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       materialization = await measureActionStartPhaseV1(args.context, 'workflow_materialization_context',
         () => deps.resolveMaterializationContext!(args, projectTarget, readAgentStartContext));
     }
-    const resolvedDefinition = await readStartDefinition(args, projectTarget, ingressContext, replaySource, checkedInline, projectExisting);
+    const resolvedDefinition = await readStartDefinition(args, projectTarget, ingressContext, replaySource, checkedInline,
+      projectExisting, inPlaceWorkspace?.readRepositoryWorkflow);
     if (resolvedDefinition.kind === 'existing') return resolvedDefinition.prepared;
     let { definition, definitionValidation, metadata, source } = resolvedDefinition;
     if (!materialization) {
@@ -1388,11 +1415,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         if (!current || current.occurrenceId !== type.occurrenceId) throw workflowError('input_type_retired');
       }
     }
-    if (!replaySource && !deps.prepareWorkspace) throw workflowError('target_unavailable', actionStartTargetUnavailableV1(args.context,
+    const prepare = inPlaceWorkspace?.prepareWorkspace
+      ?? (deps.prepareWorkspace ? (definition: WorkflowDefinitionV1) => deps.prepareWorkspace!({ projectTarget, definition }) : undefined);
+    if (!replaySource && !prepare) throw workflowError('target_unavailable', actionStartTargetUnavailableV1(args.context,
       'workflow_workspace', 'workspace_unavailable').details);
     const preparedWorkspace = replaySource ? { ok: true as const, workspaceTarget: replaySource.accepted.workspaceTarget }
-      : await measureActionStartPhaseV1(args.context, 'workflow_workspace',
-        () => deps.prepareWorkspace!({ projectTarget, definition }));
+      : await measureActionStartPhaseV1(args.context, 'workflow_workspace', async () => {
+        const result = await prepare!(definition);
+        if (inPlaceWorkspace) deps.assertCurrent?.();
+        args.context.signal?.throwIfAborted();
+        return result;
+      });
     if (!preparedWorkspace.ok) throw workflowError('target_unavailable', {
       ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
       errorCode: preparedWorkspace.code,
@@ -2405,7 +2438,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           if (prior.progress.execution && choice.acknowledgeUncertainPriorEffects !== true) throw workflowError('workflow_outcome_unresolved');
           if (choice.conversation === 'same_conversation' && !evidence.canContinueConversation) throw workflowError('ineligible_state');
           for (const workspace of restoreWorkspaces) {
-            const restored = await deps.restoreWorkspace?.(workspace)
+            const workspaceTarget = openedAccepted.accepted.workspaceTarget;
+            const restored = await (workspaceTarget.sessionPlacement?.kind === 'in_place'
+              ? deps.restoreWorkspace?.(workspace, { workspaceTarget, executionTargetKind: openedAccepted.accepted.executionTarget.kind,
+                accountId: openedAccepted.snapshot.run.ownerAccountId,
+                ...(signal ? { signal } : {}) })
+              : deps.restoreWorkspace?.(workspace))
               ?? { ok: false as const, code: 'workflow_workspace_restore_unavailable' as const };
             if (!restored.ok) throw workflowError(restored.code);
           }

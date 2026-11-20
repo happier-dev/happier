@@ -4,6 +4,7 @@ import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machin
 import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { fixture, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -12,7 +13,8 @@ import type { ManagedMachineAcquisitionDriverInput } from './acquire';
 import type { ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
 import { createManagedNativeInvocation, reconcileManagedMachine } from './reconcile';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
-import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { ensureAcceptedManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { prepareWorkflowAcceptedWorkspaceTarget } from '@/daemon/workflows/resolveWorkflowWorkspace';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { createManagedPresetHydrator } from './presetHydration';
@@ -510,6 +512,36 @@ describe('Session placement on a managed target (driver)', () => {
 
     const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
         managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };
+
+    it('refuses the other requester at Workflow admission before a guest bootstrap or file effect', async () => {
+        const h = harness({ guest: true, holdStream: true });
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const requesterIds: string[] = [];
+        const driver = createManagedMachineAcquisitionDriver({
+            ...h.input,
+            readTargetCurrent: async (_id, target) => {
+                requesterIds.push(target.requesterAccountId);
+                return { machine: row, admitted: target.requesterAccountId === 'owner' };
+            },
+        });
+        const pathIsDirectory = vi.fn(async () => true);
+        const prepared = await prepareWorkflowAcceptedWorkspaceTarget({
+            projectTarget: { machineId: syncWorkspace.controller.machineId, directory: syncWorkspace.rootPath,
+                sessionPlacement: { kind: 'in_place', workspace: workspaceAddressFromRefV2(syncWorkspace) } },
+            definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
+            currentServerId: homeId, accountId: 'someone-else',
+            resolveWorkspaceRef: () => syncWorkspace,
+            restoreManagedWorkspaceSource: (workspace, signal) => ensureAcceptedManagedWorkspaceTarget({
+                workspace, signal, requesterAccountId: 'someone-else',
+                openTarget: request => driver.openProjectWorkspaceTarget({ ...request, holder }),
+            }),
+            pathIsDirectory,
+        });
+        expect(prepared).toEqual({ ok: false, code: 'workspace_unavailable' });
+        expect(requesterIds).toEqual(['someone-else']);
+        expect(h.calls).toEqual([]);
+        expect(pathIsDirectory).not.toHaveBeenCalled();
+    });
 
     it('admits a Project target under the Account custodian and revokes its channels on a managed-row push', async () => {
         const h = harness({ guest: true, holdStream: true });

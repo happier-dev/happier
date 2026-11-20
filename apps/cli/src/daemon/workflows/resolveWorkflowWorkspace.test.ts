@@ -1,7 +1,7 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -19,6 +19,7 @@ import {
   type WorkflowWorkspaceCreationIntent,
   type WorkflowWorkspaceDescriptor,
 } from './resolveWorkflowWorkspace';
+import { currentWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 
 describe('recorded Workflow workspace restoration', () => {
@@ -318,7 +319,8 @@ describe('resolveWorkflowWorkspace', () => {
     if (prepared.ok) expect(WorkflowAcceptedWorkspaceTargetV1Schema.parse(prepared.workspaceTarget)).toEqual(prepared.workspaceTarget);
   });
 
-  it('refuses in-place admission before reading a same-path controller folder', async () => {
+  it.each(['missing', 'admission_unavailable', 'managed_target_access_unavailable'] as const)(
+    'refuses an admitted in-place address when guest custody is %s before reading files', async denial => {
     const workspace = {
       v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'guest-ref', managedId: 'guest-id',
       controller: { machineId: 'machine-1', installationId: 'controller-installation' }, rootPath: '/repo',
@@ -329,11 +331,42 @@ describe('resolveWorkflowWorkspace', () => {
       projectTarget: { machineId: 'machine-1', directory: workspace.rootPath,
         sessionPlacement: { kind: 'in_place', workspace } },
       definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
+      currentServerId: workspace.serverId, accountId: 'requester-account',
+      resolveWorkspaceRef: () => ({
+        v: 2, kind: 'managed', serverId: workspace.serverId, id: workspace.workspaceId,
+        managedId: workspace.managedId, controller: workspace.controller, rootPath: workspace.rootPath,
+        createdAtMs: 1,
+      }),
+      restoreManagedWorkspaceSource: async () => {
+        if (denial === 'missing') return null;
+        throw Object.assign(new Error(denial), { code: denial });
+      },
       pathIsDirectory, inspectLocation,
     });
-    expect(result).toEqual({ ok: false, code: 'workflow_in_place_not_available' });
+    expect(result).toEqual({ ok: false, code: 'workspace_unavailable' });
     expect(pathIsDirectory).not.toHaveBeenCalled();
     expect(inspectLocation).not.toHaveBeenCalled();
+  });
+
+  it('refuses in-place placement for a detached Run before opening the admitted workspace', async () => {
+    const restoreManagedWorkspaceSource = vi.fn(async () => null);
+    const workspace = {
+      v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId: 'machine-1', installationId: 'controller-installation' }, rootPath: '/repo',
+    } as const;
+    await expect(prepareWorkflowAcceptedWorkspaceTarget({
+      projectTarget: { machineId: 'machine-1', directory: workspace.rootPath,
+        sessionPlacement: { kind: 'in_place', workspace } },
+      definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
+      executionTargetKind: 'detached_run', currentServerId: workspace.serverId, accountId: 'requester-account',
+      resolveWorkspaceRef: () => ({
+        v: 2, kind: 'managed', serverId: workspace.serverId, id: workspace.workspaceId,
+        managedId: workspace.managedId, controller: workspace.controller, rootPath: workspace.rootPath,
+        createdAtMs: 1,
+      }),
+      restoreManagedWorkspaceSource,
+    })).resolves.toEqual({ ok: false, code: 'workflow_in_place_not_available' });
+    expect(restoreManagedWorkspaceSource).not.toHaveBeenCalled();
   });
 
   it('freezes the canonical nested project directory and original committed revision before admission', async () => {
@@ -601,6 +634,34 @@ describe('resolveWorkflowWorkspace', () => {
       pathIsDirectory: async () => true,
       inspectLocation: async () => null,
     })).resolves.toBe('available');
+  });
+
+  it('re-enters the admitted guest for a retained Workflow checkout instead of the same-path controller directory', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'workflow-retained-source-'));
+    try {
+      const controllerDirectory = join(scratch, 'controller');
+      const guestDirectory = join(scratch, 'guest');
+      await mkdir(controllerDirectory);
+      const projectWorkspace = { ...project, directory: controllerDirectory, checkoutRootPath: controllerDirectory };
+      const workspaceSource: WorkspaceSource = { ...currentWorkspaceSource(), kind: 'target', id: 'retained-guest',
+        stat: (path) => stat(path === controllerDirectory ? guestDirectory : path) };
+      const store = createInMemoryWorkflowCoordinatorStore();
+      const runId = 'retained-guest-run';
+      const key = workflowInvocationKey({ runId, blockId: 'inspect', scope: [], attempt: 0 });
+      const invocation = await store.ensureIntent({ key, recordId: 'retained-guest-inspection', runId, blockId: 'inspect',
+        blockKind: 'step', path: { blockId: 'inspect', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'admitting',
+        workspace: { descriptor: projectWorkspace } });
+      const admitted = { workspaceSource };
+      const resolve = createCoordinatorWorkspaceResolver({ store, projectWorkspace, ...admitted,
+        scm: createGitWorkflowWorkspaceTestDependencies() });
+      const request = { runId, definition: { version: 1 as const, inputs: [], defaults: {}, blocks: [] },
+        step: { id: 'inspect' }, invocation, scope: [], producerBinding: { resolve: async () => null } };
+      await expect(resolve(request)).resolves.toEqual({ ok: false, code: 'workspace_unavailable' });
+      await mkdir(guestDirectory);
+      await expect(resolve(request)).resolves.toEqual({ ok: true, workspace: projectWorkspace });
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
   });
 
   it('binds exact producer scope and row-local creation progress through the coordinator store', async () => {

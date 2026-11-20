@@ -1078,6 +1078,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     authoredDefinition: root, frozenChildren, inputs: input.context.inputs, origin: input.context.origin,
   }); }
   catch (error) { if (error instanceof WorkflowMaterializationFailureV1) return { ok: false, error: error.error }; throw error; }
+  if (purpose === 'run' && input.context.workspaceTarget.sessionPlacement?.kind === 'in_place') {
+    const detached = agentStartLeaves.find(leaf => leaf.runsAs.kind === 'background_run');
+    if (detached) return unavailable(detached.blockId, {
+      code: 'target_unavailable', reason: 'detached_execution_unavailable', errorCode: 'workflow_in_place_not_available',
+    });
+  }
   const permissionCeiling = deriveWorkflowAcceptedPermissionCeilingV1(concrete.get('$root')!,
     [...concrete].filter(([key]) => key !== '$root').map(([, definition]) => definition),
     agentStartLeaves.flatMap((leaf) => {
