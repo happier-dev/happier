@@ -51,6 +51,8 @@ Out of scope for this package:
 
 ### Current managed-Stack Plugin UI QA
 
+On Linux development hosts the Playwright heartbeat runner uses `hstack-exec` to place ordinary headless suites with validation admission. A run with an admission slot uses it. Current-stack, packed-artifact and interactive runs use validation admission on the host that holds their inputs. CI keeps its existing runner.
+
 `test:ui:e2e:plugin-current-stack` attaches to the named already-running Stack. It never starts or stops a server, Expo, daemon, publisher, or Stack lifecycle. The default scenario performs no plugin build. It fails unless the canonical publication and web/server/daemon phases are current, loaded and published snapshot IDs agree, exact server-profile credentials match the Stack, live daemon `/ping` matches the state-file runtime ID and closure fingerprint, and the Inspector identity agrees before and after the browser journey. Snapshot mode binds to the consumer's published web snapshot; Expo mode binds to the canonical running `expo.state.json` process and exact current-checkout project, including an explicitly attributed borrowed producer Stack.
 
 The default scenario exercises the actual Settings placement and `PluginSurfaceHost` using the loaded Inspector RNW artifact, an observably settled declared Action, a successfully decoded Resource-backed RNW image, remount, offline retirement/reconnect, keyboard focus, and bounded 200% zoom layout. The mounted boundary must stamp the exact admitted artifact digest, projection generation, machine, and server after the module loads. Pre/post JSON attachments record safe Account/server attribution plus exact runtime, plugin, projection, and artifact identities. Secrets and daemon control tokens are never attached.
