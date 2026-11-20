@@ -98,6 +98,19 @@ describe('CLI command Action host', () => {
         })).resolves.toMatchObject({ ok: false, errorCode: 'command_transport_unavailable' });
     });
 
+    it('retains a typed native refusal instead of reporting an empty failed command', async () => {
+        // Machine RPC is the boundary; keep the real command Action adapter.
+        const machineRpc = await import('@/session/transport/rpc/machineRpc');
+        vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ success: false,
+            errorCode: 'agent_isolation_unavailable', error: 'Requester execution protection is unavailable' });
+        const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+        const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home',
+            serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null });
+        await expect(deps.machineCommandRun!({ command: 'must not execute' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
+            externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
+        })).resolves.toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+    });
+
     it('uses the existing machine RPC lifetime without a subordinate acknowledgement deadline', async () => {
         // The remote machine transport is a network boundary; local command tests above keep its internal exec owner real.
         const machineRpc = await import('@/session/transport/rpc/machineRpc');

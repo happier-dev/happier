@@ -79,8 +79,10 @@ export function createCliMachineActionDeps(
       if (!output.success) return { ok: false, errorCode: 'action_failed', error: 'Command result is invalid' };
       if (response.success) return output.data;
       const cancelled = response.error === 'Command cancelled';
-      return { ok: false, errorCode: cancelled ? 'command_cancelled' : 'command_failed',
-        error: cancelled ? 'Command cancelled' : 'Command failed', details: output.data };
+      const refusalCode = typeof response.errorCode === 'string' && response.errorCode.trim() ? response.errorCode : undefined;
+      return { ok: false, errorCode: refusalCode ?? (cancelled ? 'command_cancelled' : 'command_failed'),
+        error: refusalCode ? typeof response.error === 'string' ? response.error : refusalCode
+          : cancelled ? 'Command cancelled' : 'Command failed', details: output.data };
     },
     machineWorkSummaryGet: async ({ input, context, signal }) => {
       if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

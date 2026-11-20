@@ -34,7 +34,7 @@ describe('AE.P02.F9-override', () => {
     expect(await fixture.actor.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'approve' }, fixture.agentContext))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     const override = await fixture.actor.executeAsPerson('approval.request.decide', { artifactId: pending.artifactId, decision: 'approve' });
-    expect(override)
+    expect(override, JSON.stringify(override))
       .toMatchObject({ ok: true });
     expect((await pending.invocation).ok).toBe(true);
     let settled = await fixture.approval(pending.artifactId);
