@@ -20,7 +20,6 @@ import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORI
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1, TriageCreateTaskActionInputV1Schema, TriageCreateTaskActionResultV1Schema, TriageEditTaskActionInputV1Schema, TriageTransitionTaskActionInputV1Schema } from './actions/tasksProtocol.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesInputV1Schema, TriageListEntriesResultV1Schema } from './actions/listEntriesProtocol.js';
 import { createTriageReadConfiguredSourceInstancesActionHandler } from './actions/readConfiguredSourceInstances.js';
-import { TRIAGE_ISSUE_OPTIONS_RESOURCES } from './actions/issueOptions.js';
 import { TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/searchEntriesProtocol.js';
 import { createTriageReadEntryDetailActionHandler } from './actions/readEntryDetail.js';
 import { createTriageReobserveEntryActionHandler } from './actions/reobserveEntry.js';
@@ -583,7 +582,6 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       }
 } as const;
 export const TRIAGE_ACCOUNT_RESOURCES = {
-  ...TRIAGE_ISSUE_OPTIONS_RESOURCES,
 [TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1]: {
         source: 'dynamic', kind: 'config', scope: 'surface', contentType: 'application/json',
         hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,

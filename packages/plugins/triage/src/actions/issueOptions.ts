@@ -11,14 +11,13 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
 
-import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../accountExecution.js';
-
 type ReadOptions = PluginDynamicResourceRuntime['read'];
 
 function optionsResource(read: ReadOptions) {
+  // Watch setup runs on its watcher Machine. Its Resource reads the Account
+  // through the normal read-only Action dispatcher.
   return {
     source: 'dynamic', kind: 'config', scope: 'global', contentType: 'application/json',
-    execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
     runtime: { read, observe: () => ({ dispose() {} }) },
   } as const;
 }

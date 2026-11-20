@@ -47,7 +47,7 @@ import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TRIAGE_DEFAULT_ACTIONS_V1, planTriage
 import { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
   TriageReadActionsResultV1Schema, TriageAdministerActionResultV1Schema } from './actions/actionsCatalogProtocol.js';
 import { createDirectTriageActionsTransport, readTriageActionsProjectionV1 } from './ui/actions/actionsCommand.js';
-import { readTriageSessionHandoffChoicesV1, type TriageSessionHandoffHostV1 } from '@happier-dev/triage-sources/runtime';
+import { readTriageSessionHandoffChoicesV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1, type TriageSessionHandoffHostV1 } from '@happier-dev/triage-sources/runtime';
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 import { runTriageConfiguredHandoffV1 } from './sessions/configuredActionRun.js';
@@ -360,6 +360,19 @@ describe('Triage activation', () => {
       expect(plugin.registrations().filter(entry => entry.family === 'actions').map(entry => entry.localId).sort())
         .toEqual(PLUGIN_MANIFEST.contributes.actions.filter(action => action.execution.target === 'daemon').map(action => action.id).sort());
     } finally { await Promise.all([plugin.dispose(), account.dispose()]); }
+  });
+
+  it('registers the source and investigation choices in the daemon that serves Watch setup', async () => {
+    const daemon = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      for (const source of Object.values(TRIAGE_ISSUE_WATCH_SOURCES_V1)) {
+        for (const inputTypeId of Object.values(triageIssueWatchOptionIdsV1(source))) {
+          const resource = PLUGIN_MANIFEST.contributes.inputTypes.find(type => type.id === inputTypeId)?.options?.resource;
+          if (typeof resource !== 'string') throw new Error(`Missing local options Resource for ${inputTypeId}`);
+          expect(daemon.registration('resources', resource), resource).toBeDefined();
+        }
+      }
+    } finally { await daemon.dispose(); }
   });
 
   it.each(['agent', 'mcp', 'cli'] as const)('keeps built-ins and explicit opt-outs identical on registered %s Actions and direct UI reads', async (surface) => {

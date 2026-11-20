@@ -20,7 +20,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
-import { TRIAGE_ACCOUNT_RESOURCES } from '../accountDefinition.js';
+import { TRIAGE_ISSUE_OPTIONS_RESOURCES } from './issueOptions.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
@@ -184,7 +184,7 @@ describe('the caller-scoped configured-instance read', () => {
         const { source: inputTypeId } = triageIssueWatchOptionIdsV1(source);
         const optionsId = PLUGIN_MANIFEST.contributes.inputTypes.find(type => type.id === inputTypeId)?.options?.resource;
         if (typeof optionsId !== 'string') throw new Error('Expected a local options Resource reference');
-        const resources: NonNullable<DefinePluginInput['resources']> = TRIAGE_ACCOUNT_RESOURCES;
+        const resources: NonNullable<DefinePluginInput['resources']> = TRIAGE_ISSUE_OPTIONS_RESOURCES;
         const options = resources[optionsId];
         if (options?.source !== 'dynamic') throw new Error('Expected the declared source options Resource');
         const read = (collections: CorpusCollectionsV1, failed = false) =>
