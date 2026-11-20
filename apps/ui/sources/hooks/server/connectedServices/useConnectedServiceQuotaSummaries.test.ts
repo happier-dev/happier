@@ -11,13 +11,13 @@ import {
 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import {
     type AccountProfile} from '@happier-dev/protocol/account/profile';
-import { createRootLayoutFeaturesResponse, standardCleanup } from '@/dev/testkit';
+import { act, createRootLayoutFeaturesResponse, renderHook, standardCleanup } from '@/dev/testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
+import { flushHookEffects, renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
 import { __resetQualifiedConnectedAccountQuotaSnapshotStore } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
 import { createLegacyQuotaAuthWrapper, createLegacyQuotaTestHarness, plainQuotaResponse,
     resetConnectedServiceQuotaSnapshotsTestState } from './useConnectedServiceQuotaSnapshots.testkit';
@@ -314,6 +314,35 @@ describe('useConnectedServiceQuotaSummaries', () => {
         // The shared profile-ref normalizer orders accounts by their canonical key.
         expect(last.accountsWithoutUsage.map((account) => account.accountId)).toEqual(['device', 'imported', 'personal']);
         expect(last.inUseAccountKeys).toEqual(new Set(['acme.connected.accounts%2Fgateway/personal']));
+    });
+
+    it('does not count an API key with a failed first read as a key without limits', async () => {
+        const account = {
+            ref: { service: { pluginId: 'acme.connected.accounts', localId: 'gateway' }, accountId: 'work' },
+            kind: 'token', authenticationModeId: 'key', accessMode: 'apiKey', status: 'connected',
+            revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
+            configurationReady: true, configurationRevision: null, scopes: [],
+        } satisfies QualifiedConnectedAccountProfileV4;
+        advertiseQualifiedAccounts();
+        setProfile({ connectedAccountsV4: [account], connectedServicesV2: [] });
+        boundary.read.mockImplementation(async () => new Response('{}', { status: 503 }));
+        const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
+        vi.useFakeTimers();
+        try {
+            const hook = await renderHook(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'once' }), { wrapper: Wrapper });
+            await flushHookEffects();
+            // Advance through the transport's existing backoff without draining unrelated recurring timers.
+            await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+            await flushHookEffects();
+
+            expect(hook.getCurrent().keysWithoutLimits).toBe(0);
+            expect(hook.getCurrent().accountsWithoutUsage).toEqual([
+                expect.objectContaining({ accountId: 'work', state: 'unavailable' }),
+            ]);
+            await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('reads only the cache when asked, never the server, and says when each summary was read', async () => {

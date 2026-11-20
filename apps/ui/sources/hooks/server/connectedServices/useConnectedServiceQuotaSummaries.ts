@@ -366,18 +366,19 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 // unavailable unless the canonical snapshot says no observation exists yet. A
                 // cache-only reader says nothing about an account it did not read.
                 const read = readByKey[entry.key] === true && loadingByKey[entry.key] !== true;
+                const failed = errorsByKey[entry.key] != null;
                 const noUsageObserved = snapshot?.state === 'not_loaded';
                 // A key that answered without limits reports none by design: counted, not "unavailable".
-                if (read && isApiKey) {
+                if (read && isApiKey && !failed) {
                     keysWithoutLimits += 1;
                     continue;
                 }
-                if (readsAccounts || read) {
+                if (readsAccounts || read || failed) {
                     withoutUsage.push({
                         key: entry.key,
                         serviceLabel: summaryService.serviceLabel,
                         legacyServiceId: summaryService.legacyServiceId,
-                        state: noUsageObserved ? 'no_usage_observed' : read ? 'unavailable' : 'loading',
+                        state: failed ? 'unavailable' : noUsageObserved ? 'no_usage_observed' : read ? 'unavailable' : 'loading',
                         ...identity,
                     });
                 }
@@ -427,6 +428,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         accountRows,
         connectedProfiles,
         quotasEnabled,
+        errorsByKey,
         loadingByKey,
         readByKey,
         readsAccounts,
