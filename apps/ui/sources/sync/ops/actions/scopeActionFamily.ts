@@ -1,5 +1,6 @@
 import { getSessionListFilterUnsupportedFieldsV1, normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById, type ScopeActionOutputById, type ShellColumn, type FileViewMode, type SettingsColumnFilterColumn, type SettingsColumnFilterV1 } from '@happier-dev/protocol/actions/scopeActionFamily';
+import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS, isWorkflowLibraryViewActionId, isWorkflowRunViewActionId } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 import type { FileChangesScope } from '@happier-dev/protocol/scm';
@@ -156,7 +157,19 @@ function selectFileViewActionOwner(tabId: string | undefined,
 export function readActiveFileViewActionOwner(): FileViewActionOwner | null {
   return selectFileViewActionOwner(undefined);
 }
-const workflowLibraryOwners = new Set<() => WorkflowLibraryViewController>();
+type RunViewRead = ScopeActionOutputById[typeof WORKFLOW_RUN_VIEW_ACTION_IDS.get];
+type RunViewPatch = Omit<ScopeActionInputById[typeof WORKFLOW_RUN_VIEW_ACTION_IDS.set], 'clientId'>;
+export type WorkflowRunViewActionController = Pick<RunViewRead, 'filters' | 'searchQuery' | 'selectedSpaceId'> & Readonly<{
+  kind: 'run';
+  lifetime: ServerAccountScopeLifetime | null;
+  focused: boolean;
+  visibleKeys: ReadonlySet<string>;
+  filterResult: EntityListFilterResultV1;
+  update(patch: RunViewPatch): boolean;
+  reset(): boolean;
+}>;
+type WorkflowViewActionController = WorkflowLibraryViewController | WorkflowRunViewActionController;
+const workflowViewOwners = new Set<() => WorkflowViewActionController>();
 
 export type DiscussionListScopeActionController = Readonly<{
   lifetime: ServerAccountScopeLifetime;
@@ -194,10 +207,20 @@ export function registerSettingsColumnFilterScopeActionOwner(read: () => Setting
   return () => { settingsColumnFilterOwners.delete(read); };
 }
 
-/** Mounted Library readers share one draft; retiring a page must not retire its visible column. */
-export function registerWorkflowLibraryScopeActionOwner(read: () => WorkflowLibraryViewController): () => void {
-  workflowLibraryOwners.add(read);
-  return () => { workflowLibraryOwners.delete(read); };
+/** Page and column of each view share a draft. Unmount withdraws only that reader. */
+export function registerWorkflowViewScopeActionOwner(read: () => WorkflowViewActionController): () => void {
+  workflowViewOwners.add(read);
+  return () => { workflowViewOwners.delete(read); };
+}
+
+function readWorkflowViewOwner<K extends WorkflowViewActionController['kind']>(kind: K,
+  context?: Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId'>) {
+  return Array.from(workflowViewOwners, read => read()).findLast(
+    (controller): controller is Extract<WorkflowViewActionController, { kind: K }> =>
+      controller.kind === kind && controller.focused && Boolean(controller.lifetime?.isCurrent()
+        && (!context?.serverId || selectActiveServerAccountScopeForServer(controller.lifetime.scope, context.serverId))
+        && (!context?.runtimeAccountId || context.runtimeAccountId === controller.lifetime.scope.accountId)),
+  );
 }
 
 export function registerShellColumnActionOwner(column: ShellColumn, read: () => ShellColumnActionOwner): () => void {
@@ -287,21 +310,28 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
       || (patch.changesScope !== undefined && !owner.changesScopeAvailable)) return unavailable('client_control_unavailable');
     return await owner.set(patch) ? { ok: true } : unavailable('client_control_unavailable');
   }
-  if (actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set' || actionId === 'workflow.library.view.reset') {
-    const controller = [...workflowLibraryOwners].map(read => read()).filter(controller => controller.focused
-      && controller.lifetime?.isCurrent()
-      && (!context?.serverId || selectActiveServerAccountScopeForServer(controller.lifetime.scope, context.serverId))
-      && (!context?.runtimeAccountId || context.runtimeAccountId === controller.lifetime.scope.accountId)).at(-1);
+  if (isWorkflowLibraryViewActionId(actionId)) {
+    const controller = readWorkflowViewOwner('library', context);
     if (!controller) return unavailable('client_surface_unavailable');
-    ScopeActionInputSchemas[actionId].parse(rawInput);
-    if (actionId === 'workflow.library.view.get') return {
+    const { clientId: _clientId, ...patch } = ScopeActionInputSchemas[actionId].parse(rawInput);
+    if (actionId === WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get) return {
       view: controller.view, filters: controller.filters, searchQuery: controller.searchQuery,
       offeredViews: controller.offeredViews, visibleKeys: controller.visibleKeys,
       coverage: controller.filterResult.coverage,
       selectedSpaceId: controller.selectedSpaceId,
     };
-    const accepted = actionId === 'workflow.library.view.reset' ? controller.reset()
-      : controller.update(ScopeActionInputSchemas['workflow.library.view.set'].parse(rawInput));
+    const accepted = actionId === WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset ? controller.reset() : controller.update(patch);
+    return accepted ? { ok: true } : unavailable('client_control_unavailable');
+  }
+  if (isWorkflowRunViewActionId(actionId)) {
+    const controller = readWorkflowViewOwner('run', context);
+    if (!controller) return unavailable('client_surface_unavailable');
+    const { clientId: _clientId, ...patch } = ScopeActionInputSchemas[actionId].parse(rawInput);
+    if (actionId === WORKFLOW_RUN_VIEW_ACTION_IDS.get) return {
+      filters: controller.filters, searchQuery: controller.searchQuery, visibleKeys: Array.from(controller.visibleKeys),
+      coverage: controller.filterResult.coverage, selectedSpaceId: controller.selectedSpaceId,
+    };
+    const accepted = actionId === WORKFLOW_RUN_VIEW_ACTION_IDS.reset ? controller.reset() : controller.update(patch);
     return accepted ? { ok: true } : unavailable('client_control_unavailable');
   }
   if (actionId === 'discussion.list.view.get' || actionId === 'discussion.list.view.set' || actionId === 'discussion.list.view.reset') {

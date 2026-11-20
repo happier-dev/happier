@@ -12,7 +12,7 @@ import type { WorkflowLibraryView } from '@happier-dev/protocol/actions/scopeAct
 import { useActiveServerAccountScopeLifetime, useAuthoringMemoryField, useProjectAccountRows } from '@/sync/domains/state/storage';
 import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
-import { registerWorkflowLibraryScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
+import { registerWorkflowViewScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { compileWorkflowListFilterV1, DEFAULT_WORKFLOW_LIST_FILTER_V1, WorkflowListFilterPatchV1Schema,
     workflowListFilterFieldsV1, type WorkflowListFilterV1, type WorkflowListFilterFactsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 import { getUnsupportedEntityFilterFieldsV1 } from '@happier-dev/protocol/collections/filter/fieldRegistryV1';
@@ -169,7 +169,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const reset = binding.reset;
     const setView = React.useCallback((view: WorkflowLibraryView) => { update({ filters: { view } }); }, [update]);
     const setSearchQuery = React.useCallback((searchQuery: string) => { update({ searchQuery }); }, [update]);
-    const controller = { lifetime, focused, filters, selectedSpaceId, spaces: binding.spaces, selectedSpace: binding.selectedSpace,
+    const controller = { kind: 'library' as const, lifetime, focused, filters, selectedSpaceId, spaces: binding.spaces, selectedSpace: binding.selectedSpace,
         activeSpace: binding.activeSpace, spacesEnabled: binding.spacesEnabled,
         spacesReady: binding.spacesReady, spaceSettingsScope: binding.spaceSettingsScope,
         view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, setFilters: binding.setFilters, reset, setView, setSearchQuery,
@@ -178,7 +178,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const latest = React.useRef(controller);
     React.useLayoutEffect(() => { latest.current = controller; });
     React.useEffect(() => focused && lifetime?.isCurrent()
-        ? registerWorkflowLibraryScopeActionOwner(() => latest.current) : undefined, [focused, lifetime]);
+        ? registerWorkflowViewScopeActionOwner(() => latest.current) : undefined, [focused, lifetime]);
     return controller;
 }
 

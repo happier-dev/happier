@@ -7272,6 +7272,14 @@ Socket ids expire on reconnect. The existing `answering-client.v1/` operation
 protects selection on the relay; an unsupported relay returns
 `client_routing_update_required` without unselected delivery.
 
+The safe `workflow.run.view.get/set/reset` Actions address the focused Runs
+view for the same Home and Account. The read returns search, filters, loaded
+matching Run keys, coverage and the selected Space. Set changes search and
+supplied condition fields. Reset clears search and restores the selected
+Space’s filters. All three use the same answering-client selection as the
+Library and report unavailable when the addressed client has no focused Runs
+view.
+
 `settings.list/get/set/invoke` discover U4 setting declarations by anchor. Explicit
 declaration bindings name the canonical Account or device preference key or an
 owner-backed nested field and its exact mutation schema;

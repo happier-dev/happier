@@ -1,4 +1,5 @@
-import { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
+import { SocketRpcAnsweringClientCandidatesV1Schema } from '../rpc/answeringClient.js';
+import { SCOPE_ACTION_IDS, WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS } from './scopeActionIdsV1.js';
 export { SCOPE_ACTION_IDS } from './scopeActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -6,6 +7,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { SessionListFilterFieldsV1Schema } from '../sessions/listFilter/sessionListFilterV1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';
 import { WorkflowListFilterPatchV1Schema, WorkflowListFilterV1StoredSchema, WorkflowListFilterViewV1Schema } from '../workflows/listing/workflowListFilterV1.js';
+import { WorkflowRunListFilterV1Schema, WorkflowRunListFilterV1StoredSchema } from '../workflows/listing/workflowRunListFilterV1.js';
 import { DiscussionListFilterV1Schema, DiscussionListFilterV1StoredSchema } from '../discussions/listing/discussionListFilterV1.js';
 import { createEntityListFilterStoredReadSchemaV1, StringSetSelectionV1Schema } from '../collections/filter/entityListFilterV1.js';
 import { OpenableContentPreferenceSelectorV1Schema } from '../plugins/openableContent.js';
@@ -24,7 +26,7 @@ const SessionListViewTargetSchema = lazyZodSchema(() => z.strictObject({
 export const SessionListActionFiltersSchema = lazyZodSchema(() => z.extend(SessionListFilterFieldsV1Schema, { searchQuery: z.string() }));
 const SessionListActionFiltersStoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(SessionListActionFiltersSchema));
 const MutationResultSchema = lazyZodSchema(() => z.strictObject({ ok: z.literal(true) }));
-const WorkflowLibraryViewTargetSchema = z.strictObject({ clientId: z.optional(z.string().check(z.minLength(1))) });
+const WorkflowViewTargetSchema = z.strictObject({ clientId: z.optional(z.string().check(z.minLength(1))) });
 export const WorkflowLibraryViewSchema = lazyZodSchema(() => WorkflowListFilterViewV1Schema);
 export type WorkflowLibraryView = z.infer<typeof WorkflowLibraryViewSchema>;
 export const ShellColumnSchema = lazyZodSchema(() => z.enum(['navigation', 'main', 'side']));
@@ -49,9 +51,12 @@ export const ScopeActionInputSchemas = {
     filters: lazyZodSchema(() => z.optional(z.partial(SessionListActionFiltersSchema))),
   }))),
   'session.list.view.reset': SessionListViewTargetSchema,
-  'workflow.library.view.get': WorkflowLibraryViewTargetSchema,
-  'workflow.library.view.set': lazyZodSchema(() => z.extend(WorkflowLibraryViewTargetSchema, { filters: z.optional(WorkflowListFilterPatchV1Schema), searchQuery: z.optional(z.string()) })),
-  'workflow.library.view.reset': WorkflowLibraryViewTargetSchema,
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get]: WorkflowViewTargetSchema,
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set]: lazyZodSchema(() => z.extend(WorkflowViewTargetSchema, { filters: z.optional(WorkflowListFilterPatchV1Schema), searchQuery: z.optional(z.string()) })),
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset]: WorkflowViewTargetSchema,
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.get]: WorkflowViewTargetSchema,
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.set]: lazyZodSchema(() => z.extend(WorkflowViewTargetSchema, { filters: z.optional(WorkflowRunListFilterV1Schema), searchQuery: z.optional(z.string()) })),
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.reset]: WorkflowViewTargetSchema,
   'discussion.list.view.get': DiscussionListViewTargetSchema,
   'discussion.list.view.set': lazyZodSchema(() => z.strictObject({
     ...DiscussionListViewTargetSchema.shape,
@@ -99,7 +104,7 @@ export const ScopeActionOutputSchemas = {
   }),
   'session.list.view.set': MutationResultSchema,
   'session.list.view.reset': MutationResultSchema,
-  'workflow.library.view.get': z.strictObject({
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get]: z.strictObject({
     answeringClientId: z.optional(z.string().check(z.minLength(1))),
     answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
     view: WorkflowLibraryViewSchema, filters: WorkflowListFilterV1StoredSchema, searchQuery: z.string(),
@@ -107,8 +112,18 @@ export const ScopeActionOutputSchemas = {
     coverage: z.enum(['complete', 'partial', 'unavailable']),
     selectedSpaceId: z.string(),
   }),
-  'workflow.library.view.set': MutationResultSchema,
-  'workflow.library.view.reset': MutationResultSchema,
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set]: MutationResultSchema,
+  [WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset]: MutationResultSchema,
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.get]: lazyZodSchema(() => z.strictObject({
+    answeringClientId: z.optional(z.string().check(z.minLength(1))),
+    answeringClientIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+    answeringClients: z.optional(SocketRpcAnsweringClientCandidatesV1Schema),
+    filters: WorkflowRunListFilterV1StoredSchema,
+    searchQuery: z.string(), visibleKeys: z.array(z.string()),
+    coverage: z.enum(['complete', 'partial', 'unavailable']), selectedSpaceId: z.string(),
+  })),
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.set]: MutationResultSchema,
+  [WORKFLOW_RUN_VIEW_ACTION_IDS.reset]: MutationResultSchema,
   'discussion.list.view.get': z.strictObject({
     serverId: z.string(), accountId: z.string(), filters: DiscussionListFilterV1StoredSchema,
     searchQuery: z.string(), selectedSpaceId: z.string(), coverage: z.enum(['complete', 'partial', 'unavailable']),

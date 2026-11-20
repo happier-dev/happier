@@ -22,8 +22,8 @@ export const WorkflowRunListFilterV1Schema = lazyZodSchema(() => z.strictObject(
     extensions: z.optional(z.record(z.string(), ExtensionSelectionV1Schema)),
 }));
 export type WorkflowRunListFilterV1 = z.infer<typeof WorkflowRunListFilterV1Schema>;
-defineStoredReadProjection(WorkflowRunListFilterV1Schema,
-    () => createEntityListFilterStoredReadSchemaV1(WorkflowRunListFilterV1Schema));
+export const WorkflowRunListFilterV1StoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(WorkflowRunListFilterV1Schema));
+defineStoredReadProjection(WorkflowRunListFilterV1Schema, () => WorkflowRunListFilterV1StoredSchema);
 export const DEFAULT_WORKFLOW_RUN_LIST_FILTER_V1: WorkflowRunListFilterV1 = Object.freeze({});
 export type WorkflowRunListFilterFactsV1 = Readonly<Record<Facet, string | null | undefined>> & PluginListFilterFactsV1;
 

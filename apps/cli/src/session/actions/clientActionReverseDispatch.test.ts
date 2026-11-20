@@ -1,6 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { WORKFLOW_RUN_VIEW_ACTION_IDS } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema, ActionIdSchema } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -27,6 +28,35 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it('reads the Runs view outside the invoking Session and addresses the next change to its answering client', async () => {
+    const { get, set } = WORKFLOW_RUN_VIEW_ACTION_IDS;
+    const view = { searchQuery: '', filters: {}, selectedSpaceId: 'all', coverage: 'complete', visibleKeys: ['run-a'] };
+    const candidates = [{ id: 'viewer', deviceLabel: 'My phone' }];
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        expect(method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
+        const { actionId, input } = UiActionDispatchRequestV1Schema.parse(payload);
+        options.onIssued();
+        if (actionId === get) {
+          expect(options.answeringClient).toEqual({ requireSingle: true, includeCandidates: true });
+          return { ok: true, result: { v: 1, execution: { ok: true, result: view } },
+            answeringClientId: 'viewer', answeringClientIds: ['viewer'], answeringClients: candidates };
+        }
+        expect(actionId).toBe(set);
+        expect(input).toEqual({ clientId: 'viewer', searchQuery: 'release' });
+        expect(options.answeringClient).toEqual({ clientId: 'viewer', requireSingle: true });
+        return { ok: true, result: { v: 1, execution: { ok: true, result: { ok: true } } } };
+      },
+    };
+    const action = executor(client);
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const, defaultSessionId: 'background-session' };
+    expect(await action.execute(get, {}, context)).toEqual({ ok: true,
+      result: { ...view, answeringClientId: 'viewer', answeringClientIds: ['viewer'], answeringClients: candidates } });
+    expect(await action.execute(set, { clientId: 'viewer', searchQuery: 'release' }, context))
+      .toEqual({ ok: true, result: { ok: true } });
+  });
+
   it('discovers connected theme devices across Sessions through the Account-wide receiver', async () => {
     const devices = [{ id: 'viewer', deviceLabel: 'My phone' }, { id: 'desktop', deviceLabel: null }];
     const deliveries: { method: string; payload: unknown; selector: unknown }[] = [];

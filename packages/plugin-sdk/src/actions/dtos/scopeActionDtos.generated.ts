@@ -94,6 +94,49 @@ export type ScopeActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "workflow.run.view.get": {
+        clientId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "workflow.run.view.set": {
+        clientId?: string | undefined;
+        filters?: undefined | {
+            workflows?: unknown;
+            results?: unknown;
+            startedBy?: unknown;
+            projects?: unknown;
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
+        searchQuery?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "workflow.run.view.reset": {
+        clientId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "session.list.view.get": {
         view?: undefined | {
             kind: 'global';
@@ -390,6 +433,68 @@ export type ScopeActionResultById = {
         ok: true;
     };
     readonly "workflow.library.view.reset": {
+        ok: true;
+    };
+    readonly "workflow.run.view.get": {
+        filters: {
+            workflows?: Readonly<{
+                include: readonly string[];
+                exclude: readonly string[];
+            }> | undefined;
+            results?: Readonly<{
+                include: readonly string[];
+                exclude: readonly string[];
+            }> | undefined;
+            startedBy?: Readonly<{
+                include: readonly string[];
+                exclude: readonly string[];
+            }> | undefined;
+            projects?: Readonly<{
+                include: readonly string[];
+                exclude: readonly string[];
+            }> | undefined;
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
+        searchQuery: string;
+        visibleKeys: string[];
+        coverage: 'complete' | 'partial' | 'unavailable';
+        selectedSpaceId: string;
+        answeringClientId?: string | undefined;
+        answeringClientIds?: string[] | undefined;
+        answeringClients?: undefined | {
+            id: string;
+            deviceLabel: null | string;
+            state?: undefined | {
+                computer: boolean;
+                focused: boolean;
+                lastFocusedAt?: number | undefined;
+            };
+        }[];
+    };
+    readonly "workflow.run.view.set": {
+        ok: true;
+    };
+    readonly "workflow.run.view.reset": {
         ok: true;
     };
     readonly "session.list.view.get": {

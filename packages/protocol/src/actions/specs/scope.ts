@@ -1,5 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { ScopeActionInputSchemas, ScopeActionOutputSchemas } from '../scopeActionFamily.js';
+import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS } from '../scopeActionIdsV1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 
 const clientView = {
@@ -9,7 +10,7 @@ const clientView = {
   inputHints: { fields: [] },
 } as const;
 
-const libraryView = {
+const workflowView = {
   ...clientView,
   inputHints: { fields: [{ path: 'clientId', title: 'Exact answering client', widget: 'text', required: false }] },
 } as const;
@@ -65,21 +66,36 @@ export const SCOPE_ACTION_SPECS: readonly ScopeActionSpec[] = lazyActionSpecArra
       { path: 'expectedSettingsVersion', title: 'Reviewed Account settings version', widget: 'number' },
     ] },
     inputSchema: ScopeActionInputSchemas['file.view.preference.set'], outputSchema: ScopeActionOutputSchemas['file.view.preference.set'] },
-  { ...libraryView, id: 'workflow.library.view.get', approval: {result: 'required'}, title: 'Read Workflow Library view',
+  { ...workflowView, id: WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get, approval: {result: 'required'}, title: 'Read Workflow Library view',
     cli: { commands: [{ path: ['workflow', 'library', 'view', 'get'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{}' } }, bindings: { sdkMethod: 'workflow.libraryView.get', voiceClientToolName: 'workflow_library_view_get' },
     description: 'Read the focused mounted Workflow Library view, offered views, search text and visible loaded row keys on the answering client. Returns answeringClientId and eligible answeringClientIds; pass clientId to address an exact connected app. Client ids expire on reconnect.', sideEffectClass: 'read',
-    inputSchema: ScopeActionInputSchemas['workflow.library.view.get'], outputSchema: ScopeActionOutputSchemas['workflow.library.view.get'] },
-  { ...libraryView, id: 'workflow.library.view.set', approval: {result: 'required'}, title: 'Change Workflow Library view',
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get], outputSchema: ScopeActionOutputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get] },
+  { ...workflowView, id: WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set, approval: {result: 'required'}, title: 'Change Workflow Library view',
     cli: { commands: [{ path: ['workflow', 'library', 'view', 'set'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{"filters":{"view":"triggered"},"searchQuery":"release"}' } }, bindings: { sdkMethod: 'workflow.libraryView.set', voiceClientToolName: 'workflow_library_view_set' },
     description: 'Change typed definition filters or search through the focused mounted Workflow Library controller. Pass clientId from view.get when several apps are connected. Missing source facts retain unavailable coverage.', sideEffectClass: 'write',
-    inputSchema: ScopeActionInputSchemas['workflow.library.view.set'], outputSchema: ScopeActionOutputSchemas['workflow.library.view.set'] },
-  { ...libraryView, id: 'workflow.library.view.reset', approval: {result: 'required'}, title: 'Reset Workflow Library view',
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set], outputSchema: ScopeActionOutputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.set] },
+  { ...workflowView, id: WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset, approval: {result: 'required'}, title: 'Reset Workflow Library view',
     cli: { commands: [{ path: ['workflow', 'library', 'view', 'reset'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{}' } }, bindings: { sdkMethod: 'workflow.libraryView.reset', voiceClientToolName: 'workflow_library_view_reset' },
     description: 'Restore All and clear search through the focused mounted Workflow Library controller. Pass clientId from view.get when several apps are connected.', sideEffectClass: 'write',
-    inputSchema: ScopeActionInputSchemas['workflow.library.view.reset'], outputSchema: ScopeActionOutputSchemas['workflow.library.view.reset'] },
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset], outputSchema: ScopeActionOutputSchemas[WORKFLOW_LIBRARY_VIEW_ACTION_IDS.reset] },
+  { ...workflowView, id: WORKFLOW_RUN_VIEW_ACTION_IDS.get, approval: { result: 'required' }, title: 'Read Workflow Runs view',
+    examples: { voice: { argsExample: '{}' } }, bindings: { sdkMethod: 'workflow.runView.get' },
+    description: 'Read search, transient filters and visible loaded rows in the focused Workflow Runs view. Pass clientId to address an exact connected app.',
+    sideEffectClass: 'read',
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.get], outputSchema: ScopeActionOutputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.get] },
+  { ...workflowView, id: WORKFLOW_RUN_VIEW_ACTION_IDS.set, approval: { result: 'required' }, title: 'Change Workflow Runs view',
+    examples: { voice: { argsExample: '{"filters":{"results":{"include":["running"],"exclude":[]}},"searchQuery":"release"}' } }, bindings: { sdkMethod: 'workflow.runView.set' },
+    description: 'Change search or the supplied condition fields through the focused Workflow Runs view. Pass clientId from the view read when several apps are connected.',
+    sideEffectClass: 'write',
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.set], outputSchema: ScopeActionOutputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.set] },
+  { ...workflowView, id: WORKFLOW_RUN_VIEW_ACTION_IDS.reset, approval: { result: 'required' }, title: 'Reset Workflow Runs view',
+    examples: { voice: { argsExample: '{}' } }, bindings: { sdkMethod: 'workflow.runView.reset' },
+    description: 'Restore the selected Run space filter and clear search through the focused Workflow Runs view.',
+    sideEffectClass: 'write',
+    inputSchema: ScopeActionInputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.reset], outputSchema: ScopeActionOutputSchemas[WORKFLOW_RUN_VIEW_ACTION_IDS.reset] },
   { ...clientView, id: 'session.list.view.get', approval: {result: 'required'}, title: 'Read Sessions view',
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'list', 'view', 'get'], visibility: 'canonical' }] },
     examples: { voice: { argsExample: '{}' } },

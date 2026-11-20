@@ -801,6 +801,47 @@ describe('WorkflowsColumn', () => {
         }
     });
 
+    it('shares the open Runs search and conditions between the page and agent Actions', async () => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { WORKFLOW_RUN_VIEW_ACTION_IDS: { get, set, reset } } = await import('@happier-dev/protocol/actions/scopeActionIdsV1');
+        answerLists();
+        routeState.pathname = '/workflows/runs';
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsRunsRoute />
+        </AppShellColumnContext.Provider>, { wrapper: TestAuth });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-runs:search')).not.toBeNull());
+
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: boundary!.serverId };
+        await vi.waitFor(() => expect(action.execute(get, {}, context)).resolves.toMatchObject({
+            ok: true, result: { searchQuery: '', visibleKeys: expect.arrayContaining([waiting.id, running.id]) },
+        }));
+
+        await act(async () => { screen.changeTextByTestId('workflow-runs:search', 'release'); });
+        expect(await action.execute(get, {}, context)).toMatchObject({
+            ok: true, result: { searchQuery: 'release', visibleKeys: [waiting.id] },
+        });
+
+        const results = { include: ['succeeded'], exclude: [] };
+        await act(async () => {
+            expect(await action.execute(set, { filters: { results }, searchQuery: 'test' }, context))
+                .toEqual({ ok: true, result: { ok: true } });
+        });
+        expect(screen.findHostByTestId('workflow-runs:search')?.props.value).toBe('test');
+        expect(await action.execute(get, {}, context)).toMatchObject({
+            ok: true, result: { searchQuery: 'test', filters: { results }, visibleKeys: [] },
+        });
+        await act(async () => {
+            expect(await action.execute(reset, {}, context)).toEqual({ ok: true, result: { ok: true } });
+        });
+        expect(screen.findHostByTestId('workflow-runs:search')?.props.value).toBe('');
+        expect(await action.execute(get, {}, context)).toMatchObject({
+            ok: true, result: { filters: {}, visibleKeys: expect.arrayContaining([waiting.id, running.id]) },
+        });
+        await screen.unmount();
+        expect(await action.execute(get, {}, context)).toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
+    });
+
     it('groups Runs by saved Workflow title or a distinct label for each unavailable Workflow', async () => {
         const definitionId = '10000000-0000-4000-8000-000000000009';
         const runRows = [

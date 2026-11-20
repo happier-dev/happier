@@ -27306,6 +27306,50 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `automationIds` (json): Triggered Workflow sources — Use this alternative alone for triggered Workflow occurrence summaries; do not combine it with sourceArtifactIds or recent.
 - `recent` (json): Recent
 
+## `workflow.run.view.get`
+
+**Read Workflow Runs view** — Read search, transient filters and visible loaded rows in the focused Workflow Runs view. Pass clientId to address an exact connected app.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `clientId` (text): Exact answering client
+
+## `workflow.run.view.reset`
+
+**Reset Workflow Runs view** — Restore the selected Run space filter and clear search through the focused Workflow Runs view.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `clientId` (text): Exact answering client
+
+## `workflow.run.view.set`
+
+**Change Workflow Runs view** — Change search or the supplied condition fields through the focused Workflow Runs view. Pass clientId from the view read when several apps are connected.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `clientId` (text): Exact answering client
+- `filters` (json): Filters
+- `searchQuery` (text): Search Query
+
 ## `workflow.run.wait`
 
 **Wait for workflow Run** — Wait for workflow Run through the canonical workflow Action owner.

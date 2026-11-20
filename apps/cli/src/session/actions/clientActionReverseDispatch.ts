@@ -1,4 +1,5 @@
 import { THEME_ACTION_IDS, isThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS, isWorkflowLibraryViewActionId, isWorkflowRunViewActionId } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -107,10 +108,10 @@ export function createClientActionReverseDispatcher(
       : callerSessionId ? readCliActionBoundSessionId(callerSessionId) : null;
     const originAction = PluginExecutionOriginActionIdSchema.safeParse(actionId);
     const originInput = originAction.success ? PluginExecutionOriginActionInputSchemas[originAction.data].parse(input) : null;
-    const libraryAction = actionId === 'workflow.library.view.get' || actionId === 'workflow.library.view.set'
-      || actionId === 'workflow.library.view.reset';
+    const workflowViewAction = isWorkflowLibraryViewActionId(actionId) || isWorkflowRunViewActionId(actionId);
+    const readsWorkflowView = actionId === WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get || actionId === WORKFLOW_RUN_VIEW_ACTION_IDS.get;
     const listsThemeDevices = actionId === THEME_ACTION_IDS.list && input !== null && typeof input === 'object' && Reflect.get(input, 'includeDevices') === true;
-    const listsAnsweringClients = listsThemeDevices || actionId === 'plugins.execution_origin.list' || actionId === 'workflow.library.view.get';
+    const listsAnsweringClients = listsThemeDevices || actionId === 'plugins.execution_origin.list' || readsWorkflowView;
     const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const,
       ...(listsAnsweringClients ? { includeCandidates: true as const } : {}) };
     // Project only the address from the already-admitted full Action input.
@@ -130,7 +131,7 @@ export function createClientActionReverseDispatcher(
         || actionId === 'account.home_continuation.invoke'
         ? currentUiContextReadClientRpcMethod()
       : address?.success ? workflowDraftClientRpcMethod(address.data)
-      : !clientId && !originInput && !libraryAction && !listsThemeDevices && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
+      : !clientId && !originInput && !workflowViewAction && !listsThemeDevices && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
       : RPC_METHODS.UI_ACTION_EXECUTE;
     if (!client) return machineTransportUnavailable();
     // Advertisements are hints, not receiver authority: reconnect/withdrawal can
@@ -210,7 +211,7 @@ export function createClientActionReverseDispatcher(
         ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}),
         ...(response.answeringClients ? { answeringClients: [...response.answeringClients] } : {}),
       } : null;
-      if (actionId === 'workflow.library.view.get' && execution && !execution.ok
+      if (readsWorkflowView && execution && !execution.ok
         && execution.errorCode === 'unavailable' && answeringClients) {
         return { ...execution, details: {
           ...(execution.details && typeof execution.details === 'object' && !Array.isArray(execution.details) ? execution.details : {}),
@@ -219,7 +220,7 @@ export function createClientActionReverseDispatcher(
       }
       if (listsAnsweringClients && execution?.ok && execution.result
         && typeof execution.result === 'object' && answeringClients
-        && (libraryAction || Reflect.get(execution.result, 'status') === 'available')) {
+        && (readsWorkflowView || Reflect.get(execution.result, 'status') === 'available')) {
         return { ...execution, result: { ...execution.result, ...answeringClients } };
       }
       return execution ?? failureWithCause('client_rpc_invalid_response');

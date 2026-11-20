@@ -273,6 +273,10 @@ so closing the Library page preserves commands for a still-present column. Hidde
 or retired readers cannot answer; invocation must match the current Account/Home.
 This bridge introduces no separate filter state or library reads.
 
+The Runs page and column register with the same bridge using the Runs view
+target. Their search and conditions and the Runs view Actions read and update
+one Run draft. Reset clears search and restores the selected Space’s filters.
+
 The Workflow Library data owner is `useWorkflowLibraryView`. Its `libraryRows`
 joins saved definitions and standalone Account Workflows in the existing
 updated-descending order, with one count and search. Each record projects its

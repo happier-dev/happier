@@ -6,6 +6,7 @@ import {
     type WorkflowRunListFilterFactsV1,
 } from '@happier-dev/protocol/workflows/listing/workflowRunListFilterV1';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import { getUnsupportedEntityFilterFieldsV1 } from '@happier-dev/protocol/collections/filter/fieldRegistryV1';
 
 import { createCollectionSpaceDraftStore, useCollectionSpaceFilter } from '@/components/ui/lists/collection/useCollectionSpaceFilter';
 import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
@@ -15,6 +16,7 @@ import { useWorkflowRunDisplayOptions } from '@/components/ui/lists/collection/u
 import { useProjectAccountRows, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 import { formatAccountDisplayName, resolveViewerAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { registerWorkflowViewScopeActionOwner, type WorkflowRunViewActionController } from '@/sync/ops/actions/scopeActionFamily';
 import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { createWorkflowRunListRowRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
@@ -194,9 +196,22 @@ export function useWorkflowRunCollection(focused: boolean) {
         ? { kind: 'partial', continuations: [{ key: 'more', label: runs.loadMoreFailed ? t('workflows.retry') : t('automations.detail.loadMoreRuns'),
             load: runs.loadMore, busy: runs.loadingMore }] }
         : { kind: 'complete' }, [runs.hasMore, runs.loadMore, runs.loadMoreFailed, runs.loadingMore]);
-    const setSearchQuery = React.useCallback((searchQuery: string) => {
-        binding.update({ searchQuery });
+    const update = React.useCallback<WorkflowRunViewActionController['update']>((patch) => {
+        if (patch.filters && getUnsupportedEntityFilterFieldsV1(workflowRunListFilterFieldsV1, patch.filters, 'list').length > 0) {
+            return false;
+        }
+        return binding.update(patch);
     }, [binding.update]);
+    const setSearchQuery = React.useCallback((searchQuery: string) => { update({ searchQuery }); }, [update]);
+    const lifetime = runs.accountLifetime;
+    const actionController = {
+        kind: 'run', focused, lifetime, searchQuery: binding.searchQuery, filters: binding.filters,
+        selectedSpaceId: binding.selectedSpaceId, visibleKeys: visible, filterResult, update, reset: binding.reset,
+    } satisfies WorkflowRunViewActionController;
+    const latest = React.useRef<WorkflowRunViewActionController>(actionController);
+    React.useLayoutEffect(() => { latest.current = actionController; });
+    React.useEffect(() => focused && lifetime?.isCurrent()
+        ? registerWorkflowViewScopeActionOwner(() => latest.current) : undefined, [focused, lifetime]);
     const readPluginDetail = React.useCallback((row: WorkflowRunCollectionRow, slot: 'context' | 'mark') =>
         readWorkflowPluginDetails(extensions.details, display.details, row, slot), [display.details, extensions.details]);
     return { rows, groups, filter, filterResult, window, runs, display, binding, focused, setSearchQuery, extensions, readPluginDetail };
