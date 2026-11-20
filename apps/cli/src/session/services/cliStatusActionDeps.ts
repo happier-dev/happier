@@ -18,6 +18,7 @@ import type { createCliConnectedAccountCatalogStore } from '@/settings/connected
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliProjectAdmission } from '@/session/actions/cliActionDeps/projectAdmission';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
+import type { createCliMachineInventoryActionDeps } from '@/session/actions/cliActionDeps/machineInventory';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionStatusGet' | 'sessionWorkStateGet' | 'sessionWaitIdle'>;
@@ -37,7 +38,7 @@ export function createCliSessionStatusActionDeps(
     resolveProjectHomeIdentity: CliProjectAdmission['resolveProjectHomeIdentity'];
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     withProjectHome: CliProjectAdmission['withProjectHome'];
-    machinesAgentsList: NonNullable<ActionExecutorDeps['machinesAgentsList']>;
+    machinesAgentsList: ReturnType<typeof createCliMachineInventoryActionDeps>['machinesAgentsList'];
     readHomeDomainAction: () => ActionExecutorDeps['homeDomainAction'];
   }>,
 ): FamilyActionDeps {
@@ -117,7 +118,8 @@ export function createCliSessionStatusActionDeps(
         ...(context?.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
         // A credential-only external root has no requester Machine projection. Never use host custody instead.
         ...(!context?.externalActionCredential || context.externalActionExecutionAuthorization ? {
-          readReadinessInventory: input => machinesAgentsList(input, context ?? { surface: 'cli' }),
+          readReadinessInventory: (input, providerIsolation) =>
+            machinesAgentsList(input, context ?? { surface: 'cli' }, undefined, providerIsolation),
           readReadinessTeamProviderResources: async ({ teamId, resourceId }) => {
             const homeDomainAction = readHomeDomainAction();
             if (!homeDomainAction) return [];

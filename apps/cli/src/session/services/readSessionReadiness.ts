@@ -20,8 +20,11 @@ import type { ResolveSessionTransportContextResult } from './resolveSessionTrans
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { MachineInventoryProviderIsolationObserver } from '@/session/actions/cliActionDeps/machineInventory';
 
-export type SessionReadinessInventoryReader = (input: MachinesAgentsListInput) => Promise<unknown>;
+export type SessionReadinessInventoryReader = (
+  input: MachinesAgentsListInput, providerIsolation?: MachineInventoryProviderIsolationObserver,
+) => Promise<unknown>;
 export type SessionReadinessTeamProviderResourcesReader = (input: Readonly<{
   teamId: string; resourceId: string;
 }>) => Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
@@ -80,8 +83,12 @@ export async function readSessionReadiness(input: Readonly<{
         const agentId = resolveAgentIdFromSessionMetadata(metadata);
         const definitionId = readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId;
         if (reachable && !target.revokedAt && !target.replacedByMachineId && keyAvailable !== false && agentId) {
+          let suppressConnectedServiceIds: readonly string[] = [];
           const parsed = MachinesAgentsListOutputSchema.safeParse(await input.readInventory({ machineId, agentId,
-            ...(definitionId ? { definitionId } : {}) }));
+            ...(definitionId ? { definitionId } : {}) }, teamModel ? {
+            agentTargetKey: teamModel.agentTargetKey,
+            reportSuppression: serviceIds => { suppressConnectedServiceIds = serviceIds; },
+          } : undefined));
           if (parsed.success) {
             // An authenticated inventory response proves this transport/key, not the Agent's auth.
             machine = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId, machine: target,
@@ -113,6 +120,13 @@ export async function readSessionReadiness(input: Readonly<{
                     const connected = ConnectedServiceBindingsV2IngressSchema.safeParse(metadata?.connectedServices);
                     teamProviderAuthReady = readiness.kind === 'available' && (metadata?.connectedServices === undefined
                       || connected.success && Object.keys(connected.data.bindingsByServiceId).length === 0);
+                    if (!teamProviderAuthReady && readiness.kind === 'available'
+                      && connected.success && suppressConnectedServiceIds.length > 0) {
+                      const { filterSuppressedConnectedServiceBindings } = await import('@/providers/spawn/authorize');
+                      teamProviderAuthReady = filterSuppressedConnectedServiceBindings({
+                        bindings: connected.data, suppressConnectedServiceIds,
+                      }).bindings === null;
+                    }
                   }
                 } catch { input.signal?.throwIfAborted(); }
               }

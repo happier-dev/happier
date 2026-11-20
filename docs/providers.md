@@ -2886,6 +2886,14 @@ Provider selections do. When that binding replaces native authentication, native
 sign-in is not a launch prerequisite; installation and worker compatibility
 remain required.
 
+In 0.3 development, CLI `session.status.get` with readiness reads the selected
+Machine's Agent inventory on demand, including for stopped Sessions. For an
+accepted, available Team model, the CLI uses that Machine's Agent declaration
+to apply the same Connected Account suppression as Provider launch. Retained
+bindings that the Provider suppresses do not require native sign-in. A
+remaining unresolved authentication prerequisite is reported as `unknown`.
+Send and Resume perform their own admission using the current facts.
+
 In 0.3 development, use `teams.credentials.entitled.list` with the exact Agent
 and Provider `application` and the borrower's `executionMachineId` to read the
 Team model catalog. The native `agents.models.list` probe refuses qualified Team

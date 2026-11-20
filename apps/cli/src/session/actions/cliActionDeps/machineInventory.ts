@@ -16,7 +16,13 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { SESSION_AGENT_READINESS_CHILDREN_V1, isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { readProjectedAgentDeclarationV1 } from '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1';
 type MachinesAgentsList = NonNullable<ActionExecutorDeps['machinesAgentsList']>;
+
+export type MachineInventoryProviderIsolationObserver = Readonly<{
+  agentTargetKey: string;
+  reportSuppression: (serviceIds: readonly string[]) => void;
+}>;
 
 export function createCliMachineInventoryActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
@@ -26,7 +32,7 @@ export function createCliMachineInventoryActionDeps(
   }>,
 ): Pick<ActionExecutorDeps, 'machineAgentSignInStart' | 'machineAgentSignInStatus' | 'machineAgentSignInCancel' | 'machineAgentSignInRestart' | 'workflowEventsList'> & {
   machinesAgentsList(args: Parameters<MachinesAgentsList>[0], context: ActionExecutorContext,
-    catalog?: AcpCatalogSnapshotV1): ReturnType<MachinesAgentsList>;
+    catalog?: AcpCatalogSnapshotV1, providerIsolation?: MachineInventoryProviderIsolationObserver): ReturnType<MachinesAgentsList>;
 } {
   const signInOperations = (target: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal;
     context: ActionExecutorContext; effectActionId: string }>): Parameters<typeof restartMachineAgentSignIn>[1] => {
@@ -50,7 +56,7 @@ export function createCliMachineInventoryActionDeps(
     };
   };
   return {
-    machinesAgentsList: async (args, context, catalog) => {
+    machinesAgentsList: async (args, context, catalog, providerIsolation) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== args.machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -80,6 +86,10 @@ export function createCliMachineInventoryActionDeps(
             ...(context.signal ? { signal: context.signal } : {}),
           }));
           if (!roster.success) throw new MachineAgentInventoryUnavailableError(args.agentId ?? 'unknown');
+          if (providerIsolation) {
+            const requirements = readProjectedAgentDeclarationV1(roster.data.projection, providerIsolation.agentTargetKey)?.providerRequirements;
+            if (requirements) providerIsolation.reportSuppression(requirements.authIsolation.suppressConnectedServiceIds);
+          }
           const agents = buildMachineAgentInventoryDescriptors(roster.data.projection)
             .filter(({ agentId }) => !args.agentId || args.agentId === agentId);
           const binding = context.externalActionExecutionAuthorization?.binding;

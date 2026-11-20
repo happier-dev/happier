@@ -9,6 +9,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { SessionReadinessInventoryReader } from './readSessionReadiness';
 
 beforeEach(() => {
   // Direct owner reads may maintain their display projection. Keep that HTTP
@@ -73,11 +74,18 @@ it.each([
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 
-it('projects the accepted Team revision for inactive Session readiness without borrowing native sign-in', async () => {
+it.each([
+  { serviceId: null, expectedState: 'ready' },
+  { serviceId: 'happier.agent.codex/openai-codex', expectedState: 'ready' },
+  { serviceId: 'acme.auth/subscription', expectedState: 'unknown' },
+] as const)('projects inactive Team Session readiness for retained binding $serviceId', async ({ serviceId, expectedState }) => {
   const sessionId = 'c123456789012345678901234';
   const team = { teamId: 'muse-team', resourceId: 'muse-resource', deliveryMode: 'brokered' } as const;
   const row = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain',
     metadata: JSON.stringify({ machineId: 'machine-1', flavor: 'codex', path: '/workspace',
+      ...(serviceId ? { connectedServices: { v: 2, bindingsByServiceId: {
+        [serviceId]: { source: 'connected', selection: 'profile', profileId: 'retained-profile' },
+      } } } : {}),
       modelSelectionIntentV2: { v: 2, updatedAt: 10, ref: { source: 'team_resource', ...team,
         expectedResourceRevision: 2, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-spark-1.3-contributor' } } }),
     acceptedTeamCredentialBinding: { v: 1, slot: { kind: 'provider_model' }, ...team, expectedResourceRevision: 4 },
@@ -102,13 +110,16 @@ it('projects the accepted Team revision for inactive Session readiness without b
     allowedRoutes: ['brokered'], directMaterialState: 'never_delivered', sessionUsePolicy: null,
     sourcePresentation: null, providerModels: [], connectedServiceSelections: [],
   };
-  const readers = { readReadinessInventory: async () => inventory,
-    readReadinessTeamProviderResources: async () => [resource] };
+  const readReadinessInventory: SessionReadinessInventoryReader = async (_input, providerIsolation) => {
+    providerIsolation?.reportSuppression(['openai-codex']);
+    return inventory;
+  };
   const result = await getSessionStatus({ credentials: { token: 'token', encryption: null },
-    idOrPrefix: sessionId, live: false, readiness: true, ...readers });
-  expect(result).toMatchObject({ ok: true, readiness: { status: 'ready', cause: null,
+    idOrPrefix: sessionId, live: false, readiness: true, readReadinessInventory,
+    readReadinessTeamProviderResources: async () => [resource] });
+  expect(result).toMatchObject({ ok: true, readiness: { status: expectedState, cause: expectedState === 'ready' ? null : 'agent',
     credential: { kind: 'team', teamId: team.teamId, resourceId: team.resourceId, readiness: { kind: 'available' } },
-    agent: { agentId: 'codex', state: 'ready', repair: null } } });
+    agent: { agentId: 'codex', current: true, state: expectedState, repair: null } } });
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 
