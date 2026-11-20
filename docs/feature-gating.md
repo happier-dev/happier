@@ -273,8 +273,9 @@ canonical decision. The gate controls availability only; existing authorization,
 machine assignment, definition validation, runtime currentness, and permission checks still apply.
 
 Workflow Actions keep a failed feature observation distinct from unreadable saved content.
-A transient failed or missing live observation refuses execution with `storage_unavailable`;
-it does not grant availability or report `content_unavailable`. Permanent probe refusals and
+A transient failed or missing live observation refuses execution with `storage_unavailable`.
+In 0.3 development, the CLI's Workflow Action cause identifies `workflow.feature.availability`
+and carries the observation reason and HTTP status, when available. Permanent probe refusals and
 settled disabled/unsupported decisions still fail closed without a storage-retry claim.
 Currentness HTTP failures likewise retain their host-local cause for the
 Workflow failure classifier; invalid content and unavailable encryption material remain separate.

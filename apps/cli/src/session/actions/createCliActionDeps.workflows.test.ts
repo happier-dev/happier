@@ -692,6 +692,26 @@ describe('createCliActionDeps workflow boundary', () => {
     }, { surface: 'cli' });
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
   });
+  it.each([
+    { observation: { status: 'error', reason: 'network' }, reason: 'network', httpStatus: null },
+    { observation: { status: 'error', reason: 'response_status', httpStatus: 503 }, reason: 'response_status', httpStatus: 503 },
+    { observation: undefined, reason: 'missing', httpStatus: null },
+  ] as const)('attributes a $reason refusal of public invocation history to Home feature observation', async ({
+    observation, reason, httpStatus,
+  }) => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null,
+      credentialProvenance: 'stored_session' }, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: async () => observation });
+    const result = await createActionExecutor(deps).execute('workflow.run.invocations.list', {
+      runId: '77777777-7777-4777-8777-777777777778', includeContent: true,
+    }, { surface: 'cli' });
+
+    expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable',
+      failureCause: { phase: 'workflow.feature.availability', nativeErrorReason: reason, httpStatus } });
+    expect(http.post.mock.calls.some(([, body]) => body.operation === 'invocations.list')).toBe(false);
+  });
+
   it.each(['timeout', 'missing'] as const)('keeps a %s feature observation out of the content-unavailable arm', async reason => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
     const deps = createCliActionDeps({ token, credentials: { token, encryption: null,

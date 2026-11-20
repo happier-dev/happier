@@ -369,7 +369,7 @@ export function createCliWorkflowFamily(
     const snapshot = await readServerFeaturesSnapshot();
     const [{ getWorkflowRuntimeFeatureDecision }, { isServerFeaturesProbeRetryable }] = await Promise.all([import("@/daemon/automation/workflowFeatureGate"), import("@/features/serverFeaturesClient")]);
     return { decision: getWorkflowRuntimeFeatureDecision(resolveCliFeatureDecisionEnvironment(), snapshot),
-      retryable: !snapshot || isServerFeaturesProbeRetryable(snapshot) };
+      retryable: !snapshot || isServerFeaturesProbeRetryable(snapshot), snapshot };
   };
   const prepareNativeGoalOwner = async (signal?: AbortSignal): Promise<void> => {
     const { decision } = await readWorkflowFeatureDecision();
@@ -424,9 +424,14 @@ export function createCliWorkflowFamily(
       const execute = createWorkflowActionExecutor({
         onFailureDiagnostic: diagnostic => logger.infoFile(JSON.stringify(diagnostic)),
         isWorkflowFeatureEnabled: async () => {
-          const { decision, retryable } = await readWorkflowFeatureDecision();
+          const { decision, retryable, snapshot } = await readWorkflowFeatureDecision();
           if (decision.state === 'unknown' && retryable) {
-            throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable' });
+            throw Object.assign(new Error('storage_unavailable'), { code: 'storage_unavailable',
+              failureCause: readActionFailureCauseV1({
+                phase: 'workflow.feature.availability', errorClass: 'Error', errorCode: 'storage_unavailable',
+                httpStatus: snapshot?.status === 'error' ? snapshot.httpStatus ?? null : null,
+                nativeErrorReason: snapshot?.status === 'error' ? snapshot.reason : 'missing',
+              }) });
           }
           return decision.state === 'enabled';
         },
