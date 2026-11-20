@@ -128,6 +128,7 @@ Uncertainty is an investigation task, not a reason to skip in-scope work. Classi
 - Before fixing UI behaviour, apply [happier-testing's live-first reproduction and frame evidence](../happier-testing/SKILL.md#live-validation-gates).
 - Preserve performance, continuity, accessibility, security, privacy, and Windows/Linux/macOS behavior wherever the changed corridor can materially differ.
 - A failure that crosses a process, package or transport boundary carries its closed reason code, phase and retryability from the producer to one presenter. Never carry payloads or content in that failure metadata. Wrappers keep the canonical code rather than re-wrapping it into a generic `unavailable`, `unknown` or `invalid_parameters`. A sanitizer or redactor removes content only; it keeps the code and phase (on 2026-11-03/04 a sanitized native startup error reduced every member-Codex failure to "reason unknown" and cost six QA reload rounds). Readers that can't decide return an explicit unknown variant, never a negative fact. Callers never loop on a non-retryable code. The deciding test asserts the code at the outermost consumer, plus one "non-retryable code → settles with zero re-polls" case.
+- A request that loses its admitted scope (workspace, Machine, Account) fails typed unavailable; it never falls back to a local default.
 
 In delivery/queue pipelines, every skip or `continue` records a settled decision or an explicit hold with its release trigger. Acknowledge a request or intent as consumed only after its effect is applied.
 

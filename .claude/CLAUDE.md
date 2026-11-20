@@ -74,7 +74,7 @@ Before briefing a lane whose change renders anything (new state, control, copy, 
   root constitution and repository skills rather than copying a private operating manual. Plan-local
   documents contain only product decisions, seam ownership, acceptance criteria, and evidence specific
   to that program.
-- **One lifecycle owner per QA stack.** Only the orchestrator starts, restarts or stops a program's QA stack; lanes never do.
+- **One lifecycle owner per QA stack.** Only the orchestrator starts, restarts or stops a program's QA stack; lanes never do. A QA lane may reload its own named fixture identity daemon itself; host holds and one-at-a-time rules still apply, and a shared stack keeps its single lifecycle owner.
   Each restart can force remote daemon runtimes to rebuild behind shared locks and strands every other lane mid-row
   (ORC, 2026-10-11: repeated lane restarts kept the daemon down for hours). A UI lane that needs its edits loaded asks
   in its report; the orchestrator batches reloads at quiet points and tells the lanes when the new build is live.

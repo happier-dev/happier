@@ -88,6 +88,7 @@ Activate when external input, protected resources, credentials, execution, files
 - privacy-minimized responses and diagnostics;
 - fail-closed gates and explicit encryption envelopes;
 - dependency risk only for changed/new dependency surface;
+- A request that loses its admitted scope (workspace, Machine, Account) fails typed unavailable; it never falls back to a local default.
 - for an admission or binding fix, every sibling read, write and effect admitted under the same signed root, in one pass. One sibling per review round is the failure mode to avoid.
 
 Do not report a security label without a concrete attack/failure path and impact.
