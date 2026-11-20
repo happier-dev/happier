@@ -1,4 +1,8 @@
 import Fastify from "fastify";
+import { vi } from "vitest";
+import type { Tx } from "@/storage/inTx";
+import * as storage from "@/storage/prisma";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageRecordKeyV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -155,4 +159,36 @@ export function createLegacyQuotaSnapshot(params: Readonly<{
             },
         ],
     });
+}
+
+
+/** Observe the actual SQLite history query and the later access to its captured payload. */
+export function observeProviderAccountUsageHistory(
+    onRead: (transactionId: string | undefined) => void,
+    onDecode: (snapshotActive: boolean) => void,
+): () => void {
+    const snapshot = storage.withSqliteReadSnapshot;
+    let snapshotActive = false;
+    const factory = vi.spyOn(storage, "withSqliteReadSnapshot").mockImplementation(async function <T>(
+        read: (reader: Tx) => Promise<T>, options?: Parameters<typeof snapshot>[1],
+    ): Promise<T> {
+        snapshotActive = true;
+        try { return await snapshot(read, options); }
+        finally { snapshotActive = false; }
+    });
+    const stop = observeSqliteRequests({ after(request, result) {
+        const entries: unknown[] = request.model === "ProviderAccountUsageHistory" && request.action === "findMany" && Array.isArray(result)
+            ? result : request.model === "ProviderAccountUsageRecord" && result !== null && typeof result === "object"
+                && "history" in result && Array.isArray(result.history) ? result.history : [];
+        for (const entry of entries) {
+            if (entry === null || typeof entry !== "object" || !("payload" in entry)) continue;
+            const payload = entry.payload;
+            Object.defineProperty(entry, "payload", { get() {
+                onDecode(snapshotActive);
+                return payload;
+            } });
+        }
+        if (entries.some(entry => entry !== null && typeof entry === "object" && "payload" in entry)) onRead(request.transactionId);
+    } });
+    return () => { stop(); factory.mockRestore(); };
 }

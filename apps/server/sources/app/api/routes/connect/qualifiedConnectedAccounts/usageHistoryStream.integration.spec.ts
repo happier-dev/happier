@@ -4,7 +4,7 @@ import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 
 import { db } from '@/storage/db';
-import { withSqliteReadSnapshot } from '@/storage/prisma';
+import { observeProviderAccountUsageHistory } from '../providerAccountUsageTestkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -112,40 +112,14 @@ describe('qualified provider usage finite history stream', () => {
         const first = await readQualifiedProviderAccountUsageHistory(params);
         if (first.status !== 'resolved' || !('entries' in first)) throw new Error('Expected admitted exact history');
         let cancelled = false;
-        let leased = false;
         let reads = 0;
         let decoded = 0;
-        let restore = () => {};
-        await withSqliteReadSnapshot(async reader => {
-            const originalExecute = reader.$executeRawUnsafe;
-            const originalFind = reader.providerAccountUsageHistory.findMany;
-            const execute = originalExecute.bind(reader);
-            const find = originalFind.bind(reader.providerAccountUsageHistory);
-            reader.$executeRawUnsafe = (async (query: string, ...values: unknown[]) => {
-                const result = await execute(query, ...values);
-                if (query === 'BEGIN DEFERRED;') leased = true;
-                if (query === 'ROLLBACK;') leased = false;
-                return result;
-            }) as typeof reader.$executeRawUnsafe;
-            // Observe real database rows, preserving the internal parser and pager.
-            reader.providerAccountUsageHistory.findMany = (async (args: Parameters<typeof find>[0]) => {
-                reads++;
-                expect(leased, 'one-statement history continuation must not acquire an interactive transaction').toBe(false);
-                const rows = await find(args);
-                for (const row of rows) {
-                    const payload: unknown = row.payload;
-                    Object.defineProperty(row, 'payload', { get() {
-                        decoded++;
-                        expect(leased, 'stream decoding must release its read snapshot').toBe(false);
-                        return payload;
-                    } });
-                }
-                return rows;
-            }) as unknown as typeof reader.providerAccountUsageHistory.findMany;
-            restore = () => {
-                reader.$executeRawUnsafe = originalExecute;
-                reader.providerAccountUsageHistory.findMany = originalFind;
-            };
+        const stop = observeProviderAccountUsageHistory(transactionId => {
+            expect(transactionId, 'history continuation must use autocommit').toBeUndefined();
+            reads++;
+        }, snapshotActive => {
+            expect(snapshotActive, 'history decoding must release the read snapshot').toBe(false);
+            decoded++;
         });
         try {
             const stream = streamQualifiedProviderAccountUsageHistory({ ...params, firstPage: first, isCancelled: () => cancelled });
@@ -161,7 +135,7 @@ describe('qualified provider usage finite history stream', () => {
             cancelled = true;
             expect(await stream.next()).toEqual({ done: true, value: undefined });
             expect(reads).toBe(1);
-        } finally { restore(); }
+        } finally { stop(); }
     });
 
     it('fails without a completion frame when a later stored payload disagrees with the admitted identity', async () => {

@@ -10,7 +10,6 @@ import {
 import { db } from "@/storage/db";
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
-import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from "@happier-dev/protocol/connect/accountUsage";
 import { buildQualifiedPluginContributionKey, ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
 import { buildQualifiedConnectedAccountLocalSubjectId } from "@happier-dev/protocol/connect/qualified-connected-account-persistence";
@@ -27,6 +26,7 @@ import {
 import {
     createProviderAccountUsageRecordKey,
     createUsageSnapshot,
+    observeProviderAccountUsageHistory,
 } from "../providerAccountUsageTestkit";
 import {
     mutateQualifiedConnectedServiceCredential,
@@ -556,51 +556,12 @@ describe("qualified Connected Account usage stored identity", () => {
         await writeQualifiedProviderAccountUsageRecord(write);
         const witness = await db.providerAccountUsageHistory.findFirstOrThrow({ where: { accountId: account.id, recordId: write.recordId },
             select: { id: true, observedAt: true } });
-        let leased = false;
         let parsed = 0;
-        let restore = () => {};
-        // Observe the actual read connection: SQLite snapshots intentionally
-        // bypass Prisma's write-pool $transaction (which begins IMMEDIATE).
-        await withSqliteReadSnapshot(async reader => {
-            const originalExecute = reader.$executeRawUnsafe;
-            const originalFind = reader.providerAccountUsageRecord.findUnique;
-            const originalHistoryFind = reader.providerAccountUsageHistory.findMany;
-            const execute = originalExecute.bind(reader);
-            const find = originalFind.bind(reader.providerAccountUsageRecord);
-            const findHistory = originalHistoryFind.bind(reader.providerAccountUsageHistory);
-            reader.$executeRawUnsafe = (async (query: string, ...values: unknown[]) => {
-                const result = await execute(query, ...values);
-                if (query === 'BEGIN DEFERRED;') leased = true;
-                if (query === 'ROLLBACK;') leased = false;
-                return result;
-            }) as typeof reader.$executeRawUnsafe;
-            // This boundary observer returns real awaited rows; Prisma's
-            // generated delegate additionally advertises PrismaPromise methods.
-            const observePayload = (entry: { payload: unknown }) => {
-                const payload: unknown = entry.payload;
-                Object.defineProperty(entry, 'payload', { get() {
-                    parsed++;
-                    expect(leased, 'history parsing must not hold a transaction connection').toBe(false);
-                    return payload;
-                } });
-            };
-            reader.providerAccountUsageHistory.findMany = (async (args: Parameters<typeof findHistory>[0]) => {
-                const rows = await findHistory(args);
-                rows.forEach(observePayload);
-                return rows;
-            }) as unknown as typeof reader.providerAccountUsageHistory.findMany;
-            reader.providerAccountUsageRecord.findUnique = (async (args: Parameters<typeof find>[0]) => {
-                const row = await find(args);
-                if (row && 'history' in row && Array.isArray(row.history)) {
-                    row.history.forEach(observePayload);
-                }
-                return row;
-            }) as unknown as typeof reader.providerAccountUsageRecord.findUnique;
-            restore = () => {
-                reader.$executeRawUnsafe = originalExecute;
-                reader.providerAccountUsageRecord.findUnique = originalFind;
-                reader.providerAccountUsageHistory.findMany = originalHistoryFind;
-            };
+        const stop = observeProviderAccountUsageHistory(transactionId => {
+            expect(transactionId).toBeDefined();
+        }, snapshotActive => {
+            expect(snapshotActive, 'history parsing must release the read snapshot').toBe(false);
+            parsed++;
         });
         try {
             const result = await readQualifiedProviderAccountUsageHistory({ accountId: account.id, recordId: write.recordId,
@@ -608,7 +569,7 @@ describe("qualified Connected Account usage stored identity", () => {
                     : { witness: { id: witness.id, observedAtMs: witness.observedAt.getTime() } }) });
             expect(result).toMatchObject({ status: 'resolved', entries: [{ record: { snapshot: write.snapshot } }], nextCursor: null });
             expect(parsed).toBeGreaterThan(0);
-        } finally { restore(); }
+        } finally { stop(); }
     });
 
     it("preserves opaque recovery details through the qualified quota reader", async () => {
