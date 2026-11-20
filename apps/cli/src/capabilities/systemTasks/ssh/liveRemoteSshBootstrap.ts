@@ -582,7 +582,7 @@ async function installRemoteRelayRuntimeUsingSharedEngine(params: Readonly<{
   };
 }
 
-async function resolveLiveRemoteHostTrust(params: Readonly<{
+export async function resolveLiveRemoteHostTrust(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   knownHostsMode: 'app' | 'system';
   signal?: AbortSignal;
