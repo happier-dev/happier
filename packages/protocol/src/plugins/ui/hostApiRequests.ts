@@ -1,4 +1,5 @@
 import { SessionForkPointSchema } from '../../sessions/forkPoint.js';
+import { ConnectedAccountActionFormSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { PluginDiagnosticRemediationV1Schema } from '../../daemon/pluginContributionIntrospection.js';
@@ -990,7 +991,7 @@ const PluginUiSelectActionInputConnectedAccountV1Schema = lazyZodSchema(() => z.
   z.strictObject({
     kind: z.literal('selected'),
     fieldPath: z.string().check(z.trim(), z.minLength(1)),
-    ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
+    ref: ConnectedAccountActionFormSelectionV1Schema,
   }),
 ]));
 
