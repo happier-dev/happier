@@ -22,6 +22,7 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
 import { resolveServerProfileScopeIdForIdentifier, setActiveServerId, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { t } from '@/text';
 import { TeamInvitationAcceptResultV1Schema, TeamInvitationPreviewResultV1Schema, createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
@@ -32,6 +33,48 @@ installTokenStorageTestIsolation('team-join-authentication', { preserveGeneratio
 const browserStorage = await vi.hoisted(async () => {
     const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
     return { ...installLocalStorageMock(), backend: globalThis.localStorage };
+});
+
+it.each([
+    ['account_inactive', 'teams.join.inactiveBody', 'teams.join.useAnotherAccount'],
+    ['email_mismatch', 'teams.join.mismatchBody', 'teams.join.signInWithInvited'],
+    ['feature_unavailable', 'teams.join.updateRequiredBody', 'teams.entry.returnToHappier'],
+] as const)('firstOpen.F12.inviteOutcomes offers the right recovery after %s at the invitation receiver', async (outcome, bodyKey, actionKey) => {
+    const identity = 'srv_invitation_recovery';
+    const accountId = 'saved-invitation-account';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverId = await home.addHome({ name: 'Acme', serverUrl: 'https://invitation-recovery.test',
+        serverIdentityId: identity, accountId, credentials, teamsEnabled: true });
+    await switchConnectionToActiveServer();
+    answerSavedAccountInvitation(serverId, identity, accountId);
+    home.answer(serverId, '/v1/team-invitations/accept', {
+        body: TeamInvitationAcceptResultV1Schema.parse({ outcome }),
+    });
+    const onRecoverIdentity = vi.fn();
+    const onAdmissionComplete = vi.fn();
+    const screen = await renderScreen(<AuthProvider initialCredentials={credentials}>
+        <TeamAuthEntrySurface target={{ kind: 'saved_profile', profileRef: serverId }}
+            invitation={{ token: 'a'.repeat(43), accountScope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId } }}
+            onSelectAction={() => { throw new Error('A saved Account can try to join directly'); }}
+            onRecoverIdentity={onRecoverIdentity}
+            onAdmissionComplete={onAdmissionComplete} />
+    </AuthProvider>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-join')).not.toBeNull());
+    await screen.pressByTestIdAsync('team-auth-entry-join');
+    const result = `team-auth-entry-admission-${outcome}`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(result)).not.toBeNull());
+    expect(screen.getTextContent()).toContain(t(bodyKey));
+    expect(screen.getTextContent()).toContain(t(actionKey));
+    expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
+    await screen.pressByTestIdAsync(`${result}-action`);
+    if (outcome === 'feature_unavailable') {
+        expect(navigation.replace).toHaveBeenCalledWith('/');
+    } else {
+        expect(onRecoverIdentity).toHaveBeenCalledOnce();
+    }
+    expect(onAdmissionComplete).not.toHaveBeenCalled();
+    expect(home.requestsFor('/v1/team-invitations/preview')).toHaveLength(1);
+    expect(home.requestsFor('/v1/team-invitations/accept')).toHaveLength(1);
 });
 
 function answerSavedAccountInvitation(serverId: string, identity: string, accountId: string) {
