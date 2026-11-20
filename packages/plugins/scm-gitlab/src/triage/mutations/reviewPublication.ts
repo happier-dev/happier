@@ -581,17 +581,6 @@ export async function publishGitlabMergeRequestReview(
   if (revisions.base !== plan.baseRevision) return rejected('base_advanced', { observed: current.row });
   if (revisions.head !== plan.headRevision) return rejected('head_advanced', { observed: current.row });
   if (revisions.start === null) return rejected('start_advanced', { observed: current.row });
-  const preclaimProjections = await Promise.all(plan.entries.map((entry, index) => projectEntry(
-    entry,
-    plan,
-    revisions.start!,
-    'A'.repeat(43),
-    routing.verdictSummaryEntryIndexes.includes(index) ? 'summary' : 'inline',
-  )));
-  if (preclaimProjections.some((entry) => entry === null)) {
-    return rejected('unsupported_anchor', { observed: current.row });
-  }
-
   // Read the complete pending-draft collection before the canonical claim. A
   // human draft has no Happier marker; surfacing it here prevents our claim from
   // becoming the reason a later retry can never dispatch.
@@ -631,26 +620,46 @@ export async function publishGitlabMergeRequestReview(
       failure ?? settlementFailure ?? undefined,
     );
   };
-  const projectedEntries = await Promise.all(plan.entries.map((entry, index) => projectEntry(
+  const specs = await Promise.all(plan.entries.map((entry, index) => projectEntry(
     entry,
     plan,
     revisions.start!,
     claim.entries[index]!.publicationCorrelationId,
     routing.verdictSummaryEntryIndexes.includes(index) ? 'summary' : 'inline',
   )));
-  if (projectedEntries.some((entry) => entry === null)) {
-    // This branch is reachable only if the generic claim owner accepted a plan
-    // whose provider projection changed between checks. It still performs no
-    // provider write; ordinary unsupported anchors were rejected above.
-    return rejected('unsupported_anchor', { observed: current.row });
+  if (specs.some((spec, index) => spec === null && claim.instructions.entries[index] === 'dispatch')) {
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(plan, claim, {
+      publicationPlanId: claim.publicationPlanId,
+      entries: claim.entries.map((entry, index) => {
+        const instruction = claim.instructions.entries[index];
+        const prior = claim.priorResult?.entries[index];
+        return (instruction === 'confirmed' || instruction === 'held') && prior !== undefined
+          ? prior
+          : {
+            ...entry,
+            outcome: instruction !== 'dispatch'
+              ? { kind: 'uncertain' }
+              : specs[index] === null
+                ? { kind: 'failed', code: 'unsupported_anchor' }
+                : { kind: 'skippedPriorFailure' },
+          };
+      }),
+      verdict: plan.verdict === null || claim.verdict === null
+        ? { kind: 'notRequested' }
+        : (claim.instructions.verdict === 'confirmed' || claim.instructions.verdict === 'held')
+          && claim.priorResult !== null && !('kind' in claim.priorResult.verdict)
+          ? claim.priorResult.verdict
+          : { ...claim.verdict, outcome: { kind: 'skippedPriorFailure' } },
+    });
+    const failure = await reportPublication(plan, claim, publication, context, current.dependencies.signal);
+    return rejected('unsupported_anchor', { observed: current.row, ...(failure === null ? {} : { failure }) });
   }
-  const specs = projectedEntries as readonly EntrySpec[];
 
   // DiscussionNote is excluded from GitLab's Notes API. Discussions includes
   // both inline threads and ordinary notes, so a mixed review reconciles once
   // through that collection; summary-only plans retain the ordinary Notes read.
   const publishedBefore = await readRawCollection(
-    specs.some((spec) => spec.kind === 'entry') ? discussionsUrl(current) : notesUrl(current),
+    routing.inlineEntryIndexes.length > 0 ? discussionsUrl(current) : notesUrl(current),
     current,
   );
   if (!publishedBefore.ok) {
@@ -680,16 +689,17 @@ export async function publishGitlabMergeRequestReview(
   if (claim.disposition === 'reconcile') {
     const publication = validateReviewCommentPublicationResultAgainstPlanV1(plan, claim, {
       publicationPlanId: claim.publicationPlanId,
-      entries: specs.map((spec, index) => {
+      entries: plan.entries.map((entry, index) => {
         const instruction = claim.instructions.entries[index];
         const prior = claim.priorResult?.entries[index];
         if ((instruction === 'confirmed' || instruction === 'held') && prior !== undefined) {
           return prior;
         }
-        const published = matchRawCollectionMarker(publishedBefore.rows, spec.marker);
-        const pendingDraft = matchRawCollectionMarker(initialDrafts.rows, spec.marker);
+        const marker = formatReviewCommentPublicationMarkerV1('entry', claim.entries[index]!.publicationCorrelationId);
+        const published = matchRawCollectionMarker(publishedBefore.rows, marker);
+        const pendingDraft = matchRawCollectionMarker(initialDrafts.rows, marker);
         return {
-          happierCommentId: plan.entries[index]!.happierCommentId,
+          happierCommentId: entry.happierCommentId,
           publicationCorrelationId: claim.entries[index]!.publicationCorrelationId,
           outcome: published.kind === 'unique'
             ? { kind: 'published', externalRef: published.externalRef }
@@ -724,11 +734,11 @@ export async function publishGitlabMergeRequestReview(
     return await settlePublication(publication);
   }
 
-  const inlineSpecs = specs.flatMap((spec, planIndex) => spec.kind === 'entry'
+  const inlineSpecs = specs.flatMap((spec, planIndex) => spec?.kind === 'entry'
     && claim.instructions.entries[planIndex] === 'dispatch'
     ? [{ spec, planIndex }]
     : []);
-  const summarySpecs = specs.flatMap((spec, planIndex) => spec.kind === 'summaryEntry'
+  const summarySpecs = specs.flatMap((spec, planIndex) => spec?.kind === 'summaryEntry'
     && claim.instructions.entries[planIndex] === 'dispatch'
     ? [{ spec, planIndex }]
     : []);
@@ -1023,7 +1033,16 @@ async function publishSingleComment<TRow extends PublicationObservedRow>(options
   }
 
   const write = await options.buildWrite(bodyWithMarker(options.plan.entries[0]!.body, marker), correlationId);
-  if (write === null) return rejected('unsupported_anchor', { observed: options.preflight.row });
+  if (write === null) {
+    const failure = await reportPublication(
+      options.plan,
+      claim,
+      singleEntryPublication(options.plan, claim, { kind: 'failed', code: 'unsupported_anchor' }),
+      options.context,
+      options.preflight.dependencies.signal,
+    );
+    return rejected('unsupported_anchor', { observed: options.preflight.row, ...(failure === null ? {} : { failure }) });
+  }
   const sent = await sendJson(options.preflight, { url: write.url, method: 'POST', body: write.body });
   if (sent.kind === 'failed' && !gitlabWriteAnswerLost(sent)) {
     const failed = outcomeFailure(sent);
@@ -1092,10 +1111,6 @@ export async function publishGitlabMergeRequestReviewComment(
   if (revisions.base !== plan.baseRevision) return rejected('base_advanced', { observed: current.row });
   if (revisions.head !== plan.headRevision) return rejected('head_advanced', { observed: current.row });
   if (revisions.start === null) return rejected('start_advanced', { observed: current.row });
-  const mapped = await projectEntry(plan.entries[0]!, plan, revisions.start, 'A'.repeat(43), 'inline');
-  if (mapped === null || mapped.kind !== 'entry') {
-    return rejected('unsupported_anchor', { observed: current.row });
-  }
   return await publishSingleComment({
     plan,
     context,

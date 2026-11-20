@@ -392,15 +392,6 @@ export async function publishGithubPullRequestReview(
     });
   }
   const verdictSummaryEntryIndexes = new Set(publicationRouting.verdictSummaryEntryIndexes);
-  if (input.publicationPlan.entries.some((entry, index) => (
-    !supportsGithubReviewEntry(entry, input.publicationPlan, verdictSummaryEntryIndexes.has(index))
-  ))) {
-    return Object.freeze({
-      kind: 'rejected' as const,
-      reason: 'unsupported_anchor' as const,
-      observation: current.observation,
-    });
-  }
 
   const capability = await preflightGithubPublicationCapability({
     localRef: input.localRef,
@@ -445,6 +436,31 @@ export async function publishGithubPullRequestReview(
       reason: 'dispatch_claim_failed' as const,
       observation: current.observation,
     });
+  }
+  // Prior-round entries already have a provider thread. Only fresh dispatch
+  // needs a line address valid on the captured head of this Review.
+  const unsupportedDispatch = input.publicationPlan.entries.some((entry, index) =>
+    claim.instructions.entries[index] === 'dispatch'
+    && !supportsGithubReviewEntry(entry, input.publicationPlan, verdictSummaryEntryIndexes.has(index)));
+  if (unsupportedDispatch) {
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(input.publicationPlan, claim, {
+      publicationPlanId: claim.publicationPlanId,
+      entries: claim.entries.map((entry, index) => ({
+        ...entry,
+        outcome: claim.priorResult?.entries[index]?.outcome
+          ?? (claim.instructions.entries[index] === 'dispatch'
+            ? { kind: 'failed', code: 'unsupported_anchor' }
+            : { kind: 'uncertain' }),
+      })),
+      verdict: claim.verdict === null ? { kind: 'notRequested' } : {
+        ...claim.verdict,
+        outcome: claim.priorResult && !('kind' in claim.priorResult.verdict)
+          ? claim.priorResult.verdict.outcome : { kind: 'skippedPriorFailure' },
+      },
+    });
+    const failure = await recordGithubPublicationSettlement(input.settlePublicationDispatch, claim, publication);
+    return { kind: 'rejected', reason: 'unsupported_anchor', observation: current.observation,
+      ...(failure !== undefined ? { failure } : {}) };
   }
   const projectedComments = input.publicationPlan.entries.map((entry, index) => (
     verdictSummaryEntryIndexes.has(index) || claim.instructions.entries[index] !== 'dispatch'
@@ -666,7 +682,6 @@ export async function publishGithubPullRequestComment(
       observation: current.observation,
     });
   }
-  let projected: Readonly<Record<string, unknown>> | null = null;
   if (input.mode === 'create') {
     if (typeof input.publicationPlan.baseRevision !== 'string'
       || typeof input.publicationPlan.headRevision !== 'string'
@@ -682,11 +697,6 @@ export async function publishGithubPullRequestComment(
     }
     if (current.facts.headRevision !== input.publicationPlan.headRevision) {
       return Object.freeze({ kind: 'rejected' as const, reason: 'head_advanced' as const, observation: current.observation });
-    }
-    if (!supportsGithubReviewEntry(entry, input.publicationPlan)
-      || githubReviewComment(entry, 'P'.repeat(43)) == null
-    ) {
-      return Object.freeze({ kind: 'rejected' as const, reason: 'unsupported_anchor' as const, observation: current.observation });
     }
   } else if (input.publicationPlan.baseRevision !== null
     || input.publicationPlan.headRevision !== null
@@ -748,13 +758,23 @@ export async function publishGithubPullRequestComment(
     });
   }
   const marker = formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId);
-  if (input.mode === 'create') {
-    projected = githubReviewComment(entry, correlation.publicationCorrelationId) ?? null;
+  let projected: Readonly<Record<string, unknown>> | null = null;
+  if (input.mode === 'create' && claim.instructions.entries[0] === 'dispatch') {
+    projected = supportsGithubReviewEntry(entry, input.publicationPlan)
+      ? githubReviewComment(entry, correlation.publicationCorrelationId) ?? null
+      : null;
     if (projected === null) {
+      const publication = validateReviewCommentPublicationResultAgainstPlanV1(input.publicationPlan, claim, {
+        publicationPlanId: claim.publicationPlanId,
+        entries: [{ ...correlation, outcome: { kind: 'failed', code: 'unsupported_anchor' } }],
+        verdict: { kind: 'notRequested' },
+      });
+      const failure = await recordGithubPublicationSettlement(input.settlePublicationDispatch, claim, publication);
       return Object.freeze({
         kind: 'rejected' as const,
         reason: 'unsupported_anchor' as const,
         observation: current.observation,
+        ...(failure === undefined ? {} : { failure }),
       });
     }
   }

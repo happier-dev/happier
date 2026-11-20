@@ -2115,7 +2115,7 @@ describe('GitHub pull-request review publication', () => {
       && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(1);
   });
 
-  it('rejects unsupported anchors before claiming dispatch instead of guessing positions', async () => {
+  it('settles an unsupported fresh anchor as failed without guessing positions or writing', async () => {
     const stub = transportFor({ reads: [pullRequestBody()] });
     const unsupported = {
       ...publicationEntry,
@@ -2132,11 +2132,17 @@ describe('GitHub pull-request review publication', () => {
     expect(result.kind).toBe('rejected');
     if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
     expect(result.reason).toBe('unsupported_anchor');
-    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.claimedPlans[1]).toMatchObject({ settlement: {
+      dispatchToken: 'dispatch-token-1',
+      result: {
+        entries: [{ happierCommentId: REVIEW_COMMENT_ID, outcome: { kind: 'failed', code: 'unsupported_anchor' } }],
+        verdict: { outcome: { kind: 'skippedPriorFailure' } },
+      },
+    } });
     expect(writes(stub)).toHaveLength(0);
   });
 
-  it('rejects a stale per-comment diff snapshot before claiming or writing', async () => {
+  it('settles a stale fresh diff snapshot as failed without writing', async () => {
     const stub = transportFor({ reads: [pullRequestBody()] });
     const stale = {
       ...publicationEntry,
@@ -2154,7 +2160,58 @@ describe('GitHub pull-request review publication', () => {
     expect(result.kind).toBe('rejected');
     if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
     expect(result.reason).toBe('unsupported_anchor');
-    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.claimedPlans[1]).toMatchObject({ settlement: {
+      dispatchToken: 'dispatch-token-1',
+      result: {
+        entries: [{ happierCommentId: REVIEW_COMMENT_ID, outcome: { kind: 'failed', code: 'unsupported_anchor' } }],
+        verdict: { outcome: { kind: 'skippedPriorFailure' } },
+      },
+    } });
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it.each([
+    ['unsupported anchor', {
+      ...publicationEntry,
+      anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'hunk-1' },
+    }],
+    ['stale diff snapshot', {
+      ...publicationEntry,
+      snapshot: {
+        ...publicationEntry.snapshot,
+        diffContext: { ...publicationEntry.snapshot.diffContext, baseSha: ADVANCED_BASE },
+      },
+    }],
+  ])('retains a confirmed publication with an %s without another provider write', async (_label, entry) => {
+    const priorPublicationResult = {
+      publicationPlanId: 'C'.repeat(43),
+      entries: [{
+        happierCommentId: REVIEW_COMMENT_ID,
+        publicationCorrelationId: COMMENT_CORRELATION_ID,
+        outcome: { kind: 'published', externalRef: 'native-first' },
+      }],
+      verdict: {
+        publicationCorrelationId: VERDICT_CORRELATION_ID,
+        outcome: { kind: 'published', externalRef: 'native-verdict' },
+      },
+    };
+    const stub = transportFor({
+      reads: [pullRequestBody()],
+      claimDisposition: 'reconcile',
+      claimInstructions: { entries: ['confirmed'], verdict: 'confirmed' },
+      priorPublicationResult,
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({ entries: [entry] }),
+      }), stub.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'settled', publication: priorPublicationResult });
+    expect(stub.claimedPlans[1]).toMatchObject({ settlement: {
+      dispatchToken: null, result: priorPublicationResult,
+    } });
     expect(writes(stub)).toHaveLength(0);
   });
 
@@ -2249,6 +2306,45 @@ describe('GitHub pull-request review publication', () => {
       }),
     });
   }
+
+  it.each([
+    ['unsupported anchor', { ...publicationEntry, anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' } }],
+    ['stale diff snapshot', { ...publicationEntry, snapshot: {
+      ...publicationEntry.snapshot,
+      diffContext: { ...publicationEntry.snapshot.diffContext, baseSha: ADVANCED_BASE },
+    } }],
+  ])('rejoins a confirmed standalone comment with %s without a provider write', async (_label, entry) => {
+    const priorPublicationResult = {
+      publicationPlanId: 'C'.repeat(43),
+      entries: [{ happierCommentId: REVIEW_COMMENT_ID, publicationCorrelationId: COMMENT_CORRELATION_ID,
+        outcome: { kind: 'published', externalRef: '992' } }],
+      verdict: { kind: 'notRequested' },
+    };
+    const stub = transportFor({ reads: [pullRequestBody()], claimDisposition: 'reconcile',
+      claimInstructions: { entries: ['confirmed'], verdict: null }, priorPublicationResult });
+
+    const result = GithubPullRequestReviewCommentCreateResultV1Schema.parse(
+      await createGithubPullRequestReviewCommentAction(standaloneInput({ entries: [entry] }), stub.context),
+    );
+
+    expect(result).toMatchObject({ kind: 'settled', publication: priorPublicationResult });
+    expect(stub.claimedPlans[1]).toMatchObject({ settlement: { dispatchToken: null, result: priorPublicationResult } });
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('settles an unsupported fresh standalone comment as failed without a provider write', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const result = await createGithubPullRequestReviewCommentAction(standaloneInput({ entries: [{
+      ...publicationEntry, anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' },
+    }] }), stub.context);
+
+    expect(result).toMatchObject({ kind: 'rejected', reason: 'unsupported_anchor' });
+    expect(stub.claimedPlans[1]).toMatchObject({ settlement: { dispatchToken: 'dispatch-token-1', result: {
+      entries: [{ happierCommentId: REVIEW_COMMENT_ID, outcome: { kind: 'failed', code: 'unsupported_anchor' } }],
+      verdict: { kind: 'notRequested' },
+    } } });
+    expect(writes(stub)).toHaveLength(0);
+  });
 
   it('publishes one canonical proposal as a standalone pinned review comment', async () => {
     const stub = transportFor({

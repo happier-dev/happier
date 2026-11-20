@@ -129,11 +129,15 @@ function createTransport(
   options: Readonly<{ claimError?: Error; settlementError?: Error }> = {},
 ) {
   let claimCount = 0;
+  const settlements: unknown[] = [];
   const transport = createStubGitlabTransport({ respond });
   (transport.context.services as unknown as { actions: { execute: Function } }).actions = {
     async execute(actionId: string, actionInput: unknown) {
       expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
       claimCount += 1;
+      if (typeof actionInput === 'object' && actionInput !== null && 'settlement' in actionInput) {
+        settlements.push(actionInput.settlement);
+      }
       if (options.settlementError !== undefined
         && typeof actionInput === 'object'
         && actionInput !== null
@@ -157,7 +161,7 @@ function createTransport(
       };
     },
   };
-  return { ...transport, claimCount: () => claimCount };
+  return { ...transport, claimCount: () => claimCount, settlements };
 }
 
 function bodyOf(request: RecordedGitlabRequest | undefined): Record<string, unknown> {
@@ -529,7 +533,55 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.some((request) => request.url.endsWith('/approve'))).toBe(false);
   });
 
-  it('rejects a moved base and an unrepresentable anchor before claiming or writing', async () => {
+  it.each([
+    ['unsupported anchor', {
+      ...plan().entries[0],
+      anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' },
+    }],
+    ['stale diff snapshot', {
+      ...plan().entries[0],
+      snapshot: {
+        ...plan().entries[0]!.snapshot,
+        diffContext: { ...plan().entries[0]!.snapshot.diffContext, baseSha: 'd'.repeat(40) },
+      },
+    }],
+  ])('retains a confirmed publication with an %s without another provider write', async (_label, entry) => {
+    const priorResult = {
+      publicationPlanId: PLAN_ID,
+      entries: [{
+        happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION,
+        outcome: { kind: 'published', externalRef: '91' },
+      }],
+      verdict: { kind: 'notRequested' },
+    };
+    const settlements: unknown[] = [];
+    const transport = createStubGitlabTransport({ respond: (request) => {
+      if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.method === 'GET' && [DRAFTS_LIST_URL, DISCUSSIONS_LIST_URL].includes(request.url)) {
+        return { status: 200, body: [] };
+      }
+      return undefined;
+    } });
+    // The host Actions service owns the persisted publication claim outside this plugin process.
+    Object.assign(transport.context.services, { actions: { async execute(_actionId: string, input: unknown) {
+      if (typeof input === 'object' && input !== null && 'settlement' in input) settlements.push(input.settlement);
+      return {
+        disposition: 'reconcile', dispatchToken: null, publicationPlanId: PLAN_ID,
+        entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION }],
+        verdict: null, instructions: { entries: ['confirmed'], verdict: null }, priorResult,
+      };
+    } } });
+
+    const result = await publishGitlabMergeRequestReview(actionInput({
+      publicationPlan: plan({ entries: [entry], verdict: null }),
+    }), transport.context);
+
+    expect(result).toMatchObject({ kind: 'settled', publication: priorResult });
+    expect(settlements).toContainEqual({ dispatchToken: null, result: priorResult });
+    expect(transport.requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('rejects a moved base before claiming and settles an unsupported fresh anchor without writing', async () => {
     const transport = createTransport((request) => request.method === 'GET' && request.url === ITEM_URL
       ? { status: 200, body: mergeRequestBody({ diff_refs: { base_sha: 'd'.repeat(40), head_sha: OBSERVED_HEAD, start_sha: OBSERVED_START } }) }
       : undefined);
@@ -539,16 +591,27 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.claimCount()).toBe(0);
     expect(transport.requests).toHaveLength(1);
 
-    const unsupportedTransport = createTransport((request) => request.method === 'GET' && request.url === ITEM_URL
-      ? { status: 200, body: mergeRequestBody() }
-      : undefined);
+    const unsupportedTransport = createTransport((request) => {
+      if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.method === 'GET' && request.url === DRAFTS_LIST_URL) return { status: 200, body: [] };
+      return undefined;
+    });
     const unsupported = await publishGitlabMergeRequestReview(actionInput({
       publicationPlan: plan({
         entries: [{ ...plan().entries[0], anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' } }],
       }),
     }), unsupportedTransport.context);
     expect(unsupported).toMatchObject({ kind: 'rejected', reason: 'unsupported_anchor' });
-    expect(unsupportedTransport.claimCount()).toBe(0);
+    expect(unsupportedTransport.settlements).toContainEqual({
+      dispatchToken: 'dispatch-token-1',
+      result: {
+        publicationPlanId: PLAN_ID,
+        entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION,
+          outcome: { kind: 'failed', code: 'unsupported_anchor' } }],
+        verdict: { publicationCorrelationId: VERDICT_CORRELATION, outcome: { kind: 'skippedPriorFailure' } },
+      },
+    });
+    expect(unsupportedTransport.requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
   });
 
   it('stops at the first failed draft creation and reports the exact skipped suffix without a verdict write', async () => {
@@ -880,10 +943,15 @@ describe('gitlab/merge-request/submit-review', () => {
 
 function installSingleClaim(
   transport: ReturnType<typeof createStubGitlabTransport>,
-  options: Readonly<{ disposition?: 'dispatch' | 'reconcile'; commentId?: string }> = {},
+  options: Readonly<{
+    disposition?: 'dispatch' | 'reconcile'; commentId?: string;
+    instruction?: 'dispatch' | 'reconcile' | 'confirmed' | 'held'; priorResult?: unknown;
+  }> = {},
 ) {
-  (transport.context.services as unknown as { actions: { execute: Function } }).actions = {
-    async execute() {
+  const settlements: unknown[] = [];
+  Object.assign(transport.context.services, { actions: {
+    async execute(_actionId: string, input: unknown) {
+      if (typeof input === 'object' && input !== null && 'settlement' in input) settlements.push(input.settlement);
       const disposition = options.disposition ?? 'dispatch';
       return {
         disposition,
@@ -894,14 +962,61 @@ function installSingleClaim(
           publicationCorrelationId: ENTRY_CORRELATION,
         }],
         verdict: null,
-        instructions: { entries: [disposition], verdict: null },
-        priorResult: null,
+        instructions: { entries: [options.instruction ?? disposition], verdict: null },
+        priorResult: options.priorResult ?? null,
       };
     },
-  };
+  } });
+  return settlements;
 }
 
 describe('GitLab single-comment publication Actions', () => {
+  it.each([
+    ['unsupported anchor', { ...plan().entries[0], anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' } }],
+    ['stale diff snapshot', { ...plan().entries[0], snapshot: {
+      ...plan().entries[0]!.snapshot,
+      diffContext: { ...plan().entries[0]!.snapshot.diffContext, baseSha: 'd'.repeat(40) },
+    } }],
+  ])('rejoins a confirmed standalone comment with %s without a provider write', async (_label, entry) => {
+    const priorResult = { publicationPlanId: PLAN_ID,
+      entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION,
+        outcome: { kind: 'published', externalRef: '101' } }], verdict: { kind: 'notRequested' } };
+    const transport = createStubGitlabTransport({ respond: (request) => {
+      if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.method === 'GET' && request.url === DISCUSSIONS_LIST_URL) return { status: 200, body: [] };
+      return undefined;
+    } });
+    const settlements = installSingleClaim(transport, { disposition: 'reconcile', instruction: 'confirmed', priorResult });
+
+    const result = await publishGitlabMergeRequestReviewComment(actionInput({
+      publicationPlan: plan({ entries: [entry], verdict: null }),
+    }), transport.context);
+
+    expect(result).toMatchObject({ kind: 'settled', publication: priorResult });
+    expect(settlements).toContainEqual({ dispatchToken: null, result: priorResult });
+    expect(transport.requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('settles an unsupported fresh standalone comment as failed without a provider write', async () => {
+    const transport = createStubGitlabTransport({ respond: (request) => {
+      if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.method === 'GET' && request.url === DISCUSSIONS_LIST_URL) return { status: 200, body: [] };
+      return undefined;
+    } });
+    const settlements = installSingleClaim(transport);
+    const result = await publishGitlabMergeRequestReviewComment(actionInput({ publicationPlan: plan({
+      entries: [{ ...plan().entries[0], anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'h1' } }], verdict: null,
+    }) }), transport.context);
+
+    expect(result).toMatchObject({ kind: 'rejected', reason: 'unsupported_anchor' });
+    expect(settlements).toContainEqual({ dispatchToken: 'dispatch-token-1', result: {
+      publicationPlanId: PLAN_ID,
+      entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION,
+        outcome: { kind: 'failed', code: 'unsupported_anchor' } }], verdict: { kind: 'notRequested' },
+    } });
+    expect(transport.requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
+  });
+
   it('refuses review-comment and thread-reply publication on a closed merge request before claim', async () => {
     for (const run of [
       (transport: ReturnType<typeof createTransport>) => publishGitlabMergeRequestReviewComment({
