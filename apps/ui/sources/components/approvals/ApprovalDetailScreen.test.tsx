@@ -107,17 +107,12 @@ describe('approval field semantics shared by card and page', () => {
             })}
           />,
         );
-        // Every key and value reads as a labelled entry; the literal is never shown raw.
+        // Typed audiences use the exact principal reading. An unavailable optional
+        // name keeps the full literal, including when its id resembles a Session.
+        await waitForHomeGovernance(() => expect(readRenderedText(screen)).not.toContain('common.loading'));
         const text = await readRenderedTextWithRowContent(screen);
-        // A discriminator reads as a word ("Kind Account"); ids stay exact.
-        expect(text).toContain(
-          `Kind ${kind.charAt(0).toUpperCase()}${kind.slice(1)}`,
-        );
-        expect(text).toContain(
-          `${kind.charAt(0).toUpperCase()}${kind.slice(1)} id session-1`,
-        );
-        if (kind === 'group') expect(text).toContain('Team id team-1');
-        expect(text).not.toContain(JSON.stringify(principal));
+        expect(text).toContain(JSON.stringify(principal));
+        expect(text).not.toContain('Kind');
       }
       const value = {
         kind: 'session',
@@ -278,6 +273,16 @@ async function prepareComputerAgentFixture() {
   });
 }
 
+/** A durable rendering fixture has completed the empty automatic-check selection before its effect. */
+function approvedFixtureLifecycle(body: string, decidedAtMs: number) {
+  const request = ApprovalRequestV2Schema.parse(JSON.parse(body));
+  expect(request.automaticChecks?.selected ?? []).toEqual([]);
+  const decision = { kind: 'approve' as const, decidedAtMs, authority: 'present_user' as const, decidingAccountId: 'account-1' };
+  return { decision, ...(request.automaticChecks ? { automaticChecks: {
+    ...request.automaticChecks, phase: 'passed' as const, humanDecision: decision,
+  } } : {}) };
+}
+
 async function createBuiltInApprovalArtifact(
   input: Readonly<{
     actionId: ApprovalRequestV2['actionId'];
@@ -291,6 +296,21 @@ async function createBuiltInApprovalArtifact(
   }>,
 ) {
   await prepareApprovalFixture();
+  if (input.actionId === 'machines.presets.archive') {
+    const { MachinePresetActionInputSchemasV1, machinePresetActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+    const { ManagedMachinePresetGetResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const target = MachinePresetActionInputSchemasV1['machines.presets.archive'].parse(input.actionArgs);
+    // Archive preparation reads the actual preset before selecting its execution target.
+    homes.answer(account.serverId, `POST ${machinePresetActionEndpointPathV1('machines.presets.get')}`, {
+      body: ManagedMachinePresetGetResultV1Schema.parse({ kind: 'found', preset: {
+        id: target.id, homeId: target.homeId, revision: target.expectedRevision,
+        owner: { kind: 'account', accountId: 'account-1' }, contentEncryptionMode: 'plain', recipients: [],
+        content: { t: 'plain', v: { v: 1, name: 'Preset', launch: {
+          provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: {},
+        } } },
+      } }),
+    });
+  }
   if (input.actionId === 'computer.input' || input.actionId === 'computer.capture') await prepareComputerAgentFixture();
   let sourceContext: Pick<Parameters<typeof createAgentApprovalRequest>[0], 'defaultSessionId' | 'defaultSessionMachineId'> = {};
   if (input.sourceSessionId) {
@@ -318,7 +338,7 @@ async function createBuiltInApprovalArtifact(
     ...(input.executedResult === undefined
       ? {}
       : {
-          decision: { kind: 'approve' as const, decidedAtMs: produced.createdAtMs + 1 },
+          ...approvedFixtureLifecycle(producedBody, produced.createdAtMs + 1),
           execution: {
             executedAtMs: produced.createdAtMs + 2,
             ok: true as const,
@@ -1358,7 +1378,7 @@ describe('ApprovalDetailScreen', () => {
   it('keeps an executed preset refusal visible as failure without completion navigation', async () => {
     currentArtifact = await createBuiltInApprovalArtifact({
       actionId: 'machines.presets.archive',
-      actionArgs: { homeId: 'home-1', id: 'preset-1', expectedRevision: 0 },
+      actionArgs: { homeId: approvalHomeFixture.serverIdentityId, id: 'preset-1', expectedRevision: 0 },
       summary: 'Archive preset',
       executedResult: { kind: 'refused', code: 'provider_unavailable' },
     });
@@ -1445,7 +1465,7 @@ describe('ApprovalDetailScreen', () => {
     currentArtifact = await createBuiltInApprovalArtifact({
       // Any executed result that names its detached operation (managed Create and Delete do) is followed alike.
       actionId: 'machines.presets.archive',
-      actionArgs: { homeId: 'home-1', id: 'preset-1', expectedRevision: 0 },
+      actionArgs: { homeId: approvalHomeFixture.serverIdentityId, id: 'preset-1', expectedRevision: 0 },
       summary: 'Delete machine',
       executedResult: { kind: 'accepted', managedId: 'managed-1', intentRevision: 2, operation: { operationId: 'delete-1' } },
     });
@@ -1525,7 +1545,7 @@ describe('ApprovalDetailScreen', () => {
       ...JSON.parse(artifact.body),
       status: 'failed',
       updatedAtMs: 2,
-      decision: { kind: 'approve', decidedAtMs: 2 },
+      ...approvedFixtureLifecycle(artifact.body, 2),
       execution: { executedAtMs: 2, ok: false, errorCode: 'approval_stale', error: 'Reviewed policy no longer matches' },
     });
     currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
@@ -1535,26 +1555,27 @@ describe('ApprovalDetailScreen', () => {
     expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('approvals.staleFailure');
   });
 
-  it('titles a failure that never reached its effect as not run, and an attempted one by its action', async () => {
+  it('names an unattempted effect in Status and an attempted failure by its action', async () => {
     const artifact = await createDaemonRoutedApprovalArtifact();
     const failedWith = (execution: Record<string, unknown>) => ApprovalRequestV2Schema.parse({
       ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 2,
-      decision: { kind: 'approve', decidedAtMs: 2 },
+      ...approvedFixtureLifecycle(artifact.body, 2),
       execution: { executedAtMs: 2, ok: false, ...execution },
     });
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
-    const titleOf = async (request: ApprovalRequestV2) => {
+    const outcomeOf = async (request: ApprovalRequestV2) => {
       currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
       const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-      return approvalItem(screen, 'approvals.execution-failure')?.props.title;
+      return { status: approvalItem(screen, 'approvals.status')?.props.detail,
+        title: approvalItem(screen, 'approvals.execution-failure')?.props.title };
     };
 
-    expect(await titleOf(failedWith({
+    expect(await outcomeOf(failedWith({
       errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable', effectAttempted: false,
-    }))).toBe('approvals.failureNotRun');
-    expect(await titleOf(failedWith({
+    }))).toEqual({ status: 'approvals.status.notRun', title: 'approvals.failureNoReason' });
+    expect(await outcomeOf(failedWith({
       errorCode: 'executor_failed', error: 'Executor failed', effectAttempted: true,
-    }))).toBe('approvals.failureNamed');
+    }))).toMatchObject({ title: 'approvals.failureNamed' });
   });
 
   it('says what failed when a recorded failure carries only a machine code, never that the decision could not be saved', async () => {
@@ -1749,7 +1770,7 @@ describe('ApprovalDetailScreen', () => {
     const artifact = await createDaemonRoutedApprovalArtifact();
     const request = ApprovalRequestV2Schema.parse({
       ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 2,
-      decision: { kind: 'approve', decidedAtMs: 2 },
+      ...approvedFixtureLifecycle(artifact.body, 2),
       execution: { executedAtMs: 2, ok: false, errorCode: 'provider_connection_invalid', error: 'provider_connection_invalid' },
     });
     currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
@@ -1767,7 +1788,7 @@ describe('ApprovalDetailScreen', () => {
       ...JSON.parse(artifact.body),
       status: 'executing',
       updatedAtMs: 2,
-      decision: { kind: 'approve', decidedAtMs: 2 },
+      ...approvedFixtureLifecycle(artifact.body, 2),
     });
     currentArtifact = {
       ...artifact,
@@ -2412,7 +2433,7 @@ describe('ApprovalDetailScreen', () => {
     const request = ApprovalRequestV2Schema.parse(JSON.parse(currentArtifact.body));
     const settledAtMs = request.updatedAtMs + 1;
     const failed = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: settledAtMs,
-      decision: { kind: 'approve', decidedAtMs: settledAtMs },
+      ...approvedFixtureLifecycle(currentArtifact.body, settledAtMs),
       execution: { executedAtMs: settledAtMs, ok: false, errorCode: 'approval_stale' } });
     remoteArtifact = { ...currentArtifact, header: buildApprovalRequestArtifactHeaderV1(failed), body: JSON.stringify(failed) };
     daemonReply = {
@@ -2570,7 +2591,9 @@ describe('ApprovalDetailScreen', () => {
     expect(artifactReads('target-artifact-1').length).toBeGreaterThan(1);
     const receiptBody = storage.getState().artifacts['target-artifact-1']?.body;
     if (typeof receiptBody !== 'string') throw new Error('Expected the inline receipt body');
-    expect(JSON.parse(receiptBody)).toMatchObject({ ...JSON.parse(authoritative.body), status: 'failed', updatedAtMs: expect.any(Number),
+    const { settleTargetActionApprovalReplayInputs } = await import('@happier-dev/protocol/approvals/targetActionApprovalRequestTransition');
+    const settled = settleTargetActionApprovalReplayInputs(TargetActionApprovalRequestV1Schema.parse(JSON.parse(authoritative.body)), 'failed');
+    expect(JSON.parse(receiptBody)).toMatchObject({ ...settled, status: 'failed', updatedAtMs: expect.any(Number),
       execution: { ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
         details: { reason: 'live_invocation_unavailable' } } });
     expect(screen.findByTestId('approvals.approve')).toBeNull();
@@ -2906,7 +2929,8 @@ describe('ApprovalDetailScreen', () => {
     expect(text).toContain('Repo session');
     expect(text).toContain('Rebound workstation');
     expect(text).toContain('~/repo');
-    expect(text).toContain('codex');
+    // Requester chrome uses the Agent's product name, not its routing id.
+    expect(text).toContain('Codex');
     expect(text).toContain('Agent wants to answer the pending question');
     expect(text).toContain('Continue?');
     expect(text).toContain('Yes');
@@ -3121,9 +3145,12 @@ describe('ApprovalDetailScreen', () => {
     const text = readRenderedText(screen);
 
     expect(text).toContain('Team ID');
-    expect(text).toContain('team-acme');
     expect(text).toContain('Membership ID');
-    expect(text).toContain('membership-alice');
+    const { ApprovalTechnicalDetails } = await import('./ActionApprovalFieldsCard');
+    expect(screen.findAllByType(ApprovalTechnicalDetails as never).flatMap(node => node.props.lines)).toEqual(expect.arrayContaining([
+      { key: 'teamId', label: 'Team ID', value: 'team-acme' },
+      { key: 'membershipId', label: 'Membership ID', value: 'membership-alice' },
+    ]));
     expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(
       false,
     );
@@ -3159,7 +3186,10 @@ describe('ApprovalDetailScreen', () => {
     const text = readRenderedText(screen);
     expect(text).not.toContain(bearer);
     expect(text).toContain('srv-home-acme');
-    expect(text).toContain('team-acme');
+    const { ApprovalTechnicalDetails } = await import('./ActionApprovalFieldsCard');
+    expect(screen.findAllByType(ApprovalTechnicalDetails as never).flatMap(node => node.props.lines)).toEqual(expect.arrayContaining([
+      { key: 'continuation.teamId', label: 'Team ID', value: 'team-acme' },
+    ]));
     expect(text).toContain('Acme Platform');
     expect(text).toContain('member');
     expect(text).toContain('from_membership');
@@ -3609,9 +3639,8 @@ describe('ApprovalDetailScreen', () => {
 
   it('names managed Create native steps when their private Actions are absent from the UI catalog', async () => {
     await prepareApprovalFixture();
-    const actionArgs = { selection: { kind: 'preset', homeId: account.serverId, id: 'preset', revision: 1 },
-      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
+    const actionArgs = { selection: { kind: 'preset', homeId: approvalHomeFixture.serverIdentityId, id: 'preset', revision: 1 },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
     const hostReviewedChildren = { children: ['acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'putFile', 'reconcile', 'cleanup'].map(role => ({
       action: { pluginId: 'happier.machine.lima', localId: role === 'putFile' ? 'put-file' : role }, role,
     })) };
@@ -3630,9 +3659,8 @@ describe('ApprovalDetailScreen', () => {
     await prepareApprovalFixture();
     const { t } = await import('@/text');
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
-    const actionArgs = { selection: { kind: 'preset', homeId: account.serverId, id: 'preset', revision: 1 },
-      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
+    const actionArgs = { selection: { kind: 'preset', homeId: approvalHomeFixture.serverIdentityId, id: 'preset', revision: 1 },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
     const hostReviewedChildren = { children: ['acquire', 'bootstrap', 'inspect'].map(role => ({
       action: { pluginId: 'happier.machine.lima', localId: role }, role })) };
     currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'machines.managed.acquire',
