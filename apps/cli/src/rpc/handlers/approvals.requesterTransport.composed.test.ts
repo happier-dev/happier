@@ -192,7 +192,8 @@ describe('authenticated requester approval transport from the app to its origina
     outgoing.length = 0;
     let remoteStored = request;
     const remote = createActionExecutor(createActionExecutorBoundaryFixture({
-      actionAutomations: createActionAutomationPortV1({ accountId: 'bot-owner', seed: async () => ({ v: 1, rows: [] }) }),
+      actionAutomations: createActionAutomationPortV1({ accountId: 'bot-owner', seed: async () => ({ v: 1, rows: [] }),
+        settle: async () => undefined }),
       approvalsGet: async () => {
         if (approvalUnavailable) throw new Error('Approval storage unavailable');
         return remoteStored;
