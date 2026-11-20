@@ -23,7 +23,8 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { commitTreeGateMode, commitTreeEntryLoads, selectWorkspaceClosureInputs, startCommitTreeEntryLoadReport } from './commitTreeEntryLoads.mjs';
+import { commitTreeGateMode, commitTreeEntryLoads, EntryLoadAdmissionUnavailable, selectWorkspaceClosureInputs,
+  startCommitTreeEntryLoadReport, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 
 export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, incomplete: 11, needsFull: 3, unavailable: 75 });
 
@@ -83,7 +84,7 @@ export async function runCommitGate(options) {
   }
 }
 
-async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, env = process.env, cacheDir, label = 'commit-gate' }) {
+async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, compareAdmittedEntryLoads, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
   const treeMode = commitTreeGateMode(env);
@@ -91,6 +92,10 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     try { return await run(); } catch (error) { throw new CommitGateUnavailable(check, error); }
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
+  const declarationsIncomplete = (packages, stall) => ({
+    verdict: 'incomplete', check: 'package declarations', findings: [], notes,
+    reason: { code: 'declaration-comparison-incomplete', packages, ...(stall ? { stall } : {}) },
+  });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
   const checkTypes = (packages, cachedOnly = false) => judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
@@ -134,14 +139,14 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   if (declarations.length) {
     const result = await (typecheck ?? checkTypes(declarations, cheapOnly));
     notes.push(...result.lines);
+    if (result.stall) return declarationsIncomplete(declarations, result.stall);
     if (result.fresh.length) return refused('new type errors in a package the packet touches', result.lines);
     const unjudged = declarations.filter(dir => !result.packages.includes(dir)
       || result.incomplete.includes(dir) || result.unavailable.includes(dir));
     if (unjudged.length) {
       const check = 'package declarations';
       if (cheapOnly) return { verdict: 'needs-full', check, findings: [], notes };
-      const reason = { code: 'declaration-comparison-incomplete', packages: unjudged };
-      return { verdict: 'incomplete', check, reason, findings: [], notes };
+      return declarationsIncomplete(unjudged);
     }
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
   }
@@ -149,11 +154,12 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   if (typecheck && !declarations.length) {
     const result = await typecheck;
     notes.push(...result.lines);
+    if (result.stall) return declarationsIncomplete(result.packages, result.stall);
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
   }
 
   if (treeMode === 'block') {
-    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly, finalEntryRecheck }));
+    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
     if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
     if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
   } else if (treeMode === 'report' && !prior && !cheapOnly) {
@@ -225,8 +231,10 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     reason: { code: 'final-recheck-incomplete' }, findings: [], notes: [],
   });
   let recheckedAfterRelease = false;
-  const check = async (cheapOnly) => {
-    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, finalEntryRecheck: cheapOnly && losses >= 2, label });
+  const entryBlocking = commitTreeGateMode() === 'block';
+  const check = async (cheapOnly, compareAdmittedEntryLoads) => {
+    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree,
+      priorBase: accepted?.base, cheapOnly, compareAdmittedEntryLoads, label });
     for (const note of gate.notes) console.error(`commit gate: ${note}`);
     if (gate.verdict === 'pass') {
       commit = createCommit(packet);
@@ -240,12 +248,14 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     if (gate.verdict !== 'pass') return { gate };
   }
   for (;;) {
-    const result = await withCommitLock({ repo, ref }, async (moveRef) => {
+    const finalEntryPhase = entryBlocking && losses >= 2;
+    const locked = (compareAdmittedEntryLoads, entryPhaseAttempted = false) => withCommitLock({ repo, ref }, async (moveRef) => {
       for (;;) {
         const head = headAt();
         if (head !== packet.base) {
           if (recheckedAfterRelease) losses++;
           recheckedAfterRelease = false;
+          if (entryBlocking && losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
           packet = replay(head);
           if (!packet) return {};
         }
@@ -253,7 +263,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
           if (!accepted) return { recheck: 'the replay has no prior verdict' };
           let gate;
           try {
-            gate = await check(true);
+            gate = await check(true, compareAdmittedEntryLoads);
           } catch (error) {
             if (!error.unavailable) throw error;
             return { recheck: error.message };
@@ -269,9 +279,24 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
           // A writer outside the lock (or a host without flock) can still win CAS.
           recheckedAfterRelease = false;
           losses++;
+          if (entryBlocking && losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
         }
       }
     });
+    let result;
+    try {
+      result = finalEntryPhase && headAt() !== packet.base
+        ? await withAdmittedCommitEntryPhase({ repo, base: packet.base, tree: packet.tree },
+          compare => locked(compare, true))
+        : await locked();
+    } catch (error) {
+      if (!(error instanceof EntryLoadAdmissionUnavailable)) throw error;
+      return { gate: {
+        verdict: 'incomplete', check: 'tree entry loads',
+        reason: { code: 'entry-load-admission-unavailable', status: error.status }, findings: [], notes: [],
+      } };
+    }
+    if (result.admitEntry) continue;
     if (!result.recheck) return result;
     if (finalPrepared) return { gate: incomplete() };
     finalPrepared = losses >= 2;

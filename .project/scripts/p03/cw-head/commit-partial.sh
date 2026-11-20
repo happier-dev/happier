@@ -24,6 +24,10 @@ for p in "${patches[@]}"; do
   awk '/^diff --git a\//{f=$3; sub(/^a\//,"",f)} /^@@/{n[f]++} END{for (k in n) printf "patch %s: %s: %d hunk(s)\n", FILENAME, k, n[k]}' "$p"
 done
 branch=$(git symbolic-ref --short HEAD)
+tooling=$(cd -- "$(dirname "$SELF")/../../../.." && pwd -P)
+entry_phase=${P03_CP_ENTRY_PHASE:-0}
+entry_block=0
+if [[ ${HAPPIER_COMMIT_TREE_GATE:-} =~ ^[[:space:]]*block[[:space:]]*$ ]]; then entry_block=1; fi
 # The gate is a separate process; P03_COMMIT_GATE replaces it in scratch-repo selftests.
 GATE=${P03_COMMIT_GATE:-/home/leeroy.guest/.happier-stack/workspace/0.3/.project/scripts/p03/cw-head/gate.sh}
 # R3: every gate run executes a private copy. Bash reads a running script by offset, so an in-place edit
@@ -57,7 +61,8 @@ LOCK="$(git rev-parse --git-common-dir)/p03-commit-partial.lock"
 cacheRoot=$(realpath -m -- "${P03_GATE_CACHE:-$HOME/.happier-stack/cache/p03-commit-gate}")
 packetDir=
 exec 9>"$LOCK"
-trap 'unlock 2>/dev/null || true; cleanup_gate; [ -z "$packetDir" ] || rm -rf -- "$packetDir"' EXIT
+trap 'rc=$?; unlock 2>/dev/null || true; cleanup_gate; [ -z "$packetDir" ] || rm -rf -- "$packetDir";
+      if [ "$entry_phase" = 1 ] && [ "$rc" = 1 ]; then exit 10; fi' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p "$cacheRoot/head"
@@ -226,7 +231,7 @@ replay_onto_now() {
 resume_frozen_packet() {
   exec 9>&-
   P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
-    exec bash "$SELF" "${ARGS[@]}"
+    P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds exec bash "$SELF" "${ARGS[@]}"
 }
 requeue_after_full_gate() {
   unlock
@@ -236,14 +241,52 @@ requeue_after_full_gate() {
   rechecked_after_release=1
   resume_frozen_packet
 }
-final_prepared=0
+final_prepared=${P03_CP_FINAL_PREPARED:-0}
+entry_admission_incomplete() {
+  printf 'commit gate incomplete (tree entry loads): {"code":"entry-load-admission-unavailable","status":%s}\n' "$1"
+  exit 11
+}
+# The caller has released the commit lock. Reserve the packet's reachable graph
+# set because HEAD may keep moving in the broker queue. The admitted child
+# selects the exact smaller set again from the landed commits after locking.
+admit_final_entry_phase() {
+  [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ] || return 0
+  [ "$(git rev-parse HEAD)" != "$head" ] || return 0
+  local projects launcher=$tooling/apps/stack/bin/hstack-exec rc=0
+  projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
+  [ -n "$projects" ] || return 0
+  [ ! -x ./apps/stack/bin/hstack-exec ] || launcher=./apps/stack/bin/hstack-exec
+  while [ "$(git rev-parse HEAD)" != "$head" ]; do
+    rc=0
+    P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=0 \
+      P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
+      "$launcher" --heavyweight-admission --class=gate-entry-loads --machine=local "--projects=$projects" \
+      --identity-arg=node --identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs \
+      -- bash -c 'export P03_CP_ENTRY_PHASE=1; exec bash "$@"' commit-entry-phase "$SELF" "${ARGS[@]}" 9>&- || rc=$?
+    case $rc in
+      0|11|130|143) exit "$rc";;
+      10) exit 1;;
+      3)
+        if [ "$final_prepared" -eq 1 ]; then final_recheck_incomplete; fi
+        final_prepared=1
+        now=$(git rev-parse HEAD)
+        replay_onto_now
+        local prior=$gated
+        if both_sides_deps; then prior=; fi
+        P03_GATE_PRIOR=$prior check_gate "$now" final
+        head=$now; gated=$commit
+        ;;
+      *) entry_admission_incomplete "$rc";;
+    esac
+  done
+}
 locked_recheck() {
   local rc=0 t0=$SECONDS prior=$gated final_entry_recheck=
   while :; do
     replay_onto_now
     if [ "$cas_losses" -ge 2 ]; then
       echo "two CAS losses; final scoped recheck under the commit lock"
-      final_entry_recheck=1
+      if [ "$entry_phase" = 1 ]; then final_entry_recheck=1; fi
     fi
     if both_sides_deps; then
       prior=
@@ -264,6 +307,8 @@ locked_recheck() {
     echo "recheck needs the full path (exit $rc); releasing the commit lock"
     if [ "$cas_losses" -lt 2 ]; then requeue_after_full_gate "$prior"; fi
     unlock
+    # Non-entry preparation must leave the entry slot before it queues.
+    if [ "$entry_phase" = 1 ]; then packetDir=; exit 3; fi
     if [ "$final_prepared" -eq 1 ]; then final_recheck_incomplete; fi
     final_prepared=1
     P03_GATE_PRIOR=$prior check_gate "$now" final
@@ -282,14 +327,22 @@ reexec_if_replaced() {
   echo "commit-partial: the installed wrapper changed; re-running it with the same arguments"
   resume_frozen_packet
 }
-rounds=0
+rounds=${P03_CP_ROUNDS:-0}
 reexec_if_replaced
+if [ "$rechecked_after_release" -eq 1 ] && [ "$(git rev-parse HEAD)" != "$head" ]; then
+  cas_losses=$((cas_losses + 1)); rechecked_after_release=0
+fi
+admit_final_entry_phase
 lock
 now=$(git rev-parse HEAD)
 if [ "$now" != "$head" ]; then
-  rounds=1
+  rounds=$((rounds + 1))
   if [ "$rechecked_after_release" -eq 1 ]; then cas_losses=$((cas_losses + 1)); fi
-  locked_recheck
+  if [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ]; then
+    unlock; admit_final_entry_phase; lock
+    now=$(git rev-parse HEAD)
+  fi
+  if [ "$now" != "$head" ]; then locked_recheck; fi
 fi
 while ! git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)" "refs/heads/$branch" "$commit" "$head"; do
   now=$(git rev-parse HEAD)
@@ -299,7 +352,11 @@ while ! git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)
   echo "CAS lost to a commit outside the wrapper (reflog: $(git reflog -1 --format=%gs "refs/heads/$branch" 2>/dev/null | cut -c1-80)); replaying the frozen packet"
   cas_losses=$((cas_losses + 1))
   rounds=$((rounds + 1))
-  locked_recheck
+  if [ "$entry_block" = 1 ] && [ "$entry_phase" = 0 ] && [ "$cas_losses" -ge 2 ]; then
+    unlock; admit_final_entry_phase; lock
+    now=$(git rev-parse HEAD)
+  fi
+  if [ "$now" != "$head" ]; then locked_recheck; fi
 done
 unlock; publish_head_cache "$commit" || echo "gate cache: could not publish HEAD seed" >&2; echo "COMMITTED $commit parent $head (after $rounds recheck round(s))"
 { git show --stat --format="%h %s" "$commit" | head -40 || true; }

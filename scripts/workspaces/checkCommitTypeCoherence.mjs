@@ -846,7 +846,14 @@ async function main(argv) {
         for (const row of finalized.checked.fresh)
           console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
         for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-        if (finalized.checked.gate) console.log((await import('./commitGate.mjs')).formatCommitGateRefusal(finalized.checked.gate));
+        if (finalized.checked.gate) {
+          const { COMMIT_GATE_EXIT, formatCommitGateIncomplete, formatCommitGateRefusal } = await import('./commitGate.mjs');
+          if (finalized.checked.gate.verdict === 'incomplete') {
+            console.error(formatCommitGateIncomplete(finalized.checked.gate));
+            return COMMIT_GATE_EXIT.incomplete;
+          }
+          console.log(formatCommitGateRefusal(finalized.checked.gate));
+        }
         console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} gate=${finalized.checked.gate?.check ?? 'pass'}`);
         return 1;
       }

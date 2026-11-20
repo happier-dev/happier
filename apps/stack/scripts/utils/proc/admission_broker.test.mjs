@@ -62,6 +62,70 @@ test('status flags each admitted slot once only after twice its recorded class p
     'each flagged slot is recorded in the sentinel ledger');
 });
 
+test('declaration comparison aborts on observed CPU inactivity or twice its learned maximum', { ...linux, timeout: 12_000 }, async t => {
+  for (const scenario of ['idle', 'learned-duration', 'progressing']) {
+    await t.test(scenario, async t => {
+      let now = Date.now();
+      t.mock.method(Date, 'now', () => now);
+      const observed = Promise.withResolvers();
+      let cpuUsec = 1000;
+      let advance = () => {};
+      const readSlotCpuUsageUsec = () => {
+        queueMicrotask(advance);
+        return cpuUsec;
+      };
+      const { root } = await fixture(t, { readSlotCpuUsageUsec });
+      const identity = { className: scenario === 'idle' ? 'gate-package-typecheck' : 'gate-declaration-comparison',
+        component: '.', entry: 'node scripts/workspaces/commitGateTypecheck.mjs', projects: ['packages/protocol'] };
+      if (scenario !== 'idle') {
+        const key = JSON.stringify([identity.className, identity.component, identity.entry, identity.projects]);
+        await writeFile(join(root, 'identity-durations.json'), JSON.stringify({ [key]: [2_000, 550_000, 1_000] }));
+      }
+      const payload = Promise.withResolvers();
+      t.after(() => payload.resolve(130));
+      const task = runAdmittedTask({ root, floorKiB: 60, repoDir: root, env: {}, ...identity }, async (_env, signal) => {
+        observed.resolve(signal);
+        signal.addEventListener('abort', () => payload.resolve(130), { once: true });
+        return await payload.promise;
+      }).then(status => ({ status }), error => ({ error }));
+      const signal = await observed.promise;
+      const observeCpuAt = (elapsedMs, nextCpuUsec) => {
+        const sampled = Promise.withResolvers();
+        advance = sampled.resolve;
+        now += elapsedMs;
+        cpuUsec = nextCpuUsec;
+        return sampled.promise;
+      };
+      if (scenario === 'idle') {
+        await observeCpuAt(300_000, 1000);
+        const { error } = await task;
+        assert.deepEqual(error.stall, {
+          cause: 'no-cpu-progress', elapsedMs: 300_000, cpuIdleMs: 300_000, cpuUsageUsec: 0,
+          elapsedLimitMs: null, historicalMaxMs: null, recordedPeakKiB: null,
+        });
+      } else {
+        await observeCpuAt(300_000, 50_000);
+        assert.equal(signal.aborted, false);
+        await observeCpuAt(300_000, 100_000);
+        assert.equal(signal.aborted, false, 'CPU progress keeps a comparison alive past five minutes');
+        if (scenario === 'progressing') {
+          payload.resolve(0);
+          assert.deepEqual(await task, { status: 0 });
+        } else {
+          await observeCpuAt(500_000, 150_000);
+          const { error } = await task;
+          assert.deepEqual(error.stall, {
+            cause: 'learned-duration', elapsedMs: 1_100_000, cpuIdleMs: 0, cpuUsageUsec: 149_000,
+            elapsedLimitMs: 1_100_000, historicalMaxMs: 550_000, recordedPeakKiB: null,
+          });
+        }
+      }
+      const next = await (await acquire(root, 70, t)).admit();
+      await next.release();
+    });
+  }
+});
+
 test('watch pushes a deadline crossing without new commands or resource observations', linux, async t => {
   const { root, broker } = await fixture(t);
   const controller = new AbortController();
@@ -845,14 +909,14 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readCpuPressure, readSlotWorkingSetKiB = () => null } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readCpuPressure, readSlotWorkingSetKiB = () => null, readSlotCpuUsageUsec } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
   const root = await mkdtemp('/tmp/happier-broker-test-');
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
     readMemory, readProcesses });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
-    readCpuCapacity: () => cpuCores, readCpuPressure, readSlotWorkingSetKiB,
+    readCpuCapacity: () => cpuCores, readCpuPressure, readSlotWorkingSetKiB, readSlotCpuUsageUsec,
     ...(admitDisk ? { admitDisk } : {}) });
   await broker.start();
   t.after(async () => { await broker.close(); await rm(root, { recursive: true, force: true }); });

@@ -3,6 +3,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 CP = os.environ.get('P03_SELFTEST_CP', str(ROOT / 'commit-partial.sh'))
 REAL_GIT = subprocess.check_output(['which', 'git'], text=True).strip()
 def case(kind):
+    admission_case = kind in ('cas-final-entry', 'entry-admission-refused', 'cas-churn')
     d = pathlib.Path(tempfile.mkdtemp(prefix='p03-replay-test.'))
     scratch = d/'wrapper-scratch'; scratch.mkdir()
     cache = d/'shared-cache'; cache.mkdir()
@@ -13,17 +14,28 @@ def case(kind):
     initial = ''.join(f'line {i}\n' for i in range(30))
     for f in ('a.txt', 'b.txt', 'c.txt', 'package.json'): (d/f).write_text(initial)
     git('add', '--', *(['a.txt', 'b.txt', 'package.json'] if kind == 'newfile' else ['a.txt', 'b.txt', 'c.txt', 'package.json'])); git('commit', '-qm', 'root')
+    if admission_case:
+        graph = d/'apps/stack/scripts/perf/entry-graphs.mjs'
+        graph.parent.mkdir(parents=True)
+        graph.write_text("export const ENTRY_GRAPHS = [{id:'cli',entry:'apps/cli/src/main.mjs'}];")
+        cli = d/'apps/cli'; (cli/'src').mkdir(parents=True)
+        (cli/'package.json').write_text('{"name":"@fixture/cli"}')
+        (cli/'src/main.mjs').write_text('export {};')
+        git('add', 'apps'); git('commit', '-qm', 'fixture graph')
     base = git('rev-parse', 'HEAD')
     (d/'a.txt').write_text(initial.replace('line 2\n', 'packet A\n'))
     (d/'c.txt').write_text(initial.replace('line 2\n', 'packet C\n'))
     pk = ['a.txt', 'c.txt']
     if kind == 'manifest':
         (d/'package.json').write_text(initial.replace('line 2\n', 'packet dep\n')); pk.append('package.json')
+    if admission_case:
+        (d/'apps/cli/src/main.mjs').write_text('export const selected = 1;')
+        pk.append('apps/cli/src/main.mjs')
     (d/'packet.patch').write_text(git('diff', '-U3', 'HEAD', '--', *pk)+'\n')
     (d/'msg').write_text('test: packet A\n')
     idx = str(d/'private-b'); envb = dict(env, GIT_INDEX_FILE=idx)
     subprocess.check_call([REAL_GIT, 'read-tree', base], cwd=d, env=envb)
-    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-final-entry','cas-churn','cas-stale','cas-worker-down','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
+    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-final-entry','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
     content = initial.replace('line 20\n', 'packet B\n') if kind != 'conflict' else initial.replace('line 2\n', 'conflict B\n')
     blob = subprocess.check_output([REAL_GIT, 'hash-object', '-w', '--stdin'], input=content, cwd=d, text=True).strip()
     subprocess.check_call([REAL_GIT, 'update-index', '--cacheinfo', f'100644,{blob},{target}'], cwd=d, env=envb)
@@ -35,14 +47,16 @@ def case(kind):
     bindir = d/'bin'; bindir.mkdir()
     shim = bindir/'git'
     shim.write_text(f'''#!/bin/bash
-if [[ '{kind}' = cas-loss || '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' = cas-loss || '{kind}' = cas-final-entry || '{kind}' = entry-admission-refused || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  # A must retain its gated snapshot, even when its working files change.
  echo 'later worktree edit' > '{d}/c.txt'
-elif [[ '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved-twice' ]; then
+elif [[ '{kind}' = cas-final-entry || '{kind}' = entry-admission-refused || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved-twice' ]; then
  touch '{d}/moved-twice'
  '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
+elif [ '{kind}' = cas-final-entry ] && [ "$1" = update-ref ] && [ -e '{d}/moved-twice' ]; then
+ [ "${{TEST_ENTRY_LEASE:-}}" = held ] || {{ echo 'final CAS ran outside the entry lease'; exit 99; }}
 fi
 exec '{REAL_GIT}' "$@"
 '''); shim.chmod(0o755)
@@ -75,7 +89,7 @@ if [ '{kind}' = signal ]; then
  exec sleep 120
 fi
 l=unlocked; flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true || l=locked
-if [[ '{kind}' != cas-loss && '{kind}' != cas-final-entry && '{kind}' != cas-churn && '{kind}' != cas-stale && '{kind}' != cas-worker-down && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' != cas-loss && '{kind}' != cas-final-entry && '{kind}' != entry-admission-refused && '{kind}' != cas-churn && '{kind}' != cas-stale && '{kind}' != cas-worker-down && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  flock -x "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  echo 'later worktree edit' > '{d}/c.txt'
@@ -86,15 +100,16 @@ if [ '{kind}' = requeue ] && [ -e '{d}/.missed' ] && [ -z "${{P03_SCAN_CHEAP_ONL
  flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
 fi
 [ '{kind}' != incomplete ] || exit 11
-if [[ '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ -e '{d}/moved-twice' ]; then
+if [[ '{kind}' = cas-final-entry || '{kind}' = entry-admission-refused || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ -e '{d}/moved-twice' ]; then
  if [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ]; then
    if [ '{kind}' = cas-final-entry ] && [ "${{P03_GATE_FINAL_ENTRY_RECHECK:-}}" = 1 ]; then
-     [ "$l" = locked ] || exit 99
+     [ "$l" = locked ] && [ "${{TEST_ENTRY_LEASE:-}}" = held ] || {{ echo 'locked check reached the graph without pre-admission'; exit 99; }}
      exit 0
    fi
    exit 3
  fi
  [ "$l" = unlocked ] || {{ echo 'worker preparation is holding the commit lock'; exit 99; }}
+ [ -z "${{TEST_ENTRY_LEASE:-}}" ] || {{ echo 'worker preparation is retaining the entry lease'; exit 99; }}
  if [ '{kind}' = cas-worker-down ]; then exit 75; fi
  if [ '{kind}' = cas-stale ]; then
    flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{last}' '{later}' || exit 99
@@ -105,6 +120,19 @@ sleep 0.2
 ''')
     fast = d/'fast.sh'; fast.write_text(f"#!/bin/bash\necho fast >> '{d}/fasts'\nsleep 0.2\nexit 2\n")
     env.update(PATH=str(bindir)+':'+env['PATH'], P03_COMMIT_GATE=str(gate), P03_COMMIT_FASTGATE=str(fast))
+    if admission_case:
+        launcher = d/'apps/stack/bin/hstack-exec'; launcher.parent.mkdir(parents=True)
+        launcher.write_text(f'''#!/bin/bash
+set -eu
+flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true
+[[ "$*" = *--class=gate-entry-loads* && "$*" = *--projects=cli* ]]
+echo grant-attempt >> '{d}/admission'
+[ '{kind}' != entry-admission-refused ] || exit 96
+while [ "$1" != -- ]; do shift; done
+shift
+TEST_ENTRY_LEASE=held exec "$@"
+'''); launcher.chmod(0o755)
+        env['HAPPIER_COMMIT_TREE_GATE'] = 'block'
     selected = '-'
     if kind == 'newfile':
         (d/'wholefiles').write_text('c.txt\n'); selected=str(d/'wholefiles')
@@ -133,7 +161,14 @@ sleep 0.2
     (d/'run.log').write_text(run.stdout)
     gates=(d/'gates').read_text().splitlines()
     print(f'{kind}: {elapsed:.3f}s rc={run.returncode} gates={gates} evidence={d}', flush=True)
-    if kind == 'incomplete':
+    if admission_case:
+        assert (d/'admission').exists(), 'no entry admission attempt occurred before taking the final lock'
+        assert (d/'admission').read_text().splitlines() == ['grant-attempt']
+    if kind == 'entry-admission-refused':
+        assert run.returncode == 11 and git('rev-parse','HEAD') == later, run.stdout
+        assert 'entry-load-admission-unavailable' in run.stdout, run.stdout
+        assert gates == ['a.txt,apps/cli/src/main.mjs,c.txt||unlocked', 'a.txt,apps/cli/src/main.mjs,c.txt|fast|locked'], gates
+    elif kind == 'incomplete':
         assert run.returncode == 11 and git('rev-parse','HEAD') == base, run.stdout
         assert len(gates) == 1 and 'candidate gate incomplete' in run.stdout, run.stdout
     elif kind in ('cas-stale', 'cas-worker-down'):
@@ -160,6 +195,7 @@ sleep 0.2
         assert git('show','HEAD:c.txt').splitlines()[2] == 'packet C', 'gated bytes changed'
         assert (d/'c.txt').read_text() == 'later worktree edit\n'
         pk = 'a.txt,c.txt' + (',package.json' if kind == 'manifest' else '')
+        if admission_case: pk = 'a.txt,apps/cli/src/main.mjs,c.txt'
         cheap = pk + '|fast|locked'
         fallback = [cheap + '|cheap-miss', pk + '|fast|unlocked']
         full = {
@@ -186,4 +222,4 @@ sleep 0.2
                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             assert dry.returncode == 0 and 'DRY candidate' in dry.stdout, dry.stdout
             assert not list(cache.glob('packet.*')), 'dry packet retained its private files'
-for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-final-entry','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','signal','retention']: case(kind)
+for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-final-entry','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','signal','retention']: case(kind)

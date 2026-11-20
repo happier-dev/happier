@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
-import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, rm, symlink, watch, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -731,6 +732,7 @@ exec /bin/bash -c "$2"
   for (const name of [
     'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh',
     'apps/stack/scripts/utils/dev_targets/historical_temp_roots.mjs',
+    'apps/stack/scripts/utils/fs/fs.mjs',
     'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh',
     'apps/stack/scripts/utils/proc/native_process_identity.sh',
     'apps/stack/scripts/utils/proc/native_process_priority.sh',
@@ -758,9 +760,14 @@ if [ "$1" = --execution-workers ]; then
   exit 0
 fi
 if [ "$1" = --heavyweight-admission ]; then
+  case "$2" in --class=dependency-install|--class=gate-package-typecheck) ;; *) exit 94;; esac
   while [ "$1" != -- ]; do shift; done
   shift
   [ "$2" = scripts/workspaces/commitGateTypecheck.mjs ] || { printf 'unstable admission entry: %s\\n' "$2" >&2; exit 95; }
+  if [ -n "$HAPPIER_P03_FIXTURE_STALL" ]; then
+    printf 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE %s\\n' "$HAPPIER_P03_FIXTURE_STALL"
+    exit 75
+  fi
   exec "$@"
 fi
 printf 'attempted mirror dispatch\\n' >> ${JSON.stringify(mirrorLog)}
@@ -805,23 +812,34 @@ if (project !== 'tsconfig.json') {
   }]]], result.stderr);
   assert.equal(existsSync(mirrorLog), false);
 
+  const runGate = stall => spawnSync(process.execPath, [
+    fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
+    '--label=commit-partial', `--base=${sha}^`, `--tree=${sha}`,
+  ], {
+    cwd: repo, encoding: 'utf8', timeout: 10_000,
+    env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}`,
+      HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_DIR: state,
+      ...(stall && { HAPPIER_P03_FIXTURE_STALL: JSON.stringify(stall) }) },
+  });
   const lockPath = join(workerHome, '.happier-stack/cache/commit-typecheck-worker/typecheck-state/lane-gate/worktree.lock');
   await withWorkspaceBundleLock(async () => {
-    const stalled = spawnSync(process.execPath, [
-      fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
-      '--label=commit-partial', `--base=${sha}^`, `--tree=${sha}`,
-    ], {
-      cwd: repo, encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}`,
-        HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_DIR: state },
-    });
-    assert.equal(stalled.status, 11, stalled.error?.message ?? stalled.stderr + stalled.stdout);
-    assert.match(stalled.stderr, /exact-tree worker worktree busy/u);
-    assert.match(stalled.stdout, /"code":"declaration-comparison-incomplete"/u);
+    const busy = runGate();
+    assert.equal(busy.status, 11, busy.error?.message ?? busy.stderr + busy.stdout);
+    assert.match(busy.stderr, /exact-tree worker worktree busy/u);
+    assert.match(busy.stdout, /"code":"declaration-comparison-incomplete"/u);
   }, { lockPath });
+
+  const stall = { cause: 'no-cpu-progress', elapsedMs: 301_000, cpuIdleMs: 300_000, cpuUsageUsec: 1200,
+    historicalMaxMs: null, elapsedLimitMs: null, recordedPeakKiB: null };
+  const stalled = runGate(stall);
+  assert.equal(stalled.status, 11, stalled.error?.message ?? stalled.stderr + stalled.stdout);
+  const detail = stalled.stdout.match(/commit gate incomplete \(package declarations\): (.+)/u);
+  assert.ok(detail, stalled.stdout);
+  assert.deepEqual(JSON.parse(detail[1]), { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'],
+    stall: { ...stall, worker: 'test-worker' } });
 });
 
-test('the controller declaration gate admits and judges both Git trees with its installed toolchain', { skip: process.platform === 'win32' }, async t => {
+async function controllerDeclarationFixture(t) {
   const { repo, commit } = await workspace(t);
   const state = join(repo, '.git/controller-typecheck');
   const tsDir = dirname(createRequire(import.meta.url).resolve('typescript/package.json'));
@@ -834,7 +852,8 @@ test('the controller declaration gate admits and judges both Git trees with its 
   await write('packages/protocol/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
   const entry = fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url));
   await write('apps/stack/bin/hstack-exec', `#!/bin/sh
-[ "$1" = --heavyweight-admission ] || exit 95
+case "$1" in --execution-workers*) exit 0;; esac
+[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-declaration-comparison ] || exit 95
 printf '%s\n' "$@" > "${repo}/admissions"
 while [ "$1" != -- ]; do shift; done
 shift
@@ -843,10 +862,18 @@ shift 2
 exec "${process.execPath}" "${entry}" "$@"
 `, 0o755);
   await write('scripts/workspaces/runTypeScriptCli.mjs', `
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { shouldRouteTypeScriptCliThroughHstack } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};
 if (shouldRouteTypeScriptCliThroughHstack({ args: process.argv.slice(2), env: process.env })) process.exit(98);
 const source = readFileSync('src/index.ts', 'utf8');
+if (process.env.TEST_DECLARATION_COMPILER === 'fail') process.exit(99);
+if (process.env.TEST_DECLARATION_COMPILER === 'wait') {
+  writeFileSync(process.env.TEST_DECLARATION_READY, String(process.pid));
+  await new Promise(done => setTimeout(done, 8000));
+}
+const comparison = resolve(process.cwd(), '../../../..');
+if (readdirSync(comparison).length !== 1) throw new Error('parent and candidate trees occupy disk at the same time');
 if (source.includes('= 99')) process.exit(97);
 if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
   console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
@@ -862,15 +889,75 @@ if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 
   await symlink(tsDir, join(repo, 'node_modules/typescript'), 'dir');
   const { installIdentity } = await inspectDependencyRefresh({ installDir: repo });
   await publishDependencyRefreshMarker({ installDir: repo, identity: installIdentity });
-  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+  const scratch = join(repo, 'comparison-scratch');
+  await mkdir(scratch);
+  const env = { ...process.env, TMPDIR: scratch, P03_GATE_CACHE: join(repo, '.git', 'gate'),
+    HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
     HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
   // This gate starts directly, outside the routed test runner's placement.
   for (const marker of ['HAPPIER_HSTACK_EXECUTION', 'HAPPIER_DEV_TARGET_EXECUTION', 'HAPPIER_TYPECHECK_DISPATCHED', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN']) delete env[marker];
+  return { repo, candidate, scratch, env, git };
+}
+
+test('the controller declaration gate admits and judges both Git trees with its installed toolchain', { skip: process.platform === 'win32' }, async t => {
+  const { repo, candidate, scratch, env, git } = await controllerDeclarationFixture(t);
   const result = await runCommitGate({ repo, base: `${candidate}^`, tree: candidate, env, label: 'commit-partial' });
   assert.equal(result.verdict, 'refused', JSON.stringify(result));
   assert.ok(result.findings.some(finding => finding.includes('TS9007')));
   const trees = [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)];
   assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${trees.join(',')}`));
+  assert.deepEqual(await readdir(scratch), []);
+});
+
+test('the controller compiler accepts a queued request without a scratch path and removes its own scratch', { skip: process.platform === 'win32' }, async t => {
+  const { repo, candidate, scratch, env, git } = await controllerDeclarationFixture(t);
+  const request = {
+    repo, trees: [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)],
+    packages: ['packages/protocol'], sides: ['base', 'head'],
+  };
+  const entry = fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url));
+  const stdout = execFileSync(process.execPath, [entry, '--compiler-admitted'], {
+    cwd: repo, encoding: 'utf8',
+    env: { ...env, HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST: JSON.stringify(request) },
+  });
+  assert.match(stdout, /9007/u);
+  assert.deepEqual(await readdir(scratch), []);
+});
+
+test('controller declaration scratch is removed on failure and after cancellation', { skip: process.platform === 'win32', timeout: 20_000 }, async t => {
+  const { repo, candidate, scratch, env } = await controllerDeclarationFixture(t);
+  const command = [fileURLToPath(new URL('./commitGate.mjs', import.meta.url)), '--label=commit-partial',
+    `--base=${candidate}^`, `--tree=${candidate}`];
+  const failed = spawnSync(process.execPath, command, { cwd: repo, encoding: 'utf8', timeout: 8_000,
+    env: { ...env, TEST_DECLARATION_COMPILER: 'fail' } });
+  assert.equal(failed.status, 11, failed.stderr + failed.stdout);
+  assert.deepEqual(await readdir(scratch), []);
+
+  const ready = join(repo, 'comparison-started');
+  const events = watch(repo, { signal: t.signal });
+  const started = (async () => {
+    for await (const event of events) {
+      if (event.filename === 'comparison-started' && existsSync(ready)) return;
+    }
+  })();
+  const child = spawn(process.execPath, command, { cwd: repo, stdio: 'ignore',
+    env: { ...env, TEST_DECLARATION_COMPILER: 'wait', TEST_DECLARATION_READY: ready } });
+  const ended = once(child, 'close');
+  t.after(() => child.kill());
+  try {
+    const running = await Promise.race([started.then(() => true), ended.then(() => false)]);
+    assert(running && existsSync(ready), 'the compiler reached an active exact scratch tree');
+    child.kill('SIGTERM');
+    await ended;
+    assert.deepEqual(await readdir(scratch), [], 'cancelled comparison removed its exact-tree scratch before returning');
+  } finally {
+    await events.return();
+    // Also retire the fixture leaf when this test runs against the pre-fix process owner.
+    if (existsSync(ready)) {
+      try { process.kill(Number(readFileSync(ready, 'utf8')), 'SIGTERM'); }
+      catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+  }
 });
 
 test('an excluded fallback worker is never contacted for Git preparation', { skip: process.platform === 'win32' }, async t => {

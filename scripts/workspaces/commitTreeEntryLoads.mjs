@@ -1,14 +1,18 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const self = fileURLToPath(import.meta.url);
 const tooling = new URL('../../', import.meta.url);
+const ENTRY_LOAD_ADMISSION_CLASS = 'gate-entry-loads';
+const ENTRY_LOAD_RESULT = 'HAPPIER_COMMIT_ENTRY_LOAD_RESULT ';
+const ENTRY_LOAD_READY = 'HAPPIER_COMMIT_ENTRY_LOAD_READY';
 const ENTRY_GRAPHS_PATH = 'apps/stack/scripts/perf/entry-graphs.mjs';
 const ENTRY_LOAD_PATH = 'apps/stack/scripts/perf/entry-load.mjs';
 const GENERATED = 'apps/server/generated';
@@ -199,23 +203,108 @@ function childCpuMs() {
  * Returns `{ findings, preexisting, results, selected, timings }` (`findings` are the failures the packet adds); throws when the check cannot judge (extraction,
  * derivation or harness failure), which callers report as unavailable, never as a refusal.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false, finalEntryRecheck = false }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, compareAdmittedEntryLoads }) {
+  const git = gitAt(repo);
+  [base, tree] = git(['rev-parse', `${base}^{tree}`, `${tree}^{tree}`]).toString().trim().split('\n');
+  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase });
+  const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
+  const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
+  if (!selected.length) return empty;
+  if (cheapOnly && !compareAdmittedEntryLoads && !finalEntryRecheck) return { ...empty, needsFull: true };
+  const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !cheapOnly };
+  return compareAdmittedEntryLoads
+    ? await compareAdmittedEntryLoads(request)
+    : await admitEntryLoads(request, { env, signal, requireInherited: cheapOnly });
+}
+
+function entryLoadAdmissionCommand(repo, projects, payload, { base, tree, requireInherited } = {}) {
+  if (process.platform === 'win32') return payload;
+  const localLauncher = join(repo, 'apps/stack/bin/hstack-exec');
+  const launcher = existsSync(localLauncher) ? localLauncher : fileURLToPath(new URL('apps/stack/bin/hstack-exec', tooling));
+  return [launcher, '--heavyweight-admission', `--class=${ENTRY_LOAD_ADMISSION_CLASS}`, '--machine=local',
+    `--projects=${projects.join('\n')}`, '--identity-arg=node', '--identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs',
+    ...(base && tree ? [`--judged-trees=${base},${tree}`] : []),
+    ...(requireInherited ? ['--require-inherited'] : []), '--', ...payload];
+}
+
+async function spawnEntryLoadCommand({ repo, projects, payload, signal, env, stdio, ...options }) {
+  const [command, ...args] = entryLoadAdmissionCommand(repo, projects, payload, options);
+  const { spawnForegroundCommand } = await import(new URL('apps/stack/scripts/utils/proc/proc.mjs', tooling).href);
+  return spawnForegroundCommand(command, args, { cwd: repo, env, signal, stdio, ownedProcessGroup: true });
+}
+
+export class EntryLoadAdmissionUnavailable extends Error {
+  constructor(status) {
+    super(`entry-load admission did not grant the final recheck (exit ${status})`);
+    this.status = status;
+  }
+}
+
+/**
+ * The native payload signals its grant, then waits for the exact scoped request
+ * from the lock holder. Leave its input open through CAS to retain the slot.
+ * Reserve the packet's reachable set because HEAD can move while admission waits.
+ */
+export async function withAdmittedCommitEntryPhase({ repo, base, tree, env = process.env }, run) {
+  const { selected: projects } = await selectCommitTreeEntryGraphs({ repo, base, tree });
+  if (!projects.length) return await run();
+  const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
+    payload: [process.execPath, self, '--entry-load-final-session'] });
+  const terminal = waitForTreeChild(child);
+  // The stream can close before the child reports its exit status.
+  terminal.catch(() => {});
+  child.stdin.on('error', () => {}); // An early child exit is handled by the response and terminal status.
+  const output = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = output[Symbol.asyncIterator]();
+  const readLine = async predicate => {
+    for (;;) {
+      const { done, value } = await lines.next();
+      if (done) return undefined;
+      if (predicate(value)) return value;
+    }
+  };
+  try {
+    if (!await readLine(line => line === ENTRY_LOAD_READY)) {
+      const status = await terminal.catch(error => error.code ?? error.name);
+      throw new EntryLoadAdmissionUnavailable(status);
+    }
+    return await run(async request => {
+      child.stdin.write(JSON.stringify(request) + '\n');
+      const line = await readLine(line => line.startsWith(ENTRY_LOAD_RESULT));
+      if (!line) throw new Error(`admitted entry-load recheck did not return a verdict (exit ${await terminal})`);
+      return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+    });
+  } finally {
+    child.stdin.end();
+    output.close();
+    await terminal.catch(() => {});
+  }
+}
+
+async function admitEntryLoads(request, { env, signal, requireInherited }) {
+  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, requireInherited,
+    payload: [process.execPath, self, '--entry-load-admitted'],
+    env: { ...env, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
+    stdio: ['ignore', 'pipe', 'inherit'] });
+  let stdout = '';
+  child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
+  const status = await waitForTreeChild(child);
+  const line = stdout.split('\n').find(line => line.startsWith(ENTRY_LOAD_RESULT));
+  if (status !== 0 || !line) throw new Error(`entry-load admission did not return a verdict (exit ${status})`);
+  return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+}
+
+async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, selected, graphs, waitForDependencies }, env, signal) {
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
-  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase });
-  const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const timings = {};
-  const finish = (result) => {
+  const finish = result => {
     const cpu = process.cpuUsage(cpuBefore);
     const children = childCpuMs();
-    return { ...result, selected, graphs: selection.graphs.length, timings: { ...timings, totalMs: Math.round(performance.now() - started),
+    return { ...result, selected, graphs, timings: { ...timings, totalMs: Math.round(performance.now() - started),
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
-  const empty = { findings: [], preexisting: [], results: [] };
-  if (!selected.length) return finish(empty);
-  if (cheapOnly && !finalEntryRecheck) return finish({ ...empty, needsFull: true });
-  const waitForDependencies = !cheapOnly;
   const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies });
   // Like every other gate check, only failures the packet adds refuse it: the failing graphs load again from the
   // base tree (paid only when the candidate fails), and a failure the base already has is reported, not blamed.
@@ -404,57 +493,70 @@ export function startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger
   return child.pid;
 }
 
-/** One report run at a time per host: a measurement mode must not multiply its own cost. */
-function takeReportLock(root) {
-  mkdirSync(root, { recursive: true });
-  const lock = join(root, 'report.lock');
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try { writeFileSync(lock, String(process.pid), { flag: 'wx' }); return () => rmSync(lock, { force: true }); } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const owner = Number(readFileSync(lock, 'utf8').trim());
-      try { process.kill(owner, 0); return null; } catch { rmSync(lock, { force: true }); }
-    }
-  }
-  return null;
-}
-
 // Under `node -e '<importer>' <args>` argv[1] is an argument, not a path: compare only an existing file (a throw here
 // broke every importer's load, gate.sh's textual step included).
 if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(self)) {
   const args = process.argv.slice(2);
-  const option = name => { const index = args.indexOf(`--${name}`); return index < 0 ? undefined : args[index + 1]; };
-  const repo = resolve(option('repo') ?? process.cwd());
-  const git = gitAt(repo);
-  const base = git(['rev-parse', option('base') ?? 'HEAD']).toString().trim();
-  const tree = git(['rev-parse', option('tree')]).toString().trim();
-  const ledger = option('ledger') ?? defaultCommitTreeLedger(repo);
-  const label = option('label') ?? 'manual';
-  if (args.includes('--detach')) {
-    const pid = startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger });
-    console.log(pid ? `commit tree entry loads: report started (pid ${pid}; ledger ${ledger})` : 'commit tree entry loads: the tree has no entry-load harness; nothing to report');
-    process.exit(0);
-  }
-  const record = entry => { if (ledger) appendFileSync(ledger, `${JSON.stringify({ at: new Date().toISOString(), label, base, tree, ...entry })}\n`); };
-  const release = args.includes('--report') ? takeReportLock(defaultRoot()) : () => {};
-  if (!release) { record({ verdict: 'skipped', reason: 'another report run is active on this host' }); process.exit(0); }
   const stop = new AbortController();
   const interrupt = () => stop.abort();
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
-  try {
-    const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
-    for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
-    for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
-    console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
-    record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, preexisting: result.preexisting, results: result.results, timings: result.timings });
-    process.exitCode = result.findings.length ? 1 : 0;
-  } catch (error) {
-    console.error(`commit tree entry loads unavailable: ${String(error?.stack ?? error).slice(0, 800)}`);
-    record({ verdict: 'unavailable', error: String(error?.message ?? error).slice(0, 400) });
-    process.exitCode = 75;
-  } finally {
-    process.off('SIGINT', interrupt);
-    process.off('SIGTERM', interrupt);
-    release();
+  if (args.includes('--entry-load-final-session')) {
+    const requests = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    stop.signal.addEventListener('abort', () => requests.close(), { once: true });
+    process.stdout.write(`${ENTRY_LOAD_READY}\n`);
+    try {
+      for await (const line of requests) {
+        const result = await compareSelectedEntryLoads(JSON.parse(line), process.env, stop.signal);
+        process.stdout.write(`${ENTRY_LOAD_RESULT}${JSON.stringify(result)}\n`);
+      }
+    } catch (error) {
+      console.error(`commit tree entry loads unavailable: ${error.message}`);
+      process.exitCode = 75;
+    } finally {
+      requests.close();
+    }
+  } else if (args.includes('--entry-load-admitted')) {
+    try {
+      const request = JSON.parse(process.env.HAPPIER_COMMIT_ENTRY_LOAD_REQUEST);
+      const result = await compareSelectedEntryLoads(request, process.env, stop.signal);
+      process.stdout.write(`${ENTRY_LOAD_RESULT}${JSON.stringify(result)}\n`);
+    } catch (error) {
+      console.error(`commit tree entry loads unavailable: ${error.message}`);
+      process.exitCode = 75;
+    }
+  } else {
+    const option = name => { const index = args.indexOf(`--${name}`); return index < 0 ? undefined : args[index + 1]; };
+    const repo = resolve(option('repo') ?? process.cwd());
+    const git = gitAt(repo);
+    const base = git(['rev-parse', option('base') ?? 'HEAD']).toString().trim();
+    const tree = git(['rev-parse', option('tree')]).toString().trim();
+    if (args.includes('--select')) {
+      const { selected } = await selectCommitTreeEntryGraphs({ repo, base, tree });
+      if (selected.length) console.log(selected.join('\n'));
+      process.exit(0);
+    }
+    const ledger = option('ledger') ?? defaultCommitTreeLedger(repo);
+    const label = option('label') ?? 'manual';
+    if (args.includes('--detach')) {
+      const pid = startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger });
+      console.log(pid ? `commit tree entry loads: report started (pid ${pid}; ledger ${ledger})` : 'commit tree entry loads: the tree has no entry-load harness; nothing to report');
+      process.exit(0);
+    }
+    const record = entry => { if (ledger) appendFileSync(ledger, `${JSON.stringify({ at: new Date().toISOString(), label, base, tree, ...entry })}\n`); };
+    try {
+      const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
+      for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
+      for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
+      console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
+      record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, preexisting: result.preexisting, results: result.results, timings: result.timings });
+      process.exitCode = result.findings.length ? 1 : 0;
+    } catch (error) {
+      console.error(`commit tree entry loads unavailable: ${String(error?.stack ?? error).slice(0, 800)}`);
+      record({ verdict: 'unavailable', error: String(error?.message ?? error).slice(0, 400) });
+      process.exitCode = 75;
+    }
   }
+  process.off('SIGINT', interrupt);
+  process.off('SIGTERM', interrupt);
 }

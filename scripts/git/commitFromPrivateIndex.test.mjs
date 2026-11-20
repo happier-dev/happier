@@ -307,12 +307,14 @@ test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }
   assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
 });
 
-function runWithCommitLockContender(f, winner, name, { observeTreeGate = false, additionalWinners = [] } = {}) {
+function runWithCommitLockContender(f, winner, name, { observeTreeGate = false, additionalWinners = [], refuseFinalAdmission = false } = {}) {
   const base = f.git('rev-parse', 'HEAD').trim();
   const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
   const bin = path.join(f.cwd, 'bin');
   const acquisitions = path.join(f.cwd, 'acquisitions');
   const treeGateLocks = path.join(f.cwd, 'tree-gate-locks');
+  const finalGrants = path.join(f.cwd, 'final-grants');
+  const finalActive = path.join(f.cwd, 'final-active');
   const flock = execFileSync('sh', ['-c', 'command -v flock'], { encoding: 'utf8' }).trim();
   fs.mkdirSync(bin);
   // Advance the real ref under the real lock immediately before the writer's first acquisition.
@@ -337,6 +339,9 @@ if [ "$1" = update-ref ] && [ "${'$'}{2-}" = -m ]; then
   case "$head" in
   ${moves}
   esac
+  if [ "$head" = "$TEST_FINAL_HEAD" ]; then
+    [ -f "$TEST_FINAL_ACTIVE" ] || { echo 'Final CAS ran outside the entry grant' >&2; exit 94; }
+  fi
 fi
 exec "$real_git" "$@"
 `, { mode: 0o755 });
@@ -348,9 +353,12 @@ exec "$real_git" "$@"
     env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
       HAPPIER_COMMIT_TREE_GATE: observeTreeGate ? 'block' : 'report', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
       HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
-      TEST_TREE_GATE_LOCKS: treeGateLocks, TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
+      TEST_TREE_GATE_LOCKS: treeGateLocks, TEST_FINAL_GRANTS: finalGrants, TEST_FINAL_ACTIVE: finalActive,
+      TEST_FINAL_DENY: refuseFinalAdmission ? '1' : '0', TEST_FINAL_HEAD: additionalWinners.at(-1) ?? '', TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
   });
+  assert(!fs.existsSync(finalActive), 'the final entry grant was released');
   return { result, acquisitions: fs.existsSync(acquisitions) ? fs.readFileSync(acquisitions, 'utf8').trim().split('\n') : [], flock, lock,
+    finalGrants: fs.existsSync(finalGrants) ? fs.readFileSync(finalGrants, 'utf8').trim().split('\n') : [],
     treeGateLocks: fs.existsSync(treeGateLocks) ? fs.readFileSync(treeGateLocks, 'utf8').trim().split('\n') : [] };
 }
 
@@ -382,6 +390,30 @@ function treeGraphReplayFixture(t, { uiGraph = false } = {}) {
   }
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/perf'), { recursive: true });
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/build'), { recursive: true });
+  fs.mkdirSync(path.join(f.cwd, 'apps/stack/bin'), { recursive: true });
+  fs.writeFileSync(path.join(f.cwd, 'apps/stack/bin/hstack-exec'), `#!/bin/sh
+[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-entry-loads ] || exit 91
+while [ "$1" != -- ]; do
+  case "$1" in --projects=*) export TEST_ENTRY_PROJECTS="\${1#--projects=}" ;; esac
+  shift
+done
+shift
+if ! "$TEST_FLOCK" -n "$TEST_LOCK" true; then
+  printf 'Entry load requested admission while the commit lock was held\n' >&2
+  exit 92
+fi
+if [ "$(git rev-parse HEAD)" = "$TEST_FINAL_HEAD" ]; then
+  if [ "$TEST_FINAL_DENY" = 1 ]; then exit 93; fi
+  printf '%s\n' "$(git rev-parse HEAD)" >> "$TEST_FINAL_GRANTS"
+  touch "$TEST_FINAL_ACTIVE"
+  trap 'rm -f -- "$TEST_FINAL_ACTIVE"' EXIT
+  export TEST_ENTRY_ADMITTED=1
+  "$@"
+  exit "$?"
+fi
+export TEST_ENTRY_ADMITTED=1
+exec "$@"
+`, { mode: 0o755 });
   f.write('apps/stack/scripts/build/source_revision.mjs', 'export async function deriveRevisionGeneratedInputs() {}');
   fs.mkdirSync(path.join(f.cwd, 'packages/cli-common'), { recursive: true });
   f.write('packages/cli-common/registerSourceRuntime.mjs', 'export {};');
@@ -395,6 +427,10 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 export { ENTRY_GRAPHS };
 export async function loadEntryGraph(graph) {
+  if (process.env.TEST_ENTRY_ADMITTED !== '1') throw new Error('Selected graph reached the harness before admission');
+  if (!process.env.TEST_ENTRY_PROJECTS?.split(String.fromCharCode(10)).includes(graph.id)) {
+    throw new Error('Selected graph is missing from the broker project set: ' + graph.id);
+  }
   const { status } = spawnSync(process.env.TEST_FLOCK, ['-n', process.env.TEST_LOCK, 'true']);
   appendFileSync(process.env.TEST_TREE_GATE_LOCKS, graph.id + ':' + status + String.fromCharCode(10));
   await import(pathToFileURL(resolve(graph.entry)).href);
@@ -436,7 +472,7 @@ test('releases the lock and reruns only entry graphs whose inputs changed since 
   assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
 });
 
-test('after two CAS losses rechecks only the affected entry graph under the commit lock', { skip: !hasFlock }, t => {
+function twiceStaleEntryFixture(t, refuseFinalAdmission) {
   const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
   const additionalWinners = [];
   for (const value of [3, 4]) {
@@ -447,10 +483,27 @@ test('after two CAS losses rechecks only the affected entry graph under the comm
   }
   f.git('read-tree', base);
 
-  const { result, treeGateLocks, flock, lock } = runWithCommitLockContender(f, winner, packet, { observeTreeGate: true, additionalWinners });
+  return { f, additionalWinners, ...runWithCommitLockContender(f, winner, packet,
+    { observeTreeGate: true, additionalWinners, refuseFinalAdmission }) };
+}
+
+test('after two CAS losses obtains entry admission before locking and reloads only the affected graph', { skip: !hasFlock }, t => {
+  const { f, additionalWinners, result, treeGateLocks, finalGrants, flock, lock } = twiceStaleEntryFixture(t, false);
   assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(finalGrants, [additionalWinners.at(-1)]);
   assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0', 'cli:1']);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), additionalWinners.at(-1));
+  assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
+});
+
+test('after two CAS losses an entry admission refusal leaves HEAD and the final lock untouched', { skip: !hasFlock }, t => {
+  const { f, additionalWinners, result, acquisitions, treeGateLocks, finalGrants, flock, lock } = twiceStaleEntryFixture(t, true);
+  assert.equal(result.status, 11, result.stderr);
+  assert.match(result.stderr, /entry-load-admission-unavailable/);
+  assert.deepEqual(finalGrants, []);
+  assert(!acquisitions.includes(additionalWinners.at(-1)));
+  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0']);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), additionalWinners.at(-1));
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });
 

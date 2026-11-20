@@ -730,23 +730,36 @@ gate). The rolling HEAD typecheck
 (`scripts/workspaces/commitPackageTypecheck.mjs`, the compiler check for every
 `packages/*` commit since 2026-11-16) shares the focused-test rank below, so it and
 focused runs are served in arrival order and later focused runs cannot starve it
-(P03 ORCH, 2026-11-17). The commit gate's typecheck delta (`compilation` running
-`scripts/workspaces/commitGateTypecheck.mjs`, the worker compile of the `packages/*` and
-`packages/plugins/*` workspaces a packet touches, while the committing lane waits) ranks
-with the shared producers (P03-GATE-TC, 2026-11-18). The broker derives the rank from the admitted command identity that the
-canonical client builds from the payload argv; a request field claiming priority is
-ignored. For the blocking Protocol and Plugin SDK scope, the gate first admits
-the declaration comparison on the controller with parent and candidate in
-separate scratch trees. The controller installation must match the selected
-dependency closure, root inputs and lockfile. When the controller cannot
-judge the scope, the same comparison can use the exact-tree workers.
-Worker requests send the judged Git objects to the worker and materialize them in its own warm worktree. The worker
-launches the committed controller tools in temporary storage and prepares
-dependencies using the judged tree’s manifests, workspace configuration and
-lockfile. The package declaration check resolves the TypeScript API from that
-worktree. If a declaration worker's worktree is busy, the gate tries the next
-eligible worker and returns `declaration-comparison-incomplete` when no worker
-can judge the packet. Priority waiters keep arrival order within their rank. A priority head
+(P03 ORCH, 2026-11-17). The commit gate admits selected tree entry loads,
+exact-worker package typechecks and the controller declaration comparison as
+`gate-entry-loads`, `gate-package-typecheck` and
+`gate-declaration-comparison`. The broker learns each class and selected-project
+identity in the ordinary queue. Syntax, eager cycles, manifests and ordinary
+CAS need no admission slot. Report-mode entry loads queue under the same owner.
+After two lost attempts, the final entry recheck obtains admission before
+taking the commit lock and retains it through the ref update. While locked,
+it loads only the packet's entry graphs whose inputs changed since the last
+unlocked pass. If admission is refused, the gate reports an incomplete result
+and leaves the ref at the winning commit.
+
+For Protocol and Plugin SDK declarations, the controller admits the original
+comparison, materializing one exact Git tree at a time. The dispatcher removes
+its scratch and compiler output after success, failure or cancellation. Both
+trees borrow the same published installation, which must match the selected
+dependency closure, root inputs and lockfile. When the controller cannot judge the scope, the gate
+can use the exact-tree workers. Workers receive the judged Git objects and
+committed tooling, prepare the selected tree's dependencies and load the
+TypeScript API from that installation. A busy worker yields to the next worker.
+If no worker can judge, the gate returns `declaration-comparison-incomplete`.
+
+Once the declaration comparison is admitted on Linux, the broker stops it
+after five consecutive minutes without observed process-tree CPU progress or
+twice the longest successful duration recorded for that command identity on
+the host. Queue time is excluded. Without a duration record, the current commit
+wrapper has no elapsed deadline. A stall logs the measured elapsed and CPU
+values and any recorded duration and peak, releases the admitted job and
+returns typed incomplete before writing the ref.
+Priority waiters keep arrival order within their rank. A priority head
 pledges releases at once instead of after the 22m24s bound, and ordinary source
 bundles cannot borrow its pledge. A shared-producer head (rank 2) holds its whole
 floor, free or released, so nothing backfills past it and it lends nothing to EASY
@@ -1402,7 +1415,8 @@ diagnostic. The execution-qualified disk marker never authorizes replay of a sta
 command. `dev-targets status` exposes free bytes. Admission does not guarantee capacity
 for future writes or filesystem quotas; real write failures remain authoritative.
 
-Linux `dev-targets status NAME` consumes the broker's cached available, reserved and queued memory with active/waiting counts. CPU admission budgets held core grants and the host runnable count outside admitted scopes. The offer and check paths subtract runnable threads in active dedicated jobs scopes, including recovered holders. Unattributable threads remain in the host budget. Queued commands block on sockets and can be observed through status. Status does not walk admission owner records or take a second process sample. Service-memory diagnostics remain separate and never decide capacity. Neither low CPU nor process age imposes an admission deadline or authorizes cancellation.
+Linux `dev-targets status NAME` consumes the broker's cached available, reserved and queued memory with active/waiting counts. CPU admission budgets held core grants and the host runnable count outside admitted scopes. The offer and check paths subtract runnable threads in active dedicated jobs scopes, including recovered holders. Unattributable threads remain in the host budget. Queued commands block on sockets and can be observed through status. Status does not walk admission owner records or take a second process sample. Service-memory diagnostics remain separate and never decide capacity. The admitted declaration comparison is the only command with the CPU-idle and
+learned-duration stop conditions described above.
 
 Admission records belong to the worker's host-local `/tmp/happier-heavyweight-admission-v3` root. PID observations on another host cannot retire them. At each decision, definite absence or a different kernel birth token stops counting the recorded process; unreadable birth or signal observations retain its reservation. These native records carry boot-relative birth ticks rather than a wall-clock start or boot witness, so a reboot alone does not prove retirement when the recorded PID and ticks still match. A terminal wrapper retains an envelope only while the current observer authenticates its surviving payload tree. No stale RSS snapshot can resurrect an absent or reused PID.
 

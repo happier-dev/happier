@@ -73,7 +73,7 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     for (const key of ['user.name', 'user.email']) {
       if (!git('config', '--get', key)) throw new Error(`Missing Git ${key}`);
     }
-    const { finalizeGatedCommit, formatCommitGateRefusal } = await import('../workspaces/commitGate.mjs');
+    const { COMMIT_GATE_EXIT, finalizeGatedCommit, formatCommitGateIncomplete, formatCommitGateRefusal } = await import('../workspaces/commitGate.mjs');
     const base = git('rev-parse', 'HEAD');
     git('read-tree', base);
     if (paths.length) git('add', '--', ...paths);
@@ -98,6 +98,9 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       },
       createCommit: ({ base, tree }) => git('commit-tree', tree, '-p', base, '-F', messageFile),
     });
+    if (gate?.verdict === 'incomplete') {
+      throw Object.assign(new Error(formatCommitGateIncomplete(gate)), { exitCode: COMMIT_GATE_EXIT.incomplete });
+    }
     if (gate) throw new Error(formatCommitGateRefusal(gate));
     console.error(`Committed ${commit}; synchronizing shared index`);
     // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
@@ -124,6 +127,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     console.log(await commitFromPrivateIndex(options));
   } catch (error) {
     console.error(error.message);
-    process.exitCode = 1;
+    process.exitCode = error.exitCode ?? 1;
   }
 }

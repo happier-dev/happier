@@ -13,7 +13,7 @@ import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
-import { isInAdmissionJobsSlice, readAdmittedRunnableThreads, readLinuxAdmissionMemory, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
+import { isInAdmissionJobsSlice, readAdmittedRunnableThreads, readLinuxAdmissionMemory, readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
 
 // Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations
@@ -47,6 +47,13 @@ function queueJudgment(value) {
 // start at the next free slot, after the shared producers and ahead of the
 // commit gate compiler (between ranks 2 and 1): they are small (1-3 GiB) and short.
 const FOCUSED_TEST_PRIORITY_RANK = 1.5;
+const DECLARATION_COMPARISON_ENTRY = 'compilation scripts/workspaces/commitGateTypecheck.mjs';
+const DECLARATION_IDLE_MS = 5 * 60 * 1000;
+const DECLARATION_COMPARISON_ENTRIES = new Set([
+  DECLARATION_COMPARISON_ENTRY,
+  'gate-declaration-comparison scripts/workspaces/commitGateTypecheck.mjs',
+  'gate-package-typecheck scripts/workspaces/commitGateTypecheck.mjs',
+]);
 const HEAD_PRIORITY_RANKS = new Map([
   ['source-bundle apps/stack/scripts/build/build_source_runtime.mjs', 2],
   // The shared web export every stack's QA browsers consume (one per revision).
@@ -58,7 +65,7 @@ const HEAD_PRIORITY_RANKS = new Map([
   ['compilation scripts/workspaces/commitPackageTypecheck.mjs', FOCUSED_TEST_PRIORITY_RANK],
   // P03-GATE-TC 2026-11-18: the commit gate's typecheck delta (its worker compile) holds a committing lane and decides
   // whether a type error reaches every other lane's build, so it takes the top rank with the shared producers.
-  ['compilation scripts/workspaces/commitGateTypecheck.mjs', 2],
+  [DECLARATION_COMPARISON_ENTRY, 2],
 ]);
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;
@@ -81,10 +88,13 @@ function headPriorityRank(request) {
   const classPriority = HEAVYWEIGHT_COMMAND_RESOURCES[request.resourceClass ?? request.className]?.headPriority;
   if (classPriority !== undefined) return classPriority;
   if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
+  return HEAD_PRIORITY_RANKS.get(admissionScriptClass(request)) ?? 0;
+}
+function admissionScriptClass(request) {
   const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
-  if (!script || typeof request.repoDir !== 'string') return 0;
+  if (!script || (isAbsolute(script) && typeof request.repoDir !== 'string')) return null;
   const path = isAbsolute(script) ? relative(request.repoDir, script) : posix.normalize(script);
-  return HEAD_PRIORITY_RANKS.get(`${request.resourceClass ?? request.className} ${path}`) ?? 0;
+  return `${request.resourceClass ?? request.className} ${path}`;
 }
 
 // A 20-completion p95 retains the high end while allowing one isolated
@@ -225,7 +235,7 @@ export function createAdmissionBroker({ root,
   oldLockPath = root === HOST_ADMISSION_ROOT ? HOST_LEGACY_LOCK_PATH : join(root, 'old-admission.lock'),
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
   readCpuPressure = sampleResources === readAdmissionMemorySample ? readLinuxHostRunnable : () => 0,
-  readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB,
+  readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB, readSlotCpuUsageUsec = readProcessJobScopeCpuUsageUsec,
   admitDisk = request => request.cacheBaseDir
     ? admitWorkerDiskBudget({ ...request, commandClass: request.className }) : { admitted: true } } = {}) {
   const slots = new Map();
@@ -486,6 +496,49 @@ export function createAdmissionBroker({ root,
     // Keep earned releases on the waiting item until it is admitted or gone.
     headPledge = head ? (head.headPledge ??= { item: head, memoryKiB: 0, cpuCores: 0 }) : undefined;
   }
+  // Sample from the broker, outside the job's cgroup. The observer must
+  // not count its own CPU as progress in the job it is watching.
+  function monitorDeclarationComparison(slot) {
+    if (slot.stallTimer || slot.stalled || slot.judgmentFinished || !slot.monitorsDeclaration
+      || !slot.admittedAt || (!slot.admitted && !slot.recovered)) return;
+    const durations = recordedIdentityDurations().get(slot.identityKey);
+    const historicalMaxMs = durations?.length ? Math.max(...durations) : null;
+    const elapsedLimitMs = historicalMaxMs === null ? null : 2 * historicalMaxMs;
+    const peaks = recordedIdentityPeaks().get(slot.identityKey);
+    const recordedPeakKiB = peaks?.length ? Math.max(...peaks) : null;
+    let initialCpuUsec = readSlotCpuUsageUsec(slot.pid);
+    let previousCpuUsec = initialCpuUsec;
+    let lastProgressAt = Date.now();
+    const sample = () => {
+      if (closing || slot.judgmentFinished || slot.peer.destroyed) return;
+      const now = Date.now();
+      const cpuUsec = readSlotCpuUsageUsec(slot.pid);
+      if (cpuUsec === null || previousCpuUsec === null || cpuUsec !== previousCpuUsec) lastProgressAt = now;
+      if (cpuUsec === null || initialCpuUsec === null || cpuUsec < initialCpuUsec) initialCpuUsec = cpuUsec;
+      previousCpuUsec = cpuUsec;
+      const elapsedMs = now - slot.admittedAt;
+      const cpuIdleMs = cpuUsec === null ? null : now - lastProgressAt;
+      const cause = cpuIdleMs >= DECLARATION_IDLE_MS ? 'no-cpu-progress'
+        : elapsedLimitMs !== null && elapsedMs >= elapsedLimitMs ? 'learned-duration' : null;
+      if (cause) {
+        slot.stalled = true;
+        slot.peer.write(JSON.stringify({ kind: 'declaration-comparison-stalled', stall: {
+          cause, elapsedMs, cpuIdleMs, cpuUsageUsec: cpuUsec === null ? null : cpuUsec - initialCpuUsec,
+          elapsedLimitMs, historicalMaxMs, recordedPeakKiB,
+        } }) + '\n');
+        return;
+      }
+      schedule(elapsedMs);
+    };
+    const schedule = elapsedMs => {
+      const delay = elapsedLimitMs === null ? DEFAULT_FILE_CHANGE_CATCH_UP_MS
+        : Math.max(1, Math.min(DEFAULT_FILE_CHANGE_CATCH_UP_MS, elapsedLimitMs - elapsedMs));
+      slot.stallTimer = setTimeout(sample, delay);
+      slot.stallTimer.unref();
+    };
+    schedule(Date.now() - slot.admittedAt);
+  }
+
   function headReservation(head) {
     // A priority head pledges releases at once; ordinary heads after the aging bound.
     const active = Boolean(head && (head.headPriority > 0 || Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS));
@@ -778,6 +831,7 @@ export function createAdmissionBroker({ root,
   }
   function releaseReservation(slot) {
     if (!slots.delete(slot.address)) return false;
+    clearTimeout(slot.stallTimer);
     // Before the measured wait bound, releases remain reusable by backfills.
     // After it, include recovered slots too so sustained traffic cannot starve
     // the head. Evaluate on this release, never retroactively or on a new timer.
@@ -1009,6 +1063,7 @@ export function createAdmissionBroker({ root,
       const key = identityKey(item);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
         slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: key,
+        monitorsDeclaration: item.acceptsDeclarationStall === true && DECLARATION_COMPARISON_ENTRIES.has(admissionScriptClass(item)),
         memoryWarmupMs: recordedMemoryWarmupMs(key), pressureExempt,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder, judgment: item.judgment };
       slots.set(address, slot);
@@ -1067,13 +1122,14 @@ export function createAdmissionBroker({ root,
       }
       if (metadata.kind === 'slot-completed') {
         if (Number.isSafeInteger(metadata.status)) enqueue(() => {
+          clearTimeout(slot.stallTimer);
           if (!slot.judgmentFinished) {
             const finishedAt = Date.now();
             pruneFinished(finishedAt);
             recentlyFinished.push({ ...(slot.judgment ?? queueJudgment()), finishedAt });
             slot.judgmentFinished = true;
           }
-          if (metadata.status === 0) {
+          if (metadata.status === 0 && !slot.stalled) {
             slot.succeeded = true;
             if (Number.isSafeInteger(metadata.cpuMilliCores) && metadata.cpuMilliCores > 0) {
               slot.cpuMilliCores = metadata.cpuMilliCores;
@@ -1091,7 +1147,11 @@ export function createAdmissionBroker({ root,
           slot.identityKey ??= identityKey(metadata);
           slot.judgment ??= queueJudgment(metadata.judgment);
           const key = slot.recovered ? slot.identityKey : null;
-          if (slot.recovered) slot.memoryWarmupMs = recordedMemoryWarmupMs(key);
+          if (slot.recovered) {
+            slot.memoryWarmupMs = recordedMemoryWarmupMs(key);
+            slot.monitorsDeclaration = metadata.acceptsDeclarationStall === true && DECLARATION_COMPARISON_ENTRIES.has(admissionScriptClass(metadata));
+            monitorDeclarationComparison(slot);
+          }
           const peaks = recordedIdentityPeaks().get(key);
           const peak = peaks && nearestRank(peaks, 0.95);
           if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
@@ -1107,9 +1167,11 @@ export function createAdmissionBroker({ root,
         || !Number.isSafeInteger(metadata.admittedAt) || metadata.admittedAt < 0
         || !/^[a-f0-9-]{36}$/.test(metadata.slotId ?? '')
         || !Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, metadata.className)) return;
-      enqueue(() => { Object.assign(slot, { admittedAt: metadata.admittedAt,
-        slotId: metadata.slotId, className: metadata.className,
-        durationClass: metadata.durationClass, p99DurationMs: metadata.p99DurationMs }); });
+      enqueue(() => {
+        Object.assign(slot, { admittedAt: metadata.admittedAt, slotId: metadata.slotId, className: metadata.className,
+          durationClass: metadata.durationClass, p99DurationMs: metadata.p99DurationMs });
+        monitorDeclarationComparison(slot);
+      });
     });
     peer.once('close', () => enqueue(() => release(slot)));
     return slot;
@@ -1181,6 +1243,7 @@ export function createAdmissionBroker({ root,
           await connectSlot(item.slot);
           item.slot.admitted = true;
           item.slot.admittedAt = item.slot.lastSampleAt = Date.now();
+          monitorDeclarationComparison(item.slot);
           item.settled = true;
           removeWaiting(item);
           send(socket, { kind: 'admitted', slotId: item.slot.slotId, admittedAt: item.slot.admittedAt,
@@ -1382,6 +1445,7 @@ export function createAdmissionBroker({ root,
       for (const socket of pendingConnections) socket.destroy();
       await serial;
       for (const slot of slots.values()) {
+        clearTimeout(slot.stallTimer);
         slot.peer?.destroy();
       }
       await new Promise(resolveClosed => server?.listening ? server.close(resolveClosed) : resolveClosed());

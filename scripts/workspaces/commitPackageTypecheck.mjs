@@ -220,7 +220,7 @@ export function packageTypecheckRows(result, cwd, rootDir) {
 
 /** One compiler run through the worktree's canonical compiler owner, its output parsed into rows. */
 function runPackageCompiler(worktree, cwd, args, env) {
-  const output = mkdtempSync(join(tmpdir(), 'happier-commit-typecheck-'));
+  const output = mkdtempSync(join(env.TMPDIR || tmpdir(), 'happier-commit-typecheck-'));
   const descriptors = [openSync(join(output, 'stdout'), 'w'), openSync(join(output, 'stderr'), 'w')];
   try {
     // Regular files, not pipes: a compiler descendant can keep a pipe open after the compiler exits.
@@ -288,7 +288,7 @@ function compileApp(worktree, dir, env) {
   if (!step) return { rows: null, ms: 0, failure: 'no runTypeScriptCli step in typecheck:source:finite' };
   const [program, ...args] = step.split(/\s+/u);
   if (program !== 'node') return { rows: null, ms: 0, failure: `unsupported typecheck step ${program}` };
-  const output = mkdtempSync(join(tmpdir(), 'happier-commit-typecheck-'));
+  const output = mkdtempSync(join(env.TMPDIR || tmpdir(), 'happier-commit-typecheck-'));
   const descriptors = [openSync(join(output, 'stdout'), 'w'), openSync(join(output, 'stderr'), 'w')];
   const started = Date.now();
   try {
@@ -647,8 +647,9 @@ export const commitPackageTypecheckRefuses = result => !result.skipped && (resul
 /** The commit gate's worker lane: its own warm worktree beside the rolling one (sharing its bare repository), so a gate
  * never waits behind a rolling app compile (up to hours) for the worktree, and its own admission identity. */
 const GATE_LANE = 'gate';
-/** The gate's admitted entry: the broker ranks admissions by script, and this one takes the top rank. */
 export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypecheck.mjs';
+const GATE_PACKAGE_CHECK_CLASS = 'gate-package-typecheck';
+const GATE_DECLARATION_COMPARISON_CLASS = 'gate-declaration-comparison';
 
 /**
  * The commit gate's blocking typecheck (gate.sh and commitFromPrivateIndex.mjs call this one function): the delta of
@@ -664,18 +665,24 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
   const worker = workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY, workers });
   const controller = packages && !workers && existsSync(join(repo, 'node_modules', 'typescript'))
     ? controllerDeclarationRows({ repo, env, log }) : null;
+  const compare = remote ?? (controller ? async (trees, dirs, sides) => {
+    const rows = await controller(trees, dirs, sides);
+    if (rows.stall || rows.cancelled || trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
+    log('[commit-package-typecheck] controller comparison incomplete; trying exact-tree workers');
+    return await worker(trees, dirs, sides);
+  } : worker);
+  let stall;
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly,
-    remote: remote ?? (controller ? async (trees, dirs, sides) => {
-      const rows = await controller(trees, dirs, sides);
-      if (trees.every(tree => dirs.every(dir => Array.isArray(rows.get(tree)?.get(dir))))) return rows;
-      log('[commit-package-typecheck] controller comparison incomplete; trying exact-tree workers');
-      return await worker(trees, dirs, sides);
-    } : worker) });
+    remote: async (...args) => {
+      const rows = await compare(...args);
+      stall = rows?.stall;
+      return rows;
+    } });
   if (!result.skipped && record && !cachedOnly) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
   }
-  return { ...result, detached: plan.detached };
+  return { ...result, detached: plan.detached, ...(stall ? { stall } : {}) };
 }
 
 /** A green range can still list packages that the worker could not compare. */
@@ -953,6 +960,18 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
 const WORKER_STATE = '.happier-stack/cache/commit-typecheck-worker';
 const WORKER_ROWS = 'HAPPIER_ROLLING_ROWS ';
 
+async function readDeclarationComparisonStall(output) {
+  if (!output) return null;
+  const { DECLARATION_COMPARISON_STALL_MARKER: marker } = await import('../../apps/stack/scripts/utils/proc/admission_client.mjs');
+  const line = output.split('\n').find(entry => entry.startsWith(marker));
+  if (!line) return null;
+  try { return JSON.parse(line.slice(marker.length)); } catch { return null; }
+}
+
+const completeTypecheckRows = (byTree, trees, packages) => trees.every(
+  tree => packages.every(dir => Array.isArray(byTree[tree]?.[dir])),
+);
+
 // The executor owns the command pool, exclusions and connection addresses.
 function typecheckWorkerConnections(repo, env) {
   const launcher = join(repo, 'apps/stack/bin/hstack-exec');
@@ -1102,6 +1121,10 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       renameSync(`${tipPath}.${process.pid}`, tipPath);
       const run = await io.dispatch(worker, ['--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`,
         `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`], ssh, controllerTree);
+      if (run.status !== 0) {
+        const stall = await readDeclarationComparisonStall(run.stdout);
+        if (stall) return Object.assign(none, { stall: { ...stall, worker } });
+      }
       const line = run.status === 0 && run.stdout?.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
       if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (${run.failure?.code ?? run.status ?? run.signal}); trying the next worker`); continue; }
       let fetched;
@@ -1114,27 +1137,55 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
   };
 }
 
+async function withControllerDeclarationScratch(env, run) {
+  const scratch = mkdtempSync(join(env.P03_COMMIT_TREE_WORK_DIR || env.TMPDIR || tmpdir(), 'happier-controller-declarations-'));
+  const stop = new AbortController();
+  const interrupt = signal => stop.abort(signal);
+  const signals = ['SIGHUP', 'SIGINT', 'SIGTERM'];
+  for (const signal of signals) process.on(signal, interrupt);
+  try {
+    const result = await run(scratch, stop.signal);
+    return { result, cancelled: stop.signal.aborted };
+  } finally {
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+    } finally {
+      for (const signal of signals) process.off(signal, interrupt);
+    }
+  }
+}
+
 /** The scoped gate can judge locally with the controller's published install. */
 function controllerDeclarationRows({ repo, env, log }) {
   return async (trees, packages, sides) => {
-    const request = { repo, trees, packages, sides };
-    log(`[commit-package-typecheck] controller declaration comparison for ${sides.join('+')} (${trees.join(', ')})`);
-    const [executable, ...args] = admittedCommand(repo, [process.execPath, COMMIT_GATE_TYPECHECK_ENTRY, '--compiler-admitted'],
-      false, packages.join(','), 'compilation', { trees, files: packages }, join(repo, 'apps/stack/bin/hstack-exec'));
-    const output = await new Promise(resolve => {
-      const child = spawn(executable, args, { cwd: repo, stdio: ['ignore', 'pipe', 'inherit'],
-        env: { ...compileEnvOf(env), HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST: JSON.stringify(request) } });
-      let stdout = '';
-      let failure;
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', chunk => { stdout += chunk; });
-      child.on('error', error => { failure = error; });
-      child.on('close', (code, signal) => {
-        if (code !== 0 || failure) log(`[commit-package-typecheck] controller comparison incomplete (${failure?.code ?? signal ?? code})`);
-        resolve(code === 0 && !failure ? stdout : '');
+    const { getForegroundCommandResult, spawnForegroundCommand } = await import('../../apps/stack/scripts/utils/proc/proc.mjs');
+    const { result: run, cancelled } = await withControllerDeclarationScratch(env, async (scratch, stop) => {
+      const request = { repo, trees, packages, sides, scratch };
+      log(`[commit-package-typecheck] controller declaration comparison for ${sides.join('+')} (${trees.join(', ')}) scratch=${scratch}`);
+      const [executable, ...args] = admittedCommand(repo, [process.execPath, COMMIT_GATE_TYPECHECK_ENTRY, '--compiler-admitted'],
+        false, packages.join('\n'), GATE_DECLARATION_COMPARISON_CLASS, { trees, files: packages }, join(repo, 'apps/stack/bin/hstack-exec'));
+      // Wait for the owned process group to stop before removing its scratch.
+      return await new Promise(resolve => {
+        const child = spawnForegroundCommand(executable, args, { cwd: repo, stdio: ['ignore', 'pipe', 'inherit'],
+          signal: stop, ownedProcessGroup: true,
+          env: { ...compileEnvOf(env), HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST: JSON.stringify(request) } });
+        let stdout = '';
+        let failure;
+        child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+        child.on('error', error => { failure = error; });
+        child.on('close', (nativeCode, nativeSignal) => {
+          const { status, signal } = getForegroundCommandResult(child, nativeCode, nativeSignal);
+          if (status !== 0 || failure) log(`[commit-package-typecheck] controller comparison incomplete (${stop.reason ?? failure?.code ?? signal ?? status})`);
+          resolve({ ok: status === 0 && !failure, stdout });
+        });
       });
     });
-    const line = output.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
+    if (cancelled) return Object.assign(new Map(), { cancelled: true });
+    if (!run.ok) {
+      const stall = await readDeclarationComparisonStall(run.stdout);
+      return Object.assign(new Map(), stall ? { stall: { ...stall, worker: 'controller' } } : {});
+    }
+    const line = run.stdout.split('\n').find(entry => entry.startsWith(WORKER_ROWS));
     if (!line) return new Map();
     let rows;
     try { rows = JSON.parse(line.slice(WORKER_ROWS.length)); }
@@ -1143,60 +1194,62 @@ function controllerDeclarationRows({ repo, env, log }) {
   };
 }
 
-async function compileControllerDeclarations({ repo, trees, packages, sides }) {
+async function compileControllerDeclarations({ repo, trees, packages, sides, scratch }, signal) {
   const { extractRevision } = await import('../../apps/stack/scripts/build/source_revision_install.mjs');
   const { mountCapturedWorkspaceDependencies } = await import('./buildInputConvergence.mjs');
   const { dependencyInputsIdentity, inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
   const log = message => console.error(message);
   const byTree = {};
-  const scratch = mkdtempSync(join(tmpdir(), 'happier-controller-declarations-'));
   try {
-    const captured = [];
-    for (const [index, tree] of trees.entries()) {
-      const state = join(scratch, String(index));
-      const worktree = join(state, 'worktree');
-      mkdirSync(worktree, { recursive: true });
-      await extractRevision({ repoDir: repo, revision: tree, outputDir: worktree });
-      const selected = await inspectDependencyRefresh({ installDir: worktree });
-      captured.push({ tree, side: sides[index], state, worktree, selected });
-    }
-    // Both trees use the same publication. A dependency writer can acquire
-    // custody once both compiler invocations end.
-    await withDependencyConsumption({ installDir: repo, wait: false }, async admittedEnv => {
+    // Hold one publication across both verdicts, materializing one Git tree
+    // at a time. Archiving the whole tree preserves compiler inputs outside
+    // the package closure, including root configuration and generated inputs.
+    await withDependencyConsumption({ installDir: repo, signal, wait: false }, async admittedEnv => {
       const installed = await readDependencyPublicationState({ installDir: repo });
       const current = await inspectDependencyRefresh({ installDir: repo });
-      // This process came through local admission. Compiler leaves inside a
-      // Git archive need to inherit that placement as well as the slot.
-      const env = { ...admittedEnv, HAPPIER_HSTACK_EXECUTION: '1' };
-      for (const { tree, side, state, worktree, selected } of captured) {
-        const workspaces = readCommitTreeWorkspacePackages(repo, tree);
-        if (selected.installIdentity !== installed.identity) {
-          const roots = [...workspaces].filter(([, workspace]) => packages.includes(workspace.root)).map(([name]) => name);
-          const closure = workspaceSourcePackageClosure(workspaces, roots);
-          // Keep the root, lockfile and patch inputs. Workspace manifests for
-          // other packages can differ, including packages absent from this tree.
-          const manifests = new Set([...closure].map(name => `install:${workspaces.get(name).root}/package.json`));
-          const scopedInstallIdentity = ({ dependencyIdentity, inputSnapshot }) => dependencyInputsIdentity(
-            dependencyIdentity, inputSnapshot.filter(({ path }) => !path.endsWith('/package.json') || path.startsWith('install:patches/') || manifests.has(path)),
-          );
-          if (current.installIdentity !== installed.identity || scopedInstallIdentity(selected) !== scopedInstallIdentity(current)) {
-            log(`[commit-package-typecheck] ${side} controller installation does not match the judged declaration closure`);
-            continue;
+      for (const [index, tree] of trees.entries()) {
+        signal?.throwIfAborted();
+        const side = sides[index];
+        const state = join(scratch, String(index));
+        const worktree = join(state, 'worktree');
+        try {
+          mkdirSync(worktree, { recursive: true });
+          await extractRevision({ repoDir: repo, revision: tree, outputDir: worktree });
+          const selected = await inspectDependencyRefresh({ installDir: worktree });
+          const workspaces = readCommitTreeWorkspacePackages(repo, tree);
+          if (selected.installIdentity !== installed.identity) {
+            const roots = [...workspaces].filter(([, workspace]) => packages.includes(workspace.root)).map(([name]) => name);
+            const closure = workspaceSourcePackageClosure(workspaces, roots);
+            // Preserve root and lockfile inputs. Manifests outside the closure
+            // may differ between the installed and judged trees.
+            const manifests = new Set([...closure].map(name => `install:${workspaces.get(name).root}/package.json`));
+            const scopedInstallIdentity = ({ dependencyIdentity, inputSnapshot }) => dependencyInputsIdentity(
+              dependencyIdentity, inputSnapshot.filter(({ path }) => !path.endsWith('/package.json') || path.startsWith('install:patches/') || manifests.has(path)),
+            );
+            if (current.installIdentity !== installed.identity || scopedInstallIdentity(selected) !== scopedInstallIdentity(current)) {
+              log(`[commit-package-typecheck] ${side} controller installation does not match the judged declaration closure`);
+              continue;
+            }
           }
+          const dirs = [...new Set([...packages, ...[...workspaces.values()].map(workspace => workspace.root)])];
+          await mountCapturedWorkspaceDependencies({ sourceDir: repo, captureDir: worktree, workspaceDirs: dirs, capturedOnly: true });
+          signal?.throwIfAborted();
+          // Keep compiler emit directories inside the dispatcher's lifetime as well.
+          const env = { ...admittedEnv, HAPPIER_HSTACK_EXECUTION: '1', TMPDIR: state, TMP: state, TEMP: state };
+          const { rowsAt } = treeTypechecker({ repo, state, env, log, capturedWorktree: worktree });
+          byTree[tree] = Object.fromEntries(rowsAt(tree, packages, side));
+        } finally {
+          rmSync(state, { recursive: true, force: true });
         }
-        const dirs = [...new Set([...packages, ...[...workspaces.values()].map(workspace => workspace.root)])];
-        await mountCapturedWorkspaceDependencies({ sourceDir: repo, captureDir: worktree, workspaceDirs: dirs, capturedOnly: true });
-        const { rowsAt } = treeTypechecker({ repo, state, env, log, capturedWorktree: worktree });
-        byTree[tree] = Object.fromEntries(rowsAt(tree, packages, side));
       }
     });
+    signal?.throwIfAborted();
   } catch (error) {
+    if (signal?.aborted) return 2;
     log(`[commit-package-typecheck] controller comparison incomplete: ${error.message}`);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
   }
-  console.log(`${WORKER_ROWS}${JSON.stringify(byTree)}`);
-  return 0;
+  process.stdout.write(`${WORKER_ROWS}${JSON.stringify(byTree)}\n`);
+  return completeTypecheckRows(byTree, trees, packages) ? 0 : 2;
 }
 
 /** Worker side of workerTreeRows: compile the shipped tree in this host's warm worktree under its own broker. A lane
@@ -1211,7 +1264,7 @@ async function workerRows(argv, entry) {
   if (option('lane') && !/^[a-z]+$/u.test(option('lane'))) { console.error('[rolling-head-typecheck] --lane must be lowercase letters'); return 2; }
   const state = option('lane') ? join(slugState, `lane-${option('lane')}`) : slugState;
   const request = { trees: option('tree').split(',').filter(Boolean), packages: option('packages').split(',').filter(Boolean),
-    sides: option('side').split(','), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling' };
+    sides: option('side').split(','), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling', gate: option('lane') === GATE_LANE };
   const scope = option('scope') || 'packages';
   if (!option('slug') || !request.trees.length || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
   // A scoped Git runner has a temporary root. Keep the broker's entry identity stable.
@@ -1219,7 +1272,7 @@ async function workerRows(argv, entry) {
   const payload = [process.execPath, ...process.execArgv, workerEntry, '--compiler-admitted'];
   mkdirSync(state, { recursive: true });
   // A lane's compile identity names its packages, so the broker sizes each from its own recorded compile peak.
-  const projects = option('lane') ? request.packages.join(',') : scope === 'packages' ? undefined : scope;
+  const projects = option('lane') ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
   const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(request) };
   return await withWorkspaceBundleLock(async () => {
     // Dependencies are their own admitted step, once per dependency generation, so the compile's identity records and
@@ -1231,7 +1284,7 @@ async function workerRows(argv, entry) {
       if (prepared.error) throw prepared.error;
       if (prepared.status !== 0) return prepared.status ?? 2;
     }
-    const command = admittedCommand(state, payload, false, projects, 'compilation',
+    const command = admittedCommand(state, payload, false, projects, request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation',
       { trees: request.trees, files: request.packages });
     const result = spawnSync(command[0], command.slice(1), { env: workerEnv, stdio: 'inherit' });
     if (result.error) throw result.error;
@@ -1394,7 +1447,14 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     return 0;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST) {
-    return await compileControllerDeclarations(JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST));
+    const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST);
+    if (request.scratch) return await compileControllerDeclarations(request);
+    // A queued dispatcher can start the current child with the earlier request shape.
+    const { result, cancelled } = await withControllerDeclarationScratch(process.env, (scratch, signal) => {
+      console.error(`[commit-package-typecheck] retained controller declaration request scratch=${scratch}`);
+      return compileControllerDeclarations({ ...request, scratch }, signal);
+    });
+    return cancelled ? 2 : result;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
     // Admitted on the worker: rows for the shipped trees, compiled in turn in the worker's warm worktree.
@@ -1405,7 +1465,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     const byTree = Object.fromEntries(request.trees.map((tree, index) =>
       [tree, Object.fromEntries(rowsAt(tree, request.packages, request.sides[index] || tree.slice(0, 10)))]));
     process.stdout.write(`${WORKER_ROWS}${JSON.stringify(byTree)}\n`);
-    return 0;
+    return !request.gate || completeTypecheckRows(byTree, request.trees, request.packages) ? 0 : 2;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_ROLLING === '1') {
     const options = { repo: process.env.HAPPIER_COMMIT_TYPECHECK_REPO, scope: process.env.HAPPIER_COMMIT_TYPECHECK_SCOPE || 'packages' };
