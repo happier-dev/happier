@@ -1,5 +1,7 @@
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { ActionIdSchema } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema } from './actionIds.js';
+import { ActionInvokeInputSchema } from './actionInvokeInput.js';
+import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { getActionSpec } from './actionSpecs.js';
 import { isApprovalRuleChangeActionId } from './actionPolicyActionIds.js';
 import { normalizeActionSettingsActionId } from './actionSettings.js';
@@ -28,6 +30,23 @@ export function isSessionApprovalConsentEligibleV1(actionId: string): boolean {
   if (!builtIn.success) return true;
   const policy = getActionSpec(builtIn.data).approvalPolicy;
   return policy?.control !== true && policy?.pluginCaptureWaiver !== true;
+}
+
+/**
+ * The policy id a stored approval request's Session row would key on (`profileActionId ?? actionId`):
+ * a contributed Action by its qualified id, never the invoke carrier. Null when no Session row can
+ * change this Action's Ask, so the approval sheet offers none.
+ */
+export function readSessionApprovalConsentActionIdV1(
+  request: Readonly<{ actionId: string; actionArgs?: unknown }>,
+): string | null {
+  let actionId: string = request.actionId;
+  if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
+    const invocation = ActionInvokeInputSchema.safeParse(request.actionArgs);
+    if (!invocation.success) return null;
+    actionId = formatQualifiedPluginActionId(invocation.data.action);
+  }
+  return isSessionApprovalConsentEligibleV1(actionId) ? actionId : null;
 }
 
 /** One person-authored row edit, saved without a second confirmation (the edit is the approval). */
