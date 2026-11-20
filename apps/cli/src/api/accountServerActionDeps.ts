@@ -916,8 +916,9 @@ export function createAccountServerActionDeps(input: Readonly<{
       const prepared = await prepareKeys().catch(() => null);
       if (prepared?.kind !== 'prepared') return output;
       // Current readiness remains server-derived after the protected continuation.
-      const read = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', target);
-      const readHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: read.method, path: read.path });
+      const readActionId = 'machines.access.grants.list';
+      const read = bindMachineAccessActionHttpRequestV1(readActionId, target);
+      const readHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: readActionId, method: read.method, path: read.path });
       if (!readHeaders.ok) return output;
       const refreshed = await dispatchAccountServerActionHttpRequest({ headers: readHeaders.headers, method: read.method, path: read.path,
         sideEffectClass: 'read', ...(signal ? { signal } : {}) });

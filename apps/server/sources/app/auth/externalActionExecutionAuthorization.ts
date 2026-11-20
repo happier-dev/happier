@@ -113,6 +113,7 @@ import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
+import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
@@ -1563,6 +1564,9 @@ function isProjectPrepareReviewEffect(rootActionId: string, effectActionId: stri
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string,
     referenceReceiverMachineId?: string) {
+    const machineGrantSetRead = binding.target.kind === 'machine' && target.kind === 'machine'
+        && isMachineGrantSetAccessReadV1({ rootActionId: binding.actionId, effectActionId,
+            serverId: binding.serverIdentityId, machineId: binding.target.machineId, request: proof });
     const reviewedManagedAcquirePurpose = await isReviewedManagedAcquirePurpose(binding, effectActionId, proof);
     const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
@@ -1647,7 +1651,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = deploymentReferenceServices || configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowStart;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowStart || machineGrantSetRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1655,9 +1659,9 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = deploymentReferenceServices || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowStart;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowStart || machineGrantSetRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
-    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
+    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
         reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, deploymentReferenceServices, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
@@ -4544,6 +4548,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (!referencePurpose && !controllerPurpose && !readPurpose && !directPurpose && !childPurpose && !guestPurpose && !setupPurpose && !boundSetupPurpose
             && !setupHostReviewPurpose && !setupWorkflowPurpose && !setupAppReadPurpose && !connectorGrantReadPurpose) return refuse('managed_machine_purpose');
         if (guestPurpose) managedGuestActivity = guestPurpose;
+    } else if (verified.signedChildPurpose.machineGrantSetRead) {
+        // The signed child purpose bound the read to the admitted Machine.
+        // The access route still projects the original requester's current access.
     } else if ((rootMachineAction.success || effectMachineAction.success) && !admittedReadRootRequesterGet) {
         if (!rootMachineAction.success || !effectMachineAction.success
             || rootMachineAction.data !== effectMachineAction.data) return refuse('machine_access_effect');

@@ -32,6 +32,7 @@ import {
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
 } from '@happier-dev/protocol/actions';
 import { auth } from '@/app/auth/auth';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { withAuthenticatedTestApp } from '../../testkit/sqliteFastify';
@@ -809,6 +810,78 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             expect(staleList.json()).toEqual([stale.json().machine]);
             expect(stale.json().machine.keyBasis).toEqual({ dataEncryptionKey: privacyKit.encodeBase64(envelope), metadataVersion: machine.metadataVersion, daemonStateVersion: machine.daemonStateVersion });
         });
+    });
+
+    it('uses the signed grant-set admission to read the same Machine before and after saving a grant', async () => {
+        const { owner, other: recipient, machine } = await fixture();
+        const otherMachine = await db.machine.create({ data: {
+            id: `other-machine-${randomUUID()}`, accountId: owner.id,
+            metadata: machine.metadata, dataEncryptionKey: machine.dataEncryptionKey,
+        } });
+        const installationKeys = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: machine.id }, data: {
+            installationPublicKey: new Uint8Array(installationKeys.publicKey),
+        } });
+        const root = 'machines.access.grant.set';
+        const read = 'machines.access.grants.list';
+        const issued = await auth.createApiToken({
+            accountId: owner.id, tokenId: randomUUID(),
+            label: await preparePlainAccountApiTokenLabel(owner.id, 'Machine access write'),
+            grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [root] }, targets: { sessions: [], machines: [machine.id] } },
+        });
+        const principal = (await auth.verifyTokenForRoute(issued.token))?.apiTokenPrincipal;
+        if (!principal) throw new Error('Missing authenticated fixture principal');
+        const target = { kind: 'machine' as const, machineId: machine.id };
+        const requestId = randomUUID();
+        const serverIdentityId = await getOrCreateServerIdentityId();
+        const body = { principal: { kind: 'account' as const, accountId: recipient.id }, level: 'view' as const };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({
+            serverIdentityId, accountId: principal.accountId,
+            principalId: principal.principalId, credentialId: principal.credentialId, grant: principal.grant,
+            machineId: machine.id, actionId: root, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                v: 1, requestId, target, input: { serverId: serverIdentityId, machineId: machine.id, ...body },
+            }), target,
+        });
+        const path = `/v1/machines/${machine.id}/access`;
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app);
+        machinesRoutes(app);
+        await app.ready();
+        const send = (effectActionId: typeof root | typeof read, method: 'GET' | 'PUT', url: string, payload?: typeof body) =>
+            app.inject({ method, url, ...(payload ? { payload } : {}), headers: {
+                'x-happier-account-stored-content-protocol': '4',
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target,
+                    installationId: machine.installationId!, requestId, method, path: url, body: payload, privateKey: installationKeys.secretKey,
+                }),
+            } });
+        const persistedGrant = () => db.machineGrant.findUnique({
+            where: { machineId_accountId: { machineId: machine.id, accountId: recipient.id } },
+        });
+        try {
+            const before = await send(read, 'GET', path);
+            expect(await persistedGrant()).toBeNull();
+            const write = await send(root, 'PUT', path, body);
+            expect(write.statusCode, write.body).toBe(200);
+            expect(write.json()).toMatchObject({ kind: 'saved' });
+            expect(await persistedGrant()).not.toBeNull();
+            const after = await send(read, 'GET', path);
+            expect(before.statusCode, before.body).toBe(200);
+            expect(before.json().grants).toEqual([]);
+            expect(after.statusCode, after.body).toBe(200);
+            expect(after.json().grants).toEqual(expect.arrayContaining([expect.objectContaining({ principal: body.principal })]));
+            // Existing daemons can sign the same settlement read with the root id.
+            expect((await send(root, 'GET', path)).statusCode).toBe(200);
+            expect((await send(read, 'GET', `/v1/machines/${otherMachine.id}/access`)).statusCode).toBe(401);
+            expect((await send(read, 'GET', `${path}?extra=1`)).statusCode).toBe(401);
+            expect((await send(read, 'PUT', path, body)).statusCode).toBe(401);
+        } finally { await app.close(); }
     });
 
     it('admits an exact signed grant-set key continuation from another installation and rechecks current resource authority', async () => {

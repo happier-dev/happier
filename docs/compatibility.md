@@ -13917,6 +13917,16 @@ no fallback or person-entered digest. The inspected `../0.2` frontier
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Devcontainer plugin or managed
 Machine preset contracts.
 
+## Signed Machine sharing read-back (unreleased 0.3)
+
+A signed `machines.access.grant.set` can read the exact Machine bound to its
+admission for review and key-readiness settlement. Home authenticates the
+bodyless access GET under the original grant-set credential. Current daemons
+sign the list effect and Home also accepts the grant-set effect used by older
+development daemons for read-back. Machine access still decides the response
+for the original requester. The authorization token and response formats are
+unchanged.
+
 ## Managed guest authority (unreleased 0.3)
 
 Managed guest CLI updates use the connected Home's guest payload through the
