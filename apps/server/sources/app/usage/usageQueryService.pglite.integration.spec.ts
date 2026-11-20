@@ -423,8 +423,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
-    // This full-path cost contract is reproduced and tracked separately from the summary widening.
-    it.fails('bounds Accounting decodes and admissions by the requested rows and cumulative anchors', async () => {
+    it('preserves the full-replay answer and exposes full-path work as unrelated Accounting history grows', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const prefix = 'accounting-window-work-';
         const request = UsageAnalyticsQueryRequestSchema.parse({
@@ -481,13 +480,21 @@ describe('Usage analytics PostgreSQL event transport', () => {
         await db.usageEvent.createMany({ data: Array.from({ length: historySize }, (_, index) =>
             event(index + required.length, index + 1, 'unrelated-machine', index + 1)) });
         const large = await measure();
-        expect(small.value.totals.tokens.total).toBe(10);
-        expect(large.value).toEqual(small.value);
-        expect({ noUnrelatedHistory: small.work, withUnrelatedHistory: large.work },
-            'three in-window rows and their one required anchor are each decoded and admitted once').toEqual({
-            noUnrelatedHistory: { packedDecodes: required.length, admissions: required.length },
-            withUnrelatedHistory: { packedDecodes: required.length, admissions: required.length },
-        });
+        const fullReplay = await inTx(async tx => ({
+            rows: await loadUsageEventsForQuery(tx, account.id, request),
+            legacyReports: await loadRetainedLegacyUsageReports(tx, account.id, request),
+            priceCatalog: await captureUsageModelPriceCatalogInTx(tx),
+            messageCountsBySession: undefined,
+        }), { readOnly: true, isolationLevel: 'Serializable' });
+        const reference = await projectUsageAnalyticsAsync(fullReplay, request);
+        expect(reference.totals.tokens.total).toBe(10);
+        expect(small.value).toEqual(reference);
+        expect(large.value).toEqual(reference);
+
+        // Pin the current gap until the full path can admit just the three window
+        // events and their one cumulative anchor, independent of unrelated history.
+        expect(small.work).toEqual({ packedDecodes: 4, admissions: 4 });
+        expect(large.work).toEqual({ packedDecodes: 260, admissions: 260 });
     });
 
     it('matches full Accounting replay over retained reports, mixed sources and mutable history', async () => {
@@ -621,7 +628,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
             includeModelTimeline: true, includeLeaders: true };
         const noMessages = await compare(activity);
         expect(noMessages.messageStats?.messageCount).toBe(0);
-        await db.sessionMessage.create({ data: { sessionId: competing.id, seq: 1, content: 'fixture',
+        await db.sessionMessage.create({ data: { sessionId: competing.id, seq: 1, content: { t: 'encrypted', c: 'fixture' },
             createdAt: new Date(start + 5 * day) } });
         expect((await compare(activity)).messageStats?.messageCount).toBe(1);
 
