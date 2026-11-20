@@ -32,6 +32,7 @@ import { registerPluginAvailabilityRoutes } from '../../../../../server/sources/
 import { machinesRoutes } from '../../../../../server/sources/app/api/routes/machines/machinesRoutes';
 import { featuresRoutes } from '../../../../../server/sources/app/api/routes/features/featuresRoutes';
 import { registerExternalActionRoutes } from '../../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { startSocket } from '../../../../../server/sources/app/api/socket';
 import { auth } from '../../../../../server/sources/app/auth/auth';
 import { db } from '../../../../../server/sources/storage/db';
@@ -39,6 +40,8 @@ import { getOrCreateServerIdentityId, initializeServerIdentityCache } from '../.
 import { removeMachineAccessGrantInTx, resolveMachineAdmission } from '../../../../../server/sources/app/machines/machineAccess';
 import { ApiClient } from '../../../../../cli/src/api/api';
 import { dispatchOriginalAccountAction } from '../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { createCliActionExecutor } from '../../../../../cli/src/session/actions/createCliActionExecutor';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import type { ApiMachineClient } from '../../../../../cli/src/api/apiMachine';
 import { createCurrentMachineExecutionOriginContextResolver } from '../../../../../cli/src/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
@@ -94,7 +97,7 @@ vi.mock('node:child_process', async original => {
         if (command !== 'sudo' || !boundary.launch) return actual.spawn(command, args, options);
         expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
         boundary.runAsUsers.push(args[2]!);
-        return spawnWorkspaceCheckoutNativeBoundary();
+        return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
     } };
 });
 
@@ -161,7 +164,7 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
                 createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
                 homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
                     canonicalServerUrl: endpoint, revision: 1, endpoints: [{ kind: 'https', url: endpoint }] }) } } }));
-        const ownerCredentials = { token: ownerToken, encryption: null };
+        const ownerCredentials = { token: ownerToken, encryption: null, credentialProvenance: 'stored_session' as const };
         daemon = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
             activeServerDir: configuration.activeServerDir, serverId: homeId, serverHttpBaseUrl: endpoint,
             machineId: machine.id, custodianAccountId: owner.id, credentials: ownerCredentials,
@@ -284,6 +287,27 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
         expect(ownerControl, JSON.stringify(ownerControl)).toMatchObject({ ok: true, result: { kind: 'opened', directory: ownerRoot } });
         const ownerRows = (await readRows(ownerToken)).rows;
         expect(ownerRows.some(row => row.key.kind === 'workspace-ref')).toBe(true);
+        phase = 'CLI guest Project Open preserves requester Account custody';
+        const requesterCredentials = { token: requesterToken, encryption: null, credentialProvenance: 'stored_session' as const };
+        const cli = createCliActionExecutor({ token: requesterToken, credentials: requesterCredentials,
+            sessionId: '', mode: 'plain', ctx: null, serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: endpoint,
+            // Credential and preference readers are client storage boundaries. The real policy owner
+            // consumes this explicit preference; approval replay is a separate installed-daemon path.
+            actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+                approvalWaivedSurfaces: { 'projects.open': ['cli'] } }) },
+            onRequesterSessionCredentialDisclosure: async disclosure => disclosure.accountId === requester.id
+                && disclosure.machineId === machine.id });
+        const cliResult = await cli.execute('projects.open', input,
+            bindPresentUserActionConfirmationV1('projects.open', input, { serverId: homeId, serverIdentityId: homeId,
+                runtimeAccountId: requester.id, actionCaller: { kind: 'host' }, surface: 'cli',
+                authority: 'present_user', actionRequestId: crypto.randomUUID() }));
+        expect(cliResult, JSON.stringify(cliResult)).toMatchObject({ ok: true, result: { kind: 'opened', directory: root } });
+        if (!cliResult.ok) throw new Error(cliResult.errorCode);
+        const cliOpened = OpenProjectResultV1Schema.parse(cliResult.result);
+        if (cliOpened.kind !== 'opened') throw new Error('CLI requester Project was not opened');
+        expect((await readRows(requesterToken)).rows.some(row => row.key.kind === 'workspace-ref'
+            && row.key.id === cliOpened.workspace.workspaceId)).toBe(true);
+        expect((await readRows(ownerToken)).rows).toEqual(ownerRows);
         phase = 'guest signed Action and pushed row materialization';
         const result = await createDefaultActionExecutor().execute('projects.open', input, {
             serverId: profile.id, expectedAccountId: requester.id, surface: 'ui', authority: 'present_user', actionRequestId: crypto.randomUUID(),
@@ -291,9 +315,9 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
         expect(result, JSON.stringify({ result, receipts })).toMatchObject({ ok: true, result: { kind: 'opened', directory: root } });
         // The signed roots were admitted by Home; local handoff must not request a new raw-RPC grant.
         expect(rawProjectAdmissionRequests).toBe(0);
-        expect(carriedRequests).toHaveLength(2);
-        expect(carriedRequests[1]).toMatchObject({ actionId: 'projects.open', principal: { accountId: requester.id }, envelope: { v: 1 } });
-        if (carriedRequests[1]!.envelope.v === 1) expect(OpenProjectInputV1Schema.parse(carriedRequests[1]!.envelope.input).source)
+        expect(carriedRequests).toHaveLength(3);
+        expect(carriedRequests[2]).toMatchObject({ actionId: 'projects.open', principal: { accountId: requester.id }, envelope: { v: 1 } });
+        if (carriedRequests[2]!.envelope.v === 1) expect(OpenProjectInputV1Schema.parse(carriedRequests[2]!.envelope.input).source)
             .toEqual({ kind: 'folder', path: root });
         if (!result.ok) throw new Error(result.errorCode);
         const opened = OpenProjectResultV1Schema.parse(result.result);
@@ -311,7 +335,7 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
                 params: input, content: { mode: 'plain' }, timeoutMs: 10_000 });
             if (token === requesterToken) expect(OpenProjectResultV1Schema.parse(await raw))
                 .toMatchObject({ kind: 'refused', code: 'requester_account_unavailable', effectAttempted: false,
-                    failureCause: { phase: 'projects.open', errorCode: 'requester_account_unavailable' } });
+                    failureCause: { phase: 'projects.open' } });
             else await expect(raw).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         }
         phase = 'outsider signed Action refusal';

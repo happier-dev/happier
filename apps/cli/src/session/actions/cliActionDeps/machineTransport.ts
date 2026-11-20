@@ -4,6 +4,7 @@ import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupCombinedActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -211,6 +212,7 @@ export function createCliMachineActionTransport(
     }
     const originalContext = input.context;
     const originalAccountAction = isLocalServiceStopActionIdV1(input.effectActionId)
+      || isProjectWorkspaceSyncOpenActionV1(input.effectActionId)
       || input.effectActionId === 'execution.run.action'
         && doesExternalActionConsumeRequesterAccountContentV1({ actionId: input.effectActionId, input: input.request });
     if (originalContext && originalAccountAction
