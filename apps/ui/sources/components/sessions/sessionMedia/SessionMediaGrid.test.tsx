@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
     isLoaded: true,
     navigate: vi.fn(),
     loadStatus: 'no_more' as 'no_more' | 'in_flight',
+    switchSurface: vi.fn(),
 }));
 
 installSessionAttachmentCommonModuleMocks({
@@ -39,6 +40,9 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
 }));
 vi.mock('@/sync/sync', () => ({
     sync: { loadOlderMessages: async () => ({ loaded: 0, hasMore: state.loadStatus === 'in_flight', status: state.loadStatus }) },
+}));
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation', () => ({
+    useSessionCockpitSurfaceNavigation: () => ({ switchSurface: state.switchSurface, returnToPreviousSurface: vi.fn() }),
 }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => state.navigate,
@@ -95,6 +99,7 @@ describe('SessionMediaGrid', () => {
         state.messages = [];
         state.isLoaded = true;
         state.navigate.mockClear();
+        state.switchSurface.mockClear();
         state.loadStatus = 'no_more';
     });
 
@@ -115,6 +120,8 @@ describe('SessionMediaGrid', () => {
         invokeTestInstanceHandler(screen.findByTestId('session-media-grid-jump:m2'), 'onPress');
 
         expect(state.navigate).toHaveBeenCalledWith('s1', { query: { jumpSeq: 9 } });
+        // On the mobile cockpit the route alone would leave the user on Files; chat has to be revealed.
+        expect(state.switchSurface).toHaveBeenCalledWith('chat');
         expect(screen.findByTestId('session-media-grid-image:.happier/uploads/generated/m1/a.png')).not.toBeNull();
     });
 

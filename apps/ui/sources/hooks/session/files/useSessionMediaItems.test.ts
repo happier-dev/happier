@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { act } from 'react-test-renderer';
+
 import { renderHook } from '@/dev/testkit';
 
 type Page = Readonly<{ mediaCount: number; hasMore: boolean; status?: string }>;
@@ -8,6 +10,7 @@ const state = vi.hoisted(() => ({
     messages: [] as unknown[],
     pages: [] as Array<Readonly<{ mediaCount: number; hasMore: boolean; status?: string }>>,
     nextSeq: 1,
+    isLoaded: true,
     loadOlderMessages: vi.fn(),
 }));
 
@@ -35,7 +38,7 @@ vi.mock('@/sync/sync', () => ({
     sync: { loadOlderMessages: (...args: unknown[]) => state.loadOlderMessages(...args) },
 }));
 vi.mock('@/sync/store/hooks', () => ({
-    useSessionMessages: () => ({ messages: state.messages, isLoaded: true }),
+    useSessionMessages: () => ({ messages: state.messages, isLoaded: state.isLoaded }),
 }));
 
 describe('useSessionMediaItems', () => {
@@ -43,6 +46,7 @@ describe('useSessionMediaItems', () => {
         state.messages = [];
         state.pages = [];
         state.nextSeq = 1;
+        state.isLoaded = true;
         state.loadOlderMessages.mockReset();
         state.loadOlderMessages.mockImplementation(async () => {
             const page: Page = state.pages.shift() ?? { mediaCount: 0, hasMore: false, status: 'no_more' };
@@ -90,5 +94,34 @@ describe('useSessionMediaItems', () => {
         await renderHook(() => useSessionMediaItems('s1', false, 8));
 
         expect(state.loadOlderMessages).not.toHaveBeenCalled();
+    });
+
+    it('does not page before the transcript has loaded, then starts once it has', async () => {
+        state.isLoaded = false;
+        state.pages = [{ mediaCount: 1, hasMore: false }];
+        const { useSessionMediaItems } = await import('./useSessionMediaItems');
+        const hook = await renderHook(() => useSessionMediaItems('s1', true, 8));
+        expect(state.loadOlderMessages).not.toHaveBeenCalled();
+
+        state.isLoaded = true;
+        await hook.rerender();
+
+        expect(state.loadOlderMessages).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a not-ready or zero-progress page as a stall, not as the end of history, and resumes on retry', async () => {
+        state.pages = [{ mediaCount: 0, hasMore: true, status: 'not_ready' }];
+        const { useSessionMediaItems } = await import('./useSessionMediaItems');
+        const hook = await renderHook(() => useSessionMediaItems('s1', true, 8));
+
+        expect(state.loadOlderMessages).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().historyExhausted).toBe(false);
+        expect(hook.getCurrent().historyStalled).toBe(true);
+        expect(hook.getCurrent().isLoadingHistory).toBe(false);
+
+        state.pages = [{ mediaCount: 0, hasMore: true }];
+        await act(async () => { hook.getCurrent().retry(); });
+        expect(state.loadOlderMessages).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().historyStalled).toBe(true);
     });
 });

@@ -254,6 +254,33 @@ describe('SessionRepositoryTreeBrowserView', () => {
         expect(onViewRequestHandled).toHaveBeenCalledTimes(1);
     });
 
+    it('shows the revealed file in the tree even when Session media is selected', async () => {
+        const { screen, SessionRepositoryTreeBrowserView, onOpenFile } = await renderRepositoryTreeBrowserView({
+            viewRequest: { view: 'session' },
+            onViewRequestHandled: vi.fn(),
+        });
+        expect(screen.findByTestId('session-media-grid')).not.toBeNull();
+
+        await act(async () => {
+            await screen.update(
+                <SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={onOpenFile} revealRequest={{ path: 'src/a.ts' }} />,
+            );
+        });
+
+        expect(screen.findByTestId('repository-tree-list')).not.toBeNull();
+        expect(screen.findByTestId('session-media-grid')).toBeNull();
+    });
+
+    it('does no Session media work while its tab is not presented', async () => {
+        const { screen } = await renderRepositoryTreeBrowserView({
+            viewRequest: { view: 'session' },
+            onViewRequestHandled: vi.fn(),
+            active: false,
+        });
+
+        expect(screen.findByTestId('session-media-grid')).toBeNull();
+    });
+
     it('keeps the repository tree list stable when only scroll edge visibility changes', async () => {
         await renderRepositoryTreeBrowserView();
         const initialProps = repositoryTreeListProps.at(-1);

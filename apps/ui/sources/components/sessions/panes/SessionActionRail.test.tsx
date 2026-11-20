@@ -8,7 +8,7 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const state = vi.hoisted(() => ({ openTarget: vi.fn() }));
+const state = vi.hoisted(() => ({ openTarget: vi.fn(), closeDetails: vi.fn(), hiddenByDetails: false }));
 
 installReactNativeWebMock();
 installUnistylesMock();
@@ -19,12 +19,12 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         scopeState: { right: { isOpen: false, activeTabId: null }, details: { isOpen: false } },
-        openRight: vi.fn(), closeRight: vi.fn(), closeDetails: vi.fn(), openDetailsTab: vi.fn(),
+        openRight: vi.fn(), closeRight: vi.fn(), closeDetails: state.closeDetails, openDetailsTab: vi.fn(),
     }),
 }));
 vi.mock('@/components/appShell/panes/PaneActionRailContext', () => ({
     PANE_ACTION_RAIL_WIDTH: 48,
-    usePaneActionRailRightPaneHiddenByDetails: () => false,
+    usePaneActionRailRightPaneHiddenByDetails: () => state.hiddenByDetails,
 }));
 vi.mock('@/components/sessions/terminal/useSessionTerminalAction', () => ({
     useSessionTerminalAction: () => ({ available: false, active: false, onPress: vi.fn() }),
@@ -38,7 +38,11 @@ vi.mock('./SessionGitActionRailBadge', () => ({
 vi.mock('./open/useOpenSessionTarget', () => ({ useOpenSessionTarget: () => state.openTarget }));
 
 describe('SessionActionRail', () => {
-    beforeEach(() => state.openTarget.mockClear());
+    beforeEach(() => {
+        state.openTarget.mockClear();
+        state.closeDetails.mockClear();
+        state.hiddenByDetails = false;
+    });
 
     it('puts a Session media button right after Files that opens the file browser on the Session view', async () => {
         const { SessionActionRail } = await import('./SessionActionRail');
@@ -51,6 +55,17 @@ describe('SessionActionRail', () => {
 
         invokeTestInstanceHandler(screen.findByTestId('session-action-rail:media'), 'onPress');
 
+        expect(state.openTarget).toHaveBeenCalledWith({ kind: 'fileBrowser', view: 'session' });
+    });
+
+    it('reveals the right pane first when open details are hiding it', async () => {
+        state.hiddenByDetails = true;
+        const { SessionActionRail } = await import('./SessionActionRail');
+        const screen = await renderScreen(<SessionActionRail sessionId="s1" scopeId="session:s1" />);
+
+        invokeTestInstanceHandler(screen.findByTestId('session-action-rail:media'), 'onPress');
+
+        expect(state.closeDetails).toHaveBeenCalledTimes(1);
         expect(state.openTarget).toHaveBeenCalledWith({ kind: 'fileBrowser', view: 'session' });
     });
 });

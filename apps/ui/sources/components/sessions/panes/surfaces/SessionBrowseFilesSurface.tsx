@@ -9,6 +9,8 @@ export const SessionBrowseFilesSurface = React.memo((props: Readonly<{
     scopeId?: string;
     onOpenFile: (fullPath: string) => void;
     onOpenFilePinned: (fullPath: string) => void;
+    /** Whether the host is presenting Files; a retained, hidden tab passes false. */
+    active?: boolean;
 }>) => {
     const pane = useAppPaneScope(props.scopeId ?? resolveSessionPaneScopeId(props.sessionId));
     const files = pane.scopeState?.right.tabState.files as {
@@ -29,6 +31,7 @@ export const SessionBrowseFilesSurface = React.memo((props: Readonly<{
         onOpenFilePinned={props.onOpenFilePinned}
         revealRequest={files?.revealRequest}
         viewRequest={files?.viewRequest}
+        active={props.active}
         onViewRequestHandled={clearViewRequest}
         density="panel"
     />

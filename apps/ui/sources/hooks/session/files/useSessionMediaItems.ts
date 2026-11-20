@@ -17,6 +17,10 @@ const IN_FLIGHT_RETRY_MS = 250;
  * canonical `sync.loadOlderMessages` — but only until `limit` media items are available
  * (`null` = the whole history), so a long session is not pulled in until the user asks for it.
  * The subscription, the paging and the scan only exist while `enabled`, so the closed tab costs nothing.
+ *
+ * History counts as exhausted only when the loader confirms it. A page that is not ready or makes no
+ * progress (the loader reports a failed request as `loaded: 0`) stops the automatic paging as a
+ * stall instead of retrying in a loop; `retry` resumes it.
  */
 export function useSessionMediaItems(sessionId: string, enabled: boolean, limit: number | null): Readonly<{
     items: readonly SessionMediaGalleryItem[];
@@ -25,9 +29,13 @@ export function useSessionMediaItems(sessionId: string, enabled: boolean, limit:
     isLoadingHistory: boolean;
     /** There is no older history left to fetch. */
     historyExhausted: boolean;
+    /** Paging stopped without confirming the end of history; `retry` tries again. */
+    historyStalled: boolean;
+    retry: () => void;
 }> {
     const { messages, isLoaded } = useSessionMessages(sessionId, { enabled });
     const [exhaustedFor, setExhaustedFor] = React.useState<string | null>(null);
+    const [stalledFor, setStalledFor] = React.useState<string | null>(null);
     // Bumped after each page so the paging effect re-evaluates against the newly collected count.
     const [pageTick, setPageTick] = React.useState(0);
 
@@ -36,7 +44,9 @@ export function useSessionMediaItems(sessionId: string, enabled: boolean, limit:
         [enabled, messages],
     );
     const historyExhausted = exhaustedFor === sessionId;
-    const needsMore = enabled && !historyExhausted && (limit === null || items.length < limit);
+    const historyStalled = stalledFor === sessionId;
+    const needsMore = enabled && isLoaded && !historyExhausted && !historyStalled
+        && (limit === null || items.length < limit);
 
     React.useEffect(() => {
         if (!needsMore) return;
@@ -50,12 +60,16 @@ export function useSessionMediaItems(sessionId: string, enabled: boolean, limit:
                 retryTimer = setTimeout(() => { void loadPage(); }, IN_FLIGHT_RETRY_MS);
                 return;
             }
-            if (result?.status === 'loaded' && result.hasMore) {
+            if (result?.status === 'no_more' || (result?.status === 'loaded' && !result.hasMore)) {
+                setExhaustedFor(sessionId);
+                return;
+            }
+            if (result?.status === 'loaded' && result.loaded > 0) {
                 setPageTick((tick) => tick + 1);
                 return;
             }
-            // no_more, not_ready or a failed load: show what the transcript holds.
-            setExhaustedFor(sessionId);
+            // not_ready, a failed request, or a page that added nothing: do not loop on it.
+            setStalledFor(sessionId);
         };
         void loadPage();
 
@@ -65,5 +79,7 @@ export function useSessionMediaItems(sessionId: string, enabled: boolean, limit:
         };
     }, [needsMore, sessionId, pageTick]);
 
-    return { items, isLoaded, isLoadingHistory: needsMore, historyExhausted };
+    const retry = React.useCallback(() => setStalledFor(null), []);
+
+    return { items, isLoaded, isLoadingHistory: needsMore, historyExhausted, historyStalled, retry };
 }

@@ -15,34 +15,69 @@ export type SessionMediaGalleryItem = Readonly<{
     createdAt: number;
 }>;
 
+// A message's media never changes while its object is the same, so each message is parsed once and
+// each gallery record is reused for as long as its message is: a new arrival only costs its own parse.
+const mediaByMessage = new WeakMap<Message, readonly SessionMediaInlineImageSummary[]>();
+const itemByMedia = new WeakMap<SessionMediaInlineImageSummary, SessionMediaGalleryItem>();
+
+function readMessageMedia(message: Message): readonly SessionMediaInlineImageSummary[] {
+    let media = mediaByMessage.get(message);
+    if (!media) {
+        media = parseSessionMediaMessageMeta(message.meta).inlineImages;
+        mediaByMessage.set(message, media);
+    }
+    return media;
+}
+
+function readGalleryItem(media: SessionMediaInlineImageSummary, owner: Message): SessionMediaGalleryItem {
+    const seq = typeof owner.seq === 'number' ? owner.seq : null;
+    const cached = itemByMedia.get(media);
+    if (cached && cached.messageId === owner.id && cached.seq === seq && cached.createdAt === owner.createdAt) {
+        return cached;
+    }
+    const item: SessionMediaGalleryItem = {
+        key: `${media.sha256 ?? ''}:${media.path}`,
+        media,
+        messageId: owner.id,
+        seq,
+        createdAt: owner.createdAt,
+    };
+    itemByMedia.set(media, item);
+    return item;
+}
+
+// One file reference, with or without a checksum, is one tile; different checksums at one path
+// (a regenerated file) stay separate.
+function isSameFile(a: SessionMediaInlineImageSummary, b: SessionMediaInlineImageSummary): boolean {
+    return a.path === b.path && (!a.sha256 || !b.sha256 || a.sha256 === b.sha256);
+}
+
 /**
  * Session-wide media listing: the same per-message parse the transcript uses
  * (`parseSessionMediaMessageMeta`), gathered across the session, newest first.
  * Tool-call results carry their media on the tool-call message or its children.
  */
 export function collectSessionMediaItems(messages: readonly Message[]): readonly SessionMediaGalleryItem[] {
-    const byKey = new Map<string, SessionMediaGalleryItem>();
+    const itemsByPath = new Map<string, SessionMediaGalleryItem[]>();
+    const oldestFirstItems: SessionMediaGalleryItem[] = [];
 
     const visit = (message: Message, owner: Message) => {
-        for (const media of parseSessionMediaMessageMeta(message.meta).inlineImages) {
-            const key = `${media.sha256 ?? ''}:${media.path}`;
-            if (byKey.has(key)) continue;
-            byKey.set(key, {
-                key,
-                media,
-                messageId: owner.id,
-                seq: typeof owner.seq === 'number' ? owner.seq : null,
-                createdAt: owner.createdAt,
-            });
+        for (const media of readMessageMedia(message)) {
+            const sameFile = itemsByPath.get(media.path);
+            if (sameFile?.some((existing) => isSameFile(existing.media, media))) continue;
+            const item = readGalleryItem(media, owner);
+            if (sameFile) sameFile.push(item); else itemsByPath.set(media.path, [item]);
+            oldestFirstItems.push(item);
         }
         if (message.kind === 'tool-call') {
             for (const child of message.children) visit(child, owner);
         }
     };
 
-    // Oldest first so the first sighting of a file is its originating message.
-    const oldestFirst = [...messages].sort((a, b) => a.createdAt - b.createdAt);
+    // The transcript is already oldest first; only sort when it is not.
+    const isOrdered = messages.every((message, index) => index === 0 || messages[index - 1]!.createdAt <= message.createdAt);
+    const oldestFirst = isOrdered ? messages : [...messages].sort((a, b) => a.createdAt - b.createdAt);
     for (const message of oldestFirst) visit(message, message);
 
-    return [...byKey.values()].sort((a, b) => b.createdAt - a.createdAt);
+    return oldestFirstItems.reverse();
 }

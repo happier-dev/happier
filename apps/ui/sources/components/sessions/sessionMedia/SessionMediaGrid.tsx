@@ -11,6 +11,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { AttachmentImagePreviewModal } from '@/components/sessions/attachments/preview/AttachmentImagePreviewModal';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { useSessionMediaItems } from '@/hooks/session/files/useSessionMediaItems';
 import type { SessionMediaGalleryItem } from '@/sync/domains/sessionMedia/collectSessionMediaItems';
 
@@ -20,12 +21,15 @@ import { resolveSessionMediaImageMimeType, toSessionMediaPreviewImage } from './
 const PAGE_SIZE = 8;
 const MIN_CELL_WIDTH = 150;
 const CELL_HEIGHT = 200;
+const CELL_HORIZONTAL_PADDING = 6;
+// Cell height less its padding, gap and the jump row, so a thumbnail never covers the jump button.
+const THUMBNAIL_MAX_HEIGHT = 140;
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: { flex: 1 },
     cell: {
         height: CELL_HEIGHT,
-        paddingHorizontal: 6,
+        paddingHorizontal: CELL_HORIZONTAL_PADDING,
         paddingVertical: 6,
         gap: 6,
         alignItems: 'center',
@@ -105,17 +109,28 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
     const styles = stylesheet;
     // Start small: older history is only paged in as far as the shown count needs, and fully on "Show all".
     const [limit, setLimit] = React.useState<number | null>(PAGE_SIZE);
-    const { items, isLoaded, isLoadingHistory, historyExhausted } = useSessionMediaItems(props.sessionId, true, limit);
+    const { items, isLoaded, isLoadingHistory, historyExhausted, retry } = useSessionMediaItems(props.sessionId, true, limit);
     const visibleItems = React.useMemo(() => (limit === null ? items : items.slice(0, limit)), [items, limit]);
     const hasMore = !historyExhausted || items.length > visibleItems.length;
     // Unsure (rather than known) that more exists: everything loaded is shown and history is not exhausted.
     const showUnknownTile = !historyExhausted && visibleItems.length === items.length;
     const showMore = React.useCallback(() => {
         setLimit((current) => (current === null ? null : current + PAGE_SIZE));
-    }, []);
+        retry();
+    }, [retry]);
+    const showAll = React.useCallback(() => {
+        setLimit(null);
+        retry();
+    }, [retry]);
     const navigateToSession = useNavigateToSession();
+    const cockpit = useSessionCockpitSurfaceNavigation();
     const [width, setWidth] = React.useState(0);
     const columns = Math.max(2, Math.floor(width / MIN_CELL_WIDTH));
+    // A thumbnail must fit inside its cell; the transcript's wider default would spill into the next one.
+    const maxThumbnailSize = React.useMemo(
+        () => ({ width: Math.max(1, Math.floor(width / columns) - CELL_HORIZONTAL_PADDING * 2), height: THUMBNAIL_MAX_HEIGHT }),
+        [width, columns],
+    );
 
     const { entries, previewImages } = React.useMemo(() => {
         const result: GridEntry[] = [];
@@ -167,6 +182,7 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
                             onOpenPreview={openPreview}
                             imageTestIDPrefix="session-media-grid-image"
                             previewTestIDPrefix="session-media-grid-image-preview"
+                            maxThumbnailSize={maxThumbnailSize}
                         />
                     ) : (
                         <Pressable
@@ -186,7 +202,11 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
                         testID={`session-media-grid-jump:${messageId}`}
                         accessibilityRole="button"
                         accessibilityLabel={t('files.sessionMedia.jumpToMessage')}
-                        onPress={() => { void navigateToSession(props.sessionId, { query: { jumpSeq: seq } }); }}
+                        onPress={() => {
+                            // On the mobile cockpit the route alone keeps Files on screen; reveal chat first.
+                            cockpit?.switchSurface('chat');
+                            void navigateToSession(props.sessionId, { query: { jumpSeq: seq } });
+                        }}
                         style={styles.jump}
                     >
                         <Icon name="chats-circle" size={14} color={theme.colors.text.link} />
@@ -197,7 +217,7 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
                 ) : null}
             </View>
         );
-    }, [navigateToSession, openPreview, props.onOpenFile, props.sessionId, showMore, styles, theme.colors.text.link, theme.colors.text.primary, theme.colors.text.secondary]);
+    }, [cockpit, maxThumbnailSize, navigateToSession, openPreview, props.onOpenFile, props.sessionId, showMore, styles, theme.colors.text.link, theme.colors.text.primary, theme.colors.text.secondary]);
 
     if (isLoaded && !isLoadingHistory && visibleItems.length === 0) {
         return (
@@ -240,7 +260,7 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
                             <Pressable
                                 testID="session-media-grid-show-all"
                                 accessibilityRole="button"
-                                onPress={() => setLimit(null)}
+                                onPress={showAll}
                                 style={styles.footerButton}
                             >
                                 <Text style={[styles.caption, { color: theme.colors.text.link }]}>{t('files.sessionMedia.showAll')}</Text>

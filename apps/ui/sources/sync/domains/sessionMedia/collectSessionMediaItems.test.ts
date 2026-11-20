@@ -4,7 +4,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { collectSessionMediaItems } from './collectSessionMediaItems';
 
-function mediaMeta(path: string, role: 'input' | 'output' = 'output'): unknown {
+function mediaMeta(path: string, role: 'input' | 'output' = 'output', sha: string | null | undefined = undefined): unknown {
     return {
         happier: {
             kind: 'session_media.v1',
@@ -18,7 +18,7 @@ function mediaMeta(path: string, role: 'input' | 'output' = 'output'): unknown {
                     path,
                     mimeType: 'image/png',
                     sizeBytes: 10,
-                    sha256: Buffer.from(path).toString('hex').padEnd(64, '0').slice(0, 64),
+                    ...(sha === null ? {} : { sha256: sha ?? Buffer.from(path).toString('hex').padEnd(64, '0').slice(0, 64) }),
                     origin: { source: role === 'input' ? 'user-upload' : 'provider-generated' },
                 }],
             },
@@ -64,5 +64,28 @@ describe('collectSessionMediaItems', () => {
 
         expect(items).toHaveLength(1);
         expect(items[0]).toMatchObject({ messageId: 'm1', seq: 1 });
+    });
+
+    it('shows one tile when the same file is referenced with and without a checksum, but two for different checksums', async () => {
+        const path = '.happier/uploads/a.png';
+        const sameFile = collectSessionMediaItems([
+            agentMessage('m1', 1, mediaMeta(path, 'input', 'a'.repeat(64))),
+            agentMessage('m2', 2, mediaMeta(path, 'output', null)),
+        ]);
+        expect(sameFile).toHaveLength(1);
+
+        const regenerated = collectSessionMediaItems([
+            agentMessage('m1', 1, mediaMeta(path, 'output', 'a'.repeat(64))),
+            agentMessage('m2', 2, mediaMeta(path, 'output', 'b'.repeat(64))),
+        ]);
+        expect(regenerated).toHaveLength(2);
+    });
+
+    it('reuses the records of unchanged messages when a new message arrives', () => {
+        const first = agentMessage('m1', 1, mediaMeta('.happier/uploads/a.png'));
+        const before = collectSessionMediaItems([first]);
+        const after = collectSessionMediaItems([first, agentMessage('m2', 2)]);
+
+        expect(after[0]).toBe(before[0]);
     });
 });

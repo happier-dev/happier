@@ -156,6 +156,7 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => {
                                 sessionId={props.sessionId}
                                 onOpenFile={openFileInDetails}
                                 onOpenFilePinned={openFileInDetailsPinned}
+                                active={activeTab === 'files'}
                             />
                         </React.Suspense>
                     </RightTabSurface>

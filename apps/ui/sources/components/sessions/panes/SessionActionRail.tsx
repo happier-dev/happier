@@ -109,7 +109,11 @@ export const SessionActionRail = React.memo((props: Readonly<{
                     {/* Opens Files directly on its Session media tab; the Files button above keeps its own toggle. */}
                     {tab.id === 'files' ? renderAction({
                         id: 'media', label: t('files.sessionMedia.title'), icon: 'image',
-                        active: false, onPress: () => { openSessionTarget({ kind: 'fileBrowser', view: 'session' }); },
+                        active: false, onPress: () => {
+                            // Same as the Files button: open details hide the right pane, so close them first.
+                            if (rightPaneHiddenByDetails) pane.closeDetails();
+                            openSessionTarget({ kind: 'fileBrowser', view: 'session' });
+                        },
                     }) : null}
                 </React.Fragment>
             ))}

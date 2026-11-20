@@ -58,6 +58,11 @@ export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     /** One-shot request to switch to a tab; applied once, then reported through `onViewRequestHandled`. */
     viewRequest?: Readonly<{ view: 'session' }>;
     onViewRequestHandled?: () => void;
+    /**
+     * Whether the host is presenting this browser. A retained-but-hidden Files tab sets this to false
+     * so the Session media tab does no paging, subscription or scan until it is shown again.
+     */
+    active?: boolean;
 }>;
 
 type ToolbarActionId =
@@ -293,6 +298,8 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         if (!isSafeWorkspaceRelativePath(path)) return;
         setSearchQuery('');
         setShowChangedOnly(false);
+        // Only the tree consumes a reveal, so leave Session media for it.
+        setVisibilityMode((mode) => (mode === 'session' ? 'all' : mode));
         revealPath(path, { focus: true });
         const expandedPaths = computeExpandedPathsForReveal({
             expandedPaths: storage.getState().getSessionRepositoryTreeExpandedPaths(props.sessionId),
@@ -724,10 +731,12 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                     scrollEventThrottle={16}
                 />
             ) : visibilityMode === 'session' ? (
-                <SessionMediaGrid
-                    sessionId={props.sessionId}
-                    onOpenFile={handleRepositoryFileOpen}
-                />
+                props.active === false ? null : (
+                    <SessionMediaGrid
+                        sessionId={props.sessionId}
+                        onOpenFile={handleRepositoryFileOpen}
+                    />
+                )
             ) : (
                 <RepositoryTreeList
                     theme={repositoryTreeTheme}
@@ -764,6 +773,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     ), [
         activeSearchResultsTheme,
         visibilityMode,
+        props.active,
         revealedPaths,
         latestRequest,
         setGitIgnoreAvailable,

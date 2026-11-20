@@ -25,6 +25,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 const FALLBACK_THUMBNAIL_SIZE = 84;
 const MAX_THUMBNAIL_WIDTH = 220;
 const MAX_THUMBNAIL_HEIGHT = 160;
+const DEFAULT_MAX_THUMBNAIL: ImageDimensions = { width: MAX_THUMBNAIL_WIDTH, height: MAX_THUMBNAIL_HEIGHT };
 const fallbackSessionMediaMappingHelper: FlashListCompat.FlashListMappingHelper = {
     getMappingKey: (itemKey: FlashListCompat.FlashListMappingKey) => itemKey,
 };
@@ -79,7 +80,7 @@ function resolveImageDimensions(value: Readonly<{ width?: number; height?: numbe
     return width && height ? { width, height } : null;
 }
 
-function resolveThumbnailSize(dimensions: ImageDimensions | null): ImageDimensions {
+function resolveThumbnailSize(dimensions: ImageDimensions | null, max: ImageDimensions = DEFAULT_MAX_THUMBNAIL): ImageDimensions {
     if (!dimensions) {
         return {
             width: FALLBACK_THUMBNAIL_SIZE,
@@ -88,8 +89,8 @@ function resolveThumbnailSize(dimensions: ImageDimensions | null): ImageDimensio
     }
 
     const scale = Math.min(
-        MAX_THUMBNAIL_WIDTH / dimensions.width,
-        MAX_THUMBNAIL_HEIGHT / dimensions.height,
+        max.width / dimensions.width,
+        max.height / dimensions.height,
     );
     return {
         width: Math.max(1, Math.round(dimensions.width * scale)),
@@ -118,12 +119,14 @@ export function SessionMediaInlineImagePreviewTile(props: Readonly<{
     onOpenPreview: (index: number) => void;
     imageTestIDPrefix: string;
     previewTestIDPrefix: string;
+    /** Largest thumbnail to draw; the transcript default unless a host (the grid) has a smaller cell. */
+    maxThumbnailSize?: Readonly<{ width: number; height: number }>;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const metadataDimensions = resolveImageDimensions(props.media);
     const [loadedDimensions, setLoadedDimensions] = React.useState<ImageDimensions | null>(null);
-    const thumbnailSize = resolveThumbnailSize(metadataDimensions ?? loadedDimensions);
+    const thumbnailSize = resolveThumbnailSize(metadataDimensions ?? loadedDimensions, props.maxThumbnailSize);
 
     React.useEffect(() => {
         setLoadedDimensions(null);
