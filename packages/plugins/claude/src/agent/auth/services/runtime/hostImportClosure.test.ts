@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = fileURLToPath(new URL('../../../../../../../../', import.meta.url));
 
 const claudeHostBackendTree = 'apps/cli/src/backends/claude';
+const TEST_SOURCE_SUFFIXES = ['.test.ts', '.spec.ts', '.test-support.ts', '.testkit.ts'];
 
 describe('Claude runtime auth host import closure', () => {
   it('does not keep a legacy Claude host backend tree', () => {
@@ -25,7 +26,7 @@ describe('Claude runtime auth host import closure', () => {
           visit(fullPath);
           continue;
         }
-        if (entry.endsWith('.ts')) files.push(fullPath);
+        if (entry.endsWith('.ts') && !TEST_SOURCE_SUFFIXES.some(suffix => entry.endsWith(suffix))) files.push(fullPath);
       }
     };
     visit(srcRoot);
@@ -40,6 +41,8 @@ describe('Claude runtime auth host import closure', () => {
           && !specifier.startsWith('@happier-dev/plugin-sdk')
           && !specifier.startsWith('@happier-dev/agents')
           && !specifier.startsWith('@happier-dev/protocol')
+          // Claude declares Kimi as a dependency and consumes its published Connected Account service.
+          && specifier !== '@happier-dev/plugins-kimi/connected-account-service'
       ).map((specifier) => `${relative(srcRoot, filePath)} -> ${specifier}`);
     });
 

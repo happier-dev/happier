@@ -19,6 +19,24 @@ const ALLOWED_RELATIVE_IMPORT_EXTENSIONS = new Set([
 const DISALLOWED_FIRST_PARTY_RUNTIME_IMPORT_PREFIXES = [
   ['@happier-dev', 'protocol'].join('/'),
 ] as const;
+const CLAUDE_PROTOCOL_POLICY_ENTRYPOINTS = new Set([
+  '@happier-dev/protocol/agents/claude/connected-account-materialization',
+  '@happier-dev/protocol/agents/claude/settings-policy',
+  '@happier-dev/protocol/providers/claude/oauth-profile',
+]);
+
+function isCanonicalClaudeProtocolPolicyImport(node: ts.ImportDeclaration): boolean {
+  if (!ts.isStringLiteral(node.moduleSpecifier)) return false;
+  const specifier = node.moduleSpecifier.text;
+  if (CLAUDE_PROTOCOL_POLICY_ENTRYPOINTS.has(specifier)) return true;
+  // This exported compatibility reader is shared with the predecessor writer.
+  const clause = node.importClause;
+  const bindings = clause?.namedBindings;
+  return specifier === '@happier-dev/protocol/agents/claude/predecessor-message-meta'
+    && clause?.name === undefined && bindings !== undefined && ts.isNamedImports(bindings)
+    && bindings.elements.length === 1
+    && (bindings.elements[0]?.propertyName ?? bindings.elements[0]?.name)?.text === 'readClaudeSettingSourcesV2';
+}
 
 function isDisallowedFirstPartyRuntimeImport(specifier: string): boolean {
   return DISALLOWED_FIRST_PARTY_RUNTIME_IMPORT_PREFIXES.some(
@@ -117,7 +135,7 @@ describe('Claude plugin ESM imports', () => {
     expect(violations).toEqual([]);
   });
 
-  it('keeps production source on public package boundaries instead of the Protocol implementation package', () => {
+  it('limits production Protocol imports to canonical Claude policy and compatibility entrypoints', () => {
     const violations = listProductionTypeScriptFiles(SOURCE_ROOT).flatMap((path) => {
       const sourceText = readFileSync(path, 'utf8');
       const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
@@ -129,6 +147,7 @@ describe('Claude plugin ESM imports', () => {
           && node.moduleSpecifier
           && ts.isStringLiteral(node.moduleSpecifier)
           && isDisallowedFirstPartyRuntimeImport(node.moduleSpecifier.text)
+          && !isCanonicalClaudeProtocolPolicyImport(node)
           && !isCanonicalExternalSessionTranscriptWireTypeImport(node)
           && !isCanonicalBuildTimePredecessorBridgeImport(path, sourceFile, node)
         ) {
