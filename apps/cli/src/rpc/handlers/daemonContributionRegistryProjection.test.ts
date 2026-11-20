@@ -369,6 +369,7 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
     pluginOnly?: boolean;
     useOnly?: boolean;
     acceptsTeamResource?: boolean;
+    eventSource?: boolean;
 }> = {}) {
     const primaryAccess = {
         id: 'select-account',
@@ -388,7 +389,13 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
             operations: ['select' as const],
         },
     };
-    const manifest = readCanonicalPluginManifest(createPluginManifestV2Fixture({
+    const credentialSchema = input.acceptsTeamResource
+        ? connectedAccountActionFormSelectionV1JsonSchema()
+        : QualifiedConnectedAccountRefJsonSchema;
+    const credentialMapping = { path: 'credentialRef', purpose: primaryAccess.id };
+    const sourceConfigSchema = { type: 'object' as const, properties: { credentialRef: credentialSchema },
+        required: ['credentialRef'], additionalProperties: false };
+    return normalizePluginManifestV2(createPluginManifestV2Fixture({
         id: 'acme.action-form',
         hostAccess: {
             required: input.optional ? [] : [primaryAccess, ...(input.secondSelect ? [secondAccess] : [])],
@@ -412,25 +419,14 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
                 id: 'run',
                 title: 'Run',
                 scopes: ['global'],
-                surfaces: input.pluginOnly ? ['plugin'] : ['ui'],
+                surfaces: input.pluginOnly ? ['plugin'] : input.eventSource ? ['ui', 'plugin'] : ['ui'],
                 ...(input.pluginOnly ? {} : { placementBindings: ['commandPalette'] as const }),
                 dangerLevel: 'safe',
                 execution: { target: 'daemon' },
                 hostAccess: [primaryAccess.id, ...(input.secondSelect ? [secondAccess.id] : [])],
-                connectedAccountPurposeBindings: [{
-                    path: 'credentialRef',
-                    purpose: primaryAccess.id,
-                }],
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        credentialRef: input.acceptsTeamResource
-                            ? connectedAccountActionFormSelectionV1JsonSchema()
-                            : QualifiedConnectedAccountRefJsonSchema,
-                    },
-                    required: ['credentialRef'],
-                    additionalProperties: false,
-                },
+                connectedAccountPurposeBindings: [credentialMapping],
+                inputSchema: sourceConfigSchema,
+                ...(input.eventSource ? { resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema) } : {}),
                 inputHints: {
                     fields: [{
                         path: 'credentialRef',
@@ -439,11 +435,30 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
                         connectedAccountOptions: true,
                     }],
                 },
-            }],
+            }, ...(input.eventSource ? [{
+                id: 'resume-watch',
+                title: 'Resume watching',
+                scopes: ['global'],
+                surfaces: ['plugin'],
+                dangerLevel: 'writesLocal',
+                execution: { target: 'daemon' },
+                inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+                resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+            }] : [])],
+            ...(input.eventSource ? { events: [{
+                id: 'watch', kind: 'event', title: 'Watch changes',
+                payloadSchema: { type: 'object', additionalProperties: false },
+                automation: {
+                    v: 1, eligible: true, source: {
+                        sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+                        sourceConfigSchema, setupActionRef: { pluginId: 'acme.action-form', localId: 'run' },
+                        historyGapResetActionRef: { pluginId: 'acme.action-form', localId: 'resume-watch' },
+                        connectedAccountPurposeBindings: [credentialMapping],
+                    },
+                },
+            }] } : {}),
         },
     }));
-    if (!manifest) throw new Error('Expected Connected Account Action-form manifest fixture');
-    return manifest;
 }
 
 function createActionFormRegistry(manifest: ReturnType<typeof createActionFormConnectedAccountManifest>) {
@@ -457,9 +472,11 @@ function createActionFormRegistry(manifest: ReturnType<typeof createActionFormCo
         manifest,
     }] });
     return createResolvedContributionRegistry({
+        occurrenceIdsByPluginId: { [manifest.id]: ACTION_FORM_OCCURRENCE_ID },
         actions: normalized.actions.map((action): ResolvedActionContribution => ({
             ...action, provenance: 'external', source: { kind: 'path' },
         })),
+        events: normalized.events.map(event => ({ ...event, provenance: 'external', source: { kind: 'path' } })),
         activationTargets: [{
             provenance: 'external',
             source: { kind: 'path' },
@@ -530,10 +547,7 @@ async function registerActionFormOptionsHandler(input: Readonly<{
     const { handlers, registrar } = createRegistrar();
     projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar, {
         resolveRuntimeRegistry: async () => createRuntimeRegistry(
-            {
-                ...createActionFormRegistry(input.manifest),
-                occurrenceIdsByPluginId: { 'acme.action-form': ACTION_FORM_OCCURRENCE_ID },
-            },
+            createActionFormRegistry(input.manifest),
             {
                 generation: input.runtimeGeneration ?? 7,
                 targetActionInvocations: input.targetActionInvocations,
@@ -720,7 +734,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         });
     });
 
-    it.each([false, true])('offers a Team Connected Account only when the Action declaration admits it (accepts Team: %s)', async (acceptsTeamResource) => {
+    it.each(['personal only', 'finite Team Action', 'Team Event source'] as const)('offers only usable Connected Accounts for a %s declaration', async (declaration) => {
         const personal = {
             value: { service: { pluginId: 'acme.action-form', localId: 'account' }, accountId: 'account-1' },
             label: 'Personal GitHub',
@@ -729,17 +743,22 @@ describe('daemon contribution registry projection rpc handler', () => {
             value: { teamId: 'team-1', selection: { source: 'team_resource', resourceId: 'resource-1', deliveryMode: 'brokered' } },
             label: 'Shared GitHub',
         } as const;
+        const direct = { value: { teamId: 'team-1', selection: { source: 'team_resource', resourceId: 'resource-2',
+            deliveryMode: 'direct', disclosedMember: personal.value } }, label: 'Direct Team GitHub' } as const;
+        const acceptsTeamResource = declaration !== 'personal only';
+        const eventSource = declaration === 'Team Event source';
         const handler = await registerActionFormOptionsHandler({
-            manifest: createActionFormConnectedAccountManifest({ acceptsTeamResource }),
+            manifest: createActionFormConnectedAccountManifest({ acceptsTeamResource, eventSource }),
             resolveGeneration: async () => 7,
             targetActionInvocations: createActionFormTargetInvocationRuntime(),
-            listActionFormConnectedAccountOptions: async () => [personal, team],
+            listActionFormConnectedAccountOptions: async () => [personal, team, direct],
         });
 
         await expect(handler({
             machineId: 'machine-1', expectedOccurrenceId: ACTION_FORM_OCCURRENCE_ID,
             qualifiedActionId: 'acme.action-form/run', fieldPath: 'credentialRef',
-        })).resolves.toEqual({ ok: true, options: acceptsTeamResource ? [personal, team] : [personal] });
+        })).resolves.toEqual({ ok: true, options: [personal, ...(acceptsTeamResource ? [team] : []),
+            ...(declaration === 'finite Team Action' ? [direct] : [])] });
     });
 
     it('uses the target Action occurrence rather than the aggregate projection generation for Action-form Connected Account options', async () => {

@@ -3432,9 +3432,18 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ? compileField(request.data.fieldPath) : null;
             const nativeField = currentAuthorization.nativeServicePath && options.some(option => 'nativeServicePath' in option)
                 ? compileField(currentAuthorization.nativeServicePath) : null;
+            const eventSourceCredential = lease.registry.contributes.automationEligibleEvents?.some(({ event, setupAction }) =>
+                setupAction.id === request.data.qualifiedActionId
+                && setupAction.occurrenceId === request.data.expectedOccurrenceId
+                && event.automation.source.connectedAccountPurposeBindings?.some(binding =>
+                    binding.purpose === currentAuthorization.purpose.purpose));
             return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
                 ok: true,
                 options: options.filter(option => {
+                    // Retained Event watchers can redeem brokered Team resources.
+                    if (eventSourceCredential && 'selection' in option.value && option.value.selection.deliveryMode === 'direct') {
+                        return false;
+                    }
                     const validate = 'nativeServicePath' in option
                         ? (option.nativeServicePath === currentAuthorization.nativeServicePath ? nativeField : null)
                         : credentialField;
