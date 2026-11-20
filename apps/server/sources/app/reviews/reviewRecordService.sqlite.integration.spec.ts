@@ -7,6 +7,7 @@ import { assertReviewRoundBinding, writeReviewRoundState } from './reviewRecordS
 import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteService';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 
 describe('durable Review lifecycle metadata', () => {
     const accountId = randomUUID();
@@ -24,10 +25,20 @@ describe('durable Review lifecycle metadata', () => {
     it('keeps clean, failed and cancelled rounds queryable independently of findings or runs', async () => {
         const metadata = { projectSourceId: randomUUID(), workflowId: randomUUID(), subjectKind: 'repository' as const,
             sourceKind: 'workflow' as const, currentRoundOrdinal: 1, state: 'running' as const, startedAt: 10, finishedAt: null };
-        expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata }))).toBe(true);
-        await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).resolves.toBeUndefined();
-        expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(true);
-        expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
+        const writes: string[] = [];
+        const restore = observePrismaRequests(db, { before: request => {
+            if (request.model === 'ReviewMetadata' && /^(?:create|update|upsert|delete)/.test(request.action)) writes.push(request.action);
+        } });
+        try {
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata }))).toBe(true);
+            await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).resolves.toBeUndefined();
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(true);
+            expect(writes.length).toBeGreaterThan(0);
+            expect(writes.length).toBeLessThanOrEqual(2);
+            const settledWrites = writes.length;
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
+            expect(writes.length - settledWrites).toBe(0);
+        } finally { restore(); }
         await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata,
             projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct',
             currentRoundOrdinal: 2, startedAt: 30 } }));
