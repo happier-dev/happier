@@ -133,15 +133,15 @@ it('exposes the pending native permission offer and published operands through t
   const session = createSessionFixture({ id: 'pending-session', active: true, encryptionMode: 'plain',
     access: createSessionAccessFixture('owner'),
     agentState: { controlledByUser: false, requests: { 'request-1': { tool: 'native-tool', kind: 'permission',
-      turnId: 'turn-1', arguments: { privateArgument: 'excluded-from-status' }, createdAt: 1, nativeChoices } } } });
+      turnId: 'turn-1', arguments: argumentsFixture, createdAt: 1, nativeChoices } } } });
   homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
   const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id },
     { surface: 'ui', serverId, expectedAccountId: 'alice' });
   expect(result).toMatchObject({ ok: true, result: { pendingRequests: [{ requestId: 'request-1', turnId: 'turn-1',
-    kind: 'permission', tool: 'native-tool', nativeChoices }], agentState: { controlledByUser: false, pendingRequestsCount: 1 } } });
+    kind: 'permission', tool: 'native-tool', arguments: argumentsFixture, nativeChoices }],
+    agentState: { controlledByUser: false, pendingRequestsCount: 1 } } });
   if (result.ok) {
     expect(SessionStatusActionResultV1Schema.parse(result.result)).toEqual(result.result);
-    expect(result.result).not.toHaveProperty('pendingRequests.0.arguments');
   }
 });
 
