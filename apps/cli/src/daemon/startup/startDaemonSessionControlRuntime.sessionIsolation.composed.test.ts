@@ -15,7 +15,8 @@ import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprova
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { ApiMachineClient } from '@/api/apiMachine';
@@ -30,7 +31,7 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { fixture as nativeFixture, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
-import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createCliActionDeps, type SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -63,9 +64,10 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
 }) });
 
     it.each(['supported', 'deferred-clone', 'failed', 'approved-own-account', 'approved-admitted-own-account',
-        'enrolled-on', 'enrolled-off', 'enrolled-unsupported'] as const)(
+        'shared-busy', 'enrolled-on', 'enrolled-off', 'enrolled-unsupported'] as const)(
       'joins primary daemon Session isolation acquisition before Session birth (%s)', async nativeSandbox => {
         const enrolled = nativeSandbox.startsWith('enrolled-');
+        const sharedBusy = nativeSandbox === 'shared-busy';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
@@ -158,10 +160,24 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
                     target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
             }
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path === '/v1/sessions' && sharedBusy) return { status: 409, data: { error: 'session-managed-target-busy' } };
             if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
             if (path.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
             if (path.endsWith('/admit')) {
                 isolationAdmissions.push(body);
+                if (sharedBusy) {
+                    const { requestId } = body as { requestId: string };
+                    const prior = isolationAdmissions.slice(0, -1).some(value => (value as { requestId: string }).requestId === requestId);
+                    const incumbent = isolationAdmissions.length === 1 || prior;
+                    machine = ManagedMachineV1Schema.parse({ ...machine, id: incumbent ? 'incumbent' : 'replacement',
+                        allocation: incumbent ? 'bound' : 'unsubmitted' });
+                    const snapshot = incumbent ? replaceManagedMachinePresetLaunchNameV1({
+                        presetId: preset.id, mode: 'plain', content: content.content, launchName: launch.name,
+                        nativeResult: AcquireResultV1Schema.parse(roleResult('acquire')),
+                    }) : content.content;
+                    expect(snapshot).not.toBeNull();
+                    return { status: 200, data: { machine, presetContent: { content: snapshot, recipients: content.recipients }, replayed: incumbent } };
+                }
                 return { status: 200, data: { machine, presetContent: content, replayed: false } };
             }
             if (path.endsWith('/current')) return { status: 200, data: { machine, current: true } };
@@ -192,7 +208,7 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
         };
         vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(request => nativeRpc(request.method));
         vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(request => nativeRpc(request.method));
-        const launched: unknown[] = [];
+        const launched: Parameters<SessionSpawnDirectTargetTransport['spawnedSession']['spawn']>[0][] = [];
         const isolationChildResults: unknown[] = [];
         const isolationQualifications: boolean[] = [];
         let isolationFailure: unknown;
@@ -259,12 +275,25 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
                         ...(nativeSandbox !== 'enrolled-unsupported' ? { supportsAgentNativeSandbox: true } : {}) },
                 } : { isolationPolicyV1: { agentNativeSandboxEnabled: true,
                     configuredSandboxes: { local: { provisioner: launch.provider, presetId: preset.id } },
-                    workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+                    workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: sharedBusy ? 'shared-kept' : 'fresh' },
                         botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } } }),
                 prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
                 spawnedSession: { spawn: async request => { launched.push(request);
                     // The real Home refuses Session birth until its managed resource is bound.
                     if (!enrolled && machine.allocation !== 'bound') return { type: 'error', errorMessage: 'session-origin-forbidden' };
+                    if (sharedBusy && machine.id === 'incumbent') {
+                        const { postSessionCreationRequest } = await import('@/session/transport/http/sessionCreation');
+                        const { readSessionCreationTerminalSpawnErrorDetail } = await import('@/api/session/sessionCreationTerminalSpawnErrorDetail');
+                        const { buildSessionCreationTerminalSpawnErrorResult } = await import('@/daemon/sessions/onHappySessionWebhook');
+                        try {
+                            await postSessionCreationRequest({ serverUrl, token, body: {} });
+                        } catch (error) {
+                            const detail = readSessionCreationTerminalSpawnErrorDetail(error);
+                            if (detail) return buildSessionCreationTerminalSpawnErrorResult(detail);
+                            throw error;
+                        }
+                        throw new Error('Incumbent guest must refuse a competing birth');
+                    }
                     return { type: 'success', sessionId: 'created',
                     sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
                     resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
@@ -403,6 +432,26 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
                 expect(result).toMatchObject({ ok: true, result: { type: 'success' } });
                 expect(launched).toEqual([expect.objectContaining({ nativeSandbox: nativeSandbox === 'enrolled-off' ? 'off' : 'on' })]);
             }
+            return;
+        }
+        if (sharedBusy) {
+            releaseAcquire();
+            const lost = await start();
+            expect(lost, JSON.stringify({ lost, isolationFailure, isolationChildResults, isolationAdmissions, isolationReports, roles, launched }))
+                .toMatchObject({ ok: false, errorCode: 'spawn_failed',
+                details: { type: 'error', retryable: true, launchError: { code: 'session-managed-target-busy' } } });
+            const retried = await start();
+            expect(retried, JSON.stringify({ retried, isolationFailure, isolationChildResults, isolationAdmissions, isolationReports, roles, launched }))
+                .toMatchObject({ ok: true, result: { type: 'success' } });
+            expect(isolationAdmissions).toMatchObject([
+                { originalActionEnvelope: rootContext.originalActionEnvelope },
+                { originalActionEnvelope: rootContext.originalActionEnvelope },
+            ]);
+            expect(roles.filter(role => role === 'acquire')).toHaveLength(1);
+            expect(launched).toMatchObject([
+                { managedTargetPlacement: { managedId: 'incumbent' }, sessionCreationTag: expect.any(String) },
+                { managedTargetPlacement: { managedId: 'replacement' }, sessionCreationTag: launched[0]?.sessionCreationTag },
+            ]);
             return;
         }
         const pendingResult = start();
