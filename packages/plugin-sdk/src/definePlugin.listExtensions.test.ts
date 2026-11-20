@@ -47,6 +47,7 @@ describe('public list extension authoring', () => {
             ...manifest, contributes: { ...manifest.contributes, ui: { listExtensions } },
         });
         expect(parse([{ id: 'bad', entity: 'session', filterFields: [field] }]).ok).toBe(false);
+        expect(parse([{ id: 'bad', entity: 'plugin:com.acme.invalid-list/reviews', filterFields: [field] }]).ok).toBe(false);
         expect(parse([{ id: 'bad', entity: 'sessionWork', filterFields: [field], render: 'callback' }]).ok).toBe(false);
         const resource = parse([{ id: 'bad', entity: 'sessionWork', filterFields: [{ ...field, source: { resource: 'missing' } }] }]);
         expect(resource).toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_manifest_dangling_reference' }] });

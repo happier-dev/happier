@@ -12769,7 +12769,11 @@ pruning must not erase that evidence.
 The unreleased `ui.listExtensions` manifest family is optional; manifests that
 omit it retain their prior normalized shape. Its descriptor, fields, sources
 and mark references are closed. It uses the existing UI declaration projection
-and adds no persisted host-row data or runtime registration. The 0.2 predecessor
+and adds no persisted host-row data or runtime registration. The manifest
+schema and UI declaration projection accept the five host list entities.
+Strict authoring rejects the unused development `plugin:…` value. The
+tolerant daemon manifest loader skips that contribution and retains supported
+siblings. The 0.2 predecessor
 has no plugin UI projection reader. Earlier 0.3 development strict readers
 reject the new projected entry's field and therefore the describe response;
 they are not a supported mixed-version author contract. This is no additional
