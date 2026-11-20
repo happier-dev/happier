@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountProfileSchema, FeaturesResponseSchema, AutomationSourceSelectorIdV1Schema, AutomationTriggerIdSchema,
-    sealAutomationTriggerDefinitionStoredEnvelopeV1, createActionExecutor, MachineServicesDetailResultV1Schema,
-    type HealthCheckSourceConfigV1 } from '@happier-dev/protocol';
+    sealAutomationTriggerDefinitionStoredEnvelopeV1, createActionExecutor, MachineServicesDetailResultV1Schema } from '@happier-dev/protocol';
+import type { HealthCheckSourceConfigV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
