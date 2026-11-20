@@ -25,8 +25,8 @@ export const WORKFLOW_SESSION_EVENT_KINDS: readonly SessionEventKind[] = Object.
 export type WorkflowTriggerEventOption = Readonly<{
     eventRef: Readonly<{ pluginId: string; localId: string }>;
     title: string;
-    /** The plugin's name: the Event's group in the menu. */
-    pluginName: string;
+    /** The plugin's name, when the catalog supplies one. */
+    pluginName: string | null;
     /** The public Event declaration owns which resource kinds it can observe. */
     automation?: PluginEventAutomationDeclarationV1;
     /** Retain the declaration for Event setup and Insert value authoring. */
@@ -181,13 +181,16 @@ export function buildWorkflowTriggerStartOptions(
         { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
             title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
     ];
-    // Grouped by plugin, by plugin name; a plugin keeps its declaration order.
+    // Named plugins come first; unnamed plugins keep their declaration order without a group heading.
     const plugins = [...new Map(events.map((event) => [event.eventRef.pluginId, event.pluginName])).entries()]
-        .sort(([, left], [, right]) => left.localeCompare(right));
-    for (const [pluginId] of plugins) {
+        .sort(([, left], [, right]) => {
+            if (left === null) return right === null ? 0 : 1;
+            return right === null ? -1 : left.localeCompare(right);
+        });
+    for (const [pluginId, pluginName] of plugins) {
         for (const event of events) {
             if (event.eventRef.pluginId !== pluginId) continue;
-            options.push({ id: eventId(event.eventRef), group: event.pluginName, section: 'plugins', title: event.title, glyph: 'lightning' });
+            options.push({ id: eventId(event.eventRef), group: pluginName ?? '', section: 'plugins', title: event.title, glyph: 'lightning' });
         }
     }
     const currentId = current ? readWorkflowTriggerStartId(current.when) : null;

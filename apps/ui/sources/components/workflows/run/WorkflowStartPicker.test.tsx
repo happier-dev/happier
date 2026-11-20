@@ -42,6 +42,7 @@ import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHa
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import {
   installDisconnectedServerSocketBoundary,
@@ -157,12 +158,24 @@ const plugin = {
   // Daemon discovery decodes authored contributions through this same schema.
   definition: WorkflowDefinitionV1Schema.parse(BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition),
 };
+
+function expectExampleDraft(exampleKey: string) {
+  const route = routing.push.mock.calls.at(-1)?.[0];
+  expect(route).toMatchObject({
+    pathname: '/workflows/new',
+    params: { example: exampleKey, definitionDraftSeedId: expect.any(String) },
+  });
+  expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
+    definition: WORKFLOW_STARTER_EXAMPLES_V1.find(example => example.key === exampleKey)!.definition,
+  });
+}
+
 function installPluginProjection() {
   machineRpc.mockImplementation(
     async (request: { method: string; payload: Record<string, unknown> }) => {
       if (
-        request.method ===
-        RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        || request.method === `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`
       ) {
         return {
           protocolVersion: 1,
@@ -642,10 +655,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     await screen.pressByTestIdAsync(
       'workflow-examples:review-pull-request:use',
     );
-    expect(routing.push).toHaveBeenCalledWith({
-      pathname: '/workflows/new',
-      params: { example: 'review-pull-request' },
-    });
+    expectExampleDraft('review-pull-request');
     expect(writes()).toEqual([]);
     expect(starts()).toEqual([]);
   });
@@ -802,14 +812,14 @@ describe('WorkflowStartPicker plugin workflows', () => {
     await screen.pressByTestIdAsync(
       'workflow-examples:test-after-every-turn:use',
     );
-    const picker = screen.findByType(DropdownMenu);
+    const selectSession = screen.findByType(DropdownMenu).props.onSelect;
     await act(async () => {
       storage.setState({
         profileScope: { ...scope, accountId: 'another-account' },
       });
     });
     await act(async () => {
-      picker.props.onSelect(session.id);
+      selectSession(session.id);
     });
     expect(onUse).not.toHaveBeenCalled();
     expect(routing.push).not.toHaveBeenCalled();
@@ -831,6 +841,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
       // Real native anchor geometry keeps this review on the anchored composer branch.
       createNodeMock: () => ({
         focus: () => {},
+        scrollTo: () => {},
         measureInWindow: (
           receive: (
             x: number,
@@ -847,7 +858,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     expect(modals[0]).toMatchObject({
       type: 'custom',
       visible: true,
-      chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none' },
+      chrome: { phonePresentation: 'sheet', scrollHost: 'bounded' },
     });
     expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
     await act(async () => {
@@ -912,16 +923,14 @@ describe('WorkflowStartPicker plugin workflows', () => {
         ).not.toBeNull();
       const first = WORKFLOW_STARTER_EXAMPLES_V1[0]!.key;
       await screen.pressByTestIdAsync(`workflow-examples:${first}:use`);
-      expect(routing.push).toHaveBeenCalledWith({
-        pathname: '/workflows/new',
-        params: { example: first },
-      });
+      expectExampleDraft(first);
       expect(writes()).toEqual([]);
       expect(starts()).toEqual([]);
     },
   );
   it('shows the plugin library even when no saved definitions or runs exist', async () => {
     installPluginProjection();
+    await publishMachineInventoryForTest(storage.getState().profileScope!, [storage.getState().machines['machine-1']!]);
     const screen = await renderScreen(<WorkflowsLibraryHome />);
     await vi.waitFor(async () => {
       await act(async () => { await Promise.resolve(); });
@@ -964,6 +973,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     ).toEqual({
       definition: plugin.definition,
       name: t('workflows.copyName', { name: plugin.title }),
+      initialView: 'sentence',
     });
   });
 
@@ -1378,7 +1388,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     });
     await vi.waitFor(() =>
       expect(hook.tree.root.findByType(WorkflowRunComposer).props.startProblem?.message).toBe(
-        t('workflows.problem.targetUnavailable'),
+        `tester.local: ${t('workflows.problem.targetUnavailable')}`,
       ),
     );
     // Said inside the form, never as an alert over it; the form, its inputs and the draft stay.
@@ -1432,7 +1442,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
         hook.tree.root
           .findByType(WorkflowRunComposer)
           .props.onChangeValues({
-            engines: ['codex'],
+            reviewers: [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }],
             ...(explicit ? { reviewSession: explicit } : {}),
           });
       });
@@ -1534,6 +1544,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
   });
   it('selects the catalog definition with its qualified identity and observed plugin version', async () => {
     installPluginProjection();
+    await publishMachineInventoryForTest(storage.getState().profileScope!, [storage.getState().machines['machine-1']!]);
     const selected = vi.fn();
     const closed = vi.fn();
     const screen = await renderScreen(

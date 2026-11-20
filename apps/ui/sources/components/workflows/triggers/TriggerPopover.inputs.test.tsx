@@ -883,34 +883,40 @@ describe('Run a workflow trigger inputs', () => {
     });
     it('keeps an example inline and validates its declared inputs before attaching the trigger', async () => {
         const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
+        const contextHome = await home.addHome({ name: 'Example trigger Home', serverUrl: 'https://example-trigger-home.test',
+            serverIdentityId: 'srv_example_trigger_home', accountId: 'account-a', active: false });
         const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="example-trigger" anchorRef={React.createRef()}
-            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" initial={null}
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" serverId={contextHome} initial={null}
             workflowOptions={[]} onSubmit={submit} />);
         await act(async () => { screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'example-trigger-then')!.props.onSelect('example'); });
         await reportCollectionLayout(screen, 'workflow-examples:cards');
         await screen.pressByTestIdAsync('workflow-examples:ask-once:use');
         expect(screen.findByTestId('example-trigger-submit')?.props.disabled).toBe(true);
         await act(async () => { screen.changeTextByTestId('example-trigger-input-request', 'Review the changes'); });
+        expect(screen.findByTestId('example-trigger-submit')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('example-trigger-submit');
         expect(submit.mock.calls[0]?.[1]).toMatchObject({ target: { kind: 'inline',
             definition: WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === 'ask-once')!.definition },
             inputs: { request: 'Review the changes' } });
     });
     it('shows defaults, refuses missing or invalid inputs, and submits typed edits', async () => {
+        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
+        const askOnce = WORKFLOW_STARTER_EXAMPLES_V1.find(example => example.key === 'ask-once')!.definition;
+        const definition = WorkflowDefinitionV1Schema.parse({ ...askOnce, inputs: [...askOnce.inputs,
+            { name: 'maxRounds', valueType: 'number', required: false, default: 3 },
+            { name: 'useJudge', valueType: 'boolean', required: false, default: false },
+        ] });
         const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="typed-trigger" anchorRef={React.createRef()}
-            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1"
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" serverId={serverId}
             initial={{ when: { kind: 'turnEnds' }, enabled: true,
-                then: { kind: 'runWorkflow', ref: 'builtin:review-and-converge', inputs: {} } }}
-            workflowOptions={[{ ref: 'builtin:review-and-converge', title: 'Review & converge' }]} onSubmit={submit} />);
+                then: { kind: 'kept', target: { kind: 'inline', definition }, inputs: {} } }}
+            workflowOptions={[]} onSubmit={submit} />);
         const field = (name: string) => screen.findByTestId(`typed-trigger-input-${name}`);
         expect(field('maxRounds')?.props.value).toBe('3');
         expect(screen.findByTestId('typed-trigger-submit')?.props.disabled).toBe(true);
-        await act(async () => {
-            screen.find((node) => node.props.testID === 'typed-trigger-input-engines'
-                && typeof node.props.onChange === 'function').props.onChange(['codex']);
-        });
+        await act(async () => { screen.changeTextByTestId('typed-trigger-input-request', 'Review the changes'); });
         await act(async () => { screen.changeTextByTestId('typed-trigger-input-maxRounds', '3e'); });
         expect(field('maxRounds')?.props.value).toBe('3e');
         expect(screen.findByTestId('typed-trigger-submit')?.props.disabled).toBe(true);
@@ -918,22 +924,19 @@ describe('Run a workflow trigger inputs', () => {
         expect(submit).not.toHaveBeenCalled();
         await act(async () => { screen.changeTextByTestId('typed-trigger-input-maxRounds', '5'); });
         expect(screen.findByTestId('typed-trigger-submit')?.props.disabled).toBe(false);
-        await act(async () => {
-            screen.find((node) => node.props.testID === 'typed-trigger-input-apply'
-                && typeof node.props.onChange === 'function').props.onChange('report');
-        });
         await act(async () => { screen.pressByTestId('typed-trigger-submit'); });
-        expect(submit.mock.calls[0]?.[1]).toMatchObject({ target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
-            inputs: { engines: ['codex'], maxRounds: 5, apply: 'report', useJudge: false,
-                reviewSession: { serverId, sessionId: 'session-1' } } });
+        expect(submit.mock.calls[0]?.[1]).toMatchObject({ target: { kind: 'inline', definition },
+            inputs: { request: 'Review the changes', maxRounds: 5, useJudge: false } });
     });
+
 
     it('leaves an origin Session default for the new-session trigger claim to bind', async () => {
         const submit = vi.fn<Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession: true }>['onSubmit']>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="new-review-trigger" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['sessionStarts']} creatingSession sessionId={null} serverId={serverId}
             initial={{ when: { kind: 'sessionStarts' }, enabled: true,
-                then: { kind: 'runWorkflow', ref: 'builtin:review-and-converge', inputs: { engines: ['codex'] } } }}
+                then: { kind: 'runWorkflow', ref: 'builtin:review-and-converge',
+                    inputs: { reviewers: [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }] } } }}
             workflowOptions={[{ ref: 'builtin:review-and-converge', title: 'Review & converge' }]} onSubmit={submit} />);
         expect(screen.findByTestId('new-review-trigger-submit')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('new-review-trigger-submit');
