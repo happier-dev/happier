@@ -29,8 +29,8 @@ import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workfl
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
-import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
-  DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
+  DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -83,10 +83,26 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       if (!result.ok) throw new Error(`F4 setup ${actionId} refused (${result.errorCode})`);
       return result.result;
     }
-    async function invokeDatabase(actionId: DatabaseActionIdV1, input: unknown) {
-      const result = await account.execute('action.invoke', { action: { pluginId: DATABASE_PLUGIN_ID_V1,
-        localId: databaseActionLocalIdV1(actionId) }, input }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
-        presentUserConfirmation: { actionId: 'action.invoke' } });
+    async function setBindings(input: unknown) {
+      const result = await account.executeReviewed('deployments.bindings.set', input, {
+        externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+        presentUserConfirmation: { actionId: 'deployments.bindings.set' },
+      });
+      if (!result.ok) throw new Error(`F4 binding review refused (${result.errorCode})`);
+      const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);
+      if (!saved.ok) throw new Error(`F4 binding update refused (${saved.error})`);
+    }
+    function executeDatabase(actionId: DatabaseActionIdV1, input: unknown, surface: 'cli' | 'person') {
+      const action = { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(actionId) };
+      const { machineId } = machine.target;
+      const externalActionTarget = { kind: 'machine', machineId } as const;
+      return surface === 'person'
+        ? account.executeAsPerson('action.invoke', { action, input }, { externalActionTarget }, { action, machineId })
+        : account.execute('action.invoke', { action, input }, { externalActionTarget,
+          presentUserConfirmation: { actionId: 'action.invoke' } });
+    }
+    async function invokeDatabase(actionId: DatabaseActionIdV1, input: unknown, surface: 'cli' | 'person' = 'cli') {
+      const result = await executeDatabase(actionId, input, surface);
       if (!result.ok) throw new Error(`F4 semantic Action refused (${result.errorCode})`);
       return result.result;
     }
@@ -151,10 +167,15 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         providerIdentity: linked.providerIdentity, providerEnvironment: linked.providerEnvironment,
         data: { engine: 'postgres', providerConsole: 'providerConsole' in linked ? linked.providerConsole : undefined } });
       if (!linkContent.providerIdentity) throw new Error('F4 provider omitted its selected identity');
-      const link = DeploymentTargetLinkResultV1Schema.parse(await invoke('deployments.targets.link', {
+      const linkAction = await account.executeReviewed('deployments.targets.link', {
         ...address, expectedRevision: environment.revision, requestKey: randomUUID(), role: 'data', machines: [],
-        targetId: `${pluginId}/database`, targetKind: provider, source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } },
-        provider: linkContent }));
+        targetId: 'database', targetKind: provider, source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } },
+        provider: linkContent }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+        presentUserConfirmation: { actionId: 'deployments.targets.link' } });
+      if (!linkAction.ok) throw new Error(`F4 selected managed database Link refused (${linkAction.errorCode})`);
+      const parsedLink = DeploymentTargetLinkResultV1Schema.safeParse(linkAction.result);
+      if (!parsedLink.success) throw new Error(`F4 selected managed database Link returned unexpected fields (${Object.keys(linkAction.result ?? {}).join(', ')})`);
+      const link = parsedLink.data;
       if (!link.ok || !('targetLinkId' in link)) throw new Error('F4 selected managed database did not link');
       if (provider === 'neon') {
         // The public custody/binding producer owns the dedicated P45 read role.
@@ -169,7 +190,7 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         } finally { resourceDataKey.fill(0); }
         const current = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
         if (!current.ok) throw new Error(`F4 Environment read failed (${current.error})`);
-        await invoke('deployments.bindings.set', { ...address, expectedRevision: current.environment.revision,
+        await setBindings({ ...address, expectedRevision: current.environment.revision,
           set: [{ purpose: 'dataRole', targetLinkId: link.targetLinkId, role: 'readOnlyPassword', source: {
             kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }], remove: [] });
       }
@@ -189,8 +210,8 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         target: { kind: 'managed_deployment', environmentId: environment.environmentId,
           targetLinkId: link.targetLinkId, databaseName: target.database } } };
       expect(selectedDescriptor?.automationSubject).toEqual(automationSubject);
-      async function semantic(actionId: DatabaseActionIdV1, input: unknown) {
-        return DatabaseOperationResultV1Schema.parse(await invokeDatabase(actionId, input));
+      async function semantic(actionId: DatabaseActionIdV1, input: unknown, surface?: 'cli' | 'person') {
+        return DatabaseOperationResultV1Schema.parse(await invokeDatabase(actionId, input, surface));
       }
       const sql = provider === 'neon' ? 'SELECT marker, typed_text AS duplicate, exact_integer AS duplicate, absent, empty_text FROM dbw_managed_sentinel'
         : 'SELECT marker, absent, empty_text FROM dbw_managed_sentinel';
@@ -211,10 +232,14 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         // distinguishes transport support from the default editing-off refusal.
         const current = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
         if (!current.ok) throw new Error(`F4 editing setup read failed (${current.error})`);
-        await invoke('deployments.environments.update', { ...address,
+        const editing = await account.executeReviewed('deployments.environments.update', { ...address,
           expectedRevision: current.environment.revision, contentArtifactId: current.environment.contentArtifactId,
           contentHeaderVersion: current.environment.contentHeaderVersion, contentBodyVersion: current.environment.contentBodyVersion,
-          patch: { dataEditorMode: 'managers' } });
+          patch: { dataEditorMode: 'managers' } },
+        { presentUserConfirmation: { actionId: 'deployments.environments.update' } });
+        if (!editing.ok) throw new Error(`F4 editing setup refused (${editing.errorCode})`);
+        const updated = DeploymentEnvironmentUpdateResultV1Schema.parse(editing.result);
+        if (!updated.ok) throw new Error(`F4 editing setup failed (${updated.error})`);
         const described = await semantic(DATABASE_DESCRIBE_ACTION_ID_V1, { operation: 'describe', target });
         expect(described).toMatchObject({ ok: true, operation: 'describe', descriptor: {
           automationSubject,
@@ -242,12 +267,13 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         } finally { resourceDataKey.fill(0); }
         const bindingBasis = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
         if (!bindingBasis.ok) throw new Error(`F5e write binding setup failed (${bindingBasis.error})`);
-        await invoke('deployments.bindings.set', { ...address, expectedRevision: bindingBasis.environment.revision,
+        expect(bindingBasis.environment).toMatchObject({ dataEditorMode: 'managers', capabilities: { editData: true } });
+        await setBindings({ ...address, expectedRevision: bindingBasis.environment.revision,
           set: [{ purpose: 'dataRole', targetLinkId: link.targetLinkId, role: 'write', source: {
             kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }], remove: [] });
         const write = (statements: { sql: string; parameters: { type: 'text'; value: string }[] }[]) =>
           semantic(DATABASE_STATEMENT_RUN_ACTION_ID_V1, DatabaseWriteStatementInputV1Schema.parse({
-            operation: 'statement.run', mode: 'write', target, executionMode: 'transaction', statements }));
+            operation: 'statement.run', mode: 'write', target, executionMode: 'transaction', statements }), 'person');
         // Match the real qualified contributed Action against the selected
         // managed Database, including exclusion of a neighboring database name.
         const armAfter = async (databaseName: string) => {
@@ -293,7 +319,7 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         expect(await fixture.postgres.sql(database, `SELECT value FROM ${table} WHERE id=1`)).toBe('committed');
         const apply = (changes: unknown[]) => semantic(DATABASE_EDITS_APPLY_ACTION_ID_V1,
           DatabaseEditsApplyInputV1Schema.parse({ operation: 'edits.apply', target,
-            relation: { schema: 'public', name: table }, changes }));
+            relation: { schema: 'public', name: table }, changes }), 'person');
         const update = (before: string, after: string) => ({ kind: 'update',
           key: [{ column: 'id', value: { type: 'integer', value: '1' } }],
           original: [{ column: 'value', value: { type: 'text', value: before } }],
@@ -316,14 +342,12 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         // admitted write and native effects have established G1.
         const removalBasis = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
         if (!removalBasis.ok) throw new Error(`F4 write binding removal setup failed (${removalBasis.error})`);
-        await invoke('deployments.bindings.set', { ...address, expectedRevision: removalBasis.environment.revision,
+        await setBindings({ ...address, expectedRevision: removalBasis.environment.revision,
           set: [], remove: [{ purpose: 'dataRole', targetLinkId: link.targetLinkId, role: 'write' }] });
         const beforeWrite = boundary.entries().length;
-        const written = await account.execute('action.invoke', { action: { pluginId: DATABASE_PLUGIN_ID_V1,
-          localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) }, input: DatabaseWriteStatementInputV1Schema.parse({
+        const written = await executeDatabase(DATABASE_STATEMENT_RUN_ACTION_ID_V1, DatabaseWriteStatementInputV1Schema.parse({
           operation: 'statement.run', mode: 'write', target, executionMode: 'transaction', statements: [
-            { sql: 'UPDATE dbw_managed_sentinel SET empty_text = $1', parameters: [{ type: 'text', value: 'must-not-write' }] }] }) },
-          { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId }, presentUserConfirmation: { actionId: 'action.invoke' } });
+            { sql: 'UPDATE dbw_managed_sentinel SET empty_text = $1', parameters: [{ type: 'text', value: 'must-not-write' }] }] }), 'person');
         expect(written).toMatchObject({ ok: false, errorCode: 'write_connection_setup_required' });
         expect(boundary.entries().slice(beforeWrite).some(entry => entry.method === 'POST'
           && (entry.path.includes('/database/query') || entry.path === '/sql'))).toBe(false);
