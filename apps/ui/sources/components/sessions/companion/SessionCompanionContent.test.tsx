@@ -13,7 +13,7 @@ import { createSessionBoardSourceAvailabilityResolver } from '@/components/sessi
 import { createSessionFixture } from '@/dev/testkit';
 import { createSessionSurfaceNoteDocumentV1, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
 import { resolveWidgetSizeChoicesV1, WidgetDefinitionV1Schema, WidgetSizeDeclarationV1Schema, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
-import type { SessionWidgetHostProps } from '@/components/sessions/board/SessionWidgetHost';
+import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost';
 import { sessionCompanionGlanceLabel } from './glances/SessionCompanionGlance';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -67,20 +67,6 @@ const summaryModel = {
 vi.mock('./summary/useSessionSummaryModel', () => ({
     useSessionSummaryModel: () => summaryModel,
 }));
-
-const widgetHostProps = vi.fn();
-vi.mock('@/components/sessions/board/SessionWidgetHost', async () => {
-    const actual = await vi.importActual<typeof import('@/components/sessions/board/SessionWidgetHost')>(
-        '@/components/sessions/board/SessionWidgetHost',
-    );
-    return {
-        ...actual,
-        SessionWidgetHost: (props: SessionWidgetHostProps) => {
-            widgetHostProps(props);
-            return <actual.SessionWidgetHost {...props} />;
-        },
-    };
-});
 
 import {
     projectSessionBoard,
@@ -188,7 +174,6 @@ function controller(items: readonly SessionCompanionItemRefV1[]): SessionCompani
 
 describe('SessionCompanionContent (mounted)', () => {
     beforeEach(() => {
-        widgetHostProps.mockClear();
         removeItem.mockClear();
         moveItem.mockClear();
         show.mockClear();
@@ -322,15 +307,15 @@ describe('SessionCompanionContent (mounted)', () => {
         );
 
         expect(renderer.findByTestId('session-companion-content-item-widget:w1')).not.toBeNull();
-        expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
+        const mounted = renderer.tree.root.findByType(SessionWidgetHost).props;
+        expect(mounted).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
             bodyActive: true,
             pluginRuntime,
             callerHostedHtmlRuntime,
         });
-        const resolveSourceAvailability = widgetHostProps.mock.calls[0]?.[0]
-            ?.resolveSourceAvailability as ((source: unknown) => unknown) | undefined;
+        const resolveSourceAvailability = mounted.resolveSourceAvailability;
         expect(resolveSourceAvailability?.({
             kind: 'hostedHtml',
             source: artifactHtmlBundleFromBodyV1('<main>Companion</main>'),
@@ -364,17 +349,18 @@ describe('SessionCompanionContent (mounted)', () => {
         );
 
         expect(renderer.findByTestId('measurement-content-item-widget:w1')).not.toBeNull();
-        expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
+        const mounted = renderer.tree.root.findByType(SessionWidgetHost).props;
+        expect(mounted).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
             bodyActive: false,
             canEdit: false,
             pluginRuntime,
         });
-        expect(widgetHostProps.mock.calls[0]?.[0]).not.toHaveProperty('callerHostedHtmlRuntime');
-        expect(widgetHostProps.mock.calls[0]?.[0]).not.toHaveProperty('onOpenHere');
-        expect(widgetHostProps.mock.calls[0]?.[0]).not.toHaveProperty('onManagePlugin');
-        expect(widgetHostProps.mock.calls[0]?.[0]).not.toHaveProperty('onRemove');
+        expect(mounted.callerHostedHtmlRuntime).toBeUndefined();
+        expect(mounted.onOpenHere).toBeUndefined();
+        expect(mounted.onManagePlugin).toBeUndefined();
+        expect(mounted.onRemove).toBeUndefined();
         expect(renderer.findByTestId('measurement-content-item-widget:w1-actions')).toBeNull();
         expect(openBoard).not.toHaveBeenCalled();
         expect(managePlugin).not.toHaveBeenCalled();
@@ -440,12 +426,12 @@ describe('SessionCompanionContent (mounted)', () => {
             />,
         );
 
-        const mounted = widgetHostProps.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        const mounted = renderer.tree.root.findByType(SessionWidgetHost).props;
         expect(mounted).toMatchObject({ frame: 'section', canEdit: false });
         // The Companion keeps a reference: deleting or editing the shared record, and a
         // second "open" control beside the menu's, belong to the Board.
-        expect(mounted).not.toHaveProperty('onRemove');
-        expect(mounted).not.toHaveProperty('onOpenHere');
+        expect(mounted.onRemove).toBeUndefined();
+        expect(mounted.onOpenHere).toBeUndefined();
         const [actionOwner] = renderer.findAll((node) => Array.isArray(node.props?.actions)
             && node.props?.overflowTriggerTestID === 'session-companion-content-item-widget:w1-actions');
         const actions = actionOwner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
@@ -464,11 +450,11 @@ describe('SessionCompanionContent (mounted)', () => {
             boardBinding: binding({ itemsById: board.itemsById }),
         };
 
-        await renderScreen(<SessionCompanionContent {...shared} presentation="rail" />);
-        expect(widgetHostProps.mock.calls.at(-1)?.[0]).toMatchObject({ density: 'compact', expanded: false });
+        const rail = await renderScreen(<SessionCompanionContent {...shared} presentation="rail" />);
+        expect(rail.tree.root.findByType(SessionWidgetHost).props).toMatchObject({ density: 'compact', expanded: false });
 
-        await renderScreen(<SessionCompanionContent {...shared} presentation="full" />);
-        expect(widgetHostProps.mock.calls.at(-1)?.[0]).toMatchObject({ density: 'full', expanded: true });
+        const full = await renderScreen(<SessionCompanionContent {...shared} presentation="full" />);
+        expect(full.tree.root.findByType(SessionWidgetHost).props).toMatchObject({ density: 'full', expanded: true });
     });
 
     it('renders a recoverable pending state, never a deletion, while the inventory is incomplete', async () => {
