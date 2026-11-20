@@ -371,6 +371,8 @@ const baseAuthOptions = {
     retryServerCheck: vi.fn(),
 } satisfies AuthEntryOptions;
 
+const implicitHomeAuthOptions = { ...baseAuthOptions, requestedHomeTarget: undefined };
+
 describe('OnboardingWizardSurface', () => {
     beforeEach(async () => {
         nativeSecureStore.clear();
@@ -530,22 +532,19 @@ describe('OnboardingWizardSurface', () => {
         await hook.unmount();
     });
 
-    it('keeps Start for the implicit Cloud default and selects another Home through the welcome row', async () => {
+    it('keeps Start for the implicit Cloud default and opens Where through Run your own Home', async () => {
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.start');
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.skip');
@@ -558,14 +557,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(screen.findByType(WizardModalShell as never).props.contentTransitionKey).toBe('relay_select');
@@ -908,23 +904,17 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        const cloud = screen.findByProps({ testID: 'onboarding-wizard-relay:cloud' } as never);
-        const thisComputer = screen.findByProps({ testID: 'onboarding-wizard-relay:thisComputer' } as never);
-        const customUrl = screen.findByProps({ testID: 'onboarding-wizard-relay:customUrl' } as never);
-
-        expect(cloud?.props.badge).toBe('setupOnboarding.recommendedBadge');
-        expect(thisComputer?.props.badge).toBeUndefined();
-        expect(customUrl?.props.badge).toBeUndefined();
+        const recommended = 'setupOnboarding.recommendedBadge';
+        expect(relayTileText(screen, 'onboarding-wizard-relay:cloud')).toContain(recommended);
+        expect(relayTileText(screen, 'onboarding-wizard-relay:remoteComputer')).not.toContain(recommended);
+        expect(relayTileText(screen, 'onboarding-wizard-relay:customUrl')).not.toContain(recommended);
     });
 
     it('hides Happier Cloud when setup surface policy denies it (no implicit profile creation)', async () => {
@@ -976,14 +966,14 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
         expect({ ...browser!.storage }).toEqual(storageBeforeRender);
 
         await act(async () => {
-            await screen.findByTestId('welcome-use-different-home')!.props.onPress?.();
+            await screen.findByTestId('welcome-self-hosting')!.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1173,6 +1163,7 @@ describe('OnboardingWizardSurface', () => {
                 isDesktopShell: true,
                 authEntryOptions: {
                     ...baseAuthOptions,
+                    requestedHomeTarget: undefined,
                     homeTarget: selectedHomeTarget,
                     observedHomeServerIdentityId: homeProfileRef('relay-b'),
                 },
@@ -1180,10 +1171,7 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
@@ -1423,20 +1411,15 @@ describe('OnboardingWizardSurface', () => {
         browser?.reconfigureUrl('http://localhost:31337');
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-            }),
+            <PersonalHomeBootstrapRequestContext.Provider value={vi.fn()}>
+                <OnboardingWizardSurface layout="portrait" isDesktopShell authEntryOptions={implicitHomeAuthOptions} />
+            </PersonalHomeBootstrapRequestContext.Provider>,
         );
 
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-logotype')).toBeTruthy();
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
@@ -1630,16 +1613,13 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
         // Saving the first Home makes it the active Home; enter selection through
         // Welcome's actual change-Home action rather than its sign-in primary.
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
@@ -1680,14 +1660,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
@@ -1755,11 +1732,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        await pressOnboarding(screen, 'welcome-use-different-home');
+        await pressOnboarding(screen, 'welcome-self-hosting');
         const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
         await act(async () => {
             await relayRow.props.onPress?.();
@@ -1817,16 +1794,16 @@ describe('OnboardingWizardSurface', () => {
                 layout: 'portrait',
                 isDesktopShell: true,
                 initialStepId: 'auth',
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        await pressOnboarding(screen, 'welcome-use-different-home');
+        await pressOnboarding(screen, 'welcome-self-hosting');
 
         expect(screen.findByTestId('onboarding-wizard-relay:cloud')).toBeTruthy();
     });
 
-    it('threads the mounted Personal Home admission to auth without opening setup', async () => {
+    it('keeps one-tap creation and Login on the first auth step when local setup is available', async () => {
         await focusHomeAtAddress('https://relay.example.test');
         const requestBootstrap = vi.fn();
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
@@ -1835,8 +1812,12 @@ describe('OnboardingWizardSurface', () => {
                 <OnboardingWizardSurface layout="portrait" isDesktopShell initialStepId="auth" authEntryOptions={baseAuthOptions} />
             </PersonalHomeBootstrapRequestContext.Provider>,
         );
-        await pressOnboarding(screen, 'welcome-create-personal-home');
-        expect(requestBootstrap).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('welcome-primary-start')).not.toBeNull();
+        expect(screen.findByTestId('welcome-scan-existing-home')).not.toBeNull();
+        expect(screen.findByTestId('welcome-create-personal-home')).toBeNull();
+        await pressOnboarding(screen, 'welcome-scan-existing-home');
+        expect(getOnboardingStepId(screen)).toBe('auth_restore');
+        expect(requestBootstrap).not.toHaveBeenCalled();
         expect(expoRouterSpies.push).not.toHaveBeenCalledWith('/setup');
     });
 
@@ -2179,14 +2160,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: false,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const onThisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
@@ -2212,14 +2190,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
@@ -2249,14 +2224,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
@@ -2501,14 +2473,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const remoteRow = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
@@ -2596,14 +2565,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');
@@ -3490,15 +3456,11 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
+                authEntryOptions: implicitHomeAuthOptions,
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
+        await pressOnboarding(screen, 'welcome-self-hosting');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await screen.pressByTestIdAsync('onboarding-wizard-relay:cloud');

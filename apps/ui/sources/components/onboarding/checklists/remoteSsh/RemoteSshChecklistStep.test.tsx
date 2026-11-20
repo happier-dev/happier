@@ -106,6 +106,10 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async () => {
     };
 });
 
+// Keep the cold module transform in collection, outside the interactive test's timeout.
+const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+const { useWizardChromeOverrides } = await import('@/components/onboarding/hooks/useWizardChromeOverrides');
+
 function createRunner({
     snapshot,
     snapshotsByTaskId,
@@ -213,41 +217,42 @@ describe('RemoteSshChecklistStep', () => {
         await resetProfileRegistry();
     });
 
-    it('does not trigger a maximum update depth loop when wired to the wizard chrome override store', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
-        const { useWizardChromeOverrides } = await import('@/components/onboarding/hooks/useWizardChromeOverrides');
+    it('settles the StrictMode wizard chrome and advances with its registered Continue button', async () => {
         const runnerHarness = createRunner();
 
         const Harness = () => {
             const overrides = useWizardChromeOverrides('host_relay_remote');
-            return React.createElement(RemoteSshChecklistStep, {
-                testID: 'remote-ssh-step',
-                mode: 'remoteRelayHost',
-                relayUrl: 'https://relay.example.test',
-                runner: runnerHarness.runner,
-                initialDraft: {
-                    username: 'dev',
-                    host: 'example.test',
-                },
-                onWizardPrimaryChange: overrides.setWizardPrimaryOverride,
-                onWizardBackChange: overrides.setWizardBackOverride,
-                onWizardSkipChange: overrides.setWizardSkipOverride,
-                onRequestAdvance: () => undefined,
-            });
+            return <>
+                {React.createElement(RemoteSshChecklistStep, {
+                    testID: 'remote-ssh-step',
+                    mode: 'remoteRelayHost',
+                    relayUrl: 'https://relay.example.test',
+                    runner: runnerHarness.runner,
+                    initialDraft: {
+                        username: 'dev',
+                        host: 'example.test',
+                    },
+                    onWizardPrimaryChange: overrides.setWizardPrimaryOverride,
+                    onWizardBackChange: overrides.setWizardBackOverride,
+                    onWizardSkipChange: overrides.setWizardSkipOverride,
+                    onRequestAdvance: () => undefined,
+                })}
+                <button data-testid="wizard-primary" disabled={overrides.activePrimaryOverride?.disabled ?? true}
+                    onClick={overrides.activePrimaryOverride?.onPress}>
+                    {overrides.activePrimaryOverride?.label}
+                </button>
+            </>;
         };
 
-        let error: unknown = null;
-        try {
-            await renderScreen(React.createElement(React.StrictMode, null, React.createElement(Harness)));
-        } catch (err) {
-            error = err;
-        }
-
-        expect(error).toBeNull();
+        const screen = await renderScreen(<React.StrictMode><Harness /></React.StrictMode>);
+        expect(screen.findHostByTestId('wizard-primary')?.props.disabled).toBe(false);
+        await act(async () => screen.findHostByTestId('wizard-primary')?.props.onClick());
+        // Entering the checklist is still local; installation starts only after confirming the plan.
+        expect(screen.findByTestId('remote-ssh-step-plan')).not.toBeNull();
+        expect(runnerHarness.startSpy).not.toHaveBeenCalled();
     });
 
     it('defaults save-host off on non-desktop platforms (so password saving is never preselected)', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
@@ -272,7 +277,6 @@ describe('RemoteSshChecklistStep', () => {
     it('defaults save-host on for desktop (so users can opt-in to saving secrets after selecting password auth)', async () => {
         tauriState.isDesktop = true;
 
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
@@ -297,7 +301,6 @@ describe('RemoteSshChecklistStep', () => {
     it('defaults save-host on for desktop (so users can opt-in to saving a private key after selecting keyfile auth)', async () => {
         tauriState.isDesktop = true;
 
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
@@ -323,7 +326,6 @@ describe('RemoteSshChecklistStep', () => {
     it('hides the saved-host picker when remote host management is disabled', async () => {
         featureGateState.managementEnabled = false;
 
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
@@ -344,7 +346,6 @@ describe('RemoteSshChecklistStep', () => {
     it('forwards an encrypted private key from the wizard form into the bootstrap task spec when keyfile auth is selected', async () => {
         tauriState.isDesktop = true;
 
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
@@ -430,7 +431,6 @@ describe('RemoteSshChecklistStep', () => {
         const catalog = await import('@/sync/engine/settings/remoteHostCatalogEngine');
         await catalog.refreshRemoteHostCatalog({ serverId: source, accountId: 'source-account' });
 
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
 
         let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
@@ -480,7 +480,6 @@ describe('RemoteSshChecklistStep', () => {
 
     it('prefills the inline SSH form from a configured-host suggestion without selecting a saved host', async () => {
         tauriState.isDesktop = true;
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             startBehavior: (spec, taskId) => {
                 if (spec.kind !== 'local.ssh.discoverConfiguredHosts.v1') {
@@ -538,7 +537,6 @@ describe('RemoteSshChecklistStep', () => {
 
     it('opens the credentials form directly after SSH discovery finds no hosts', async () => {
         tauriState.isDesktop = true;
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             startBehavior: (spec, taskId) => spec.kind === 'local.ssh.discoverConfiguredHosts.v1' ? {
                 taskId,
@@ -560,7 +558,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('routes the remote Personal Home plan through the canonical remote host action', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
         let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
 
@@ -629,7 +626,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('prefers the explicit public relay URL when completing remote relay hosting', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             snapshot: {
                 status: 'running',
@@ -720,7 +716,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('does not emit a loopback relay URL when remote relay hosting only discovers a local bind URL', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             snapshot: {
                 status: 'running',
@@ -788,7 +783,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('uses wizard chrome actions for SSH password prompts', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             snapshot: {
                 status: 'running',
@@ -877,7 +871,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('answers remote background service replacement prompts through wizard chrome actions', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             snapshot: {
                 status: 'running',
@@ -952,7 +945,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('asks a new host key in the one trust sheet, never inline, and continues with the trusted key', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const { Modal } = await import('@/modal');
         const shown: { chrome?: { testID?: string }; props?: { onResolve?: (trusted: boolean) => void } }[] = [];
         const show = vi.spyOn(Modal, 'show').mockImplementation(((config: (typeof shown)[number]) => { shown.push(config); return `sheet-${shown.length}`; }) as never);
@@ -995,7 +987,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('answers a declined remote release-channel switch instead of cancelling the task', async () => {
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner({
             snapshot: {
                 status: 'running',
