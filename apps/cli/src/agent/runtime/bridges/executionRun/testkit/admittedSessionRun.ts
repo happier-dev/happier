@@ -98,7 +98,8 @@ import { createRetainedPendingHome } from './retainedPendingHome';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { SessionMessageContent } from '@/api/types';
 import type { SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
-import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1, SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+  SessionTranscriptObservationBatchInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 // This is a host attribution contract, not Claude codec/process certification.
@@ -339,8 +340,11 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       const answer = event === 'session-turn-mutation'
         ? createSessionTurnMutationAppliedSocketAck(SessionTurnMutationV1Schema.parse(args[0]))
         : pendingHome?.answer(event, args[0]) ?? activityHome.answer(event, args[0]) ?? transcriptHome.answer(event, args[0]);
-      if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
-        options?.observeTranscriptObservation?.(args[0]);
+      const observations = event === SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1
+        ? SessionTranscriptObservationBatchInputV1Schema.parse(args[0]).observations
+        : event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 ? [args[0]] : [];
+      for (const observation of observations) {
+        options?.observeTranscriptObservation?.(observation);
         await options?.beforeTranscriptAck?.();
       }
       if (answer !== null && typeof callback === 'function') callback(answer);

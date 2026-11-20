@@ -10,7 +10,10 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2,
+    SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+    SessionTranscriptObservationBatchAckV1Schema,
+    SessionTranscriptObservationBatchInputV1Schema,
     SessionTranscriptObservationAckV1Schema,
     SessionTranscriptObservationCapabilityAckSchema,
     SessionTranscriptObservationCapabilityRequestSchema,
@@ -150,6 +153,13 @@ export function createSessionTurnMutationAppliedSocketAck(mutation: SessionTurnM
 /** Acknowledge the actual transcript producer, preserving its exact local identity. */
 export function createSessionTranscriptHomeStub() {
     let sequence = 0;
+    const observe = (observation: ReturnType<typeof SessionTranscriptObservationInputSchema.parse>) => {
+        sequence += 1;
+        return SessionTranscriptObservationAckV1Schema.parse({
+            ok: true, status: 'observed', id: `message-${sequence}`, seq: sequence,
+            localId: observation.localId, didWrite: true, ingestedAt: observation.updatedAt,
+        });
+    };
     return Object.freeze({
         answer(event: string, payload: unknown): unknown | null {
             if (event === SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1) {
@@ -158,13 +168,22 @@ export function createSessionTranscriptHomeStub() {
                     ok: true, capability: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2,
                 });
             }
-            if (event !== SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) return null;
-            const observation = SessionTranscriptObservationInputSchema.parse(payload);
-            sequence += 1;
-            return SessionTranscriptObservationAckV1Schema.parse({
-                ok: true, status: 'observed', id: `message-${sequence}`, seq: sequence,
-                localId: observation.localId, didWrite: true, ingestedAt: observation.updatedAt,
-            });
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1) {
+                const batch = SessionTranscriptObservationBatchInputV1Schema.safeParse(payload);
+                if (!batch.success) return SessionTranscriptObservationBatchAckV1Schema.parse({ ok: false, error: 'invalid_observation' });
+                const acks: ReturnType<typeof SessionTranscriptObservationAckV1Schema.parse>[] = [];
+                for (const raw of batch.data.observations) {
+                    const observation = SessionTranscriptObservationInputSchema.safeParse(raw);
+                    if (!observation.success || observation.data.sessionId !== batch.data.sessionId) {
+                        acks.push({ ok: false, error: 'invalid_observation' });
+                        break;
+                    }
+                    acks.push(observe(observation.data));
+                }
+                return SessionTranscriptObservationBatchAckV1Schema.parse({ ok: true, acks });
+            }
+            return event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1
+                ? observe(SessionTranscriptObservationInputSchema.parse(payload)) : null;
         },
     });
 }
