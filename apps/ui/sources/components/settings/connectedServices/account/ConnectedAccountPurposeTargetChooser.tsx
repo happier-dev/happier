@@ -24,6 +24,7 @@ import {
   type SelectionListStep,
     SELECTION_LIST_MODAL_MAX_HEIGHT,
 } from '@/components/ui/selectionList';
+import { findSoleEligibleOption } from '@/components/ui/selectionList/findSoleEligibleOption';
 import { Item } from '@/components/ui/lists/Item';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
@@ -318,11 +319,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   React.useEffect(() => {
     if (hasSelection) selectionMade.current = true;
     if (selectionMade.current || !canPreselect || !onSelectSingleEligible) return;
-    const eligible = buildConnectedAccountPurposeTargetChoices({
+    const choice = findSoleEligibleOption(buildConnectedAccountPurposeTargetChoices({
       ...choiceInput, ...preselectionProfile, labelsByKey: {},
-    }).filter(choice => choice.selectable && choice.kind !== 'none');
-    if (eligible.length !== 1) return;
-    const choice = eligible[0]!;
+    }), option => option.selectable && option.kind !== 'none');
+    if (!choice) return;
     selectionMade.current = true;
     onSelectSingleEligible(choice.target, choice.teamResource);
   }, [canPreselect, choiceInput, hasSelection, onSelectSingleEligible, preselectionProfile]);

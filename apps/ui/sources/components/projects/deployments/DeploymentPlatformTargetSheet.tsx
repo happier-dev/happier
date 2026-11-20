@@ -25,6 +25,7 @@ import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protoc
 import {
   ActionInputFields,
   getValueAtPath,
+  type ActionFieldOption,
 } from '@/components/sessions/actions/ActionInputFields';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
@@ -36,6 +37,7 @@ import {
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { findSoleEligibleOption } from '@/components/ui/selectionList/findSoleEligibleOption';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider, useListPresentation, usePageListInsets } from '@/components/ui/lists/listPresentation';
@@ -432,6 +434,17 @@ export function DeploymentPlatformTargetEditor(
     );
     resetFrom();
   };
+  const providerAccountField = fields.find(field => field.path === 'providerAccountId');
+  const providerAccountOptions = providerAccountField ? options.state(providerAccountField) : null;
+  const mayPreselectProviderAccount = draft !== null && !connectionNeeded && providerAccountField?.required === true
+    && busy === null && !reviewingCreate && values.providerAccountId === undefined
+    && (cursors.providerAccountId?.length ?? 0) === 0;
+  const selectProviderAccount = useEventCallback((value: ActionFieldOption['value']) => patch({ ...values, providerAccountId: value }));
+  React.useEffect(() => {
+    if (!mayPreselectProviderAccount || providerAccountOptions?.status !== 'ready' || providerAccountOptions.nextCursor !== undefined) return;
+    const option = findSoleEligibleOption(providerAccountOptions.options, choice => !choice.disabled);
+    if (option) selectProviderAccount(option.value);
+  }, [mayPreselectProviderAccount, providerAccountOptions, selectProviderAccount]);
   const page = (
     field: EffectiveActionInputField,
     direction: 'next' | 'previous',

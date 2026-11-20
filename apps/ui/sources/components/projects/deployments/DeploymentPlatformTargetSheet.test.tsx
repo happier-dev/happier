@@ -694,6 +694,96 @@ it('welcomes an Account with no platform account to add a token in place, then c
   }
 });
 
+it('uses the sole Pages account in Use existing and Create new', async () => {
+  const accountId = 'pages-owner';
+  const serverId = await homes.addHome({ name: 'Pages target', serverUrl: 'https://pages-preselection.test',
+    serverIdentityId: `srv_${'c'.repeat(32)}`, accountId, currentAccount: true });
+  const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+  const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+  const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+  const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
+  const cloudflare = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS['happier.deploy.cloudflare/cloudflare'];
+  if (!cloudflare) throw new Error('Expected the Cloudflare connection declaration');
+  const features = createRootLayoutFeaturesResponse({
+    capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } },
+  });
+  for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
+  primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount,
+    accountLifetime: context.accountLifetime, publishProjection: true });
+  const { DeploymentPlatformTargetEditor } = await import('./DeploymentPlatformTargetSheet');
+  const previous = storage.getState();
+  const ref = { service: cloudflare.service, accountId: 'pages-token' };
+  const machineId = 'pages-options-controller';
+  const qualified = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId });
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(
+      (manifest.contributes.inputTypes ?? []).map(definition => [qualified(definition.id), {
+        id: qualified(definition.id), pluginId: manifest.id, pluginVersion: manifest.version, definition,
+      }]),
+    ) } },
+    resourcesById: Object.fromEntries((manifest.contributes.resources ?? [])
+      .filter(resource => resource.source === 'dynamic')
+      .map(resource => [qualified(resource.id), { pluginId: manifest.id, id: resource.id, resourceKind: resource.kind,
+        scope: resource.scope, execution: resource.execution, accountRuntimeDeclared: true }])),
+  });
+  receiverRpc.call.mockImplementation(async request => {
+    expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+    return { protocolVersion: 1, projection };
+  });
+  try {
+    await publishMachineInventoryForTest(context, [createMachineFixture({ id: machineId, installationId: 'pages-options-installation', activeAt: Date.now(), access: {
+      custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+    } })]);
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.options.resolve', machineId,
+      installationId: 'pages-options-installation', tokenEpoch: 0, execute: async raw => {
+        const input = getActionSpec('action.options.resolve').inputSchema.parse(raw);
+        return getActionSpec('action.options.resolve').outputSchema!.parse({
+          actionId: input.actionId ?? null, fieldPath: input.fieldPath ?? null, optionsSourceId: input.optionsSourceId ?? null,
+          options: input.fieldPath === 'providerAccountId' ? [{ value: 'provider-pages', label: 'Pages Account' }] : [],
+        });
+      } });
+    storage.setState({ profileScope: context.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: '' }) });
+    const screen = await renderScreen(<ModalProvider><DeploymentPlatformTargetEditor
+      name="Site" environment={{ projectSourceId: '', controllerMachineId: machineId }} ownerAccountId={accountId}
+      lifetime={context.accountLifetime} actions={createDeploymentActions(context.accountLifetime, '')}
+      initialTargetKey={`${manifest.id}/pages`} onClose={() => {}} onApproval={() => {}} onPrepared={() => {}} /></ModalProvider>);
+    const chooser = () => screen.root.findByType(ConnectedAccountPurposeTargetChooser);
+    await waitForHomeGovernance(() => expect(chooser().props.value).toBeNull());
+    await act(async () => {
+      storage.setState({ profile: AccountProfileSchema.parse({ id: accountId, connectedAccountsV4: [{ ref,
+        status: 'connected', authenticationModeId: cloudflare.descriptor.authentication.defaultModeId,
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        configurationReady: true, configurationRevision: null, displayName: 'Pages connection', scopes: [],
+      }] }) });
+    });
+    await waitForHomeGovernance(() => expect(chooser().props.value).toEqual({ kind: 'account', account: ref }));
+    const expectProviderAccount = () => {
+      const field = screen.root.findAllByType(ActionInputFields)
+        .find(node => node.props.fields[0]?.path === 'providerAccountId');
+      expect(field?.props.resolveFieldOptions.state?.(field.props.fields[0])).toMatchObject({
+        status: 'ready', options: [{ value: 'provider-pages', label: 'Pages Account' }],
+      });
+      expect(field?.props.input.providerAccountId).toBe('provider-pages');
+      expect(screen.getTextContent()).toContain('Pages Account');
+    };
+    const mode = screen.root.findAllByType(SegmentedChoiceItem)
+      .find(node => node.props.testID === 'project-deployments.platform.mode');
+    expect(mode?.props.value).toBe('existing');
+    await waitForHomeGovernance(expectProviderAccount);
+    await act(async () => mode?.props.onChange('create'));
+    expect(chooser().props.value).toEqual({ kind: 'account', account: ref });
+    await waitForHomeGovernance(expectProviderAccount);
+  } finally {
+    storage.setState({ profile: previous.profile, profileScope: previous.profileScope });
+    await installed.dispose();
+    context.dispose();
+  }
+});
+
 it('says a repository refusal with the shared remedy after another target was inspected in this module', async () => {
   const pluginId = 'com.example.repository-deploy';
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
