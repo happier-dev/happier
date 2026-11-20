@@ -13173,7 +13173,10 @@ development reviews publish through this same owner. In 0.3 development source,
 and returns its approval Artifact ID. An explicit
 `plugins install <exact-source> --dev --json` remains an alternative way to rejoin
 the retained candidate and same Artifact while its registered source observation
-is current. If a newer observation has already superseded that candidate, a new
+is current. Unregistering clears the development source's installation consent.
+Registering that source again opens a fresh installation review, and approval
+activates the plugin. Enable alone requires existing installation consent.
+If a newer observation has already superseded that candidate, a new
 request expires the stale candidate and prepares current facts; approving an old
 review still cannot adopt superseded source. Development dependency preparation
 preserves an author-provided lockfile and does not create one for a lockfile-free

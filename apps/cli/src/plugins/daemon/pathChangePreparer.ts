@@ -12,6 +12,7 @@ import {
 import {
   createPluginRegistryStateStore,
   PluginRegistryCandidateConflictError,
+  readDevelopmentInstallationState,
   resolvePluginUpdatePolicyChangeRejection,
   type PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
@@ -208,7 +209,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       const savedPluginId = (request.kind === 'development' ? request.pluginId : undefined)
         ?? trustedDevelopmentPluginId
         ?? (authoringSource.kind === 'manifest' ? authoringSource.source.manifest.id : undefined);
-      if (savedPluginId && developmentCatalog?.plugins[savedPluginId]?.state.enabled === false) {
+      const savedInstallation = savedPluginId ? developmentCatalog?.plugins[savedPluginId] : undefined;
+      if (readDevelopmentInstallationState(savedInstallation) === 'disabled') {
         throw new DaemonPluginChangePreparationError(
           'plugin_disabled',
           `Plugin '${savedPluginId}' is disabled`,
@@ -312,15 +314,18 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         await registryStateStore.initialize();
         const registrySnapshot = await registryStateStore.readSnapshot();
         const existing = registrySnapshot.state.plugins[projected.manifest.id];
+        const awaitingReview = readDevelopmentInstallationState(existing) === 'reviewRequired';
+        const reviewedInstallation = awaitingReview ? undefined : existing;
         const alreadyTrusted = existing?.source.kind === 'path'
           && existing.source.devWatch === true
           && isPluginTrustRecordAuthorized(existing.install.trust, {
             pluginId: projected.manifest.id,
             distribution,
           });
-        let incumbentAuthorityManifest: CanonicalPluginManifest | undefined =
-          registrySnapshot.approvedAuthorityManifestsByPluginId[projected.manifest.id];
-        if (!incumbentAuthorityManifest && existing) {
+        let incumbentAuthorityManifest: CanonicalPluginManifest | undefined = awaitingReview
+          ? undefined
+          : registrySnapshot.approvedAuthorityManifestsByPluginId[projected.manifest.id];
+        if (!incumbentAuthorityManifest && reviewedInstallation) {
           const generationReference = registrySnapshot.pluginOccurrenceIds[projected.manifest.id];
           if (generationReference) {
             const incumbentGeneration = await readPreparedImmutablePluginGeneration({
@@ -348,7 +353,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           ? evaluatePluginAuthorityReview({
               previous: incumbentAuthorityManifest,
               candidate: projected.manifest,
-              selectedOptionalAccess: existing?.install.optionalAccess ?? [],
+              selectedOptionalAccess: reviewedInstallation?.install.optionalAccess ?? [],
             })
           : null;
         const authorityExpansion = incumbentAuthorityEvaluation?.authorityExpansion
@@ -371,8 +376,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           uiArtifacts,
         });
         const installReviewPrincipal = derivePluginInstallReviewPrincipal(review);
-        const priorPrincipalDigest = registrySnapshot.installReviewPrincipalDigestsByPluginId[projected.manifest.id];
-        const priorPrincipalPresentation = registrySnapshot.installReviewPrincipalPresentationsByPluginId[projected.manifest.id];
+        const priorPrincipalDigest = reviewedInstallation
+          && registrySnapshot.installReviewPrincipalDigestsByPluginId[projected.manifest.id];
+        const priorPrincipalPresentation = reviewedInstallation
+          && registrySnapshot.installReviewPrincipalPresentationsByPluginId[projected.manifest.id];
         const approvedAtMs = Date.now();
         const trust = alreadyTrusted
           ? existing!.install.trust!
@@ -402,7 +409,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
             installedPath: null,
           },
           state: {
-            enabled: existing?.state.enabled ?? true,
+            enabled: reviewedInstallation?.state.enabled ?? true,
             lastLoadedAtMs: approvedAtMs,
             lastError: null,
           },
@@ -414,7 +421,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           manifest: projected.manifest,
           preparedActivationGraph: evaluated.graph,
           registryRevision: registrySnapshot.revision,
-          priorOptionalAccess: existing?.install.optionalAccess ?? [],
+          priorOptionalAccess: reviewedInstallation?.install.optionalAccess ?? [],
           preservedOptionalAccess: incumbentAuthorityEvaluation?.preservedOptionalAccess ?? null,
           installReviewPrincipal,
           ...(priorPrincipalDigest && priorPrincipalPresentation

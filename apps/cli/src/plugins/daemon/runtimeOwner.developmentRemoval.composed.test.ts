@@ -14,7 +14,7 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { createPackedTestConnectedAccountsRuntime } from './packedTestConnectedAccounts';
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 
-it('unregisters an uninstalled development root and only revokes its matching installed authority', async () => {
+it('unregisters only matching development authority and re-admits it through fresh installation review', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-removal-')));
   const firstEntry = join(root, 'first.ts');
   const secondRoot = join(root, 'second');
@@ -110,6 +110,22 @@ it('unregisters an uninstalled development root and only revokes its matching in
     });
     expect((await store.read()).plugins[pluginId]!.install.trust).toBeUndefined();
     expect(reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeNull();
+    await expect(owner.changeService.requestPluginChange({ kind: 'enable', pluginId }))
+      .resolves.toMatchObject({ kind: 'failed', code: 'plugin_change_failed' });
+
+    const rejoin = await owner.changeService.requestPluginChange({
+      kind: 'development', pluginId, sourceRootPath: firstEntry,
+    });
+    expect(rejoin, JSON.stringify(rejoin)).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation' });
+    if (rejoin.kind !== 'reviewRequired') throw new Error('Expected fresh installation review');
+    expect(rejoin.pendingChangeId).not.toBe(pending.pendingChangeId);
+    expect(reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeNull();
+    const rejoined = await owner.changeService.decidePluginChange({
+      pendingChangeId: rejoin.pendingChangeId, decision: 'installAndTrust',
+    });
+    expect(rejoined, JSON.stringify(rejoined)).toMatchObject({ kind: 'committed', pluginId });
+    expect((await store.read()).plugins[pluginId]).toMatchObject({ state: { enabled: true } });
+    expect(reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeTruthy();
   } finally {
     await owner.changeService.shutdown();
     await reloadController.shutdown();

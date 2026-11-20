@@ -11,7 +11,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActio
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
-import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -563,6 +563,14 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     const executed = await executeAction(invocation.actionId, resolvedInput, invocationOptions);
     automationNotices = executed.automationNotices;
     data = unwrapOuterActionResult(executed);
+  }
+  if (invocation.actionId === 'approval.request.decide' && data && typeof data === 'object'
+    && 'status' in data && data.status === 'failed') {
+    const failure = 'execution' in data ? parseActionExecuteFailure(data.execution) : null;
+    throwActionFailure({
+      ...(failure ?? { ok: false, errorCode: 'approval_execution_failed', error: 'Approval execution failed.' }),
+      ...(automationNotices ? { automationNotices } : {}),
+    });
   }
   if (sessionMcp && await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data, automationNotices })) return;
   if (wait) {

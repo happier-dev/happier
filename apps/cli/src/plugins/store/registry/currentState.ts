@@ -243,6 +243,16 @@ export type PluginRegistryAvailabilityInventory = Readonly<{
   >[];
 }>;
 
+/** Trust withdrawal leaves a development record for reinstallation, with its runtime disabled. */
+export function readDevelopmentInstallationState(record?: PluginStateRecord): 'uninstalled' | 'enabled' | 'disabled' | 'reviewRequired' {
+  if (!record) return 'uninstalled';
+  if (record.state.enabled) return 'enabled';
+  return record.source.kind === 'path' && record.source.devWatch === true
+    && record.source.trustPolicy === 'untrusted' && record.install.trust === undefined
+    ? 'reviewRequired'
+    : 'disabled';
+}
+
 /**
  * Whether this exact installed record may carry that explicit update policy.
  *
@@ -1484,7 +1494,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         },
         state: {
           ...input.catalogRecord.state,
-          enabled: catalogRecord?.state.enabled ?? input.catalogRecord.state.enabled,
+          enabled: catalogRecord && readDevelopmentInstallationState(catalogRecord) !== 'reviewRequired'
+            ? catalogRecord.state.enabled
+            : input.catalogRecord.state.enabled,
         },
       });
       const runtimeCatalog = PluginStateFileV1Schema.parse({
@@ -1606,7 +1618,8 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       if (
         enabled
         && (
-          !isPluginTrustRecordAuthorized(installation.trust, {
+          readDevelopmentInstallationState(catalogRecord) === 'reviewRequired'
+          || !isPluginTrustRecordAuthorized(installation.trust, {
             pluginId,
             distribution: installation.source.distribution,
           })

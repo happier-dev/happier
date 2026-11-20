@@ -6357,6 +6357,11 @@ strict definition through the same field owner; only a Home that explicitly does
 not support definition discovery receives the legacy JSON-only fallback. A denied,
 malformed, or mismatched definition never falls back to looser parsing.
 
+When `actions invoke approval.request.decide` receives a failed execution
+receipt, the CLI exits 1 and projects the receipt's error code and diagnostic
+in its existing failure envelope. The approval record remains available for
+inspection.
+
 Input precedence has one rule: `--input-json` supplies the base object, distinct
 field flags and positionals overlay it, and a second source for the same field is
 rejected in either order rather than silently winning.

@@ -17,7 +17,7 @@ import type {
   PluginRegistryRuntimeCandidate,
   PluginRegistryRuntimeLifecycle,
 } from '@/plugins/store/registry/currentState';
-import { createPluginRegistryStateStore, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/currentState';
+import { createPluginRegistryStateStore, readDevelopmentInstallationState, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/currentState';
 import { admitPluginContributionGraph } from '@/plugins/projection/registry/normalize/admission';
 import { developmentSourceAuthorityEqual } from '@/plugins/runtime/sourceAuthority';
 import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
@@ -284,9 +284,11 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
   const committedPreparedActivationCustodyByPluginId =
     new Map<string, PreparedActivationCustody>();
 
-  async function assertDevelopmentPluginEnabled(pluginId: string): Promise<void> {
+  async function assertDevelopmentPluginEnabled(pluginId: string, phase: 'prepare' | 'adopt'): Promise<void> {
     const catalog = await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read();
-    if (catalog.plugins[pluginId]?.state.enabled === false) {
+    const state = readDevelopmentInstallationState(catalog.plugins[pluginId]);
+    // The approved reinstallation prepares before the registry commits its enablement.
+    if (state === 'disabled' || (phase === 'adopt' && state === 'reviewRequired')) {
       throw new Error(`Plugin '${pluginId}' is disabled`);
     }
   }
@@ -314,7 +316,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         throw new Error('Plugin runtime candidate is required');
       }
       if (developmentCandidate) {
-        await assertDevelopmentPluginEnabled(developmentCandidate.pluginId);
+        await assertDevelopmentPluginEnabled(developmentCandidate.pluginId, 'prepare');
         // Refuse a candidate with no adoptable source before the caller commits
         // installation authority. Publication repeats this same source check.
         if (!isDevelopmentCandidateCurrent(developmentCandidate)) {
@@ -706,7 +708,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             if (adopted) return;
             if (candidateToAdopt) {
               try {
-                await assertDevelopmentPluginEnabled(candidateToAdopt.pluginId);
+                await assertDevelopmentPluginEnabled(candidateToAdopt.pluginId, 'adopt');
               } catch (error) {
                 await disposeOnce();
                 throw error;

@@ -80,6 +80,47 @@ it('preserves invitation token guidance at actions invoke dispatch', async () =>
 });
 
 describe('public Action failure evidence', () => {
+  it.each(['failed', 'executed'] as const)('projects a %s plugin approval decision at the CLI boundary', async status => {
+    const failure = { errorCode: 'plugin_change_failed', error: 'Plugin requires installation review before it can be enabled',
+      failureCause: { phase: 'plugins.change.apply', errorClass: 'Error', errorCode: null, httpStatus: null } } as const;
+    const request: ApprovalRequest = {
+      v: 2, status, createdAtMs: 1, updatedAtMs: 2, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      actionId: 'plugins.enable', actionArgs: { pluginId: 'acme.development-removal' }, summary: 'Enable plugin',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId: 'plugins.enable', requestId: 'enable-request' },
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: status === 'failed' ? { ok: false, executedAtMs: 2, ...failure } : { ok: true, executedAtMs: 2 },
+    };
+    const { executor } = createCliActionExecutorHarness({ token: 'test-account', sessionId: '', mode: 'plain', ctx: null, serverId: 'home' }, {
+      approvalsGet: async () => request,
+      approvalsUpdate: async () => { throw new Error('Attempted to update a settled approval'); },
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'approval.request.decide': ['cli'] } }),
+    });
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    await handleActionsCommand(['invoke', 'approval.request.decide', '--input-json',
+      JSON.stringify({ artifactId: 'plugin-approval', decision: 'approve' }), '--json'], {
+      readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: () => ({ execute: (id, input, context) => executor.execute(id, input, {
+        ...context, authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' },
+      }), resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
+    });
+    if (status === 'failed') {
+      expect(JSON.parse(output), output).toMatchObject({ ok: false, kind: 'actions_invoke', error: {
+        code: failure.errorCode, message: failure.error, failureCause: failure.failureCause,
+      } });
+      expect(process.exitCode).toBe(1);
+    } else {
+      expect(JSON.parse(output), output).toMatchObject({ ok: true, kind: 'actions_invoke', data: { status } });
+    }
+  });
+
   it.each([
     { actionId: 'deployments.rollback', input: { serverId: 'home', environmentId: 'environment' }, missing: 'deploymentId' },
     { actionId: 'deployments.teardown', input: { serverId: 'home', environmentId: 'environment', mode: 'preview' }, missing: 'reason' },
