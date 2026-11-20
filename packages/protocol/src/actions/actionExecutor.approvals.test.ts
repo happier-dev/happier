@@ -35,7 +35,7 @@ import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deployme
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
 import { mapApprovalCreatedBySurface } from './executor/approvalPreparation.js';
 
-import { createActionAutomationHttpPortV1 } from './executor/actionAutomationAdmission.js';
+import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
@@ -1314,7 +1314,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
-  it('binds a shared Bot decision to Bob while replay retains Alice and rejoins the same effect', async () => {
+  it.each([false, true])('binds a shared Bot decision to Bob while replay retains Alice and rejoins the same effect (checks: %s)', async (automaticChecks) => {
     const original = createApprovalRequest();
     if (original.v !== 2) throw new Error('Expected current approval');
     const requesterConfirmation = { requestRef: 'bob-input', requesterAccountId: 'bob',
@@ -1323,7 +1323,12 @@ describe('createActionExecutor (approvals)', () => {
     const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId: original.actionId, input: original.actionArgs,
       context: sharedRequesterContext(original.actionId, original.actionArgs), targetSessionId: 's1', requesterConfirmation });
     if (!executionOriginV1) throw new Error('Expected signed shared origin');
-    let request: ApprovalRequest = ApprovalRequestV2Schema.parse({ ...original, requestedSurface: 'agent', executionOriginV1, requesterConfirmation });
+    let request: ApprovalRequest = ApprovalRequestV2Schema.parse({ ...original, requestedSurface: 'agent', executionOriginV1, requesterConfirmation,
+      ...(automaticChecks ? { automaticChecks: { phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready',
+        subjects: [], selected: [], consents: [], runs: [], results: [],
+        notices: [{ code: 'action_automation_skipped', reason: 'actorConsentUnavailableForRequester',
+          automationId: 'shared-automation', triggerId: 'shared-trigger', workflowId: 'shared-workflow' }] } } : {}),
+    });
     const effects: Array<{ message: string; accountId: string | undefined }> = [];
     const credentialUses = [{ v: 1 as const, kind: 'connected_account' as const, label: 'Personal GitHub',
       owner: { kind: 'account' as const, accountId: 'alice' }, service: { pluginId: 'example.service', localId: 'github' },
@@ -1335,6 +1340,8 @@ describe('createActionExecutor (approvals)', () => {
         currentness: { kind: 'current_at_materialization' as const, resourceRevision: 7 } }];
     let entitled = true;
     const executor = createExecutor({ approvalsGet: async () => request,
+      actionAutomations: createActionAutomationPortV1({ accountId: 'alice', seed: async () => ({ v: 1, rows: [] }),
+        settle: async () => undefined }),
       approvalsUpdate: async ({ request: next }) => {
         const transition = decideApprovalRequestTransition(request, next);
         if (!transition.ok) return transition;

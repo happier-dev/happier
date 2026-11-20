@@ -728,6 +728,12 @@ function readNativeServiceStartApproval(actionId: string, actionArgs: unknown, p
   return { ok: true as const, review: review.data };
 }
 
+function projectRequesterApprovalDecision(request: Pick<StoredApprovalRequestV2, 'requesterConfirmation'>, context: ActionExecutorContext) {
+  const requester = request.requesterConfirmation && context.requesterApprovalDecision;
+  return requester ? { authority: 'present_user' as const, decidingAccountId: requester.actor.accountId,
+    ...(requester.decisionSource === 'voice' ? { decidedVia: 'voice' as const } : {}) } : undefined;
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
@@ -879,7 +885,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const checks = existing.automaticChecks;
     if (!checks) return { request: existing };
     const decidingActor = deriveActionActorV1(ctx, 'approval.request.decide');
-    const decidingAccountId = decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined;
+    const personDecision = projectRequesterApprovalDecision(existing, ctx) ?? (resolveHostStampedAuthority(ctx) === 'present_user'
+      ? { authority: 'present_user' as const,
+        ...(decidingActor?.actorKind === 'person' ? { decidingAccountId: decidingActor.accountId } : {}) } : undefined);
     let pending = existing;
     const now = Math.max(Date.now(), existing.updatedAtMs);
     if (checks.phase === 'consent') {
@@ -891,8 +899,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         nextChecks = answered;
       } else if (checks.humanApprovalRequired && !checks.humanDecision) {
         nextChecks = { ...checks, humanDecision: { kind: 'approve', decidedAtMs: now,
-          ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
-            ...(decidingAccountId ? { decidingAccountId } : {}) } : {}),
+          ...personDecision,
           ...(answer.narrowedInput !== undefined ? { narrowedInput: answer.narrowedInput } : {}) } };
       } else return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       const admitted = await automaticApproval.admit(artifactId,
@@ -906,8 +913,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (answer.triggerConsent) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       pending = { ...pending, status: 'approved', updatedAtMs: now,
         decision: { kind: 'approve', decidedAtMs: now,
-          ...(resolveHostStampedAuthority(ctx) === 'present_user' ? { authority: 'present_user' as const,
-            ...(decidingAccountId ? { decidingAccountId } : {}) } : {}) },
+          ...personDecision },
         automaticChecks: { ...checks, phase: 'passed' } };
       const failure = await automaticApproval.write(artifactId, pending, ctx);
       if (failure) return failure;
@@ -7787,9 +7793,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(ctx.expectedAccountId ?? ctx.runtimeAccountId
                   ? { decidingAccountId: ctx.expectedAccountId ?? ctx.runtimeAccountId } : {}),
               } : {}),
-              ...(existing.v === 2 && existing.requesterConfirmation && ctx.requesterApprovalDecision
-                ? { authority: 'present_user' as const, decidingAccountId: ctx.requesterApprovalDecision.actor.accountId,
-                  ...(ctx.requesterApprovalDecision.decisionSource === 'voice' ? { decidedVia: 'voice' as const } : {}) } : {}) },
+              ...(existing.v === 2 ? projectRequesterApprovalDecision(existing, ctx) : undefined) },
           };
           const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId, context: ctx });
           const updateFailure = readActionFailureEnvelope(updated);
@@ -7852,9 +7856,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   && (ctx.expectedAccountId ?? ctx.runtimeAccountId ?? existing.executionOriginV1.accountId)
                   ? { decidingAccountId: ctx.expectedAccountId ?? ctx.runtimeAccountId ?? existing.executionOriginV1.accountId } : {}),
               } : {}),
-              ...(existing.v === 2 && existing.requesterConfirmation && ctx.requesterApprovalDecision
-                ? { authority: 'present_user' as const, decidingAccountId: ctx.requesterApprovalDecision.actor.accountId,
-                  ...(ctx.requesterApprovalDecision.decisionSource === 'voice' ? { decidedVia: 'voice' as const } : {}) } : {}),
+              ...(existing.v === 2 ? projectRequesterApprovalDecision(existing, ctx) : undefined),
               ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(approvedActionArgs) } : {}) },
           };
 
