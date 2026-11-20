@@ -351,6 +351,7 @@ import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/c
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { SESSION_AGENT_TERMINAL_OPS } from '@/daemon/sessionAgentTerminalRoute';
 import type { MachineRpcHandlerDeps } from '@/api/machine/rpcHandlers';
+import { createSessionConfigOptionEnvironmentOwner } from '@/api/machine/rpcHandlers.sessionConfigOptions';
 import { withTrackedSessionRpcContext } from '../sessionEncryption/withTrackedSessionRpc';
 
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
@@ -1471,6 +1472,7 @@ export async function startDaemonSessionControlRuntime(
   Readonly<{
     executeGuardLeftBehindAction: ReturnType<typeof createGuardLeftBehindActionExecutor>;
     readRequesterNativeOfferedModel: NonNullable<MachineRpcHandlerDeps['readRequesterNativeOfferedModel']>;
+    withSessionConfigOptionEnvironment: NonNullable<MachineRpcHandlerDeps['withSessionConfigOptionEnvironment']>;
     materializeSessionProcessEnvironment: SessionConnectedAccountProcessEnvironmentProducer;
     resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']>;
     guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>;
@@ -1663,6 +1665,14 @@ export async function startDaemonSessionControlRuntime(
     serverId: params.serverId,
     get machineId() { return params.machineId; },
     isRetired: () => controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing(),
+  });
+  const withSessionConfigOptionEnvironment = createSessionConfigOptionEnvironmentOwner({
+    get machineId() { return params.machineId; },
+    serverId: params.requesterSessionCustodyServerId ?? params.serverId,
+    credentials: params.credentials,
+    withSessionAccountContext, withSessionAccountHome,
+    projectModels: params.projectProviderModels,
+    projectModelsForAccount: params.projectProviderModelsForAccount,
   });
   const prepareSessionAgentIsolationMember = createSessionAgentIsolationMemberPreparation({
     get machineId() { return params.machineId; }, custodianAccountId: params.externalActionAccountId,
@@ -15893,6 +15903,7 @@ export async function startDaemonSessionControlRuntime(
   return {
     executeGuardLeftBehindAction,
     readRequesterNativeOfferedModel,
+    withSessionConfigOptionEnvironment,
     async materializeSessionProcessEnvironment(input: SessionConnectedAccountProcessEnvironmentInput) {
       const context = await resolveSessionAccountContext(input.sessionId);
       try {

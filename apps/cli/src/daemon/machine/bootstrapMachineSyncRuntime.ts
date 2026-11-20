@@ -710,6 +710,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   ) => Promise<ExternalSessionHostOperationInstallation>;
   readMaterializedStateObservationBinding?: MachineRpcHandlerDeps['readMaterializedStateObservationBinding'];
   resolveExecutionRunLiveBrokerAuthority?: MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority'];
+  withSessionConfigOptionEnvironment?: MachineRpcHandlerDeps['withSessionConfigOptionEnvironment'];
   externalActionIngressOwner?: ExternalActionIngressOwner;
   prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
   openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
@@ -1402,6 +1403,7 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.resolveManagedPurposeBindingIntentSelection
           ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
           : {}),
+        withSessionConfigOptionEnvironment: params.withSessionConfigOptionEnvironment,
         ...(params.resolveExecutionRunLiveBrokerAuthority
           ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
           : {}),

@@ -8401,6 +8401,8 @@ after the existing strict JSON normalization.
 
 In unreleased 0.3 source, `session.config_option.set` accepts `valueId: null`
 to withdraw one option override through the same Session metadata intent writer.
+The daemon resolves choices and publishes intent under the Session owner's
+Account, including on Machines shared with the owner through a Use grant.
 Withdrawal remains available when the selected model no longer offers the option
 or another control disables it. A non-null value still requires an enabled,
 currently offered choice. Null retains its existing configuration-intent meaning;

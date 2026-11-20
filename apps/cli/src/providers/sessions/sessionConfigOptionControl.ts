@@ -29,6 +29,7 @@ import {
   type SessionConfigOptionChoices, type SessionConfigOptionRequest, type SessionConfigOptionWriteReceipt,
 } from '@happier-dev/protocol/sessions/control/sessionConfigOptionV1';
 
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { StoredCredentials } from '@/persistence';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -42,14 +43,15 @@ type ModelDescriptor = Readonly<{
   extendedContextModelId?: string;
   modelOptions?: readonly SessionConfigOptionInput[];
 }>;
-type ControlEnvironment = Readonly<{
+export type SessionConfigOptionControlEnvironment = Readonly<{
   credentials: StoredCredentials;
   machineId: string;
   signal?: AbortSignal;
+  readAccountSettings?: () => AccountSettings | null;
   readProviderModels?: (request: DaemonProviderModelProjectionRequestV1) => Promise<DaemonProviderModelProjectionResponseV1>;
 }>;
 
-async function readEffectiveConfigChoices(metadata: Record<string, unknown>, env: ControlEnvironment): Promise<SessionConfigOptionChoices> {
+async function readEffectiveConfigChoices(metadata: Record<string, unknown>, env: SessionConfigOptionControlEnvironment): Promise<SessionConfigOptionChoices> {
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) return { options: [] };
   const target = resolveBackendTargetFromSessionMetadata(metadata);
@@ -105,7 +107,8 @@ async function readEffectiveConfigChoices(metadata: Record<string, unknown>, env
         agentId, backendTarget: convertBackendTargetRefV2ToV1(target),
         runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(metadata) ?? undefined,
         cwd: metadata.path, credentials: env.credentials, signal: env.signal, modelId,
-        accountSettings: await resolveAvailableAccountSettings({ credentials: env.credentials }),
+        accountSettings: env.readAccountSettings ? env.readAccountSettings()
+          : await resolveAvailableAccountSettings({ credentials: env.credentials }),
       });
       if (catalog.source !== 'unavailable') {
         model = findModelOptionForEffectiveModelId(catalog.availableModels, modelId, candidate => candidate.id);
@@ -136,7 +139,7 @@ async function readEffectiveConfigChoices(metadata: Record<string, unknown>, env
   return { options };
 }
 
-export async function readSessionConfigOptionChoicesForTarget(sessionId: string, env: ControlEnvironment): Promise<SessionConfigOptionChoices> {
+export async function readSessionConfigOptionChoicesForTarget(sessionId: string, env: SessionConfigOptionControlEnvironment): Promise<SessionConfigOptionChoices> {
   const transport = await resolveSessionTransportContext({
     credentials: env.credentials, idOrPrefix: sessionId, exact: true, reason: 'waitForMetadataUpdate', usage: 'read', signal: env.signal,
   });
@@ -149,7 +152,7 @@ export async function readSessionConfigOptionChoicesForTarget(sessionId: string,
 }
 
 export async function writeSessionConfigOptionForTarget(
-  request: SessionConfigOptionRequest, env: ControlEnvironment,
+  request: SessionConfigOptionRequest, env: SessionConfigOptionControlEnvironment,
 ): Promise<SessionConfigOptionWriteReceipt> {
   const { sessionId, configId, valueId } = request;
   const updatedAt = Date.now();
