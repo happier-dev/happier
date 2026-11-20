@@ -18947,6 +18947,8 @@ const enWelcome = {
   welcomeQuestionSubtitle: 'First time here?',
   terminalContinuationTitle: 'Connect terminal.',
   terminalContinuationSubtitle: 'Sign in to finish.',
+  placeHeadingTitle: 'Sign in',
+  placeHeadingSubtitle: 'to this Home.',
 
   welcomePrimaryButton: "First time here — let's start",
   welcomePrimarySubtitle: 'One tap. No form. Your key lives here.',

@@ -15595,6 +15595,8 @@ settingsSession: {
     welcomeQuestionSubtitle: "Вы здесь впервые?",
     terminalContinuationTitle: 'Подключите терминал.',
     terminalContinuationSubtitle: 'Войдите, чтобы завершить.',
+    placeHeadingTitle: 'Войдите',
+    placeHeadingSubtitle: 'в этот Home.',
 
     welcomePrimaryButton: "Впервые здесь — начнём",
     welcomePrimarySubtitle: "Одно касание. Без форм. Ваш ключ хранится здесь.",

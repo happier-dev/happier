@@ -15601,6 +15601,8 @@ settingsSession: {
     welcomeQuestionSubtitle: "Jesteś tu pierwszy raz?",
     terminalContinuationTitle: 'Połącz swój terminal.',
     terminalContinuationSubtitle: 'Zaloguj się, aby dokończyć.',
+    placeHeadingTitle: 'Zaloguj się',
+    placeHeadingSubtitle: 'do tego Home.',
 
     welcomePrimaryButton: "Pierwszy raz tutaj — zaczynajmy",
     welcomePrimarySubtitle: "Jedno dotknięcie. Bez formularzy. Twój klucz zostaje tutaj.",

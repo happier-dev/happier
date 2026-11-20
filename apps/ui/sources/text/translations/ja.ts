@@ -16050,6 +16050,8 @@ settingsSession: {
     welcomeQuestionSubtitle: "初めてですか?",
     terminalContinuationTitle: 'ターミナルを接続しましょう。',
     terminalContinuationSubtitle: 'サインインして完了します。',
+    placeHeadingTitle: 'この Home に',
+    placeHeadingSubtitle: 'サインイン。',
 
     welcomePrimaryButton: "初めてですか — はじめましょう",
     welcomePrimarySubtitle: "ワンタップ。フォーム不要。鍵はこの端末に保管されます。",

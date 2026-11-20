@@ -144,6 +144,17 @@ describe('Add Home as a step of a host page (the Welcome wizard)', () => {
       ).toBeNull(),
     );
     expect(screen.findByTestId('home-auth-back')).toBeNull();
+    // The Home answers with its own welcome (FO-TASTE-1 F5): the one welcome view, named by that Home,
+    // whose door opens the chosen way in the Home sign-in owner.
+    expect(screen.findByTestId('welcome-decision-panel')).not.toBeNull();
+    expect(screen.findByTestId('welcome-home-context')).not.toBeNull();
+    // Choosing another Home is the previous step, not a locked choice on this one.
+    expect(screen.findByTestId('welcome-home-change-unavailable')).toBeNull();
+    // "I already use Happier" opens this Home's ways; the key leads them and opens the key form.
+    await screen.pressByTestIdAsync('welcome-scan-existing-home');
+    await screen.pressByTestIdAsync('welcome-home-key');
+    await vi.waitFor(() => expect(screen.findByTestId('restore-manual-secret-input')).not.toBeNull());
+    expect(screen.findByTestId('welcome-decision-panel')).toBeNull();
     const back = backChanges.at(-1);
     expect(typeof back?.onPress).toBe('function');
 

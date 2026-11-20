@@ -14809,6 +14809,8 @@ settingsSession: {
         welcomeQuestionSubtitle: 'És el teu primer cop aquí?',
         terminalContinuationTitle: 'Connecta el teu terminal.',
         terminalContinuationSubtitle: 'Inicia la sessió per acabar.',
+        placeHeadingTitle: 'Inicia la sessió',
+        placeHeadingSubtitle: 'en aquest Home.',
 
         welcomePrimaryButton: "Primera vegada aquí — comencem",
         welcomePrimarySubtitle: 'Un toc. Sense formulari. La teva clau viu aquí.',

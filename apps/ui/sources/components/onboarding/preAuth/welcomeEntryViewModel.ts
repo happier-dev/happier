@@ -175,7 +175,8 @@ export function projectWelcomeEntryViewModel(
         notices.push({ slot: 'signup', testID: 'welcome-signup-disabled', kind: 'unavailable',
             title: t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') });
     }
-    if (model.homeChangeLocked && input.policy?.kind !== 'invalid'
+    // On one Home's own welcome another Home is chosen on the step before, not locked here.
+    if (model.homeChangeLocked && !input.place && input.policy?.kind !== 'invalid'
         && !(input.policy?.kind === 'managed' && input.policy.field === 'home')) {
         notices.push({ slot: 'home_change', testID: 'welcome-home-change-unavailable', kind: 'unavailable',
             title: t('welcome.useDifferentHome'), reason: t('common.unavailable') });
@@ -224,7 +225,7 @@ export function projectWelcomeEntryViewModel(
     return {
         ...(input.place ? { context: { label: input.place.label } } : {}),
         heading: !input.showGreeting ? undefined : input.place
-            ? { title: t('homesJourneys.signInToHomeTitle'), subtitle: t('homesJourneys.signInToHomeLead') }
+            ? { title: t('welcome.placeHeadingTitle'), subtitle: t('welcome.placeHeadingSubtitle') }
             : input.terminalWaiting
             ? { title: t('welcome.terminalContinuationTitle'), subtitle: t('welcome.terminalContinuationSubtitle') }
             : returning ? input.returningGreeting

@@ -12880,6 +12880,8 @@ settingsSession: {
         welcomeQuestionSubtitle: '第一次使用?',
         terminalContinuationTitle: '連接你的終端機。',
         terminalContinuationSubtitle: '登入以完成。',
+        placeHeadingTitle: '登入到',
+        placeHeadingSubtitle: '這個 Home。',
 
         welcomePrimaryButton: "第一次使用 — 開始吧",
         welcomePrimarySubtitle: '一次點擊。無需表單。你的金鑰就在這裡。',

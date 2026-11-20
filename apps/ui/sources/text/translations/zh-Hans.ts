@@ -15274,6 +15274,8 @@ settingsSession: {
     welcomeQuestionSubtitle: "第一次使用?",
     terminalContinuationTitle: '连接你的终端。',
     terminalContinuationSubtitle: '登录以完成。',
+    placeHeadingTitle: '登录到',
+    placeHeadingSubtitle: '这个 Home。',
 
     welcomePrimaryButton: "第一次使用 — 开始吧",
     welcomePrimarySubtitle: "一次点击。无需表单。你的密钥就在这里。",

@@ -15862,6 +15862,8 @@ settingsSession: {
         welcomeQuestionSubtitle: 'Zum ersten Mal hier?',
         terminalContinuationTitle: 'Verbinde dein Terminal.',
         terminalContinuationSubtitle: 'Melde dich an, um abzuschließen.',
+        placeHeadingTitle: 'Melde dich an',
+        placeHeadingSubtitle: 'bei diesem Home.',
 
         welcomePrimaryButton: "Zum ersten Mal hier – los geht's",
         welcomePrimarySubtitle: 'Ein Tipp. Kein Formular. Dein Schlüssel bleibt hier.',

@@ -15882,6 +15882,8 @@ settingsSession: {
     welcomeQuestionSubtitle: "É a sua primeira vez aqui?",
     terminalContinuationTitle: 'Conecte seu terminal.',
     terminalContinuationSubtitle: 'Entre para concluir.',
+    placeHeadingTitle: 'Entre',
+    placeHeadingSubtitle: 'neste Home.',
 
     welcomePrimaryButton: "Primeira vez aqui — vamos começar",
     welcomePrimarySubtitle: "Um toque. Sem formulário. Sua chave vive aqui.",
