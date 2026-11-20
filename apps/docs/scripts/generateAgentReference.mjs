@@ -206,7 +206,7 @@ size. With **Compact while idle** on, a long conversation is compacted shortly
 before the cache expires, so the next message you send starts from a small, warm
 context.
 
-You choose it per agent under **Settings → Agents → {agent} → Session defaults**.
+You choose it per agent under **Settings → Agents → \`{agent}\` → Session defaults**.
 While it is on, **When to compact** holds two refinements, each shown only where
 the agent's runtime honours it:
 
