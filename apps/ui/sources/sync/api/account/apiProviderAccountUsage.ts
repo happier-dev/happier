@@ -224,11 +224,11 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
                 if (!active) return;
                 waitingWork = value.waitingWork; publish();
             });
-        const price = current && options.readEnteredMonthlyPrice ? options.readEnteredMonthlyPrice().then(enteredMonthlyPrice => {
+        const initialCurrent = current;
+        const price = initialCurrent && options.readEnteredMonthlyPrice ? options.readEnteredMonthlyPrice().then(enteredMonthlyPrice => {
             if (!active) return;
             throwIfAborted(options.signal); options.assertCurrent?.();
-            current = openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice,
-                accountMode: options.accountMode, material, record: recordJson });
+            current = projectProviderAccountUsageEnteredPriceV1(initialCurrent, enteredMonthlyPrice);
             publish();
         }) : Promise.resolve();
         const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId: resolution.recordId, range: historyRequest.range },

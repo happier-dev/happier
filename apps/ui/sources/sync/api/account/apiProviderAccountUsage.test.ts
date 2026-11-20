@@ -1165,6 +1165,7 @@ describe('apiProviderAccountUsage', () => {
         };
         const seen = new Set<string>();
         const requestedPageSizes: number[] = [];
+        let currentEnvelopeReads = 0;
         const request = vi.fn(async (path: string) => {
             if (!path.includes('/history')) {
                 // Repeated source/current/Pending reads are refused at the real transport boundary.
@@ -1189,6 +1190,17 @@ describe('apiProviderAccountUsage', () => {
                 return Response.json({ entries, nextCursor: start + entries.length < samples.length
                     ? { id: last.id, observedAtMs: last.observedAtMs } : null });
             }
+            if (path.includes('/record?')) {
+                const { content, ...metadata } = record(current);
+                const response = Response.json({});
+                // Instrument the object returned by the HTTP boundary so a second
+                // admission of the same body is visible even without a second GET.
+                vi.spyOn(response, 'json').mockResolvedValue({ ...metadata, get content() {
+                    currentEnvelopeReads++;
+                    return content;
+                } });
+                return response;
+            }
             return Response.json(path.includes('/sources/resolve') ? { source, recordId: current.recordId,
                 providerAccountId: current.recordKey.accountSubjectId, fetchedAt: 10, staleAfterMs: 2 }
                 : path.includes('/reset-starts/read') ? { entries: [] } : record(current));
@@ -1196,13 +1208,18 @@ describe('apiProviderAccountUsage', () => {
         const progress: ConnectedServiceQuotaGetResultV1[] = [];
         let releasePrice!: () => void;
         const priceGate = new Promise<void>(resolve => { releasePrice = resolve; });
+        const enteredMonthlyPrice = { amount: 25, currency: 'USD', enteredAtMs: 10 };
         const options = { accountMode, material: accountMode === 'e2ee' ? material : undefined, request, nowMs: 10,
-            readEnteredMonthlyPrice: async () => { await priceGate; return undefined; },
-            readAllHistory: { onProgress: (value: (typeof progress)[number]) => { progress.push(value); releasePrice(); } } };
+            readEnteredMonthlyPrice: async () => { await priceGate; return enteredMonthlyPrice; },
+            readAllHistory: { onProgress: (value: (typeof progress)[number]) => {
+                progress.push(value);
+                if (value.history) releasePrice();
+            } } };
         const { getProviderAccountUsageQuota } = await loadApi();
         const result = await getProviderAccountUsageQuota({ token: 'plain-token' }, { source,
             history: { range: { startAtMs: 0, endAtMs: 11 }, pageSize: 1 } }, options);
         expect(progress[0]).toMatchObject({ current });
+        expect(progress[0]?.current?.subscription?.enteredMonthlyPrice).toBeUndefined();
         expect(progress[0]?.history).toBeUndefined();
         expect(progress.some(value => value.history?.nextCursor != null)).toBe(true);
         const historyProgress = progress.filter(value => value.history?.entries.length);
@@ -1217,6 +1234,8 @@ describe('apiProviderAccountUsage', () => {
         expect(result.history?.nextCursor).toBeNull();
         expect(requestedPageSizes).toEqual(wire === 'stream' ? [1] : [1, 2, 4, 8]);
         expect(result.waitingWork).toEqual({ status: 'available', entries: [] });
+        expect(result.current?.subscription?.enteredMonthlyPrice).toEqual(enteredMonthlyPrice);
+        expect(currentEnvelopeReads, 'the independently admitted price does not reopen current quota').toBe(1);
     });
     it('stops a progressive history producer after its parallel price read fails', async () => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
