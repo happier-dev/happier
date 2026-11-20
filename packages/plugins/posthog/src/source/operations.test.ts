@@ -1,5 +1,5 @@
 import { activate as activateAccount } from '../accountRuntime.js';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -74,7 +74,7 @@ type MaterializeStub = (
 ) => Promise<unknown>;
 
 type RequestStub = (
-    input: Readonly<{ url: string; method?: string }>,
+    input: Readonly<{ url: string; method?: string; body?: Uint8Array }>,
     options: Readonly<{ signal: AbortSignal }>,
 ) => Promise<unknown>;
 
@@ -113,7 +113,7 @@ function context(
     });
     const materializeListedAccount = vi.fn(options.materialize ?? defaultMaterialize);
     const request = vi.fn(async (
-        input: Readonly<{ url: string; method?: string }>,
+        input: Parameters<RequestStub>[0],
         requestOptions: Readonly<{ signal: AbortSignal }>,
     ) => {
         if (options.request !== undefined) {
@@ -279,7 +279,7 @@ describe('PostHog Triage source operations', () => {
         expect(configured).toMatchObject({ kind: 'page', status: 'complete', units: [{
             id: '00000000-0000-4000-8000-0000000000d1',
         }] });
-        expect(PLUGIN_MANIFEST.contributes.actions.find(({ id }) => id === 'posthog/list-scope-units'))
+        expect(PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === POSTHOG_ACTION_IDS.listScopeUnits))
             .toMatchObject({ dangerLevel: 'safe', surfaces: expect.arrayContaining(['ui', 'agent', 'mcp', 'cli']) });
     });
 
@@ -373,7 +373,7 @@ describe('PostHog Triage source operations', () => {
             { method: 'GET' },
         ]);
         expect(requests).toHaveLength(3);
-        const declaration = PLUGIN_MANIFEST.contributes.actions.find(({ id }) => id === action);
+        const declaration = PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === action);
         expect(declaration).toMatchObject({ dangerLevel: 'writesRemote', confirmation: expect.any(Object), surfaces: expect.arrayContaining(['agent', 'mcp', 'cli', 'ui']) });
     });
 
@@ -498,13 +498,71 @@ describe('PostHog Triage source operations', () => {
         }
     });
 
-    it('keeps a cancelled PostHog dispatch uncertain and does not replay', async () => {
+    it.each([
+        [POSTHOG_ACTION_IDS.resolve, {}],
+        [POSTHOG_ACTION_IDS.suppress, {}],
+        [POSTHOG_ACTION_IDS.unsuppress, {}],
+        [POSTHOG_ACTION_IDS.assign, { assignee: { type: 'user', id: 42 } }],
+    ])('keeps a cancelled %s dispatch uncertain and does not replay', async (action, extra) => {
         const controller = new AbortController();
         const host = context([], [], { signal: controller.signal });
         host.request.mockImplementationOnce(async (input) => ({ status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(crudIssueRead)) }));
         host.request.mockImplementationOnce(async () => { controller.abort(); throw new Error('cancelled after send'); });
-        expect(await write('posthog/resolve-issue', host, {}, true)).toMatchObject({ kind: 'uncertain', failure: { code: POSTHOG_FAILURE_CODES.cancelled } });
+        expect(await write(action, host, extra, true)).toMatchObject({ kind: 'uncertain', failure: { code: POSTHOG_FAILURE_CODES.cancelled } });
         expect(host.request.mock.calls).toHaveLength(2);
+    });
+
+    it('propagates caller cancellation through each registered Triage read', async () => {
+        const instance = configuredInstance();
+        const { instance: _identity, ...draft } = instance;
+        const localRef = { kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id };
+        const entry = { v: 1, instance, localRef };
+        const page = { kind: 'initial', limit: 3 };
+        const directory = { v: 1, binding: instance.binding, page: { kind: 'initial' } };
+        const failure = { class: 'transient', code: POSTHOG_FAILURE_CODES.cancelled };
+        const unavailable = { kind: 'unavailable', failure };
+        const cases: ReadonlyArray<readonly [action: string, input: JsonValue, settlement: object]> = [
+            [POSTHOG_ACTION_IDS.listInstances, { v: 1 }, { candidates: [], failures: [{ binding: instance.binding, failure }] }],
+            [POSTHOG_ACTION_IDS.configuration, { ...directory, kind: 'organizations' }, unavailable],
+            [POSTHOG_ACTION_IDS.configuration, { ...directory, kind: 'environments', organizationUuid: projectsPage.results[0]!.organization }, unavailable],
+            [POSTHOG_ACTION_IDS.listScopeUnits, { v: 1, draft }, { kind: 'failed', failure }],
+            [POSTHOG_ACTION_IDS.scan, { v: 1, instance, page }, { kind: 'failed', failure }],
+            [POSTHOG_ACTION_IDS.scan, { v: 1, instance, page, sort: { field: 'updated', direction: 'desc' } }, { kind: 'failed', failure }],
+            [POSTHOG_ACTION_IDS.get, entry, { kind: 'unresolved', failure }],
+            [POSTHOG_ACTION_IDS.nativeOverview, entry, { observation: { kind: 'unresolved', failure } }],
+            [POSTHOG_ACTION_IDS.issueEvents, { ...entry, limit: 3 }, unavailable],
+            [POSTHOG_ACTION_IDS.issueActivity, { ...entry, limit: 3 }, unavailable],
+            [POSTHOG_ACTION_IDS.codeVariables, {
+                ...entry,
+                selectedUuid: '00000000-0000-4000-8000-0000000000f1',
+                selectedOffset: 0,
+                frozenRequest: {
+                    v: 1, issueId: localRef.entryId, from: '2026-07-16T00:00:00.000Z', to: '2026-08-15T00:00:00.000Z',
+                    filterTestAccounts: false, onlyAppFrames: false,
+                    include: ['exception', 'stacktrace', 'navigation', 'correlation'], limit: 3, offset: 0,
+                },
+            }, unavailable],
+        ];
+        for (const [action, input, settlement] of cases) {
+            const caller = new AbortController();
+            const host = context([], [], {
+                signal: caller.signal,
+                request: async () => {
+                    caller.abort();
+                    return await new Promise(() => {});
+                },
+            });
+            const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate: POSTHOG_PLUGIN.activate, activateAccount }, services: host.value.services });
+            try {
+                // Observe the provider's typed result before the Action RPC discards the cancelled reply.
+                const handler = kit.registration('actions', action);
+                if (handler === undefined) throw new Error(`Missing registered Action ${action}`);
+                expect(await handler(input, host.value), action).toMatchObject(settlement);
+                expect(host.request.mock.calls.map(([, options]) => options.signal.aborted), action).toEqual([true]);
+            } finally {
+                await kit.dispose();
+            }
+        }
     });
 
     it('refuses a native credential binding before account or provider access', async () => {
@@ -1106,7 +1164,7 @@ describe('PostHog Triage source operations', () => {
         expect(second.incomplete).toBeUndefined();
 
         const bodies = host.request.mock.calls.map(([callInput]) => JSON.parse(
-            new TextDecoder().decode((callInput as Readonly<{ body: Uint8Array }>).body),
+            new TextDecoder().decode(callInput.body),
         ) as Readonly<{ dateRange: unknown; offset: number }>);
         expect(bodies).toHaveLength(2);
         // The second page reuses the first page's frozen window. Resolving the relative
@@ -1172,6 +1230,7 @@ describe('PostHog Triage source operations', () => {
             nextOffset: null,
         }]);
 
+        if (!('uuid' in selected) || typeof selected.uuid !== 'string') throw new Error('selected event requires a UUID');
         const result = await readPosthogCodeVariablesForIssue({
             v: 1,
             instance: configuredInstance(),
@@ -1208,8 +1267,8 @@ describe('PostHog Triage source operations', () => {
             { signal: expect.any(AbortSignal) },
         );
         expect(host.request).toHaveBeenCalledTimes(1);
-        const request = host.request.mock.calls[0]?.[0] as Readonly<{ body: Uint8Array }>;
-        expect(JSON.parse(new TextDecoder().decode(request.body))).toEqual({
+        const request = host.request.mock.calls[0]?.[0];
+        expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({
             issueId: localRef.entryId,
             dateRange: {
                 date_from: '2026-07-16T00:00:00.000Z',
@@ -1601,6 +1660,8 @@ describe('PostHog invocation boundaries', () => {
                 id: POSTHOG_ACTION_IDS.get,
                 qualifiedId: `${POSTHOG_PLUGIN_ID}:${POSTHOG_ACTION_IDS.get}`,
             },
+            occurrenceId: 'posthog-under-test',
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' },
             materialization: {
                 machineId: 'machine-under-test',
                 materializationId: 'materialization-under-test',
