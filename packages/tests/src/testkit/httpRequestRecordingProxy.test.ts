@@ -6,7 +6,7 @@ import { connect, type Socket } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { gzipSync } from 'node:zlib';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { startHttpRequestRecordingProxy } from './httpRequestRecordingProxy';
 import { withTimeoutMs } from './timing/withTimeout';
@@ -374,6 +374,31 @@ describe('startHttpRequestRecordingProxy', () => {
     } finally {
       releaseResponse();
       await proxy.stop().catch(() => {});
+      await closeServer(target);
+    }
+  });
+
+  it('logs the route without the query when a response hook fails', async () => {
+    const target = createServer((_req, res) => { res.end('upstream response'); });
+    await listen(target);
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress !== 'object') throw new Error('target server did not bind');
+
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
+      beforeForwardResponse: () => { throw new Error('fixture rejected response'); },
+    });
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await fetch(`${proxy.baseUrl}/callback?sample=1`);
+      expect(response.status).toBe(502);
+      await response.text();
+      expect(errorLog).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        path: '/callback', message: 'fixture rejected response',
+      }));
+    } finally {
+      errorLog.mockRestore();
+      await proxy.stop();
       await closeServer(target);
     }
   });

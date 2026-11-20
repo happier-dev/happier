@@ -399,7 +399,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
           // A fixture hook failure becomes the client's 502; record why so the journey's
           // downstream refusal can be traced to it. Bodies are never logged.
           console.error('[http-recording-proxy] beforeForwardResponse failed; answering 502', {
-            method: entry.method, path: entry.path, upstreamStatus: statusCode, message,
+            method: entry.method, path: entry.path.split('?', 1)[0], upstreamStatus: statusCode, message,
             stack: error instanceof Error ? error.stack : undefined,
           });
           upstreamRes.destroy();
