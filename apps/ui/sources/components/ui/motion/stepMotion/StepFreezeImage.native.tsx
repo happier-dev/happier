@@ -7,7 +7,11 @@ import type { StepFreezeImageProps } from './StepFreezeImage';
 export function StepFreezeImage({ freeze, opacity, durationMs, delayMs, onCleared }: StepFreezeImageProps) {
     const [progress] = React.useState(() => new Animated.Value(0));
     const lastFrame = opacity.length - 1;
-    const clearFrame = Math.min(lastFrame, opacity.findLastIndex(value => value > 0) + 1);
+    let lastVisibleFrame = lastFrame;
+    while (lastVisibleFrame >= 0 && !(opacity[lastVisibleFrame] > 0)) {
+        lastVisibleFrame--;
+    }
+    const clearFrame = Math.min(lastFrame, lastVisibleFrame + 1);
     const visibleDuration = clearFrame > 0 ? durationMs * clearFrame / lastFrame : 0;
     const [visible, setVisible] = React.useState(visibleDuration > 0);
     const { x, y, width, height } = freeze.rect;

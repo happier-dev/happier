@@ -77,7 +77,6 @@ const platformState = vi.hoisted(() => ({
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
-const invokeDesktopHostSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
     const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
     return createDesktopHostModuleMock({
@@ -85,7 +84,7 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
         overrides: {
             isDesktopHost: () => tauriDesktopState.value,
             desktopHostKind: () => tauriDesktopState.value ? 'tauri' : null,
-            invokeDesktopHost: invokeDesktopHostSpy,
+            invokeDesktopHost: async <T,>() => undefined as T,
             listenDesktopHostEvent: async () => () => {},
         },
     });

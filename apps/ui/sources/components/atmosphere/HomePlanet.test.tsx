@@ -48,7 +48,7 @@ vi.mock('@shopify/react-native-skia', async () => {
   };
 });
 
-function planetAt({ scene }: GlyphSurfaceProps, seconds = 0): PlanetGlyphLayer {
+function planetAt(scene: GlyphSurfaceProps['scene'], seconds = 0): PlanetGlyphLayer {
   const layers = typeof scene === 'function' ? scene(seconds) : scene;
   const planet = layers.find(layer => layer.kind === 'planet');
   if (!planet) throw new Error('Home has no planet layer');
@@ -87,7 +87,7 @@ describe('Horizon foot fade', () => {
       />,
     );
     const canvas = screen.findByType(GlyphSurface);
-    const fade = planetAt(canvas.props).fade!;
+    const fade = planetAt(canvas.props.scene).fade!;
     expect(fade.to).toBeGreaterThan(desk.height);
     expect(canvas.props.height).toBeGreaterThanOrEqual(fade.to);
     await screen.unmount();
@@ -110,7 +110,7 @@ describe('Horizon foot fade', () => {
     );
     const canvas = screen.findByType(GlyphSurface);
     expect(canvas.props.height).toBe(desk.height);
-    expect(planetAt(canvas.props).fade).toBeUndefined();
+    expect(planetAt(canvas.props.scene).fade).toBeUndefined();
     await screen.unmount();
   });
 });
@@ -160,7 +160,7 @@ describe('Home glyph subscription locality', () => {
     const screen = await renderScreen(scene(true));
     try {
       await vi.waitFor(() => expect(nativePictures.count).toBeGreaterThan(0));
-      const answer = () => planetAt(screen.findByType(GlyphSurface).props, 0.2).ring;
+      const answer = () => planetAt(screen.findByType(GlyphSurface).props.scene, 0.2).ring;
       expect(answer()).toBeUndefined();
       await act(async () => {
         vi.advanceTimersByTime(21_500);
@@ -221,7 +221,7 @@ describe('Home glyph subscription locality', () => {
     const server = await upsertAndActivateServer({ serverUrl: 'https://home-glyph-idle.test' });
     resetReanimatedFrameCallbacks();
     const bot = createSessionListRenderableSessionFixture({
-      id: 'idle-moon', serverId: server.id, accessLevel: 'owner', active: true, presence: 'online',
+      id: 'idle-moon', serverId: server.id, active: true, presence: 'online',
       metadata: { path: '/repo', bot: { kind: 'bot' }, name: 'Helper' }, latestTurnStatus: 'completed',
     });
     storage.getState().applyServerScopedSessionListRows(server.id, [bot], { source: 'ordinary', mode: 'replace' });

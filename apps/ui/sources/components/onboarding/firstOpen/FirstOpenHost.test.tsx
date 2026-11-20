@@ -16,7 +16,7 @@ import { createFirstOpenLayoutRecorder } from './useFirstOpenBoot';
 
 function Destination({ onPress }: { onPress: () => void }) {
     const onLayout = React.useContext(FirstOpenContentLayout);
-    return <View onLayout={onLayout} testID="first-open.fixture-layout">
+    return <View onLayout={onLayout ?? undefined} testID="first-open.fixture-layout">
         <Pressable onPress={onPress} testID="first-open.fixture-action" />
     </View>;
 }

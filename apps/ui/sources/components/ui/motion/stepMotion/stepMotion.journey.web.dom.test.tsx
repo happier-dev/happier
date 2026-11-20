@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, it, vi } from 'vitest';
+import { assert, expect, it, vi } from 'vitest';
 import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 
 import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
@@ -133,7 +133,9 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     // The browser supports CSS.escape, which jsdom does not implement. This journey uses simple IDs.
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     const previousMatchMedia = window.matchMedia;
-    window.matchMedia = vi.fn(() => Object.assign(new EventTarget(), { matches: true, media: '(prefers-reduced-motion: reduce)' }));
+    window.matchMedia = vi.fn((media: string) => Object.assign(new EventTarget(), {
+        matches: true, media, onchange: null, addListener() {}, removeListener() {},
+    }));
     setReducedMotionPreferenceOverride(true);
     const previousAnimate = HTMLElement.prototype.animate;
     const cancel = vi.fn();
@@ -339,7 +341,8 @@ it.each(['back', 'blur', 'settle'] as const)('keeps stage continuity when a late
         if (interruption === 'back') {
             await act(async () => { find('back').click(); });
             const reverse = travellerAt(0);
-            expect(reverse?.stepMorphProgress).toBeCloseTo(forward!.stepMorphProgress);
+            assert.isNumber(forward?.stepMorphProgress);
+            expect(reverse?.stepMorphProgress).toBeCloseTo(forward.stepMorphProgress);
             expect(reverse?.particles.length).toBe(forward!.particles.length);
             expect(reverse?.particles.every((value, index) => value === forward!.particles[index])).toBe(true);
             expect(document.activeElement).toBe(find('open-approval'));

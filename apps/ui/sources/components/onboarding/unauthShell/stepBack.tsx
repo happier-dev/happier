@@ -25,7 +25,10 @@ const STEP_ROW_WELL_STYLE = { width: STEP_ROW_BUTTON_PX, height: STEP_ROW_BUTTON
  * so their size, glyph and edge are decided here once.
  */
 export function StepRowWayButton(
-  props: Readonly<Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant'>>,
+  props: Readonly<
+    Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant' | 'icon' | 'iconName'>
+    & { iconName: IconName }
+  >,
 ) {
   // The well stands on the welcome atmosphere as an Element: glass over the planet and field, its exact solid paint
   // under Reduce Transparency. Its fill and hover take that material's inner step through the shared resolver.

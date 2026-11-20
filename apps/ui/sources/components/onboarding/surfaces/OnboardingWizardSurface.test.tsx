@@ -599,7 +599,7 @@ describe('OnboardingWizardSurface', () => {
         // The camera is a platform boundary (getUserMedia).
         Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn() } });
         const render = (initialStepId: 'auth' | 'auth_restore') => renderScreen(React.createElement(OnboardingWizardSurface, {
-            layout: 'portrait', initialStepId, authEntryOptions: baseAuthOptions,
+            layout: 'portrait', isDesktopShell: false, initialStepId, authEntryOptions: baseAuthOptions,
         }));
         try {
             for (const [window, scans, initialView] of [
@@ -636,7 +636,7 @@ describe('OnboardingWizardSurface', () => {
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
-            layout: 'portrait', initialStepId: 'auth_restore', authEntryOptions: baseAuthOptions,
+            layout: 'portrait', isDesktopShell: false, initialStepId: 'auth_restore', authEntryOptions: baseAuthOptions,
         }));
         try {
             const restore = screen.findByType(RestoreIndexEmbedded as never);
@@ -652,9 +652,10 @@ describe('OnboardingWizardSurface', () => {
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
+            isDesktopShell: false,
             initialStepId: 'auth_restore',
             authEntryOptions: baseAuthOptions,
-            onSelectAccountService: async () => ({ kind: 'unavailable' }),
+            onSelectAccountService: async () => ({ kind: 'unavailable' as const }),
         }));
         try {
             await pressOnboarding(screen, 'welcome-account-service-choose');
@@ -1430,6 +1431,7 @@ describe('OnboardingWizardSurface', () => {
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
+            isDesktopShell: false,
             initialStepId: 'auth_restore',
             authEntryOptions: {
                 ...baseAuthOptions,

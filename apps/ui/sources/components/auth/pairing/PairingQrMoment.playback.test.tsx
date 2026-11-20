@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
@@ -66,7 +65,7 @@ function canvasBoundary(webgl: boolean, rejectFonts = false) {
     vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
     vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} });
     return { canvases, spriteDraws, qrDraws,
-        createNodeMock: (node: React.ReactElement) => node.type === 'canvas' ? newCanvas(true) : null };
+        createNodeMock: (node: Readonly<{ type: unknown }>) => node.type === 'canvas' ? newCanvas(true) : null };
 }
 
 it('paints the pairing planet Still in its square when the browser refuses WebGL', async () => {

@@ -56,7 +56,7 @@ it.each([
             return new DOMRect(0, 0, width, 844);
         });
     const clock = vi.spyOn(performance, 'now');
-    let commitLayout = () => { throw new Error('The destination has not mounted'); };
+    let commitLayout: () => void = () => { throw new Error('The destination has not mounted'); };
     let readBuildReady = () => false;
     function Destination() {
         const layout = React.useContext(FirstOpenContentLayout);

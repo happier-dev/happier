@@ -46,7 +46,7 @@ it.each([
   await vi.waitFor(() => {
     expect(paint.images.some(image => image.length === body!.rgba.length && image.every((value, index) => value === body!.rgba[index]))).toBe(true);
   });
-  const [canvas] = screen.findAll(node => node.type === 'Canvas');
+  const [canvas] = screen.findAll(node => String(node.type) === 'Canvas');
   expect(StyleSheet.flatten(canvas?.props.style)).toMatchObject({ left: scene.px - size / 2, top: scene.py - size / 2 });
   const pictures = paint.pictures;
   expect(pictures).toBeGreaterThan(0);

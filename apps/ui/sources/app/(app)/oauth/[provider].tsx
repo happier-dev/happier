@@ -101,7 +101,6 @@ type AccountDirectoryCallbackStage = 'signing_in';
 type HomeOAuthRetry = Readonly<{
     profileRef: string;
     providerId: string;
-    mode?: 'keyed' | 'keyless';
     returnTo: string;
 }>;
 type AccountDirectoryCallbackState =
@@ -323,7 +322,6 @@ function OAuthProviderReturnBody() {
         pending: string;
         proof: string | null;
         secret: string | null;
-        mode?: PendingExternalAuth['mode'];
         intent: 'signup' | 'reset' | null;
         accountContinuation?: AccountHomeAuthenticationContinuation;
         teamContinuation?: NonNullable<PendingExternalAuth['teamContinuation']>;
@@ -658,11 +656,11 @@ function OAuthProviderReturnBody() {
                 const home = !ctx.teamContinuation && !ctx.accountContinuation && ctx.intent !== 'signup' && ctx.serverId
                     ? getServerProfileById(ctx.serverId)
                     : null;
-                const restart = home
+                const restart: Href = home
                     ? buildHomeRecoveryHref({ profileRef: home.id, returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/' })
                     : admitInternalRouteHref(failureReturnTo);
                 setExternalFailure({ presentation, iconName, restart, ...(home ? { retry: {
-                    profileRef: home.id, providerId: ctx.providerId, mode: ctx.mode,
+                    profileRef: home.id, providerId: ctx.providerId,
                     returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/',
                 } } : {}) });
             } finally {
@@ -1003,7 +1001,7 @@ function OAuthProviderReturnBody() {
                         const failure = classifyOAuthProviderRejection(error);
                         if (failure === 'cancelled') {
                             publishCancelledSignIn(providerPresentation.badgeIconName ?? 'sign-in');
-                            safeReplace(admitInternalRouteHref(pendingDirectoryAuth?.accountEntryReturnTo ?? directoryReturnTo));
+                            safeReplace(pendingDirectoryAuth?.accountEntryReturnTo ?? directoryReturnTo);
                             return;
                         }
                         safeSetDirectoryJourney({
@@ -1269,7 +1267,7 @@ function OAuthProviderReturnBody() {
                         } else if (!pendingAuth.accountContinuation && pendingAuth.serverId && pendingAuth.intent !== 'signup') {
                             const home = getServerProfileById(pendingAuth.serverId);
                             if (home) {
-                                const retry = { profileRef: home.id, providerId, mode: pendingAuth.mode,
+                                const retry = { profileRef: home.id, providerId,
                                     returnTo: admitOpaqueInternalReturnPath(pendingAuth.returnTo) ?? '/' };
                                 authenticationReturnTo = buildHomeRecoveryHref(retry);
                                 if (failure !== 'cancelled') homeRetry = retry;
@@ -1282,7 +1280,7 @@ function OAuthProviderReturnBody() {
                         });
                     }
                 }
-                const restart = flow === 'auth'
+                const restart: Href = flow === 'auth'
                     && !isFirstKeyReturn
                     && !isPasswordEnrollmentReturn
                         ? authenticationReturnTo
@@ -1480,7 +1478,6 @@ function OAuthProviderReturnBody() {
                         pending,
                         proof,
                         secret,
-                        mode: state.mode,
                         intent: (state.intent as any) ?? null,
                         ...(state.accountContinuation ? { accountContinuation: state.accountContinuation } : {}),
                         ...(state.teamContinuation ? { teamContinuation: state.teamContinuation } : {}),

@@ -260,7 +260,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                         testID={`${params.testIDPrefix}-relay-url-input`}
                         placeholder={t('homesJourneys.homeAddressPlaceholder')}
                         autoCapitalize="none"
-                        autoCorrect={false}
                         keyboardType="url"
                         value={params.urlDraft}
                         onChangeText={params.onUrlDraftChange}

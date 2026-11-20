@@ -528,8 +528,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const { from: planetFadeFrom, to: planetFadeTo } = planetFade ?? {};
     const { intensity: planetIntensity, digits: planetDigits } = atmosphere.planet;
     const planetPane = React.useMemo(() => ({ width: heroFrame.pane.width,
-        height: homePlanetDrawnHeight(heroFrame.pane.height, planetFadeFrom !== undefined && planetFadeTo !== undefined
-            ? { from: planetFadeFrom, to: planetFadeTo } : undefined) }), [heroFrame.pane.height, heroFrame.pane.width, planetFadeFrom, planetFadeTo]);
+        height: homePlanetDrawnHeight(heroFrame.pane.height, planetFadeTo !== undefined
+            ? { to: planetFadeTo } : undefined) }), [heroFrame.pane.height, heroFrame.pane.width, planetFadeTo]);
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
     const homeCovered = usePersonalHomeBootstrapCovered();
     const firstArrival = useHomeGlyphArrival();

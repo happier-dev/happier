@@ -741,7 +741,7 @@ describe('WelcomeDecisionPanel', () => {
             onContinueWithHomeAuthentication={onContinueWithHomeAuthentication}
             onChangeRelay={vi.fn()}
         />;
-        const options = { ...baseOptions, requestedHomeTarget: null };
+        const options = { ...baseOptions, requestedHomeTarget: undefined };
         const screen = await renderScreen(render({ ...options, serverAvailability: 'loading', authenticationActions: [] }));
         const focusedLogin = screen.findByTestId('welcome-scan-existing-home');
         expect(focusedLogin).not.toBeNull();

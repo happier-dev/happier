@@ -14,7 +14,7 @@ type Action = Readonly<{
     title: string;
     subtitle?: string;
     primary?: boolean;
-    presentation?: 'pill' | 'way' | 'link';
+    presentation?: 'pill' | 'link';
     iconName?: IconName;
     accentColor?: string | null;
 }>;
@@ -71,8 +71,7 @@ function describeAction(
     const action = row.action;
     const frame: Pick<Action, 'primary' | 'presentation'> = {
         primary: row.emphasis === 'primary',
-        // Direction A: the second door is a pill under the primary; every quieter way is a round mark in the ways row.
-        presentation: row.emphasis === 'secondary' ? 'pill' : row.emphasis === 'tertiary' ? 'way' : undefined,
+        presentation: row.emphasis === 'secondary' ? 'pill' : undefined,
     };
     switch (action.kind) {
         case 'scan_or_paste_home':

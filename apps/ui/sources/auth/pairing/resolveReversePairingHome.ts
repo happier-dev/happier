@@ -32,7 +32,7 @@ export function resolveReversePairingHome(profile: ServerProfile, publicDiscover
 export function resolveObservedReversePairingHome(profile: ServerProfile) {
     const observation = getCachedServerFeaturesSnapshot({ serverId: profile.id });
     return resolveReversePairingHome(profile, observation?.status === 'ready' ? {
-        serverIdentityId: observation.serverIdentityId,
+        serverIdentityId: observation.serverIdentityId ?? null,
         descriptor: observation.features.homeConnectionDescriptor,
     } : undefined);
 }

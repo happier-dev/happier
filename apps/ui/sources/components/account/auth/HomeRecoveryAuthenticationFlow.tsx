@@ -19,7 +19,7 @@ import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 type HomeRecoveryAuthenticationFlowProps = Readonly<{
     profileRef: string;
     returnTo: string;
-    retryOAuth?: Readonly<{ providerId: string; mode?: 'keyed' | 'keyless' }>;
+    retryOAuth?: Readonly<{ providerId: string }>;
     onAuthenticated: () => void | Promise<void>;
     onBack: () => void;
 }>;
@@ -89,8 +89,7 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
 
     const loginActions = catalog.actions.filter(({ action }) => action.id === 'login');
     const retry = props.retryOAuth && loginActions.find(({ execution }) => execution.kind === 'oauth'
-        && execution.providerId === props.retryOAuth?.providerId
-        && (!props.retryOAuth?.mode || execution.mode === props.retryOAuth.mode));
+        && execution.providerId === props.retryOAuth?.providerId);
     const label = homeLabel ?? profile.id;
     if (catalog.state === 'ready' && loginActions.length > 0) {
         return step({

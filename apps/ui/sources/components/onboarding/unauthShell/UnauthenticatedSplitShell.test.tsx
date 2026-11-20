@@ -124,7 +124,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="restore"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
             >
                 <RecoveryDraft />
             </UnauthenticatedSplitShell>
@@ -148,7 +147,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="relay_select"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="relay" />
             </UnauthenticatedSplitShell>,
@@ -269,7 +267,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
                 onBack={() => {}}
             >
                 <FakeBody label="restore" />
@@ -296,7 +293,6 @@ describe('UnauthenticatedSplitShell', () => {
                 stepId="auth_restore"
                 isWelcomeStep={false}
                 workflowPresentation="fullBleed"
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
             </UnauthenticatedSplitShell>,
@@ -316,7 +312,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
             </UnauthenticatedSplitShell>,
@@ -327,7 +322,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
             </UnauthenticatedSplitShell>,
@@ -344,7 +338,6 @@ describe('UnauthenticatedSplitShell', () => {
                     stepId="welcome"
                     isWelcomeStep
                     footerAccessory={accessory}
-                    onBrandHeroGetStarted={() => {}}
                 >
                     <FakeBody label="welcome" />
                 </UnauthenticatedSplitShell>,
@@ -359,7 +352,6 @@ describe('UnauthenticatedSplitShell', () => {
                     stepId="auth_restore"
                     isWelcomeStep={false}
                     footerAccessory={accessory}
-                    onBrandHeroGetStarted={() => {}}
                     onBack={() => {}}
                 >
                     <FakeBody label="restore" />
@@ -390,7 +382,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="restore" />
             </UnauthenticatedSplitShell>,
@@ -405,7 +396,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="auth_restore"
                 isWelcomeStep={false}
-                onBrandHeroGetStarted={() => {}}
                 onBack={onBack}
             >
                 <FakeBody label="restore" />
@@ -425,7 +415,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
             </UnauthenticatedSplitShell>,
@@ -439,7 +428,6 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
             </UnauthenticatedSplitShell>,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View } from 'react-native';
 import { Image } from 'expo-image';
 import Animated from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
@@ -29,7 +29,7 @@ export const PairingQrCode = React.memo(function PairingQrCode(props: Readonly<{
      * A style for the code and its mark only, so a caller can soften them while the paper keeps its crisp edge
      * (the approved entrance). The paper clips it, so a blur never bleeds past the paper's edge.
      */
-    codeStyle?: StyleProp<ViewStyle>;
+    codeStyle?: React.ComponentProps<typeof Animated.View>['style'];
     /** Drawn over the code inside the paper, unaffected by `codeStyle` (the approved check). */
     overlay?: React.ReactNode;
 }>) {
