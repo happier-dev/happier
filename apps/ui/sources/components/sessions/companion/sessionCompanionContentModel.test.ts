@@ -16,7 +16,7 @@ import {
     canAddSessionCompanionItem,
 } from './sessionCompanionContentModel';
 import { widgetProjectionOf, widgetInstalledPackage } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { selectWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { resolveWidgetSizeChoicesV1, WidgetSizeDeclarationV1Schema } from '@happier-dev/protocol/widgets';
 
 const item = (itemId: string): SessionBoardItemProjection => ({
@@ -71,6 +71,20 @@ describe('resolveSessionCompanionContentItems', () => {
     it('admits a personal saved definition reference without requiring a Session plugin runtime', () => {
         expect(canAddSessionCompanionItem({ kind: 'instance', instance: { v: 1, id: 'saved-copy',
             definition: { kind: 'artifact', artifactId: 'account-definition' }, bindings: {} } }, null)).toBe(true);
+    });
+    it('admits the Period summary offered by the Companion picker without a Session plugin runtime', () => {
+        const candidate = selectWidgetCandidates(null).find(({ definition }) =>
+            definition.kind === 'builtin' && definition.id === 'usage_period_summary');
+        expect(candidate).toBeDefined();
+        if (!candidate) throw new Error('Expected the built-in Period summary');
+        const instance = { v: 1 as const, id: 'period-summary', definition: candidate.definition, bindings: {} };
+        expect(canAddSessionCompanionItem({ kind: 'instance', instance }, null)).toBe(true);
+        expect(canAddSessionCompanionItem({ kind: 'instance', instance: {
+            ...instance, definition: { kind: 'builtin', id: 'project_readiness' },
+        } }, null)).toBe(false);
+        expect(canAddSessionCompanionItem({ kind: 'instance', instance: {
+            ...instance, definition: { kind: 'builtin', id: 'unknown-widget' },
+        } }, null)).toBe(false);
     });
     it('preserves preference order and resolves widgets from the shared Board snapshot', () => {
         const boardItem = item('widget-a');

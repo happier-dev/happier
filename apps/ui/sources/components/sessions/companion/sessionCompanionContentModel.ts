@@ -1,4 +1,5 @@
 import type { SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
+import { isWidgetTargetHostableV1, readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardItemProjection, SessionBoardSnapshot } from '@/sync/domains/session/board';
 import { resolveSessionBoardItemTitle } from '@/components/sessions/board/sessionBoardItemPresentation';
@@ -233,8 +234,8 @@ export function canAddSessionCompanionItem(
     if (item.kind === 'builtin') return true;
     if (item.kind === 'widget') return canReadBoardItem(item.widgetId);
     if (item.kind === 'instance' && item.instance.definition.kind === 'builtin') {
-        const definition = item.instance.definition;
-        return SESSION_COMPANION_BUILTIN_ITEM_IDS.some((id) => id === definition.id);
+        const descriptor = readBuiltinWidgetDescriptorV1(item.instance.definition);
+        return descriptor !== null && isWidgetTargetHostableV1(descriptor, 'companion');
     }
     // Keeping an Account definition reference grants no read authority. Its body and each data
     // read are admitted by WidgetSurface in the viewer's captured Account scope.
