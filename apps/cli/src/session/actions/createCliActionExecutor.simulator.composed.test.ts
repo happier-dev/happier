@@ -29,6 +29,8 @@ import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { registerDaemonSimulatorPreviewHandlers } from '@/rpc/handlers/daemonSimulatorPreview';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { createSimulatorDaemonRuntimeActionExecutor } from '@/daemon/devices/simulator/actions/runtimeActionExecutor';
+import { createSimulatorDaemonFeatureGate } from '@/daemon/devices/simulator/featureGate';
 
 const { io } = vi.hoisted(() => ({ io: vi.fn() }));
 // Socket.IO is the Home relay boundary. Machine RPC framing, the registered
@@ -43,6 +45,7 @@ const features = FeaturesResponseSchema.parse({
   features: {
     devices: { enabled: true, simulatorPreview: { enabled: true } },
     machines: { enabled: true, liveStream: { enabled: true } },
+    browser: { enabled: true, viewTargets: { enabled: true } },
   },
   capabilities: {},
 });
@@ -301,4 +304,40 @@ describe('simulator Actions outside the app reach the addressed Machine daemon',
       expect(daemon.events).toEqual([expect.objectContaining({ type: 'simulator.lease.acquire', simulatorId: 'sim-1' })]);
     },
   );
+  it('answers from the addressed Machine, not the installed local daemon, when a daemon-hosted caller names another Machine', async () => {
+    const home = await startHome();
+    servers.push(home.server);
+    const daemon = relayToDaemons(new Set(['machine-a', 'machine-b']));
+    // The daemon-hosted Session tool path installs this Machine's own runtime owner.
+    const localSnapshots: string[] = [];
+    const featureGate = createSimulatorDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
+    await featureGate.refresh();
+    const installed = createSimulatorDaemonRuntimeActionExecutor({ featureGate, routes: {
+      getSnapshot: async () => {
+        localSnapshots.push('machine-a');
+        return { v: 1, machineId: 'machine-a', generatedAt: 1, refreshState: 'idle', resources: [], diagnostics: [] };
+      },
+      dispatchAction: async (event) => ({ v: 1, eventType: event.type, status: 'accepted', diagnostics: [] }),
+    } });
+    const { deps } = createCliActionExecutorHarness({ credentials: owner, token: owner.token, mode: 'plain', ctx: null,
+      sessionId: 'session-a', serverId: 'home-a', serverHttpBaseUrl: home.url, runtimeActionMachineId: 'machine-a',
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) }, { runtimeActionExecute: installed });
+    const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home-a',
+      actionRequestId: 'simulator-invocation', defaultSessionId: 'session-a', defaultSessionMachineId: 'machine-a' };
+    const list = { type: 'simulator.devices.list' };
+    expect(await deps.runtimeActionExecute!({ actionId: 'devices.simulator.list', input: list,
+      context: { ...context, externalActionTarget: { kind: 'machine', machineId: 'machine-b' } } }))
+      .toMatchObject({ machineId: 'machine-b' });
+    // A Machine Home does not admit is refused by Home (the executor types the thrown refusal).
+    await expect(deps.runtimeActionExecute!({ actionId: 'devices.simulator.list', input: list,
+      context: { ...context, externalActionTarget: { kind: 'machine', machineId: 'foreign-machine' } } }))
+      .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN,
+        failureCause: { phase: 'rpc.admission.machine', errorCode: 'access_denied' } });
+    expect(daemon.calls).toContain(`foreign-machine:${RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT}`);
+    // The installed owner keeps answering for its own Machine.
+    expect(await deps.runtimeActionExecute!({ actionId: 'devices.simulator.list', input: list, context }))
+      .toMatchObject({ machineId: 'machine-a' });
+    expect(localSnapshots).toEqual(['machine-a']);
+    expect(daemon.snapshots).toEqual(['machine-b']);
+  });
 });

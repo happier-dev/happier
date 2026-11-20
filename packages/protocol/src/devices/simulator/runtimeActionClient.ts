@@ -175,7 +175,8 @@ const machineUnavailableResult = {
     'runtime_action_disabled:devices.simulator:simulator_machine_unavailable',
 } as const;
 
-const machineActionUnavailableResult = {
+/** A host with no Machine Action route for device operations answers with this typed result. */
+export const SIMULATOR_ACTION_ROUTE_UNAVAILABLE_RESULT_V1 = {
   ok: false,
   errorCode: 'runtime_action_disabled',
   error:
@@ -264,7 +265,7 @@ export function createSimulatorPreviewRuntimeActionExecutorV1(
     }
 
     if (isSimulatorDeviceOperationRuntimeActionIdV1(args.actionId)) {
-      if (!input.executeOnMachine) return machineActionUnavailableResult;
+      if (!input.executeOnMachine) return SIMULATOR_ACTION_ROUTE_UNAVAILABLE_RESULT_V1;
       return await input.executeOnMachine({
         ...args,
         input: parsed.data,

@@ -305,6 +305,11 @@ export function createCliActionExecutorHarness(
           ?? (start?.success ? start.data.machineId : undefined);
         if (machineId && machineId !== localMachineId) return await transport(args);
       }
+      // The installed owner serves only this Machine's simulators; an addressed
+      // other Machine answers (or refuses) through the Machine transport.
+      const target = args.context.externalActionTarget;
+      if (resolveRuntimeActionExecutionFamily(args.actionId) === 'devices.simulator'
+        && target?.kind === 'machine' && target.machineId !== localMachineId) return await transport(args);
       return await installedRuntime(args);
     };
   }

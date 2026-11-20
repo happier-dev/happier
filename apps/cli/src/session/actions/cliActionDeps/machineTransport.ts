@@ -17,7 +17,7 @@ import type { createCurrentMachineExecutionOriginContextResolver } from '@/api/m
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
-import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -65,6 +65,13 @@ export type CliMachineActionCall = (input: Readonly<{
     context?: RpcActionExecutorContext;
     effectActionId?: string;
   }>) => Promise<unknown>;
+export type CliOriginalAccountMachineActionDispatch = (input: Readonly<{
+    actionId: string;
+    machineId: string;
+    input: unknown;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<ActionExecuteResult | null>;
 export type CliMachineActionServerScopeCurrent = (input: Readonly<{
     serverId?: string | null;
     machineId?: ActionExecutorContext['executionRunTargetMachineId'];
@@ -108,8 +115,40 @@ export function createCliMachineActionServerScopeCurrent(
 
 export function createCliMachineActionTransport(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId' | 'onRequesterSessionCredentialDisclosure'>,
-): Readonly<{ callMachineAction: CliMachineActionCall; isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
+): Readonly<{ callMachineAction: CliMachineActionCall; dispatchOriginalAccountMachineAction: CliOriginalAccountMachineActionDispatch;
+  isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
   const isMachineActionServerScopeCurrent = createCliMachineActionServerScopeCurrent(params);
+  // An original (not received) Account caller delivers the whole Action to its Machine:
+  // Home admits the requester and the receiving daemon executes. Null: not this caller's route.
+  const dispatchOriginalAccountMachineAction: CliOriginalAccountMachineActionDispatch = async (input) => {
+    const context = input.context;
+    if (!params.credentials || context.externalActionExecutionAuthorization || context.externalActionCredential
+      || context.rpcSessionAuthorization || context.causalPermissionAuthority) return null;
+    // The original-Account invocation contract carries host and Plugin callers only.
+    const caller = context.actionCaller ?? { kind: 'host' as const };
+    if (caller.kind !== 'host' && caller.kind !== 'plugin') return null;
+    const target = { kind: 'machine' as const, machineId: input.machineId };
+    const accountId = readAccountIdFromToken(params.credentials.token);
+    const serverId = context.serverId ?? params.serverId;
+    const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
+    const provenance = readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true });
+    const authentication = provenance?.provenance.kind;
+    const invocation = accountId && serverId && (authentication === 'account' || authentication === 'terminal')
+      ? projectExternalActionRequesterInvocationV1({ actionId: input.actionId,
+        context: { ...context, actionCaller: caller },
+        account: { accountId, serverId, ...(serverIdentityId ? { serverIdentityId } : {}) }, target,
+        authentication: { kind: authentication } }) : null;
+    if (!invocation || !context.actionRequestId) {
+      return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    }
+    return await dispatchOriginalAccountAction({ actionId: input.actionId, input: input.input,
+      requestId: context.actionRequestId, target,
+      credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
+      ...(params.onRequesterSessionCredentialDisclosure
+        ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+      ...(input.signal ? { signal: input.signal } : {}) });
+  };
   // Resource handlers require current Machine admission even on this daemon.
   // Derive every Action method from the canonical families; watches share that ingress.
   const authenticatedMachineIngressMethods = new Set<string>([
@@ -174,34 +213,16 @@ export function createCliMachineActionTransport(
     const originalAccountAction = isLocalServiceStopActionIdV1(input.effectActionId)
       || input.effectActionId === 'execution.run.action'
         && doesExternalActionConsumeRequesterAccountContentV1({ actionId: input.effectActionId, input: input.request });
-    if (params.credentials && originalContext && originalAccountAction
-      && !originalContext.externalActionExecutionAuthorization && !originalContext.externalActionCredential
-      && !originalContext.rpcSessionAuthorization && !originalContext.causalPermissionAuthority
+    if (originalContext && originalAccountAction
       && (!originalContext.actionCaller || originalContext.actionCaller.kind === 'host')) {
-      const target = { kind: 'machine' as const, machineId: input.machineId };
-      const accountId = readAccountIdFromToken(params.credentials.token);
-      const serverId = originalContext.serverId ?? params.serverId;
-      const serverIdentityId = originalContext.serverIdentityId ?? params.serverIdentityId;
-      const provenance = readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true });
-      const authentication = provenance?.provenance.kind;
-      const invocation = accountId && serverId && (authentication === 'account' || authentication === 'terminal')
-        ? projectExternalActionRequesterInvocationV1({ actionId: input.effectActionId,
-          context: { ...originalContext, actionCaller: { kind: 'host' } },
-          account: { accountId, serverId, ...(serverIdentityId ? { serverIdentityId } : {}) }, target,
-          authentication: { kind: authentication } }) : null;
-      if (!invocation || !originalContext.actionRequestId) {
-        throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-      }
       const wrapped = TargetedActionRpcRequestV1Schema.safeParse(input.request);
-      const execution = await dispatchOriginalAccountAction({ actionId: input.effectActionId,
-        input: wrapped.success ? wrapped.data.input : input.request, requestId: originalContext.actionRequestId, target,
-        credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-        ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
-        ...(params.onRequesterSessionCredentialDisclosure
-          ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+      const execution = await dispatchOriginalAccountMachineAction({ actionId: input.effectActionId!, machineId: input.machineId,
+        input: wrapped.success ? wrapped.data.input : input.request, context: originalContext,
         ...(input.signal ? { signal: input.signal } : {}) });
-      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
-      return execution.result;
+      if (execution) {
+        if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
+        return execution.result;
+      }
     }
     if (input.context && input.effectActionId && requiresWorkflowMachineActionAdmission(input.effectActionId, input.context)) {
       const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
@@ -412,6 +433,6 @@ export function createCliMachineActionTransport(
       ...(input.waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),
     }));
   };
-  return { callMachineAction, isMachineActionServerScopeCurrent };
+  return { callMachineAction, dispatchOriginalAccountMachineAction, isMachineActionServerScopeCurrent };
 }
 

@@ -90,6 +90,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineRolesSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machineRoles';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { SIMULATOR_ACTION_ROUTE_UNAVAILABLE_RESULT_V1 } from '@happier-dev/protocol/devices/simulator/runtimeActionClient';
 
 // Terminal reads and controlling-TTY availability are genuine user/OS boundaries;
 // the consent owner and its default-no answer parsing stay real.
@@ -665,6 +666,70 @@ function token(kind: 'account' | 'terminal' = 'account') {
   } })}.signature`;
 }
 
+it.each([{ surface: 'mcp' as const }, { surface: 'cli' as const }])('delivers an agent simulator device operation through the original-Account Machine transport ($surface)', async ({ surface }) => {
+  const caller = { kind: 'host' as const };
+  const paths: string[] = [];
+  // The app sends device operations as whole Actions; agent hosts reuse that
+  // transport. Home and the receiving Machine decide; the CLI adds no check.
+  const events: string[] = [];
+  const operation = { platform: 'ios' as const, deviceId: 'device-1', operation: 'boot' as const };
+  const target = await home('plain', events, { originalOwnAction: 'devices.simulator.device.boot', custodianAccountId: 'bob',
+    machineRole: 'manage', ownExecution: { ok: true, result: { ok: true } }, onRequestPath: path => { if (path) paths.push(path); } });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const genericRpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new Error('Device operations are not Machine RPC'));
+  try {
+    const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
+      serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null });
+    const result = await deps.runtimeActionExecute!({ actionId: 'devices.simulator.device.boot', input: operation, context: {
+      surface, authority: 'account_automation', actionCaller: caller, actionRequestId: 'request-1', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'alice-machine' } } });
+    expect(result, JSON.stringify({ result, events })).toEqual({ ok: true });
+    // Home answered the signed original-Account request for this exact Machine and input.
+    expect(paths.some(path => path.startsWith('/v1/actions/'))).toBe(true);
+    expect(genericRpc).not.toHaveBeenCalled();
+  } finally { genericRpc.mockRestore(); }
+});
+it('keeps a Session caller off the original-Account route: its invocation contract carries host and Plugin callers only', async () => {
+  const events: string[] = [];
+  const target = await home('plain', events, { originalOwnAction: 'devices.simulator.device.boot', custodianAccountId: 'bob',
+    machineRole: 'manage', ownExecution: { ok: true, result: { ok: true } } });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
+    serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null });
+  expect(await deps.runtimeActionExecute!({ actionId: 'devices.simulator.device.boot',
+    input: { platform: 'ios', deviceId: 'device-1', operation: 'boot' }, context: {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'session', sessionId: 'agent-session' },
+      actionRequestId: 'request-1', serverId: 'home', externalActionTarget: { kind: 'machine', machineId: 'alice-machine' } } }))
+    .toEqual(SIMULATOR_ACTION_ROUTE_UNAVAILABLE_RESULT_V1);
+  expect(target.readReceived()).toBeUndefined();
+});
+it('returns the receiving refusal for an agent simulator device operation unchanged', async () => {
+  const events: string[] = [];
+  const refusal = { ok: false as const, errorCode: 'access_denied', error: 'access_denied' };
+  const target = await home('plain', events, { originalOwnAction: 'devices.simulator.device.boot', custodianAccountId: 'bob',
+    machineRole: 'manage', ownExecution: refusal });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
+    serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null });
+  expect(await deps.runtimeActionExecute!({ actionId: 'devices.simulator.device.boot',
+    input: { platform: 'ios', deviceId: 'device-1', operation: 'boot' }, context: {
+      surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'request-1', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'alice-machine' } } })).toMatchObject(refusal);
+});
+it('refuses an agent simulator device operation on a Machine outside the caller\'s admitted inventory before dispatch', async () => {
+  const events: string[] = [];
+  const target = await home('plain', events, { originalOwnAction: 'devices.simulator.device.boot', custodianAccountId: 'alice',
+    machineRole: 'use', ownExecution: { ok: true, result: { ok: true } } });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
+    serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null });
+  const result = await deps.runtimeActionExecute!({ actionId: 'devices.simulator.device.boot',
+    input: { platform: 'ios', deviceId: 'device-1', operation: 'boot' }, context: {
+      surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'request-1', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'unadmitted-machine' } } });
+  expect(result, JSON.stringify({ result, events })).toMatchObject({ ok: false });
+  expect(target.readReceived()).toBeUndefined();
+});
 async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   mutateRoot?: boolean; custodianAccountId?: string; authenticationKind?: 'account' | 'terminal';
   finiteWake?: boolean; accountOwnedFiniteWake?: boolean; finiteAction?: boolean;

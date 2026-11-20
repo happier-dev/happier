@@ -726,7 +726,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const reviewCommentAction = params.credentials
     ? createCliReviewCommentActionExecutorFromCredentials({ credentials: params.credentials })
     : null;
-  const { callMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
+  const { callMachineAction, dispatchOriginalAccountMachineAction, isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
   const inventoryDeps = createCliActionInventoryDeps({ ...params, callMachineAction,
     localMachineId,
     readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction,
@@ -1455,7 +1455,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
         operationContext: params.savedSecretOperationContext, signal: context.signal });
       return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, activate) : activate();
     },
-    runtimeActionExecute: createCliSimulatorRuntimeActionExecute({ callMachineAction }, runtimeActionExecute),
+    runtimeActionExecute: createCliSimulatorRuntimeActionExecute({ callMachineAction, dispatchOriginalAccountMachineAction,
+      isMachineActionServerScopeCurrent }, runtimeActionExecute),
     ...(approvalsStore ? { memoryLibrary: {
       serverId: actionHomeId,
       isSameServerId: isSameActionHomeId,
