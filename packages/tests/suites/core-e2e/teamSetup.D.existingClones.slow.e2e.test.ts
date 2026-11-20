@@ -2,9 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { ScmRepositoryDiscoverResponseSchema, type ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -16,10 +17,12 @@ const testDir = run.testDir(`team-existing-clones-${randomUUID()}`);
 let fixture: TeamSetupFFixture | undefined;
 let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
 let machineId: string;
+let credentials: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>['uiCredentials'];
 
 beforeAll(async () => {
   fixture = await startTeamSetupFFixture({ testDir });
   const account = await fixture.createAccount('member');
+  credentials = account.uiCredentials;
   const enrolled = await fixture.enrollDaemon(account, {
     cliLaunchSpec: { command: process.execPath, args: ['--import',
       resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
@@ -27,9 +30,14 @@ beforeAll(async () => {
     env: { GIT_TRACE2_EVENT: join(testDir, 'git-events.jsonl') },
   });
   machineId = enrolled.target.machineId;
-  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: account.uiCredentials });
+  await fixture.assertKnownGoodMachineControl(account, enrolled);
+  // Let each startup phase report its own timeout before the control is run.
+}, 0);
+
+beforeEach(async () => {
+  if (!fixture) throw new Error('Existing-clone fixture not started');
+  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials });
   await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
-  await fixture.assertKnownGoodSessionControl(account, enrolled);
 });
 
 afterAll(async () => {
@@ -46,7 +54,22 @@ async function action(id: string, input: unknown, confirmed = false) {
     { surface: 'ui', authority: 'present_user', serverId: ui.serverId, actionCaller: { kind: 'host' } });
 }
 
+async function discover(input: ScmRepositoryDiscoverRequest) {
+  if (!ui) throw new Error('UI Action client not started');
+  const result = await ui.executeConfirmed('scm.repository.discover', input, {
+    surface: 'ui', authority: 'present_user', serverId: ui.serverId, actionCaller: { kind: 'host' },
+    externalActionTarget: { kind: 'machine', machineId },
+  });
+  if (!result.ok) throw new Error(`Discovery refused: ${result.errorCode}`);
+  return ScmRepositoryDiscoverResponseSchema.parse(result.result);
+}
+
 it('TS.D.existingClones finds only immediate-child origin matches and opens a dirty clone unchanged', async () => {
+  const controlFolder = join(testDir, 'known-good-attach');
+  await mkdir(controlFolder, { recursive: true });
+  expect(await action('projects.open', {
+    serverId: ui!.serverId, machineId, source: { kind: 'folder', path: controlFolder }, materialization: { kind: 'attach' },
+  }, true)).toMatchObject({ ok: true, result: { kind: 'opened', directory: controlFolder } });
   const folder = join(testDir, 'selected-folder');
   const matching = join(folder, 'member-work');
   const unrelated = join(folder, 'unrelated');
@@ -73,17 +96,14 @@ it('TS.D.existingClones finds only immediate-child origin matches and opens a di
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return '';
     throw error;
   });
-  const discovery = await action('scm.repository.discover', {
-    machineId, cwd: folder,
+  const found = await discover({
+    cwd: folder,
     repositories: [{ kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/onboarding' }],
   });
-  expect(discovery).toMatchObject({ ok: true, result: { success: true,
+  expect(found).toMatchObject({ success: true,
     matches: [{ rootPath: matching, repositoryIdentity: {
       kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/onboarding',
-    } }] } });
-  if (!discovery.ok) throw new Error(`Discovery refused: ${discovery.errorCode}`);
-  const { ScmRepositoryDiscoverResponseSchema } = await import('@happier-dev/protocol/scm/repositoryDiscovery');
-  const found = ScmRepositoryDiscoverResponseSchema.parse(discovery.result);
+    } }] });
   if (!found.success || !found.matches[0]) throw new Error('Matching clone was not discovered');
   expect(found.skipped).toEqual([{ rootPath: malformed, origin: { success: true, kind: 'invalid' } }]);
   const choices = await import('../../../../apps/ui/sources/components/projects/activation/projectOpenChoices');
@@ -98,9 +118,8 @@ it('TS.D.existingClones finds only immediate-child origin matches and opens a di
   const origins = gitEvents.filter(event => event.event === 'start'
     && event.argv?.join(' ').includes('config --local --get remote.origin.url'));
   expect(origins).toHaveLength(4);
-  const unavailable = await action('scm.repository.discover', { machineId,
-    cwd: join(folder, 'moved-folder'), repositories: [] });
-  expect(unavailable).toMatchObject({ ok: true, result: { success: false, errorCode: 'ENOENT', error: expect.any(String) } });
+  const unavailable = await discover({ cwd: join(folder, 'moved-folder'), repositories: [] });
+  expect(unavailable).toMatchObject({ success: false, errorCode: 'ENOENT', error: expect.any(String) });
   const opened = await action('projects.open', openInput, true);
   expect(opened).toMatchObject({ ok: true, result: { kind: 'opened', directory: matching,
     workspace: { machineId, rootPath: matching } } });
