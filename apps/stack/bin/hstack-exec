@@ -2395,6 +2395,7 @@ remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
 pid_file="$remote_home/remote-exec/$execution_id.pid"
+remote_path_setup="export PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin${remote_path:+:$remote_path}"):\$PATH;"
 remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_WORKSPACE_BUILD_MODE=$(quote_remote "$remote_preparation_build_mode");"
 # Historical duration is diagnostic, never an admission limit or kill timer.
 # Send the producer's class, which can differ from the worker resource class.
@@ -2410,8 +2411,6 @@ fi
 project_inherited_command_environment "$command_preparation_environment_names"
 remote_script="$remote_script$projected_command_environment"
 remote_script="$remote_script$explicit_remote_dependency_environment"
-if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
-remote_script="$remote_script PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH;"
 if [ "$rust_toolchain_required" = 1 ]; then
   remote_script="$remote_script $(remote_rust_environment "$remote_executor_repo")"
 fi
@@ -2494,7 +2493,7 @@ fi
 if [ "${policy_workspaceSync-1}" = 0 ]; then
   # Exact observations use the same finite transport as AUTO candidate probes.
   # They need neither command custody nor its process/cleanup lifecycle.
-  observation_script="$remote_script cd -- $(quote_remote "$remote_cwd");$remote_command_environment exec$remote_command_arguments"
+  observation_script="$remote_path_setup $remote_script cd -- $(quote_remote "$remote_cwd");$remote_command_environment exec$remote_command_arguments"
   cleanup_probe_tmp
   trap release_reservation EXIT
   run_remote_ssh_probe "exec bash -lc $(quote_remote "$observation_script")"
@@ -2548,12 +2547,9 @@ elif [ "$resource_governor_priority" = background ] && [ "$telemetry_platform" !
 else
   remote_script="$remote_script$remote_setup_script$remote_command_environment$remote_command_arguments;"
 fi
-# Bash login shells may run a failing logout hook after an explicit exit. Keep
-# strict setup/command execution, then disable errexit only after capturing the
-# command result so a host logout helper cannot replace that result.
 remote_script="$remote_script command_status=\$?; set +e; exit \"\$command_status\""
 remote_custody="$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh"
-remote_command="bash $(quote_remote "$remote_custody") run $(quote_remote "$pid_file") $(quote_remote "$execution_id") bash -lc"
+remote_command="bash $(quote_remote "$remote_custody") run $(quote_remote "$pid_file") $(quote_remote "$execution_id") bash -c"
 # Custody reads the script as a frame (its byte count on one line, then the
 # bytes), never from this SSH argument: quoted into it, every single quote
 # grows fivefold per nesting level, past the per-argument exec limit. The
@@ -2571,9 +2567,9 @@ fi
 if [ "$control_stdin" = 1 ]; then
   remote_command="HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1 HAPPIER_RUNTIME_BUILD_WORKER_NAME=$(quote_remote "$selected_name") $remote_command"
 fi
-# The SSH login shell must not run an exit hook after custody has returned the
-# command's status. Replace that shell, including any environment assignments.
-remote_command="exec env $remote_command"
+# Set up the worker's command path once for custody and the payload. The login
+# shell execs custody so its logout hooks cannot replace the command's status.
+remote_command="exec bash -lc $(quote_remote "$remote_path_setup exec env $remote_command")"
 
 umask 077
 retry_other_target_before_dispatch() {

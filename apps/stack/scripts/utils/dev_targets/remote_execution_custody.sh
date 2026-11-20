@@ -116,9 +116,11 @@ if [ "$mode" = payload ]; then
   # underneath. Only generation-managed checkouts have one to keep.
   custody_checkout=${BASH_SOURCE[0]%/apps/stack/scripts/utils/dev_targets/*}
   if [ -L "$custody_checkout/node_modules/.happier-dependency-generation" ]; then
-    node "$custody_checkout/apps/stack/scripts/utils/proc/retain_dependency_generation.mjs" "$custody_checkout" "$$" \
+    { [ -n "${HAPPIER_REMOTE_EXEC_NODE-}" ] &&
+      "$HAPPIER_REMOTE_EXEC_NODE" "$custody_checkout/apps/stack/scripts/utils/proc/retain_dependency_generation.mjs" "$custody_checkout" "$$"; } \
       || printf '%s\n' '[preferred-execution] dependency generation retention failed; this payload may lose its installed tree to a concurrent refresh' >&2
   fi
+  unset HAPPIER_REMOTE_EXEC_NODE
   exec_worker_payload "$@"
 fi
 
@@ -433,6 +435,10 @@ if [ -n "$command_temp_parent" ]; then
   command_temp_token=$(heavyweight_process_token "$$")
   export TMPDIR="$command_temp"
 fi
+# The dispatcher has already projected the worker's login PATH. Select Node
+# from that same environment before handing off to the non-login payload.
+HAPPIER_REMOTE_EXEC_NODE=$(command -v node)
+export HAPPIER_REMOTE_EXEC_NODE
 set -m
 if [ "$lifetime_stdin" = 1 ]; then
   exec 3<&0
