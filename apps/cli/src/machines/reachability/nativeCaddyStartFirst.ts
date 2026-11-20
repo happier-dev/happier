@@ -15,7 +15,8 @@ export function createNativeCaddyStartFirstRoutes(input: Readonly<{
     };
     return { async switch({ candidate, incumbent, signal }) {
         for (const leg of input.legs) {
-            const previous = replicasFor(leg, incumbent), route = replicasFor(leg, candidate);
+            const previous = incumbent ? replicasFor(leg, incumbent) : leg.observedReplicaNames;
+            const route = replicasFor(leg, candidate);
             if (!previous || !route) return { kind: 'unavailable', reason: 'native_route_unavailable' };
             const result = await input.routes.switchReplicas({ placement: leg.placement, route: leg.route,
                 expectedReplicaNames: previous, candidateReplicaNames: route, ...(signal ? { signal } : {}) });

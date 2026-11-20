@@ -325,6 +325,8 @@ describe('own-server target at the Action host boundary', () => {
         ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['stop_first_route_direct', 'stop_first_route_tunnel'] as const)
+            .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
         { scenario: 'standalone_public_restore_volume_upload_activation_failure_superseded' as const, sourceKind: 'repository' as const },
     ]) it.skipIf(scenario === 'public_restore_drill' && !nativePostgresqlAvailable)(
@@ -350,6 +352,7 @@ describe('own-server target at the Action host boundary', () => {
         const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
         const startFirst = scenario.startsWith('candidate_start_first');
+        const replaceRoute = scenario === 'stop_first_route_direct' || scenario === 'stop_first_route_tunnel';
         const storedPrivatePublication = sourceKind === 'stored';
         const migrationBackup = scenario.startsWith('candidate_backup_configured') || scenario.startsWith('public_backup');
         const reverseStartFirst = scenario.startsWith('candidate_start_first_restore');
@@ -374,7 +377,8 @@ describe('own-server target at the Action host boundary', () => {
         const repository = join(root, 'repository');
         await mkdir(repository);
         const docker = await createOwnServerDockerBoundary(join(root, 'docker'), {
-            operatingSystem: previewCompanion ? 'Ubuntu 24.04.3 LTS' : 'Docker Desktop' });
+            operatingSystem: previewCompanion || replaceRoute ? 'Ubuntu 24.04.3 LTS' : 'Docker Desktop',
+            ...(replaceRoute ? { recreateContainerIds: true } : {}) });
         vi.stubEnv('PATH', `${join(root, 'docker')}${delimiter}${process.env.PATH ?? ''}`);
         const registeredImage = await docker.registerImage('app', 'A');
         const image = scenario === 'joining_current_successor'
@@ -465,10 +469,9 @@ describe('own-server target at the Action host boundary', () => {
             capture: { installationId: scenario === 'adopted_installation_changed' ? 'retired-installation' : 'installation-a' },
         } };
         let receipt = createDeploymentReceiptDetailV1();
-        receipt.deployment = createDeploymentReceiptHeaderV1({ ...receipt.deployment, acceptedExecution: { v: 1,
+        receipt.deployment = { ...createDeploymentReceiptHeaderV1({ ...receipt.deployment, state: 'queued', acceptedExecution: { v: 1,
             controller: { machineId: environment.environment.controllerMachineId, installationId: 'installation-a' },
-            builder: { machineId: environment.environment.buildMachineId!, installationId: 'installation-a' }} });
-        receipt.deployment.state = 'queued';
+            builder: { machineId: environment.environment.buildMachineId!, installationId: 'installation-a' }} }) };
         receipt.content.machineResults = [];
         receipt.content.images = [image];
         if (storedPrivatePublication) {
@@ -755,9 +758,20 @@ describe('own-server target at the Action host boundary', () => {
         let incumbentNativeIds: readonly string[] = [];
         let forwardNativeIds: readonly string[] = [];
         const routeGenerations: Array<Readonly<{ candidate: string; incumbent: string }>> = [];
-        let caddyState: Readonly<{ route: CaddyDomainRouteInput; server: {
+        let caddyState: Readonly<{ route: CaddyDomainRouteInput; http: unknown; server: {
             routes: unknown[]; errors: { routes: unknown[] };
         } }> | undefined;
+        const installFixtureRoute = ([first, ...rest]: readonly string[]) => {
+            if (!first) throw new Error('Expected the actual incumbent replicas');
+            const route: CaddyDomainRouteInput = { domainId: 'start-first-domain', domain: { hostname: 'start-first.example.test',
+                target: { service: 'app', containerPort: 3000 }, healthCheck: { path: '/healthz', expectStatus: 200 } },
+                listener: scenario === 'stop_first_route_direct' ? 'public' : 'privateOrigin',
+                upstreams: { kind: 'replicas', containerNames: [first, ...rest] }, privateSourceRanges: [] };
+            const material = materializeCaddyDomainRouteV1(route);
+            return { route, http: { routes: material.tls ? [material.tls.redirectRoute] : [] },
+                server: { routes: [material.route], errors: { routes: material.fallbackRoute ? [material.fallbackRoute] : [] },
+                    tls_connection_policies: material.tls ? [material.tls.connectionPolicy] : [] } };
+        };
         const host: OwnServerDeploymentTargetHostInput = { credentials, serverId: 'home', serverHttpBaseUrl, machineId: 'machine-a',
             ...(scenario === 'private_publication_refused' || scenario === 'private_publication_withdrawal_refused'
                 || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? { async settlePrivateWorkloadFirewall(
@@ -784,22 +798,17 @@ describe('own-server target at the Action host boundary', () => {
                 else expect(input.environment.content.ownServer?.serviceExports ?? []).toEqual([]);
                 throw Object.assign(new Error('private_scope_unenforceable'), { code: 'private_scope_unenforceable' });
             } } : {}),
-            ...(startFirst ? { async readStartFirstRoutes() {
+            ...(startFirst || replaceRoute ? { async readStartFirstRoutes() {
                 return { async switch(input: Parameters<NativeComposeStartFirstRoutes['switch']>[0]) {
-                    incumbentNativeIds = input.incumbent.services.flatMap(service => service.replicas.map(replica => replica.id));
-                    routeGenerations.push({ candidate: input.candidate.projectName, incumbent: input.incumbent.projectName });
-                    if (routeGenerations.length === 1) forwardNativeIds = input.candidate.services.flatMap(service => service.replicas.map(replica => replica.id));
-                    const names = input.incumbent.services.find(service => service.service === 'app')!.replicas.map(replica => replica.name);
-                    const [first, ...rest] = names;
-                    if (!first) throw new Error('Expected the actual incumbent replicas');
-                    const initialRoute: CaddyDomainRouteInput = { domainId: 'start-first-domain', domain: { hostname: 'start-first.example.test',
-                        target: { service: 'app', containerPort: 3000 }, healthCheck: { path: '/healthz', expectStatus: 200 } },
-                        listener: 'privateOrigin', upstreams: { kind: 'replicas', containerNames: [first, ...rest] }, privateSourceRanges: [] };
-                    if (!caddyState) {
-                        const material = materializeCaddyDomainRouteV1(initialRoute);
-                        caddyState = { route: initialRoute, server: { routes: [material.route], errors: { routes: [material.fallbackRoute] } } };
+                    const incumbent = input.incumbent;
+                    if (incumbent) {
+                        incumbentNativeIds = incumbent.services.flatMap(service => service.replicas.map(replica => replica.id));
+                        routeGenerations.push({ candidate: input.candidate.projectName, incumbent: incumbent.projectName });
+                        if (routeGenerations.length === 1) forwardNativeIds = input.candidate.services.flatMap(service => service.replicas.map(replica => replica.id));
+                        caddyState ??= installFixtureRoute(incumbent.services.find(service => service.service === 'app')!.replicas.map(replica => replica.name));
                     }
-                    const { route, server } = caddyState;
+                    if (!caddyState) throw new Error('Expected a route for the serving replicas');
+                    const { route, server, http } = caddyState;
                     const replace = (value: unknown, id: string, next: unknown): boolean => {
                         if (value === null || typeof value !== 'object') return false;
                         for (const [key, child] of Object.entries(value)) {
@@ -816,10 +825,12 @@ describe('own-server target at the Action host boundary', () => {
                         privateKey: new Uint8Array(64), async exchange(request) {
                             request.signal?.throwIfAborted();
                             const etag = JSON.stringify(server);
-                            if (request.method === 'GET') return { status: 200, etag, value: structuredClone(server) };
+                            if (request.method === 'GET') return { status: 200, etag,
+                                value: structuredClone(request.path.endsWith('_http') ? http : request.path === '/config/apps/tls'
+                                    ? { certificates: { load_pem: [] }, automation: { policies: [] } } : server) };
                             if (request.method !== 'PATCH' || request.etag !== etag) return { status: 412 };
                             const before = await docker.readInvocations();
-                            expect(before.filter(call => call.args[0] === 'container' && call.args[1] === 'stop')).toHaveLength(routeWrites.length);
+                            if (!replaceRoute) expect(before.filter(call => call.args[0] === 'container' && call.args[1] === 'stop')).toHaveLength(routeWrites.length);
                             expect(before.filter(call => call.args.includes('up'))).toHaveLength(2 + routeWrites.length);
                             if (!replace(server, decodeURIComponent(request.path.slice('/id/'.length)), request.value)) return { status: 404 };
                             routeWrites.push(before.length);
@@ -828,11 +839,13 @@ describe('own-server target at the Action host boundary', () => {
                                 throw new Error('Native Caddy reply lost after write');
                             return { status: 200 };
                         } });
-                    return createNativeCaddyStartFirstRoutes({ routes, legs: [{ route,
-                        placement: { serverId: 'home', accountId, environmentId: environment.environment.id,
-                            targetLinkId: receipt.deployment.targetLinkId, domainId: route.domainId,
-                            machineId: 'machine-a', installationId: 'installation-a',
-                            actionOperationId: receipt.deployment.actionOperationId, requestId: 'start-first-request', nativeServer: 'happier_private' } }] }).switch(input);
+                    const placement = { serverId: 'home', accountId, environmentId: environment.environment.id,
+                        targetLinkId: receipt.deployment.targetLinkId, domainId: route.domainId, machineId: 'machine-a',
+                        installationId: 'installation-a', actionOperationId: receipt.deployment.actionOperationId,
+                        requestId: 'start-first-request', nativeServer: route.listener === 'public' ? 'happier_public' : 'happier_private' };
+                    const observed = await routes.readStartFirstLeg({ route, placement });
+                    if (observed.kind !== 'ready') throw new Error(`Expected an installed replica proxy: ${JSON.stringify(observed)}`);
+                    return createNativeCaddyStartFirstRoutes({ routes, legs: [observed.leg] }).switch(input);
                 } };
             } } : {}),
             ...(scenario === 'promote_build_refused' ? { async dispatchBuild() {
@@ -3593,14 +3606,19 @@ describe('own-server target at the Action host boundary', () => {
                 expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).names).toContain(database);
                 return;
             }
-            if (startFirst) {
+            if (startFirst || replaceRoute) {
                 phase('seed-incumbent');
+                if (scenario === 'stop_first_route_tunnel') environment.content.ingress = { kind: 'cloudflareTunnel' };
                 if (scenario === 'candidate_start_first_restore_candidate') environment.content.ownServer!.rollout = 'startFirst';
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
                 expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true, state: 'running' });
+                if (replaceRoute) {
+                    incumbentNativeIds = await docker.readContainerIds();
+                    caddyState = installFixtureRoute(incumbentNativeIds.map(id => id.slice(0, 12)));
+                }
                 Object.assign(serving, structuredClone(receipt));
                 serving.deployment.state = 'succeeded';
                 environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
@@ -3617,7 +3635,7 @@ describe('own-server target at the Action host boundary', () => {
                 request = { ...request, input: { ...request.input, contentArtifactId: receipt.deployment.contentArtifactId },
                     receipt: { ...request.receipt, deploymentId: receipt.deployment.id, deploymentRevision: 1 },
                     context: { ...request.context, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
-                environment.content.ownServer!.rollout = 'startFirst';
+                if (startFirst) environment.content.ownServer!.rollout = 'startFirst';
                 environmentReads = 0;
             }
             const candidateMigration = scenario.startsWith('candidate_') && !startFirst;
@@ -3871,6 +3889,22 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                     expect(result).toMatchObject({ ok: false, errorCode: 'private_scope_unenforceable' });
                     expect((await docker.readInvocations()).some(call => call.args.includes('up'))).toBe(false);
                 }
+                return;
+            }
+            if (replaceRoute) {
+                receipt.deployment.state = 'running';
+                receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
+                const previous = incumbentNativeIds;
+                const result = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                    phase: 'activate', selectedDeploymentId: receipt.deployment.id });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'running' });
+                const current = await docker.readContainerIds();
+                expect(previous.length).toBeGreaterThan(0);
+                expect(current).toHaveLength(previous.length);
+                expect(current.every(id => !previous.includes(id))).toBe(true);
+                const route = JSON.stringify(caddyState?.server ?? null);
+                for (const id of current) expect(route).toContain(`${id.slice(0, 12)}:3000`);
+                for (const id of previous) expect(route).not.toContain(`${id.slice(0, 12)}:3000`);
                 return;
             }
             if (startFirst) {

@@ -20,7 +20,7 @@ export type NativeComposeRouteSwitchResult = Readonly<{ kind: 'switched' }>
 /** The ingress owner acknowledges its exact route writes. No request counter,
  * wait, retained upstream or second route writer belongs to this native owner. */
 export type NativeComposeStartFirstRoutes = Readonly<{
-    switch(input: Readonly<{ candidate: NativeComposeRoutingGeneration; incumbent: NativeComposeRoutingGeneration;
+    switch(input: Readonly<{ candidate: NativeComposeRoutingGeneration; incumbent?: NativeComposeRoutingGeneration;
         signal?: AbortSignal }>): Promise<NativeComposeRouteSwitchResult>;
 }>;
 export type NativeComposeStartFirstInput = Readonly<{

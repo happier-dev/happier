@@ -82,6 +82,13 @@ function caddyBoundary() {
         unavailableNextWrite: () => { unavailableNextWrite = true; } };
 }
 
+/** Path and redirect variations apply only to a native target; provider targets carry neither. */
+function nativeTarget(domain: CaddyDomainRouteInput['domain']) {
+    const target = domain.target;
+    if (target.kind === 'provider') throw new Error('Expected a native route target');
+    return target;
+}
+
 describe('native Caddy Domain placement owner', () => {
     it('retains the typed admin-write refusal without disclosing native response content', async () => {
         const native = caddyBoundary();
@@ -155,7 +162,7 @@ describe('native Caddy Domain placement owner', () => {
         expect(await native.owner.observe({ placement, route })).toEqual({ kind: 'conflict', reason: 'route_conflict' });
         expect(native.writes).toHaveLength(beforeObserve);
         for (const domain of [{ ...captured.domain, hostname: 'other.example.test' },
-            { ...captured.domain, target: { ...captured.domain.target, path: '/other' } },
+            { ...captured.domain, target: { ...nativeTarget(captured.domain), path: '/other' } },
             { ...captured.domain, healthCheck: { path: '/other-health', expectStatus: 204 } }]) {
             expect(await native.owner.observe({ placement, route: { ...captured, domain } })).toMatchObject({ kind: 'conflict' });
             expect(await native.owner.remove({ placement, route: { ...captured, domain } })).toMatchObject({ kind: 'conflict' });
@@ -222,7 +229,7 @@ describe('native Caddy Domain placement owner', () => {
             basicAuth: [{ username: 'reader', bcryptHash: 'existing-bcrypt-hash' }],
             publicTls: { kind: 'custom', certificatePem: 'certificate', privateKeyPem: 'private-key' } };
         const unsupported = { ...publicRoute, domain: { ...publicRoute.domain,
-            target: { ...publicRoute.domain.target, redirectTo: 'javascript:unsupported' } } };
+            target: { ...nativeTarget(publicRoute.domain), redirectTo: 'javascript:unsupported' } } };
         expect(await owner.activate({ placement: publicPlacement, route: unsupported }))
             .toEqual({ kind: 'unavailable', reason: 'invalid_parameters' });
         expect(writes).toHaveLength(0);
@@ -332,7 +339,7 @@ describe('native Caddy Domain placement owner', () => {
         const native = caddyBoundary();
         native.server.routes.push({ '@id': 'another-path', match: [{ host: [route.domain.hostname], path: ['/other*'] }], handle: [] });
         const scoped: CaddyDomainRouteInput = { ...route, peerOrigins: [], domain: { ...route.domain,
-            target: { ...route.domain.target, path: '/api' }, healthCheck: { path: '/api/health', expectStatus: 200 } } };
+            target: { ...nativeTarget(route.domain), path: '/api' }, healthCheck: { path: '/api/health', expectStatus: 200 } } };
         expect((await native.owner.activate({ placement, route: scoped })).kind).toBe('active');
         const overlapping = { ...scoped, domain: { ...scoped.domain, healthCheck: { path: '/other/health', expectStatus: 200 } } };
         const count = native.writes.length;
@@ -382,6 +389,7 @@ describe('native Caddy start-first switch adapter', () => {
         hostname: 'api.example.test', target: { service: 'api', containerPort: 4000 } },
         upstreams: { kind: 'replicas', containerNames: ['old-api-1', 'old-api-2'] } };
     const apiPlacement = { ...placement, domainId: api.domainId };
+    const oldWeb = ['old-web-1', 'old-web-2'] as const, oldApi = ['old-api-1', 'old-api-2'] as const;
 
     it('switches every affected leg through the real route owner with complete candidate replica lists', async () => {
         const native = caddyBoundary();
@@ -389,8 +397,8 @@ describe('native Caddy start-first switch adapter', () => {
         await native.owner.activate({ placement: apiPlacement, route: api });
         const before = native.writes.length;
         const adapter = createNativeCaddyStartFirstRoutes({ routes: native.owner,
-            legs: [{ placement, route: { ...web, basicAuth: [{ username: 'reader' }] } },
-                { placement: apiPlacement, route: { ...api, basicAuth: [{ username: 'reader' }] } }] });
+            legs: [{ placement, route: { ...web, basicAuth: [{ username: 'reader' }] }, observedReplicaNames: oldWeb },
+                { placement: apiPlacement, route: { ...api, basicAuth: [{ username: 'reader' }] }, observedReplicaNames: oldApi }] });
         expect(await adapter.switch({ candidate, incumbent })).toEqual({ kind: 'switched' });
         expect(native.writes.slice(before)).toEqual([web, api].map(input =>
             `PATCH /id/${nativeCaddyDomainRouteIdsV1(input.domainId, input.listener).proxyId}`));
@@ -412,7 +420,7 @@ describe('native Caddy start-first switch adapter', () => {
         await native.owner.activate({ placement, route: web });
         const identity = { domainId: web.domainId, domain: web.domain, listener: web.listener, basicAuth: [{ username: 'reader' }] };
         const observed = await native.owner.readStartFirstLeg({ placement, route: identity });
-        expect(observed).toEqual({ kind: 'ready', leg: { placement, route: { ...identity, privateSourceRanges: web.privateSourceRanges, peerOrigins: [] } } });
+        expect(observed).toEqual({ kind: 'ready', leg: { placement, observedReplicaNames: oldWeb, route: { ...identity, privateSourceRanges: web.privateSourceRanges, peerOrigins: [] } } });
         if (observed.kind !== 'ready') throw new Error('Expected local replica leg');
         const before = native.writes.length;
         const request = { ...observed.leg, expectedReplicaNames: ['not-the-incumbent'] as const,
@@ -438,7 +446,7 @@ describe('native Caddy start-first switch adapter', () => {
         await native.owner.activate({ placement, route: web });
         await native.owner.activate({ placement: apiPlacement, route: api });
         const adapter = createNativeCaddyStartFirstRoutes({ routes: native.owner,
-            legs: [{ placement, route: web }, { placement: apiPlacement, route: api }] });
+            legs: [{ placement, route: web, observedReplicaNames: oldWeb }, { placement: apiPlacement, route: api, observedReplicaNames: oldApi }] });
         const cancel = new AbortController();
         if (kind === 'unknown') native.loseNextWrite();
         if (kind === 'conflict') native.refuseNextWrite();
@@ -450,7 +458,7 @@ describe('native Caddy start-first switch adapter', () => {
 
     it('does not switch on missing candidate replicas, while an Environment with no affected legs does no native work', async () => {
         const native = caddyBoundary();
-        const adapter = createNativeCaddyStartFirstRoutes({ routes: native.owner, legs: [{ placement, route: web }] });
+        const adapter = createNativeCaddyStartFirstRoutes({ routes: native.owner, legs: [{ placement, route: web, observedReplicaNames: oldWeb }] });
         expect(await adapter.switch({ candidate: { ...candidate, services: [] }, incumbent })).toMatchObject({ kind: 'unavailable' });
         expect(native.writes).toEqual([]);
         expect(await createNativeCaddyStartFirstRoutes({ routes: native.owner, legs: [] }).switch({ candidate, incumbent }))

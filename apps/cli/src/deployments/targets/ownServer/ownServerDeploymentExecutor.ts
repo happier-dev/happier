@@ -1398,10 +1398,28 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 return result.activation;
                             } finally { await launch.release(); }
                         }
-                        activated = true;
-                        return activationProject.activate({ render: activationRender, context, signal: snapshot.signal,
-                            onIncumbentServicesChanged,
-                            cleanupOnFailure: !snapshot.link.activeDeploymentId && receipt.content.onFailure === 'rollbackAll' });
+                        const activateReplacement = () => {
+                            activated = true;
+                            return activationProject.activate({ render: activationRender, context, signal: snapshot.signal,
+                                onIncumbentServicesChanged,
+                                cleanupOnFailure: !snapshot.link.activeDeploymentId && receipt.content.onFailure === 'rollbackAll' });
+                        };
+                        if (!incumbentReceipt || !host.readStartFirstRoutes) return activateReplacement();
+                        const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
+                        try {
+                            // Capture the installed route before Compose replaces its replica IDs.
+                            const routes = await host.readStartFirstRoutes(request, { docker, installationId: input.installationId,
+                                affectedServices: activationRender.services, context, signal: snapshot.signal });
+                            const replacement = await activateReplacement();
+                            try {
+                                const route = await routes.switch({ candidate: replacement.routingGeneration(), signal: snapshot.signal });
+                                if (route.kind !== 'switched') return refuse('outcome_unknown');
+                                return replacement;
+                            } catch (error) {
+                                await replacement.dispose();
+                                throw error;
+                            }
+                        } finally { await docker.dispose(); }
                     };
                     const project = await activate().catch((error: unknown) => {
                         if (error instanceof MachineNativeEffectAdmissionError && error.code === 'plan_changed') activated = false;

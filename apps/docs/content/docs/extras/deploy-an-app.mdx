@@ -205,8 +205,10 @@ from outside the Machine before treating it as public.
 
 <Callout title="Public-address validation is still incomplete">
 Development testing verified the occupied-port refusal and its recovery message.
-It did not complete a successful public-address or Tunnel setup. A successful
-app deploy alone does not establish that its Domain is reachable.
+A separate test served a Compose app over public HTTPS through a Cloudflare
+tunnel configured with the CLI Action. That test found a public HTTP 502
+after redeploy and retained the app-created tunnel after the last Domain was
+removed. Check the public address after each redeploy.
 </Callout>
 
 ## 4. Add PostgreSQL and configure backups

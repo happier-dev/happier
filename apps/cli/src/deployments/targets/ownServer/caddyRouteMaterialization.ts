@@ -131,6 +131,7 @@ export type CaddyDomainRouteMaterial = {
 };
 export type CaddyDomainObservedMaterial = CaddyDomainRouteMaterial & {
     replicaContainerPort?: number;
+    observedReplicaNames?: readonly [string, ...string[]];
     /** Native dynamic routing facts, deliberately excluding hashes and PEM. */
     observedRoute: Omit<CaddyDomainRouteInput, 'upstreams'>;
 };
@@ -264,11 +265,14 @@ export function materializeCaddyDomainRemovalV1(input: CaddyDomainRouteRemovalIn
         ...(input.basicAuth ? { basicAuth: input.basicAuth.map(({ username }) => ({ username })) } : {}),
         ...(input.publicTls ? { publicTls: { kind: input.publicTls.kind } } : {}),
     };
+    const replicaNames = local ? dials.map(dial => dial.slice(0, -suffix.length)) : [];
+    const [first, ...rest] = replicaNames;
     return { ...renderCaddyDomainRoute({ ...input, privateSourceRanges, peerOrigins,
         ...(typeof telemetryBridgeNetworkId === 'string' ? { telemetryBridgeNetworkId } : {}),
         ...(telemetryPrivateHosts ? { telemetryPrivateHosts } : {}),
-        upstreams: local ? { kind: 'replicas', containerNames: dials.map(dial => dial.slice(0, -suffix.length)), containerPort: replicaContainerPort }
+        upstreams: local ? { kind: 'replicas', containerNames: replicaNames, containerPort: replicaContainerPort }
             : { kind: 'privateOrigins', endpoints: dials } }, installed.fallbackRoute !== undefined), observedRoute,
+        ...(first === undefined ? {} : { observedReplicaNames: [first, ...rest] as const }),
         ...(local && input.domain.target.kind === 'telemetry' && replicaContainerPort ? { replicaContainerPort } : {}) };
 }
 

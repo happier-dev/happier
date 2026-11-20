@@ -57,6 +57,7 @@ function materialExposure(installed: InstalledListeners, material: CaddyDomainRo
 export type NativeCaddyStartFirstLeg = Readonly<{
     placement: NativeCaddyRoutePlacement;
     route: Omit<CaddyDomainRouteInput, 'upstreams'>;
+    observedReplicaNames: readonly [string, ...string[]];
 }>;
 type JsonRecord = Record<string, unknown>;
 type ConfigRoot = Readonly<{ value: JsonRecord; etag: string; path: string }>;
@@ -399,7 +400,9 @@ export function createNativeCaddyRoutes(host: Readonly<{
             if (!material) return { kind: 'conflict', reason: 'route_conflict' };
             const result = inspect(snapshot, material, request);
             if (result.kind !== 'active') return result;
-            return material.replicaProxy ? { kind: 'ready', leg: { placement: request.placement, route: material.observedRoute } }
+            return material.replicaProxy && material.observedReplicaNames
+                ? { kind: 'ready', leg: { placement: request.placement, route: material.observedRoute,
+                    observedReplicaNames: material.observedReplicaNames } }
                 : { kind: 'unchanged' };
         } catch (error) { return failure(error, request.signal, false); }
     };

@@ -22,6 +22,7 @@ export async function createOwnServerDockerBoundary(directory: string, options?:
     sourceNormalizationFailure?: boolean;
     dockerAccessDenied?: boolean;
     activationCommandFailure?: boolean | 'afterCreate';
+    recreateContainerIds?: boolean;
     accounting?: Readonly<{ memoryBytes: number }>;
     nativeCaddy?: Readonly<Record<string, unknown>>; nativeCloudflare?: Readonly<Record<string, unknown>> }>) {
     await mkdir(directory, { recursive: true });
@@ -38,6 +39,7 @@ export async function createOwnServerDockerBoundary(directory: string, options?:
         sourceNormalizationFailure: options?.sourceNormalizationFailure ?? false,
         dockerAccessDenied: options?.dockerAccessDenied ?? false,
         activationCommandFailure: options?.activationCommandFailure ?? false,
+        ...(options?.recreateContainerIds ? { recreateContainerIds: true } : {}),
         ...(options?.accounting ? { accounting: options.accounting } : {}),
         ...(options?.nativeCaddy ? { nativeCaddy: options.nativeCaddy } : {}),
         ...(options?.nativeCloudflare ? { nativeCloudflare: options.nativeCloudflare } : {}),
@@ -470,6 +472,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const model = loadNativeModel(files[0]);
     const project = args[args.indexOf('--project-name') + 1];
     ensureNetworks(model, project);
+    const incarnation = state.recreateContainerIds ? '/up-' + (state.incarnation = (state.incarnation || 0) + 1) : '';
     state.containers = [...state.containers.filter(row => row.Config.Labels['com.docker.compose.project'] !== project),
         ...Object.entries(model.services).flatMap(([service, definition]) => {
         const image = imageFor(definition.image);
@@ -477,7 +480,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         return Array.from({ length: definition.deploy?.replicas ?? 1 }, (_, replica) => {
             const volumeIdentity = (definition.volumes || []).filter(mount => mount.type === 'volume')
                 .map(mount => model.volumes[mount.source].name).join('/');
-            const id = hash(project + '/' + service + '/' + definition.image + (replica ? '/'+replica : '') + volumeIdentity);
+            const id = hash(project + '/' + service + '/' + definition.image + (replica ? '/'+replica : '') + volumeIdentity + incarnation);
             const previous = state.containers.find(row => row.Id === id);
             return { Id: id, Name: '/' + project + '-' + service + '-' + (replica + 1), Image: image.nativeId,
             Config: { Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service,

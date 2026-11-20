@@ -4255,9 +4255,9 @@ fragment are refused by this codec; the incoming path and query are preserved.
 Public edge routes use admitted private-origin endpoints; private replica routes
 use native Compose replica DNS names and the Environment's admitted source ranges.
 The native Compose owner uses Docker's short container-ID DNS alias when the
-container name exceeds the 63-character DNS label limit; discovery and start-first
-switches consume the same name decision. Only
-the private listener's exact GET health request has the Basic Auth exemption.
+container name exceeds the 63-character DNS label limit. Discovery and rollout
+consume the same name decision. Only the private listener's exact GET health
+request has the Basic Auth exemption.
 
 Tunnel/member origins keep automatic HTTPS disabled and produce no certificates
 or HTTP-to-HTTPS redirects. Stock Caddy 2.10.2 fixture evidence covers custom
@@ -4289,7 +4289,10 @@ compares the installed incumbent replica set, then patches only the exact proxy
 ID under its server ETag with every candidate replica and `n - 1` retries. Native
 auth hashes and custom TLS material are neither reacquired nor rewritten. Equal
 candidate material performs no write; a lost reply remains unknown, and P30 does
-not retire the incumbent until every affected leg is active.
+not retire the incumbent until every affected leg is active. Ordinary Compose
+redeploys use the same switch with the observed incumbent proxy as the expected
+value. They settle after the local replica legs point to the replacement, for both
+direct ingress and the Cloudflare tunnel origin.
 
 For start-first deployment, acknowledged route activation is the handoff to
 Plan 30's existing exact-generation Docker stop/retirement owner. Docker uses
