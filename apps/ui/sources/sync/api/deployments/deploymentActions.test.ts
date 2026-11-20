@@ -10,7 +10,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, Deploy
 import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -22,7 +22,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { admitPresentUserConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
-import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -133,19 +133,13 @@ it.each(['current', 'validation refused'] as const)('handles the r20 repository-
         body: { ok: true, environment, targetLinks: [] },
     });
     const diagnostic = { step: 'target_link.provider_links_read', field: 'selection', rule: 'invalid_type' };
-    homes.answer(serverId, 'POST /v1/deployments/targets/list', { select: body => {
-        const request = DeploymentTargetLinksListInputV1Schema.parse(body);
-        expect(request.scope).toEqual(environment.owner);
-        if (outcome === 'validation refused') return { status: 400,
-            body: { ok: false, error: 'deployment_invalid', diagnostic } };
-        return { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
-    } });
     const linked = { ok: true, environmentId: input.environmentId, revision: 2,
         targetLinkId: 'r20-link', targetLinkRevision: 1 };
     await answerLinkController(environment.controllerMachineId, body => {
-        expect(DeploymentTargetLinkInputV1Schema.parse(body).environmentId).toBe(input.environmentId);
-        return linked;
-    });
+        expect(DeploymentActionInputSchemasV1['deployments.targets.link'].parse(body)).toMatchObject(input);
+        return outcome === 'current' ? linked : { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid',
+            details: { diagnostic } };
+    }, result => ActionExecuteFailureSchema.safeParse(result).data ?? null);
     const executor = createActionExecutor(createUiDeploymentActionDeps(writer) as ActionExecutorDeps);
     const prepared = await executor.prepare('deployments.targets.link', input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, runtimeAccountId: writer.accountId, serverId,
@@ -158,48 +152,6 @@ it.each(['current', 'validation refused'] as const)('handles the r20 repository-
         expect(homes.requestsFor(`/v1/deployments/environments/${input.environmentId}/targets`)).toHaveLength(0);
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     }
-});
-
-it.each(['duplicate', 'resource', 'environment', 'account', 'relink'] as const)(
-    'compares provider links before UI association (%s)', async comparison => {
-    const writer = requireAccount();
-    const detail = createDeploymentEnvironmentDetailV1();
-    const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } } as const;
-    const provider = DeploymentTargetLinkProviderContentV1Schema.parse({ credentialPrincipal: { kind: 'account', accountId: 'owner',
-        purpose: { consumer: source.contribution, purpose: 'manage' }, target: { kind: 'account', account: {
-            service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
-        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } });
-    const existingIdentity = { ...provider.providerIdentity,
-        ...(comparison === 'resource' ? { providerResourceId: 'other-project' } : {}),
-        ...(comparison === 'environment' ? { providerEnvironment: 'branch' } : {}),
-        ...(comparison === 'account' ? { providerAccountId: 'other-organization' } : {}) };
-    const existing = await writer.createArtifactDocument({ header: { kind: 'deployment-target-link.v1', title: 'Existing' },
-        body: JSON.stringify({ providerIdentity: existingIdentity }) });
-    const link = createDeploymentTargetLinkHeaderV1({ id: 'existing-link', environmentId: detail.environment.id, source,
-        targetKind: 'platform', machines: [], members: [],
-        contentArtifactId: existing.artifactId, contentHeaderVersion: existing.revision.headerVersion,
-        contentBodyVersion: existing.revision.bodyVersion });
-    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
-        ok: true, environment: detail.environment, targetLinks: [] } });
-    homes.answer(serverId, 'POST /v1/deployments/targets/list', { select: raw => {
-        const body = raw as Readonly<{ selection: unknown; cursor?: string }>;
-        expect(body.selection).toEqual({ source, targetKind: 'platform' });
-        return { body: {
-        ok: true, items: body.cursor ? [{ environment: detail.environment, targetLink: link }] : [],
-        nextCursor: body.cursor ? null : 'second-page', coverage: 'complete' } }; } });
-    const associated = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
-        targetLinkId: 'new-link', targetLinkRevision: 1 };
-    await answerLinkController(detail.environment.controllerMachineId, () => associated);
-    const before = homes.requestsFor('/v1/artifacts').length;
-    const result = await createUiDeploymentActionDeps(writer).deploymentAction!('deployments.targets.link', {
-        serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision, requestKey: 'provider-link',
-        source, targetId: 'platform', targetKind: 'platform', role: 'runtime', machines: [], provider,
-        ...(comparison === 'relink' ? { replacesLinkId: link.id, expectedTargetLinkRevision: link.revision } : {}) }, uiHost);
-    expect(result).toMatchObject(comparison === 'duplicate' ? { ok: false, error: 'provider_scope_already_linked',
-        environment: { serverId, projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id }, targetLinkId: link.id } : associated);
-    expect(homes.requestsFor('/v1/artifacts')).toHaveLength(before + (comparison === 'duplicate' ? 0 : 1));
-    expect(homes.requestsFor('/v1/actions/deployments.targets.link')).toHaveLength(comparison === 'duplicate' ? 0 : 1);
 });
 
 // O-DEPLOY, 2026-11-05 13:35: original template roots execute on the controller.
@@ -438,8 +390,6 @@ it.each([false, true])('retains controller failure-observer enrollment after UI 
     const input = { serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         requestKey: 'ui-observed-link', role: 'runtime', targetId: 'cloudflare', targetKind: 'cloudflare', machines: [],
         source, ...(preparedInput ? content : { provider }) };
-    homes.answer(serverId, 'POST /v1/deployments/targets/list', {
-        body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: [] } });
     const linked = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
@@ -451,10 +401,7 @@ it.each([false, true])('retains controller failure-observer enrollment after UI 
     // The daemon boundary returns the enrollment owner's result; raw storage cannot enroll.
     homes.answer(serverId, `POST /v1/deployments/environments/${detail.environment.id}/targets`, { body: linked });
     await answerLinkController(detail.environment.controllerMachineId, body => {
-        const prepared = DeploymentTargetLinkInputV1Schema.parse(body);
-        expect(prepared).toMatchObject({ serverId, environmentId: input.environmentId, requestKey: input.requestKey, source });
-        expect(prepared).not.toHaveProperty('provider');
-        expect(prepared.contentArtifactId).toBeTruthy();
+        expect(body).toEqual(DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input));
         return enrolled;
     });
     const executor = createActionExecutor(createUiDeploymentActionDeps(writer) as ActionExecutorDeps);
@@ -464,7 +411,7 @@ it.each([false, true])('retains controller failure-observer enrollment after UI 
     const result = await invocation.invocation.run();
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: enrolled });
     expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/targets`)).toHaveLength(0);
-    expect(homes.artifacts(serverId).list()).toHaveLength(preparedInput ? 0 : 1);
+    expect(homes.artifacts(serverId).list()).toHaveLength(0);
 });
 
 it.each([
@@ -663,8 +610,7 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
             machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }],
         }, uiHost);
         expect(result).toMatchObject({ ok: false, errorCode: admission === 'forbidden' ? 'deployment_access_denied' : 'deployment_conflict' });
-        // A refused association leaves only the requester's private Artifact, not a second admission owner.
-        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
         expect(homes.requests.filter(request => request.serverId === serverId && request.method === 'GET'
             && new URL(request.path, request.serverUrl).pathname === environmentPath)).toHaveLength(1);
         expect(homes.requestsFor('/v1/actions/deployments.targets.link')).toHaveLength(1);
@@ -672,7 +618,7 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
 
     it.each([['plain', false, false], ['e2ee', false, false], ['plain', true, false], ['e2ee', true, false],
         ['plain', false, true], ['e2ee', false, true], ['plain', true, true], ['e2ee', true, true]] as const)(
-        'prepares link content inside the confirmed parent Action under the captured %s Account (Team: %s, provider: %s)', async (mode, team, managed) => {
+        'leaves Link publication to the controller under the captured %s Account (Team: %s, provider: %s)', async (mode, team, managed) => {
         if (mode === 'e2ee') {
             const secret = new Uint8Array(32).fill(27);
             account?.dispose();
@@ -692,9 +638,6 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         } });
-        homes.answer(serverId, 'POST /v1/deployments/targets/list', {
-            body: { ok: true, items: [], nextCursor: null, coverage: 'complete' },
-        });
         const provider = DeploymentTargetLinkProviderContentV1Schema.parse({ credentialPrincipal: { kind: 'account', accountId: 'owner',
             purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
@@ -707,7 +650,6 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
                 provider: { ...provider, providerResourceOrigin: 'created' as const },
                 source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } },
             } : {}) };
-        const { provider: _private, ...storageInput } = { ...input, provider: managed ? provider : undefined };
         const linked = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
             targetLinkId: 'linked-runtime', targetLinkRevision: 1 };
         const executor = createActionExecutor(createUiDeploymentActionDeps(writer) as ActionExecutorDeps);
@@ -720,27 +662,14 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(before);
         expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/targets`)).toHaveLength(0);
         await answerLinkController(detail.environment.controllerMachineId, body => {
-            const prepared = DeploymentTargetLinkInputV1Schema.parse(body);
-            expect(prepared).toMatchObject(storageInput);
-            expect(prepared).not.toHaveProperty('provider');
-            expect(prepared.contentArtifactId).toBeTruthy();
-            if (team) expect(homes.artifacts(serverId).readGrants(prepared.contentArtifactId)).toEqual([
-                expect.objectContaining({ principal: detail.environment.owner, accessLevel: 'admin' }),
-            ]);
+            expect(body).toEqual(DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input));
             return linked;
         });
         if (prepared.kind !== 'ready') throw new Error('Expected a parent invocation ready for the UI confirmation');
         expect(await prepared.invocation.run())
             .toMatchObject({ ok: true, result: linked });
-        expect(homes.requestsFor('/v1/artifacts')).toHaveLength(before + 1);
+        expect(homes.requestsFor('/v1/artifacts')).toHaveLength(before);
         expect(homes.requestsFor('/v1/actions/artifact.create')).toHaveLength(0);
-        const created = homes.artifacts(serverId).list().at(-1)!;
-        const opened = await writer.readArtifactContent(created.id);
-        if (!opened || typeof opened.body !== 'string') throw new Error('Expected text link content');
-        const persisted = JSON.parse(opened.body);
-        expect(persisted).toEqual(managed ? provider : {});
-        expect(persisted).not.toHaveProperty('providerResourceOrigin');
-        if (mode === 'e2ee') expect(created.body).not.toContain('providerResourceId');
     });
 
     it.each(['accountChanged', 'cancelled'] as const)('does not prepare link content after %s during parent confirmation', async withdrawal => {

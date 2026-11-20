@@ -1125,7 +1125,8 @@ describe('installed deployment storage and target composition', () => {
     });
 
     it.each([['plain', 'current', true], ['e2ee', 'current', true], ['plain', 'forbidden', true], ['plain', 'stale', true],
-        ['plain', 'current', false]] as const)(
+        ['plain', 'current', false], ['plain', 'invalid list', true], ['plain', 'duplicate', true], ['plain', 'relink', true],
+        ['plain', 'other resource', true], ['plain', 'other environment', true], ['plain', 'other account', true]] as const)(
         'prepares provider data link content in %s custody before the sole storage association (%s, provider: %s)', async (mode, admission, managed) => {
         const token = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
         const machineKey = new Uint8Array(32).fill(47);
@@ -1133,6 +1134,9 @@ describe('installed deployment storage and target composition', () => {
             type: 'dataKey', machineKey, publicKey: libsodiumPublicKeyFromSecretKey(machineKey) } };
         const environment = createDeploymentEnvironmentDetailV1();
         if (admission === 'forbidden') environment.environment.capabilities.manageTargets = false;
+        const source = { kind: 'plugin' as const, contribution: { pluginId: 'example.data', localId: 'database' } };
+        const existing = { ...environment.targetLinks[0].targetLink, source, targetKind: 'database', role: 'data' as const,
+            machines: [], members: [], contentHeaderVersion: 1, contentBodyVersion: 1 };
         const provider = DeploymentTargetLinkProviderContentV1Schema.parse({ credentialPrincipal: { kind: 'account', accountId: 'owner',
             purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
@@ -1141,10 +1145,24 @@ describe('installed deployment storage and target composition', () => {
         const input = DeploymentActionInputSchemasV1['deployments.targets.link'].parse({ serverId: 'home',
             environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'link-data',
             ...(managed ? { role: 'data', targetId: 'managed-data', targetKind: 'database', title: 'Customer database',
-                source: { kind: 'plugin', contribution: { pluginId: 'example.data', localId: 'database' } }, machines: [], provider }
+                source, machines: [], provider,
+                ...(admission === 'relink' ? { replacesLinkId: existing.id, expectedTargetLinkRevision: existing.revision } : {}) }
                 : { role: 'runtime', targetId: 'own-server', machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }] }) });
         if (admission === 'stale') input.expectedRevision++;
         const documents = new Map<string, Record<string, unknown>>();
+        const comparesExisting = admission === 'duplicate' || admission === 'relink' || admission.startsWith('other ');
+        const diagnostic = { step: 'target_link.provider_links_read', field: 'selection', rule: 'invalid_type' };
+        if (comparesExisting) {
+            const providerIdentity = { ...provider.providerIdentity,
+                ...(admission === 'other resource' ? { providerResourceId: 'other-project' } : {}),
+                ...(admission === 'other environment' ? { providerEnvironment: 'another-branch' } : {}),
+                ...(admission === 'other account' ? { providerAccountId: 'other-organization' } : {}) };
+            documents.set(existing.contentArtifactId, { id: existing.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+                publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Existing' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ ...provider, providerIdentity }) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        }
         const reads: string[] = [];
         const associations: unknown[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -1171,12 +1189,20 @@ describe('installed deployment storage and target composition', () => {
                     targetLinks: environment.targetLinks.map(row => row.targetLink) } };
             }
             if (path === '/v1/deployments/targets/list') {
-                expect(request.data).toMatchObject({ selection: { source: input.source, targetKind: input.targetKind } });
+                expect(request.data).toMatchObject({ scope: environment.environment.owner,
+                    selection: { source: input.source, targetKind: input.targetKind } });
+                if (admission === 'invalid list') return { status: 400, data: { ok: false, error: 'deployment_invalid', diagnostic } };
+                if (comparesExisting) {
+                    const data = z.object({ cursor: z.optional(z.string()) }).parse(request.data);
+                    return { status: 200, data: { ok: true, coverage: 'complete',
+                        items: data.cursor ? [{ environment: environment.environment, targetLink: existing }] : [],
+                        nextCursor: data.cursor ? null : 'next-page' } };
+                }
                 return { status: 200, data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
             }
             expect(path).toBe(`/v1/deployments/environments/${input.environmentId}/targets`);
             associations.push(DeploymentTargetLinkInputV1Schema.parse(request.data));
-            if (admission !== 'current') return { status: admission === 'forbidden' ? 403 : 409,
+            if (admission === 'forbidden' || admission === 'stale') return { status: admission === 'forbidden' ? 403 : 409,
                 data: { ok: false, error: admission === 'forbidden' ? 'deployment_access_denied' : 'deployment_conflict' } };
             return { status: 200, data: { ok: true, environmentId: input.environmentId,
                 revision: input.expectedRevision + 1, targetLinkId: 'data-link', targetLinkRevision: 1 } };
@@ -1189,7 +1215,15 @@ describe('installed deployment storage and target composition', () => {
             credentials, serverId: 'home', serverHttpBaseUrl: 'https://link.test',
             machineId: 'controller', runtime });
         const result = await deps.deploymentAction('deployments.targets.link', input, {});
-        if (admission !== 'current') {
+        if (admission === 'invalid list' || admission === 'duplicate') {
+            expect(result).toMatchObject(admission === 'invalid list'
+                ? { ok: false, errorCode: 'deployment_invalid', details: { diagnostic } }
+                : { ok: false, error: 'provider_scope_already_linked', targetLinkId: existing.id });
+            expect(associations).toHaveLength(0);
+            expect(documents.size).toBe(admission === 'duplicate' ? 1 : 0);
+            return;
+        }
+        if (admission === 'forbidden' || admission === 'stale') {
             expect(result).toMatchObject({ ok: false, error: admission === 'forbidden' ? 'deployment_access_denied' : 'deployment_conflict' });
             // The locked server writer owns refusal; local preparation may leave one private Artifact.
             expect(associations).toHaveLength(1);
@@ -1201,8 +1235,8 @@ describe('installed deployment storage and target composition', () => {
         expect(reads).toEqual([`/v1/deployments/environments/${input.environmentId}`]);
         expect(associations).toHaveLength(1);
         expect(associations[0]).not.toHaveProperty('provider');
-        expect(documents.size).toBe(1);
-        const id = [...documents.keys()][0]!;
+        expect(documents.size).toBe(comparesExisting ? 2 : 1);
+        const id = [...documents.keys()].at(-1)!;
         const artifacts = createCredentialedAccountArtifactStore(credentials);
         const opened = await runWithServerHttpBaseUrl('https://link.test', () => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }));
         if (!opened || typeof opened.body !== 'string') throw new Error('Expected text link content');

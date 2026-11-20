@@ -1181,7 +1181,92 @@ describe('deployment UI Action callbacks', () => {
         });
     });
 
-    it.each([false, true])('authors link content only inside its parent Action (provider: %s)', async managed => {
+    it.each([
+        { target: 'own-server', changed: false },
+        { target: 'platform', changed: false },
+        { target: 'platform', changed: true },
+    ] as const)('confirms the exact $target Link against the receiving review (changed: $changed)', async ({ target, changed }) => {
+        const homeId = `srv_${'e'.repeat(32)}`;
+        const serverId = await homes.addHome({ name: 'Link review', serverUrl: 'https://link-review.test',
+            accountId: 'owner', serverIdentityId: homeId, currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId: homeId });
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: {
+            ok: true, environment, targetLinks: [],
+        } });
+        homes.answer(serverId, 'POST /v1/deployments/targets/list', { body:
+            DeploymentTargetLinksListResultV1Schema.parse({ ok: true, items: [], nextCursor: null, coverage: 'complete' }) });
+        const actionId = 'deployments.targets.link';
+        await homes.requireUiApproval(serverId, actionId);
+        homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
+            body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+        });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
+        const platform = target === 'platform';
+        const intent = { environmentId: environment.id, expectedRevision: environment.revision,
+            requestKey: 'link-press', role: 'runtime' as const, ...(platform ? {
+                targetId: 'vercel', targetKind: 'vercel', machines: [],
+                source: { kind: 'plugin' as const, contribution: { pluginId: 'fixture.platform', localId: 'vercel' } },
+                provider: {
+                    credentialPrincipal: { kind: 'account' as const, accountId: 'owner',
+                        purpose: { consumer: { pluginId: 'fixture.platform', localId: 'link' }, purpose: 'manage' },
+                        target: { kind: 'account' as const, account: { service: { pluginId: 'fixture.platform', localId: 'vercel' }, accountId: 'credential' } } },
+                    providerIdentity: { providerAccountId: 'team', providerResourceId: 'existing-project', providerEnvironment: 'production' },
+                    providerEnvironment: { kind: 'production' as const },
+                },
+            } : { targetId: 'own-server', machines: [{ machineId: environment.controllerMachineId, installationId: 'installation-a' }] }),
+        };
+        let effects = 0;
+        const sent: unknown[] = [];
+        const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            actionAutomations: createUiActionAutomationPortV1(account),
+            resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.id } }),
+            prepareHostReviewedChildren: async () => platform ? {
+                children: [{ action: { pluginId: 'fixture.platform', localId: changed && sent.length > 1 ? 'changed-observer' : 'observer' },
+                    role: 'observe' }],
+            } : null,
+            deploymentAction: async () => {
+                effects++;
+                return { ok: true, environmentId: environment.id, revision: environment.revision + 1,
+                    targetLinkId: 'link', targetLinkRevision: 1 };
+            },
+        }));
+        const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId, machineId: environment.controllerMachineId, tokenEpoch: 0,
+            failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+            async execute(input, transport) {
+                sent.push(input);
+                if (!('authentication' in transport.authorization.binding)) throw new Error('Expected Home Account admission');
+                const result = await receiver.execute(actionId, input, {
+                    surface: 'ui', authority: resolveInvocationAuthority({ credential: transport.authorization.binding.authentication.kind,
+                        surface: 'ui', actionId }), actionCaller: transport.invocation.caller,
+                    actionsSettings: resolveActionsSettingsV1FromState({ settings: await account.readSettings() }),
+                    presentUserConfirmation: transport.invocation.presentUserConfirmation, interactivePresentation: 'unavailable',
+                    serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId, actionRequestId: transport.requestId,
+                    externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
+                    originalActionEnvelope: transport.envelope,
+                    signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+                        boundary.signApprovalInput({ authorizationToken: transport.authorization.token, actionId, input, target,
+                            ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+                });
+                return result.ok ? result.result : result;
+            },
+        });
+        try {
+            const run = createDeploymentActions(account.accountLifetime, environment.projectSourceId).link(intent);
+            if (changed) await expect(run).rejects.toMatchObject({ code: 'action_interactive_review_required' });
+            else await expect(run).resolves.toMatchObject({ ok: true, targetLinkId: 'link' });
+            expect(nativeReview.shown).toHaveLength(1);
+            expect(sent).toEqual([sent[0], sent[0]]);
+            expect(sent[0]).not.toHaveProperty('contentArtifactId');
+            expect(effects).toBe(changed ? 0 : 1);
+            expect(homes.artifacts(serverId).list()).toEqual([]);
+        } catch (error) {
+            throw new Error(`Link review: ${JSON.stringify({ sent: sent.length, effects, reviews: nativeReview.shown.length })}`, { cause: error });
+        } finally { account.dispose(); }
+    });
+
+    it.each([false, true])('sends reviewed Link intent to its controller without publishing content in the UI (provider: %s)', async managed => {
         const serverId = await homes.addHome({ name: 'Link deployment', serverUrl: 'https://link-deployment.test', accountId: 'alice',
             serverIdentityId: `srv_${'e'.repeat(32)}`, currentAccount: true });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'alice' }, isCurrent: () => true,
@@ -1196,36 +1281,21 @@ describe('deployment UI Action callbacks', () => {
             title: 'Customer database',
             source: { kind: 'plugin' as const, contribution: { pluginId: 'example.data', localId: 'database' } } }
             : { targetId: 'own-server', role: 'runtime' as const, machines: [{ machineId: 'machine-a', installationId: 'installation-a' }] };
-        if (managed) homes.answer(serverId, 'POST /v1/deployments/targets/list', {
-            body: DeploymentTargetLinksListResultV1Schema.parse({ ok: true, items: [], nextCursor: null, coverage: 'complete' }),
-        });
-        let preparedId = '';
         homes.answer(serverId, 'GET /v1/deployments/environments/environment-a', { body: { ok: true,
             environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-a', projectSourceId: 'source-app',
                 serverId: `srv_${'e'.repeat(32)}` }), targetLinks: [] } });
         await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-a',
-            actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
+            actionId: 'deployments.targets.link', tokenEpoch: 0, execute: (input, transport) => {
             const link = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
-            if (!('contentArtifactId' in link)) throw new Error('Expected prepared link at storage boundary');
-            const { provider: _private, title: _title, ...storageSelection } = { ...selection,
-                title: managed ? 'Customer database' : undefined, provider: managed ? provider : undefined };
-            expect(input).toMatchObject({ expectedRevision: 1, ...storageSelection,
-                contentHeaderVersion: 1, contentBodyVersion: 1 });
-            expect(input).not.toHaveProperty('provider');
-            preparedId = link.contentArtifactId;
+            expect(link).toMatchObject({ expectedRevision: 1, ...selection });
+            expect(link).not.toHaveProperty('contentArtifactId');
+            expect(transport.invocation.presentUserConfirmation).toMatchObject({ inputDigest: expect.any(String) });
             return { ok: true, environmentId: 'environment-a', revision: 2, targetLinkId: 'link-a', targetLinkRevision: 1 };
         } });
         const linked = await createDeploymentActions(lifetime, 'source-app').link({ environmentId: 'environment-a', expectedRevision: 1,
-            ...selection });
+            ...selection }, { confirmed: true });
         expect(linked).toMatchObject({ ok: true });
-        expect(preparedId).not.toBe('');
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            expect(await account.readArtifactContent(preparedId)).toMatchObject({
-                header: { kind: 'deployment-target-link.v1', title: managed ? 'Customer database' : '' },
-                body: JSON.stringify(managed ? provider : {}) });
-        } finally { account.dispose(); }
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('keeps prepared content/revisions on the shared Action front door and retains typed storage refusal', async () => {

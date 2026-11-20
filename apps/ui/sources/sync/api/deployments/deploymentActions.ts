@@ -20,8 +20,6 @@ import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protoco
 import { randomUUID } from '@/platform/randomUUID';
 import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
-import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/projects/workspaceRefKeyV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -262,33 +260,6 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
                 return { ...detail, ...(cancellationConsequence ? { cancellationConsequence } : {}) };
             });
         }
-        let linkControllerMachineId: string | undefined;
-        if (isDeploymentTargetLinkActionIdV1(actionId) && !('contentArtifactId' in input)) {
-            const intent = DeploymentActionInputSchemasV1[actionId].parse(input);
-            const read = await storage('deployments.environments.get', {
-                serverId: intent.serverId, environmentId: intent.environmentId,
-            }, context);
-            if (isDeploymentActionFailure(read)) return read;
-            const current = DeploymentEnvironmentGetResultV1Schema.parse(read);
-            if (!current.ok) return current;
-            linkControllerMachineId = current.environment.controllerMachineId;
-            // Native creation is admitted and checkpointed by the controller before
-            // it has provider content to publish into the TargetLink Artifact.
-            if (!('providerCreate' in intent)) {
-                try {
-                    const prepared = await prepareUiDeploymentTargetLink(account, intent, context, current);
-                    if (!('contentArtifactId' in prepared)) return prepared;
-                    input = prepared;
-                }
-                catch (error) {
-                    if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-                        const invalid = DeploymentInvalidV1Schema.safeParse('details' in error ? error.details : undefined);
-                        return invalid.success && invalid.data.error === error.code ? invalid.data : failure(error.code);
-                    }
-                    throw error;
-                }
-            }
-        }
         const placement = resolveActionExecutionPlacementForInput(getActionSpec(actionId), input, context.actionCaller, context.surface ?? 'ui');
         if (actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && actionId !== DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1
             && !isDeploymentEnvironmentPlacementActionV1(actionId, input, placement)) {
@@ -298,8 +269,6 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
         const effectInput = selectedReadInput ?? DeploymentActionInputSchemasV1[actionId].parse(input);
         let machineId: string;
-        // Link completion belongs to the controller's enrollment owner, including
-        // content authored here under the captured Account's encryption mode.
         if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
             const create = DeploymentActionInputSchemasV1[actionId].parse(input);
             const selected = await readEnvironmentCreateController(create, context);
@@ -309,7 +278,6 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         else {
             const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, effectInput, {
                 readEnvironmentController: address => readEnvironmentController(address, context),
-                ...(linkControllerMachineId ? { knownControllerMachineId: linkControllerMachineId } : {}),
             });
             if (!selected.ok) return selected;
             machineId = selected.machineId;
