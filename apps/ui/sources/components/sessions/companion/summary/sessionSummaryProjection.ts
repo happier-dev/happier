@@ -147,8 +147,6 @@ export type SessionSummaryCardModel = Readonly<{
     needsYou: SessionSummaryNeedsYou | null;
     /** What the status timer counts from: the ask, else the running turn. */
     sinceMs: number | null;
-    /** The Plan step the agent is on (or about to take), as N of M. */
-    progress: Readonly<{ step: number; total: number }> | null;
     statusProgress?: SessionAwarenessProjectionV1['progress'];
     nowLine?: SessionAwarenessProjectionV1['nowLine'];
     statusReasonSetAt?: SessionAwarenessProjectionV1['statusReasonSetAt'];
@@ -247,16 +245,13 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
     }
 
     const needsYou = resolveNeedsYou(input.pendingPermissions ?? [], input.pendingUserActions ?? []);
-    const plan = input.plan ?? null;
-    const step = plan ? (plan.currentStep ?? plan.nextStep) : null;
     return Object.freeze({
         needsYou,
         sinceMs: needsYou ? needsYou.request.createdAt : input.turnStartedAtMs ?? null,
-        progress: plan && step !== null ? Object.freeze({ step, total: plan.total }) : null,
         ...(input.awareness.progress ? { statusProgress: input.awareness.progress } : {}),
         ...(input.awareness.nowLine ? { nowLine: presentSessionAwarenessNowLineV1(input.awareness) } : {}),
         ...(input.awareness.statusReasonSetAt ? { statusReasonSetAt: input.awareness.statusReasonSetAt } : {}),
-        plan,
+        plan: input.plan ?? null,
         facts: resolveFacts(rows, input.awareness.runningWorkCount ?? 0),
         scope: 'exact',
         title: input.awareness.title ?? null,

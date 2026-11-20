@@ -33,7 +33,6 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
         rows: [],
         needsYou: null,
         sinceMs: null,
-        progress: null,
         plan: null,
         facts: [],
         ...overrides,
@@ -197,20 +196,19 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('says the present in words: waiting for you, and the plan step the agent paused before', async () => {
+    it('shows the waiting-for-you status and its timer', async () => {
         const screen = await renderScreen(
             <SessionSummaryCard
                 model={model({ needsYou: { request: { id: 'req-1', kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1_000 }, moreCount: 0 },
-                    sinceMs: Date.now(), progress: { step: 4, total: 5 } })}
+                    sinceMs: Date.now() })}
                 density="compact"
             />,
         );
 
         expect(screen.findByTestId('session-companion-summary-status')?.props.children)
             .toBe('sessionCompanion.status.waitingForYou');
-        expect(screen.findByTestId('session-companion-summary-what')?.props.children)
-            .toBe('sessionCompanion.status.pausedBeforeStep(agent=Claude,step=4,total=5)');
         expect(screen.findByTestId('session-companion-summary-timer')).not.toBeNull();
+        await screen.unmount();
     });
 
     it('opens each fact and the dedicated Recap row at its existing owner in a compact card', async () => {
@@ -221,6 +219,7 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         const screen = await renderScreen(
             <SessionSummaryCard
                 model={model({
+                    nowLine: 'Testing the next change',
                     rows: [
                         { kind: 'work', label: 'Testing the next change', status: null, destination: 'work' },
                         { kind: 'approvals', count: 1, destination: 'approvals' },

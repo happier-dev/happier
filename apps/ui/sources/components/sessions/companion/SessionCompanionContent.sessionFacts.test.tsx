@@ -32,6 +32,43 @@ function RailFacts() {
 }
 
 describe('Companion rail real Session facts', () => {
+    it('shows the authored now line and Session progress alongside Running checklist detail', async () => {
+        const now = Date.now();
+        const session = createSessionFixture({
+            id: 's1', serverId: runtime.serverId, active: true, activeAt: now,
+            thinking: true, thinkingAt: now, presence: 'online',
+            metadata: {
+                path: '/tmp/project', host: 'test-host',
+                work: { statusReason: 'Waiting on staging', statusProgress: { done: 9, total: 24 } },
+                sessionWorkStateV1: {
+                    v: 1, backendId: 'claude', updatedAt: now,
+                    items: Array.from({ length: 7 }, (_, index) => ({
+                        id: `step-${index + 1}`, kind: 'todo', origin: 'vendor',
+                        title: `Checklist item ${index + 1}`,
+                        status: index < 3 ? 'complete' : index === 3 ? 'active' : 'pending',
+                        updatedAt: now,
+                    })),
+                },
+            },
+        });
+        storage.getState().applySessions([session]);
+        const screen = await renderScreen(<runtime.Wrapper><RailFacts /></runtime.Wrapper>);
+        try {
+            await act(async () => { controller.show(SESSION_SUMMARY_COMPANION_ITEM); });
+            await act(async () => { controller.addItem({ kind: 'builtin', id: 'running' }); });
+            await flushHookEffects({ cycles: 10 });
+
+            const line = screen.findByTestId('session-companion-content-status.source');
+            const statusText = line?.findAllByType('Text').map((node) => node.props.children).join(' ');
+            expect(statusText).toContain('Waiting on staging');
+            expect(statusText).toContain('9/24');
+
+            const checklist = screen.findByTestId('session-companion-content-glance-builtin:running.plan');
+            expect(checklist?.findAllByType('Text').map((node) => node.props.children).join(' '))
+                .toContain('Checklist item 4');
+        } finally { await screen.unmount(); }
+    });
+
     it('renders live status, the oldest permission, context metrics and the current Plan without a Board read', async () => {
         const { latestUsage, ...session } = createSessionFixture({ id: 's1', serverId: runtime.serverId, active: true, activeAt: Date.now(),
             thinking: true, thinkingAt: Date.now(), presence: 'online',

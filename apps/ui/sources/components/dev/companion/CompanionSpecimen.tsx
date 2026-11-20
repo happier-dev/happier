@@ -59,7 +59,8 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
         rows: [],
         needsYou: { request: ASK, moreCount: 0 },
         sinceMs: ASK.createdAt ?? null,
-        progress: { step: 4, total: 5 },
+        nowLine: 'Run the full UI suite',
+        statusProgress: { done: 3, total: 5, complete: false, dim: false },
         plan: PLAN,
         facts: [
             { kind: 'runningWork', count: 2, destination: 'workTab' },

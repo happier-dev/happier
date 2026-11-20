@@ -61,7 +61,6 @@ const summaryModel = {
     rows: [] as const,
     needsYou: null,
     sinceMs: null,
-    progress: null,
     plan: null,
     facts: [] as const,
 };

@@ -269,7 +269,7 @@ describe('the live hero (lab CA)', () => {
 
         expect(model.needsYou).toMatchObject({ request: { id: 'req-1' }, moreCount: 1 });
         expect(model.sinceMs).toBe(1_000);
-        expect(model.progress).toEqual({ step: 4, total: 5 });
+        expect(model.plan).toBe(fivePlan);
     });
 
     it('times a working turn from its start and shows no timer when no start is known', () => {

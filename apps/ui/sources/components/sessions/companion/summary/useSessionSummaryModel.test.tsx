@@ -186,7 +186,7 @@ describe('useSessionSummaryModel', () => {
             },
         }) } });
         const hook = await renderHook(() => useSessionSummaryModel({ session: shellSession, serverId: homeA }));
-        expect(hook.getCurrent()).toMatchObject({ title: 'Live session', stale: false, progress: { step: 1, total: 1 } });
+        expect(hook.getCurrent()).toMatchObject({ title: 'Live session', stale: false, statusProgress: { done: 0, total: 1 } });
         // Observe a real row-only update while the stabilised shell reference never changes.
         await act(async () => storage.setState({ sessions: { [shellSession.id]: session(homeA, {
             metadata: { ...shellSession.metadata!, name: 'Updated live session' },

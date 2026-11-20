@@ -26,7 +26,6 @@ vi.mock('./summary/useSessionSummaryModel', () => ({
         rows: [],
         needsYou: null,
         sinceMs: null,
-        progress: null,
         plan: null,
         facts: [],
     }),

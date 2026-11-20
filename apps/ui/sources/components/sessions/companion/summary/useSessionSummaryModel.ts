@@ -51,7 +51,6 @@ const REALM_UNAVAILABLE_SUMMARY: SessionSummaryCardModel = Object.freeze({
     rows: Object.freeze([]),
     needsYou: null,
     sinceMs: null,
-    progress: null,
     plan: null,
     facts: Object.freeze([]),
 });

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { I18nManager, Pressable, View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -134,18 +134,13 @@ function detailRowLabel(row: SessionSummaryRow): string {
     }
 }
 
-/** The status sentence under the status words (lab CA "Claude paused before step 4 of 5"). */
+/** Present the Session status facts supplied by awareness. */
 export function resolveSessionSummaryWhatLine(model: SessionSummaryCardModel): string | null {
-    const agent = model.agentLabel ?? t('sessionCompanion.status.agentFallback');
-    if (model.needsYou && model.progress) {
-        return t('sessionCompanion.status.pausedBeforeStep', { agent, ...model.progress });
-    }
-    if (model.progress && model.status?.state === 'thinking') {
-        return t('sessionCompanion.status.stepOfPlan', model.progress);
-    }
-    const work = model.rows.find((row) => row.kind === 'work');
-    if (work?.kind === 'work') return work.label;
-    return null;
+    const { nowLine, statusProgress } = model;
+    const progress = statusProgress
+        ? [statusProgress.label, `${statusProgress.done}/${statusProgress.total}`].filter(Boolean).join(' ')
+        : null;
+    return joinHappierFacts(nowLine, progress) || null;
 }
 
 const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
