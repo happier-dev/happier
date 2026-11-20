@@ -336,7 +336,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
           onRequestClose={() => setAddingCheck(null)}
           accountLifetime={lifetime}
           initialProject={{ machineId: environment.controllerMachineId, directory: '~' }}
-          eventSeed={subjectStarterEventSeed('healthFailed', {
+          eventSeed={subjectStarterEventSeed('addCheck', {
             subject: { kind: 'environment', environmentId: environment.id, machineId: environment.controllerMachineId },
             // A Key flow is checked on the collector that keeps its requests (J5 "Check from").
             controllerMachineId: collectorId,

@@ -4,14 +4,14 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 import { subjectStarterEventSeed, subjectStarterWhen } from './subjectTriggerStarters';
 
 describe('subject operation starters', () => {
-  it('reopens one canonical saved health source from every subject entry and carries Domain configure intent', () => {
+  it('opens the native Check source for the subject and carries Domain configure intent', () => {
     const domain = { domainId: 'public-domain', targetLinkId: 'serving-target' };
     const intent = { subject: { kind: 'environment' as const, environmentId: 'production', machineId: 'controller' },
       controllerMachineId: 'controller', domain };
-    const environment = subjectStarterEventSeed('healthFailed', intent);
-    const service = subjectStarterEventSeed('healthFailed', { subject: {
+    const environment = subjectStarterEventSeed('addCheck', intent);
+    const service = subjectStarterEventSeed('addCheck', { subject: {
       kind: 'service', serviceId: 'systemd:api', machineId: 'watched' } });
-    expect(environment).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
+    expect(environment).toMatchObject({ eventRef: HEALTH_CHECK_EVENT_REFS_V1.status, sourceInstanceId: expect.stringMatching(/^health:/),
       monitoringMachineId: 'controller', setupInput: { subject: { kind: 'environment', environmentId: 'production' }, domain } });
     expect(service).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
       setupInput: { subject: { kind: 'machineService', machineId: 'watched', serviceId: 'systemd:api' } } });

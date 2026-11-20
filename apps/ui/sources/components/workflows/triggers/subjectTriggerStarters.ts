@@ -11,16 +11,18 @@ import { buildSimpleScheduleCron } from './triggerSchedule';
 
 export type SubjectSentenceStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
 
-const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter | 'addCheck', PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+  addCheck: HEALTH_CHECK_EVENT_REFS_V1.status,
   healthFailed: HEALTH_CHECK_EVENT_REFS_V1.failed,
   deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
 };
 
 /** The page supplies its subject; the existing contributed setup owns configuring the source. */
 export function subjectStarterEventSeed(
-  starter: SubjectSentenceStarter | null,
+  starter: SubjectSentenceStarter | 'addCheck' | null,
   params: Readonly<{
     subject?: TriggerSubject;
+    serverId?: string;
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
     controllerMachineId?: string;
     domain?: HealthCheckDomainSetupIntentV1;
@@ -29,22 +31,25 @@ export function subjectStarterEventSeed(
   const eventRef = starter ? STARTER_EVENT[starter] : undefined;
   if (!eventRef) return undefined;
   const observer = params.controllerMachineId ? { monitoringMachineId: params.controllerMachineId } : {};
-  if (starter === 'deploymentFailed' && params.deploymentEnvironment) {
+  if (starter === 'deploymentFailed') {
+    if (!params.deploymentEnvironment) return undefined;
     const { serverId, environmentId } = params.deploymentEnvironment;
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
   }
-  const health = starter === 'healthFailed';
-  if (health && params.subject?.kind === 'environment') {
-    const subject = { kind: 'environment' as const, environmentId: params.subject.environmentId };
-    return { eventRef, ...observer, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject),
+  const subject = params.subject?.kind === 'environment'
+    ? { kind: 'environment' as const, environmentId: params.subject.environmentId }
+    : params.subject?.kind === 'service'
+      ? { kind: 'machineService' as const, machineId: params.subject.machineId, serviceId: params.subject.serviceId }
+      : null;
+  if (!subject) return undefined;
+  const nativeSourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
+  if (starter === 'addCheck') {
+    return { eventRef, ...observer, sourceInstanceId: nativeSourceInstanceId,
       setupInput: { v: 1, subject, ...(params.domain ? { domain: params.domain } : {}) } };
   }
-  if (health && params.subject?.kind === 'service') {
-    const subject = { kind: 'machineService' as const,
-      machineId: params.subject.machineId, serviceId: params.subject.serviceId };
-    return { eventRef, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject), setupInput: { v: 1, subject } };
-  }
-  return undefined;
+  return params.serverId
+    ? { eventRef, ...observer, setupInput: { v: 1, serverId: params.serverId, nativeSourceInstanceId } }
+    : undefined;
 }
 
 /** Ordinary editor intent; source configuration and durable Save remain with their existing owners. */

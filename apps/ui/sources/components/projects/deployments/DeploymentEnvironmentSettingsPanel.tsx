@@ -498,7 +498,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             onRequestClose={() => setOpeningCheckSetup(false)}
             accountLifetime={checkLifetime}
             initialProject={{ machineId: detail.environment.controllerMachineId, directory: '~' }}
-            eventSeed={subjectStarterEventSeed('healthFailed', {
+            eventSeed={subjectStarterEventSeed('addCheck', {
               subject: { kind: 'environment', environmentId: detail.environment.id,
                 machineId: detail.environment.controllerMachineId },
               controllerMachineId: detail.environment.controllerMachineId,

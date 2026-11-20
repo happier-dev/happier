@@ -186,7 +186,8 @@ describe('Account trigger HTTP read failure and recovery', () => {
             expect(seed?.definition).toBeUndefined();
             if (id.endsWith('healthFailed')) expect(seed?.incompleteTriggers?.pending).toEqual([
                 expect.objectContaining({ eventSeed: expect.objectContaining({ setupInput: expect.objectContaining({
-                    subject: { kind: 'machineService', machineId: 'machine-a', serviceId: 'web' },
+                    serverId: account.serverId,
+                    nativeSourceInstanceId: expect.stringMatching(/^health:/),
                 }) }) }),
             ]);
             if (id.endsWith('nightly')) expect(seed?.triggers?.rows).toEqual([

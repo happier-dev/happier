@@ -334,7 +334,7 @@ export function DeploymentDomainsPanel(
         onRequestClose={() => setCheckSetup(null)}
         accountLifetime={props.healthSetup.lifetime}
         initialProject={{ machineId: props.healthSetup.controllerMachineId, directory: '~' }}
-        eventSeed={subjectStarterEventSeed('healthFailed', {
+        eventSeed={subjectStarterEventSeed('addCheck', {
           subject: { kind: 'environment', environmentId: props.environmentId, machineId: props.healthSetup.controllerMachineId },
           controllerMachineId: props.healthSetup.controllerMachineId,
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },

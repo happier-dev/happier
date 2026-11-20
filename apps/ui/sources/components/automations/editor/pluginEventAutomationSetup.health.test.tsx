@@ -11,8 +11,11 @@ import { PluginAvailabilityActionHttpPathsV1, type PluginAccountAvailabilityInte
 import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
-import { HealthCheckSetupPreviewInputV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { HealthCheckSetupPreviewInputV1Schema, SavedHealthTransitionSourceV1Schema, createSavedHealthTransitionSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AutomationPluginEventTriggerProjectionSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -31,6 +34,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 
 import { configurePluginEventAutomationSetup } from './pluginEventAutomationSetup';
@@ -417,20 +421,23 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
     return { inputs, projection, event, fresh, source, machineId, pluginId };
 }
 
-describe('carries the Environment health starter and Machine-service health starter subjects into Add check', () => {
+describe('health authoring from an Environment or Machine service', () => {
 it.each([
     { label: 'Environment Settings Add check', starter: 'environmentSettingsAddCheck', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
         subject: { kind: 'environment', environmentId: 'environment-production' } },
-    { label: 'Environment', starter: 'healthFailed', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
+    { label: 'Environment Investigate when health fails', starter: 'healthFailed', triggerSubject: { kind: 'environment', environmentId: 'environment-production', machineId: 'deployment-machine' },
         subject: { kind: 'environment', environmentId: 'environment-production' } },
-    { label: 'Machine-service', starter: 'healthFailed', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
+    { label: 'Machine-service Investigate when health fails', starter: 'healthFailed', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
         subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-production' } },
     // Add a check opens the New trigger editor straight at the service's bound Health form (O-MACH 11-07).
     { label: 'Machine-service Add a check', starter: 'addCheck', triggerSubject: { kind: 'service', machineId: 'service-machine', serviceId: 'service-production' },
         subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'service-production' } },
-] as const)('$label through the rendered Event editor and native Health form', async ({ starter, triggerSubject, subject }) => {
+] as const)('$label through the rendered Event editor', async ({ starter, triggerSubject, subject }) => {
     const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');
     const { Item } = await import('@/components/ui/lists/Item');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+    const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
     const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const disposeLoader = await installRealActionExecutorModuleLoader();
@@ -442,6 +449,9 @@ it.each([
         serverIdentityId, accountId, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v3/automations/query' && 'subject' in JSON.parse(String(init?.body))) {
+                return Response.json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
+            }
             if (path === '/v3/automations' || path === '/v3/automations/query') return Response.json({ automations: [], nextCursor: null });
             return http.request(input, init);
         } });
@@ -450,12 +460,27 @@ it.each([
     const { loadDaemonMergedProjectionInputs, clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) throw new Error('Expected Environment starter Account');
-    const { machineId, pluginId, event, fresh, projection } = healthSetupFixture(connection.serverId, serverIdentityId, true);
+    const listen = starter === 'healthFailed';
+    const contribution = listen
+        ? { eventId: HEALTH_CHECK_EVENT_REFS_V1.failed.localId, actionId: 'health-check-failed/setup' }
+        : { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' };
+    const { machineId, pluginId, event, fresh, projection } = healthSetupFixture(connection.serverId, serverIdentityId, !listen, contribution);
+    const nativeSourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
     const submitted: unknown[] = [];
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
             return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
+            return { ok: true, inputSchema: event.setupAction.inputSchema };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+            if (listen) {
+                const input = Reflect.get(Object(request.payload), 'input');
+                const sourceConfig = SavedHealthTransitionSourceV1Schema.parse({ ...Object(input), observingSince: 1 });
+                submitted.push(input);
+                return { ok: true, result: { v: 1, sourceContractVersion: 1, sourceConfig,
+                    sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(contribution.eventId, sourceConfig),
+                    displayLabel: 'Saved health checks' } };
+            }
             const input = HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input'));
             submitted.push(input);
             return { ok: true, result: { v: 1, sourceInstanceId: 'health-environment-production', sourceContractVersion: 1,
@@ -504,30 +529,56 @@ it.each([
             await pressTestInstanceAsync(screen.findAllByType(SectionActionButton)
                 .find(row => row.props.testID === 'project-deployments.environment.settings.checks-alerts.add'));
         } else {
-            screen = await renderScreen(<SubjectTriggersSection {...subjectPageProps} />);
-            await waitForHomeGovernance(() => expect(screen!.findByTestId(`subject-triggers-starter:${starter}`)).not.toBeNull());
-            await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
+            screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+                <SubjectTriggersSection {...subjectPageProps} />
+            </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+            await waitForHomeGovernance(() => expect(screen!.findByTestId(`subject-triggers-starter:${starter}`), screen!.getTextContent()).not.toBeNull());
+            const restorePopoverGlobals = withPopoverWebGlobals();
+            try {
+                await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
+                if (listen) await pressTestInstanceAsync(screen.findAllByType(RoundButton)
+                    .find(button => button.props.testID === 'workflow-builder-open-editor'));
+            } finally {
+                restorePopoverGlobals();
+            }
         }
         if (starter === 'healthFailed') {
             const { router } = await import('expo-router');
             const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
             const { WorkflowTriggerBlock } = await import('@/components/workflows/triggers/WorkflowTriggerBlock');
-            const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
             const route = vi.mocked(router.push).mock.calls.at(-1)?.[0];
             if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('Expected the ordinary Health sentence route');
             const seed = readWorkflowDefinitionDraftSeed(String(route.params?.definitionDraftSeedId), accountLifetime.scope);
-            if (!seed?.eventSeed) throw new Error('Expected the retained Health source enrollment intent');
+            const eventSeed = seed?.incompleteTriggers?.pending[0]?.eventSeed;
+            if (!eventSeed) throw new Error('Expected the retained Health source enrollment intent');
             await screen.update(<WorkflowTriggerBlock testID="health-sentence" title="Health" enabled incomplete
-                when={{ kind: 'pluginEvent', value: null, eventRef: seed.eventSeed.eventRef }}
+                when={{ kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef }}
                 startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={vi.fn()} onRemove={vi.fn()}
                 machineId={triggerSubject.machineId} serverId={connection.serverId} accountLifetime={accountLifetime}
-                initialEventSeed={seed.eventSeed} />);
+                initialEventSeed={eventSeed} />);
             await pressTestInstanceAsync(screen.findAllByType(HappierPressable)
-                .find(row => row.props.testID === 'health-sentence-configure-event'));
+                .find(button => button.props.testID === 'health-sentence-configure-event'));
         }
         const editor = screen.findByType(PluginEventAutomationEditor);
         expect(editor).not.toBeNull();
         const initialSetupSeed: React.ComponentProps<typeof PluginEventAutomationEditor>['initialSetupSeed'] = editor.props.initialSetupSeed;
+        expect(initialSetupSeed?.eventRef).toEqual(event.event.identity);
+        if (listen) {
+            const selection = { v: 1, serverId: accountLifetime.scope.serverId, nativeSourceInstanceId };
+            expect(initialSetupSeed?.setupInput).toEqual(selection);
+            expect(initialSetupSeed?.sourceInstanceId).toBeUndefined();
+            setup = configurePluginEventAutomationSetup({ eligibleEvent: event, initialSetupSeed, observationTransport: 'checkpointedPull',
+                filter: null, maximumObservationAgeMs: null, accountLifetime, signal: operation.signal,
+                resolveExecutionOrigin: () => fresh,
+                loadCurrentProjection: target => loadDaemonMergedProjectionInputs({ ...target, accountLifetime, sections: 'complete' }),
+                present: ({ form }) => { void form.submit().then(result => {
+                    if (result.kind !== 'settled') form.cancel();
+                }); },
+            });
+            const result = await setup;
+            expect({ result, submitted }).toMatchObject({ result: { kind: 'configured' }, submitted: [selection] });
+            return;
+        }
         // The native surface adapter is the UI platform boundary; source selection, schema,
         // ephemeral settlement and the contributed Action dispatch all remain canonical.
         let presented!: () => void;
@@ -568,7 +619,7 @@ it.each([
             expect(editor.props.authoringMachineId).toBe(machineId);
             expect(editor.props.initialSetupSeed).toHaveProperty('monitoringMachineId', machineId);
         } else {
-            expect(editor.props.authoringMachineId).toBeNull();
+            expect(editor.props.authoringMachineId).toBe(triggerSubject.machineId);
             expect(editor.props.initialSetupSeed).not.toHaveProperty('monitoringMachineId');
         }
         const field = document.querySelector('input[aria-label="Endpoint"]');

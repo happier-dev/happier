@@ -191,7 +191,7 @@ function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId:
     </View> : null}
     {openingChecks ? <NewAccountTriggerPopover anchorRef={anchor} onRequestClose={() => setOpeningChecks(false)}
       accountLifetime={props.lifetime} initialProject={{ machineId: props.machineId, directory: '~' }}
-      eventSeed={subjectStarterEventSeed('healthFailed', { subject: { kind: 'environment', environmentId: props.environmentId,
+      eventSeed={subjectStarterEventSeed('addCheck', { subject: { kind: 'environment', environmentId: props.environmentId,
         machineId: props.machineId }, controllerMachineId: props.machineId })} /> : null}
     {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome}
       serverId={props.serverId} testID={`${props.testID}.handoff`} onChoosePlacement={investigation.investigateWithPlacement}

@@ -21,7 +21,8 @@ export const healthTransitionCursorSchema = defineProtocolObject({ basis: define
 }, { policy: 'closed' });
 export type HealthTransitionCursor = ReturnType<typeof healthTransitionCursorSchema.parse>;
 export const healthTransitionCursorStoredSchema = createProtocolStoredReadSchema(healthTransitionCursorSchema);
-const setup = defineProtocolObject({ v: defineProtocolLiteral(1), serverId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+const setup = defineProtocolObject({ v: defineProtocolLiteral(1), serverId: defineProtocolString({ minLength: 1 }),
+    nativeSourceInstanceId: defineProtocolString().optional() }, { policy: 'closed' });
 export const savedHealthTransitionSourceSchema = SavedHealthTransitionSourceV1ProtocolSchema;
 export type SavedHealthTransitionSource = SavedHealthTransitionSourceV1;
 export const savedHealthTransitionActions = Object.fromEntries([HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT].map(event => [`${event}/setup`, {

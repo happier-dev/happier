@@ -568,9 +568,10 @@ uses that same admission owner's matching rule.
 The incumbent `health-status` enrollment remains supported by that same
 producer and owns native check setup. Existing native failed/recovered source
 configurations remain readable by the same adapter. A migrated retained listener
-pins its original probe with `nativeSourceInstanceId`; new Account-wide selectors
-omit it. Certificate
-and Domain-bound checks use these Events too; they have no second alert sampler.
+pins its original probe with `nativeSourceInstanceId`. In 0.3 development, the
+Environment and Machine service's Investigate starter uses the same selector
+to listen to its page's Check. Account-wide selectors omit it. Certificate and
+Domain-bound checks use these Events too and share the same alert sampler.
 Observation-only enrollment retains its existing marker. Executable enrollment
 uses an ordinary Workflow target and the existing per-Action approval policy.
 

@@ -204,7 +204,7 @@ export const SubjectTriggersSectionContent = React.memo(
       const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
       if (!lifetime?.isCurrent()) return false;
       const eventSeed = starter === null || !legacy ? undefined : subjectStarterEventSeed(starter, {
-        subject: legacy, deploymentEnvironment: props.deploymentEnvironment,
+        subject: legacy, deploymentEnvironment: props.deploymentEnvironment, serverId: lifetime.scope.serverId,
         controllerMachineId: props.controllerMachineId,
       });
       // An Action page starts from "Before each ⟨Action⟩" (it waits for the result); the sentence can switch to After.
@@ -383,7 +383,7 @@ export const SubjectTriggersSectionContent = React.memo(
             onRequestClose={close}
             {...(project ? { initialProject: project } : {})}
             accountLifetime={accountLifetime}
-            eventSeed={legacy ? subjectStarterEventSeed('healthFailed', { subject: legacy, controllerMachineId: props.controllerMachineId }) : undefined}
+            eventSeed={legacy ? subjectStarterEventSeed('addCheck', { subject: legacy, controllerMachineId: props.controllerMachineId }) : undefined}
           />
         ) : null}
         {opening?.kind === 'sentence' ? (

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import type { HealthChecksService, HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1, HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
+import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
 import { plugin } from './manifest.js';
 
 it('publishes the saved health check operand for the setup Action catalog', () => {
@@ -14,6 +15,10 @@ it('chooses saved health transitions without configuring another probe', async (
         const selected = await kit.invokeAction('health-check-failed/setup', { v: 1, serverId: 'home' }, { surface: 'agent' });
         expect(selected).toMatchObject({ v: 1, sourceContractVersion: 1, sourceConfig: { v: 1, serverId: 'home' } });
         expect(selected).not.toHaveProperty('sourceConfig.checks');
+        const nativeSourceInstanceId = createHealthCheckSourceInstanceIdV1({ kind: 'environment', environmentId: 'production' });
+        const subject = await kit.invokeAction('health-check-failed/setup', { v: 1, serverId: 'home', nativeSourceInstanceId }, { surface: 'ui' });
+        expect(subject).toMatchObject({ v: 1, sourceContractVersion: 1, sourceConfig: { v: 1, serverId: 'home', nativeSourceInstanceId } });
+        expect(subject).not.toHaveProperty('sourceInstanceId', nativeSourceInstanceId);
     } finally { await kit.dispose(); }
 });
 
