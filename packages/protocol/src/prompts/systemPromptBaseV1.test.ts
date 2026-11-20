@@ -52,6 +52,13 @@ describe('native prompt echo display text', () => {
     }
   });
 
+  it('strips the current host prompt, including Session status guidance, from displayed user text', () => {
+    const prefix = buildHappierBaseSystemPromptV1();
+    const userText = 'Review the release branch';
+    expect(readSessionInputPromptUserTextV1(`${prefix}\n\n${userText}`)).toBe(userText);
+    expect(readSessionInputPromptUserTextV1(prefix.replace(/\s+/g, ' '))).toBe('');
+  });
+
   it('reads the title-policy prefix emitted by the 0.2 predecessor', () => {
     // Verbatim producer vector: ../0.2 f18aba940c, systemPromptBaseV1.ts.
     const prefix = `# Session title

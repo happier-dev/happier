@@ -144,17 +144,21 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
   Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, open and analyze the referenced files before answering.
 `);
 
+const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1 = trimIdent(`
+  ## Session status
+
+  When the goal tool is available, set a goal for work with a clear outcome that spans multiple turns. Update it if the outcome changes and clear it when the goal no longer applies.
+
+  Use session_status_set_reason for a short note when it helps the user see what is happening now or what is blocking you. Use session_status_set_progress when you know how many units are done and the total. Update the note and count when the facts change. Use session_status_clear when the note and count no longer describe the session.
+`);
+
 export function buildHappierBaseSystemPromptV1(args?: Readonly<HappierBaseSystemPromptV1Options>): string {
   const blocks: string[] = [];
   if (args?.createdAsBot === true) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_BOT_FIRST_MESSAGE_V1);
   const titleGuidance = buildHappierSessionTitleGuidanceV1(args);
   if (titleGuidance) blocks.push(titleGuidance);
   if (isSessionHappierToolsEnabled(args?.sessionMetadata)) {
-    blocks.push(`## Session status
-
-When the goal tool is available, set a goal for work with a clear outcome that spans multiple turns. Update it if the outcome changes and clear it when the goal no longer applies.
-
-Use session_status_set_reason for a short note when it helps the user see what is happening now or what is blocking you. Use session_status_set_progress when you know how many units are done and the total. Update the note and count when the facts change. Use session_status_clear when the note and count no longer describe the session.`);
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1);
   }
   if (resolveCodingPromptBehaviorV1(args?.settings).sessionCompactionNudge
     && args?.sessionCompactionToolAvailable === true && isSessionHappierToolsEnabled(args.sessionMetadata)) {
@@ -195,6 +199,7 @@ const HAPPIER_BASE_SYSTEM_PROMPT_DISPLAY_BLOCKS_V1 = (() => {
     HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
     `${predecessorInitial}\n\nCall the title tool again if the task changes significantly.`,
     predecessorInitial,
+    HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_PREDECESSOR_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
