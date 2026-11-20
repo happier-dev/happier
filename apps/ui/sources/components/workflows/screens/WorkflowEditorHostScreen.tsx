@@ -1134,7 +1134,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const definitionChanged = canEditDefinition && (copying || saved === null
             || definitionHasChanges(draft) || description !== savedDescriptionRef.current);
         const validation = validateWorkflowEditorDraft(draft, { triggerEvents: triggers.triggerEvents });
-        if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) return { status: 'refused', reason: 'invalid_workflow' };
+        if (!triggers.complete || (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined))) return { status: 'refused', reason: 'invalid_workflow' };
         const lifetime = accountLifetime;
         if (!lifetime?.isCurrent()) return { status: 'unavailable' };
         // Same Account is not the same workflow: a save that resolves after this

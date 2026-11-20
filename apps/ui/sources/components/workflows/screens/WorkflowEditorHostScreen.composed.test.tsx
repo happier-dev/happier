@@ -672,6 +672,17 @@ describe('unresolved editor create identity (FIX194)', () => {
         return stored;
     }
 
+    it('keeps an unresolved native Events seed editable instead of saving a manual workflow in the full editor', async () => {
+        const nativeEvent = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
+            sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+        const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: 'A Machine went offline', definition: definition(), nativeEvent });
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId }} />);
+        expect(await save()).toMatchObject({ status: 'refused', reason: 'invalid_workflow' });
+        expect(createdRows()).toEqual([]);
+        expect(readBodyProps()!.currentWorkflowRef).toBeNull();
+        expect(readBodyProps()!.draftStore.get().blocks).toEqual(definition().blocks);
+    });
+
     it.each(['Save', 'Copy'] as const)('%s retries a committed POST after failed recovery reads with exactly one new Artifact', async kind => {
         await renderScreen(<WorkflowEditorHostScreen source={kind === 'Copy'
             ? { kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID } : newSource()} />);

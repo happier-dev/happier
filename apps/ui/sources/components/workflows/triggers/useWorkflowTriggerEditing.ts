@@ -59,6 +59,8 @@ export type WorkflowTriggerEditing = Readonly<{
     dirty: boolean;
     /** Triggers on screen but not complete yet: the When card and the Sentence view show the same ones. */
     incomplete: WorkflowTriggerIncomplete;
+    /** All authored When rows are configured; Save must not discard unfinished intent. */
+    complete: boolean;
     updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
     status: 'loading' | 'ready' | 'failed';
     retry: () => void;
@@ -264,5 +266,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         const triggerId = rowIdentities.clients.get(clientId)?.triggerId;
         return triggerId !== undefined && !draft.removes.includes(triggerId) && (set?.triggers.some((row) => row.id === triggerId) ?? false);
     }, [draft, incomplete, set, rowIdentities]);
-    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, hasTriggerRow, save };
+    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete,
+        complete: incomplete.pending.length === 0 && Object.keys(incomplete.edits).length === 0,
+        updateIncomplete, summary, hasTriggerRow, save };
 }

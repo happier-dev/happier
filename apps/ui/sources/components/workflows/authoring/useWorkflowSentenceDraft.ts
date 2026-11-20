@@ -119,6 +119,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         const isCurrent = () => mounted.current && lifetime?.isCurrent() === true;
         if (!isCurrent() || lifetime === null) return { status: 'unavailable' };
         if (savingRef.current) return { status: 'refused', reason: 'save_pending' };
+        if (!triggers.complete) return { status: 'refused', reason: 'invalid_workflow' };
         const draft = source.store.get();
         const description = source.intent.description ?? '';
         const changed = savedRef.current === null || !workflowEditorSnapshotsEqual(draft, baseline.current.draft)

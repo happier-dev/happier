@@ -290,3 +290,53 @@ it('carries unresolved native Event intent through sentence history and the full
     expect(home.creates).toEqual([]);
     expect(home.automations.creates).toEqual([]);
 });
+
+it('does not turn an unresolved native Events seed into a manual workflow on Save', async () => {
+    const home = await sourceHome();
+    // QA-C r14-events-current-automate: a native Machine offline occurrence remains Set up.
+    const nativeEvent = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
+        sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'A Machine went offline', step: message, nativeEvent }, home.lifetime));
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'refused', reason: 'invalid_workflow' }); });
+    expect(home.creates).toEqual([]);
+    expect(home.automations.creates).toEqual([]);
+    expect(hook.getCurrent().saved).toBeNull();
+    const entry = hook.getCurrent().openInEditor();
+    if (!entry) throw new Error('Expected the ordinary full editor entry');
+    expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
+        .toMatchObject({ draft: { blocks: [message] }, incompleteTriggers: { pending: [{ nativeEvent }] } });
+    await act(async () => hook.getCurrent().triggers.updateIncomplete(() => ({ pending: [],
+        edits: { 'saved:offline-watch': { kind: 'pluginEvent', value: null } } })));
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'refused', reason: 'invalid_workflow' }); });
+    expect(home.creates).toEqual([]);
+    // Deliberately removing the unfinished trigger is how this draft becomes manual.
+    await act(async () => hook.getCurrent().triggers.updateIncomplete(() => ({ pending: [], edits: {} })));
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'applied' }); });
+    expect(home.creates).toHaveLength(1);
+    expect(home.automations.creates).toEqual([]);
+    await act(async () => hook.getCurrent().triggers.updateIncomplete(() => ({ edits: {},
+        pending: [{ clientId: 'another-offline', nativeEvent, when: { kind: 'pluginEvent', value: null } }] })));
+    await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'refused', reason: 'invalid_workflow' }); });
+    expect(home.creates).toHaveLength(1);
+    const resumed = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'A Machine went offline',
+        step: { ...message, name: 'Tell the team' }, nativeEvent,
+        project: { machineId: 'controller', directory: '/repo' } }, home.lifetime));
+    const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+    const configured = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+        eventRef: { pluginId: 'acme.presence', localId: 'offline' }, sourceInstanceId: 'offline-machine',
+        sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'When this Machine goes offline', filter: null,
+        maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+            machineId: 'controller', pluginId: 'acme.presence', materializationId: 'presence-1',
+        } } });
+    await act(async () => {
+        resumed.getCurrent().triggers.updateIncomplete(() => ({ pending: [], edits: {} }));
+        resumed.getCurrent().triggers.setDraft(editWorkflowTriggerDraft(resumed.getCurrent().triggers.draft,
+            { kind: 'add', clientId: 'configured-offline', trigger: configured }));
+    });
+    const derivedName = resumed.getCurrent().draftStore.get().name;
+    expect(derivedName).toBe('When this Machine goes offline → tell the team');
+    await act(async () => { expect(await resumed.getCurrent().save()).toEqual({ status: 'applied' }); });
+    const persisted = await getWorkflowDefinition({ definitionId: resumed.getCurrent().saved!.definitionId, accountLifetime: home.lifetime });
+    expect(persisted.metadata.title).toBe(derivedName);
+    expect(home.automations.creates).toHaveLength(1);
+});
