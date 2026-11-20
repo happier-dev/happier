@@ -17,6 +17,8 @@ export type TeamSetupExistingClones = Readonly<{
   folder: string | null;
   adopted: ReadonlyMap<string, string>;
   failure: string | null;
+  /** The last search finished without a match in its folder. */
+  noneFound: boolean;
 }>;
 
 type SearchState = Readonly<{
@@ -112,6 +114,7 @@ export function useTeamSetupExistingClones(
       folder: current?.folder ?? null,
       adopted: current?.adopted ?? NONE,
       failure: current?.failure ?? null,
+      noneFound: !!current && !current.searching && !current.failure && current.adopted.size === 0,
       }),
     [current, machineId, onFind],
   );

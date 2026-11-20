@@ -251,7 +251,8 @@ export function useWorkspaceRefs() {
 
 /** One fact over the current Account's checkouts; the reader renders only when that fact changes. */
 export function useWorkspaceRefsSelector<T>(select: (refs: readonly WorkspaceRefV1[]) => T): T {
-  return getStorage()((state) => select(readProjectWorkspaceRefs(state)));
+  // Shallow, so a selection of several existing refs keeps its identity while those refs do.
+  return getStorage()(useShallow((state) => select(readProjectWorkspaceRefs(state))));
 }
 
 export function useProjectOrganizations() {

@@ -65,3 +65,13 @@ describe('Team setup repositories', () => {
     expect([...matches]).toEqual([['acme-web', '/home/mara/code/acme-web']]);
   });
 });
+
+describe('Team setup repositories with an existing checkout', () => {
+  it('opens the member’s existing checkout of the Source instead of cloning', () => {
+    const existing = { id: 'ws-web', serverId: 'home', machineId: 'devbox', rootPath: '/home/mara/code/acme-web', createdAtMs: 1,
+      source: { sourceId: 'acme-web', revision: 1 } };
+    const repository = buildTeamSetupRepository(web, target, null, existing as never);
+    expect(repository?.input.materialization?.kind).not.toBe('clone');
+    expect(repository?.input.source).toMatchObject({ kind: 'source', id: 'acme-web', checkout: { workspaceId: 'ws-web' } });
+  });
+});

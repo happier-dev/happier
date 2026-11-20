@@ -16868,6 +16868,8 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 anotherMachine: '设置另一台机器',
                 anotherMachineDescription: ({ team }: { team: string }) => `在你的另一台机器上运行 ${team} 的相同设置。`,
                 anotherMachineAction: '设置',
+                repositoriesReady: ({ machine }: { machine: string }) => `已在 ${machine} 上就绪。`,
+                clonesNone: ({ folder }: { folder: string }) => `${folder} 中没有这些仓库的克隆`,
             },
             openTeam: ({ team }: { team: string }) => `打开 ${team}`,
             expiredTitle: '此邀请已过期',

@@ -868,6 +868,8 @@ export const english = {
                 anotherMachine: 'Set up another machine',
                 anotherMachineDescription: ({ team }: { team: string }) => `Run the same setup for ${team} on another of your machines.`,
                 anotherMachineAction: 'Set up',
+                repositoriesReady: ({ machine }: { machine: string }) => `Ready on ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `No clones of these repositories in ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Open ${team}`,
             expiredTitle: 'This invitation has expired',

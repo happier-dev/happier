@@ -17050,6 +17050,8 @@ const french: TeamsTranslationRoot = {
                 anotherMachine: 'Configurer une autre machine',
                 anotherMachineDescription: ({ team }: { team: string }) => `Appliquez la même configuration de ${team} sur une autre de vos machines.`,
                 anotherMachineAction: 'Configurer',
+                repositoriesReady: ({ machine }: { machine: string }) => `Prêt sur ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `Aucun clone de ces dépôts dans ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Ouvrir ${team}`,
             expiredTitle: 'Cette invitation a expiré',

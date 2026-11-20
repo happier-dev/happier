@@ -16928,6 +16928,8 @@ const japanese: TeamsTranslationRoot = {
                 anotherMachine: '別のマシンをセットアップ',
                 anotherMachineDescription: ({ team }: { team: string }) => `${team} の同じセットアップを別のマシンで実行します。`,
                 anotherMachineAction: 'セットアップ',
+                repositoriesReady: ({ machine }: { machine: string }) => `${machine} で準備完了。`,
+                clonesNone: ({ folder }: { folder: string }) => `${folder} にこれらのリポジトリのクローンはありません`,
             },
             openTeam: ({ team }: { team: string }) => `${team} を開く`,
             expiredTitle: 'この招待は期限切れです',

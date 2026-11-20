@@ -17018,6 +17018,8 @@ const russian: TeamsTranslationRoot = {
                 anotherMachine: 'Настроить другую машину',
                 anotherMachineDescription: ({ team }: { team: string }) => `Запустите ту же настройку ${team} на другой своей машине.`,
                 anotherMachineAction: 'Настроить',
+                repositoriesReady: ({ machine }: { machine: string }) => `Готово на ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `В ${folder} нет клонов этих репозиториев`,
             },
             openTeam: ({ team }: { team: string }) => `Открыть ${team}`,
             expiredTitle: 'Это приглашение истекло',

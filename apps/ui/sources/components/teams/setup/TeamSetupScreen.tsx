@@ -4,6 +4,7 @@ import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/pro
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { suggestProjectOpenDestination } from '@/components/projects/activation/projectOpenChoices';
 import { useMachinePresetUpdates } from '@/components/machines/setup/useMachinePresetUpdates';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -292,6 +293,16 @@ function TeamSetupPlanPage(
     (!hasPreset || !!machinePlan?.plan) &&
     (hasPreset || included.length > 0);
 
+  // The checkout owner's registered checkouts of these Sources on the chosen Machine; one lookup for the page.
+  const serverId = context.scope.serverId;
+  const checkoutList = useWorkspaceRefsSelector(React.useCallback((refs) => repositories.map((source) =>
+    findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision })),
+  [machineId, repositories, serverId]));
+  const checkouts = React.useMemo(() => new Map(repositories.flatMap((source, index) => {
+    const checkout = checkoutList[index];
+    return checkout ? [[source.id, checkout] as const] : [];
+  })), [checkoutList, repositories]);
+
   const clones = useTeamSetupExistingClones({
     execute,
     context: actionContext,
@@ -307,6 +318,7 @@ function TeamSetupPlanPage(
         source,
         { serverId: context.scope.serverId, machineId, homeDir },
         clones.adopted.get(source.id) ?? null,
+        checkouts.get(source.id) ?? null,
       );
       return repository ? [repository] : [];
     });
@@ -349,6 +361,7 @@ function TeamSetupPlanPage(
     context.address,
     context.scope.serverId,
     props.lifetime,
+    checkouts,
     clones.adopted,
     homeDir,
     homeId,
@@ -443,7 +456,6 @@ function TeamSetupPlanPage(
         scope: context.scope,
       } : undefined}
       conditions={props.conditions}
-      serverId={context.scope.serverId}
       teamName={teamName}
       selection={selection}
       machineId={machineId}
@@ -474,6 +486,7 @@ function TeamSetupPlanPage(
       onStartSession={startSession}
       presetChange={presetChange}
       clones={clones}
+      checkouts={checkouts}
       onSetUpAnother={setUpAnother}
     />
   );
@@ -488,8 +501,6 @@ export function TeamSetupPageView(
   props: Readonly<{
     header: React.ReactNode;
     conditions?: React.ReactNode;
-    /** The Team's Home: checkouts of its Sources are looked up there. */
-    serverId: string;
     teamName: string;
     selection: MachineAdministrationTargetSelectionV1;
     machineId: string | null;
@@ -520,6 +531,8 @@ export function TeamSetupPageView(
     /** The Machine owner found the Team's preset newer than what this Machine applied. */
     presetChange: Readonly<{ revision: number; onReview: () => void }> | null;
     clones: TeamSetupExistingClones;
+    /** Registered checkouts of the listed Sources on the chosen Machine, by Source id (the checkout owner's fact). */
+    checkouts?: ReadonlyMap<string, WorkspaceRefV1>;
     /** After Done, the rail offers the same setup on another Machine instead of a spent button. */
     onSetUpAnother?: () => void;
     /** Preview as a member: a new member's own machine stands in for the selector, and nothing runs. */
@@ -755,7 +768,9 @@ export function TeamSetupPageView(
           testID="team-setup-repositories"
           title={t('teams.join.setupPage.repositoriesTitle')}
           description={
-            machineLabel
+            run.kind === 'done' && machineLabel
+              ? t('teams.join.setupPage.repositoriesReady', { machine: machineLabel })
+              : machineLabel
               ? t('teams.join.setupPage.repositoriesDescription', {
                   machine: machineLabel,
                 })
@@ -781,7 +796,7 @@ export function TeamSetupPageView(
               homeDir={props.homeDir}
               included={!props.excluded.has(source.id)}
               adoptedPath={props.clones.adopted.get(source.id) ?? null}
-              serverId={props.serverId}
+              checkout={props.checkouts?.get(source.id) ?? null}
               teamName={teamName}
               onStartSession={props.onStartSession}
               batch={props.batch}
@@ -799,6 +814,13 @@ export function TeamSetupPageView(
           size="line"
           title={t('teams.join.setupPage.clonesFailed', { folder: props.clones.folder })}
           reason={props.clones.failure}
+        />
+      ) : props.clones.noneFound && props.clones.folder ? (
+        <SurfaceStateCard
+          testID="team-setup-clones-none"
+          kind="empty"
+          size="line"
+          title={t('teams.join.setupPage.clonesNone', { folder: props.clones.folder })}
         />
       ) : null}
       {props.repositoryFreeSources.length > 0 ? (
@@ -862,7 +884,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     included: boolean;
     /** A clone the member already has, found by Find existing clones; it is attached as it is. */
     adoptedPath: string | null;
-    serverId: string;
+    checkout: WorkspaceRefV1 | null;
     teamName: string;
     onStartSession?: (project: OpenedProject) => void;
     batch: TeamSetupBatch | null;
@@ -874,11 +896,9 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   const progress = useTeamSetupBatchProgress(props.batch, props.source.id);
   const opened = progress?.ready ? readOpenedProject(props.batch, props.source.id) : null;
   // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
-  const { serverId, machineId, source } = props;
-  const checkout = useWorkspaceRefsSelector(React.useCallback((refs) =>
-    findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision }),
-  [machineId, serverId, source.id, source.revision]));
-  const destination = props.adoptedPath ? null : props.machineId
+  const { checkout } = props;
+  const existingPath = checkout?.rootPath ?? props.adoptedPath;
+  const destination = existingPath ? null : props.machineId
     ? suggestProjectOpenDestination({
         machineId: props.machineId,
         machineHomeDir: props.homeDir,
@@ -895,8 +915,8 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
       icon={<Icon name="git-branch" size={20} color={props.iconColor} />}
       title={nameWithOwner}
       subtitle={
-        props.adoptedPath
-          ? t('teams.join.setupPage.repositoryExisting', { path: props.adoptedPath })
+        existingPath
+          ? t('teams.join.setupPage.repositoryExisting', { path: existingPath })
           : destination
             ? t('teams.join.setupPage.repositoryInto', { path: destination })
             : undefined

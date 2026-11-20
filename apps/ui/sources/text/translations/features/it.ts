@@ -16993,6 +16993,8 @@ const italian: TeamsTranslationRoot = {
                 anotherMachine: 'Configura un’altra macchina',
                 anotherMachineDescription: ({ team }: { team: string }) => `Esegui la stessa configurazione di ${team} su un’altra delle tue macchine.`,
                 anotherMachineAction: 'Configura',
+                repositoriesReady: ({ machine }: { machine: string }) => `Pronto su ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `Nessun clone di questi repository in ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Apri ${team}`,
             expiredTitle: 'Questo invito è scaduto',

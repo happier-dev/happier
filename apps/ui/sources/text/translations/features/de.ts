@@ -16808,6 +16808,8 @@ const german: TeamsTranslationRoot = {
                 anotherMachine: 'Einen weiteren Rechner einrichten',
                 anotherMachineDescription: ({ team }: { team: string }) => `Dasselbe Setup für ${team} auf einem anderen deiner Rechner ausführen.`,
                 anotherMachineAction: 'Einrichten',
+                repositoriesReady: ({ machine }: { machine: string }) => `Bereit auf ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `Keine Klone dieser Repositorys in ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `${team} öffnen`,
             expiredTitle: 'Diese Einladung ist abgelaufen',

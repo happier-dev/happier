@@ -4,6 +4,7 @@ import {
   sameScmHostingRepositoryIdentity,
 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmRepositoryDiscoverMatch } from '@happier-dev/protocol/scm/repositoryDiscovery';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import {
   buildProjectOpenDraft,
@@ -22,13 +23,14 @@ export type TeamSetupRepositoryTarget = Readonly<{
 }>;
 
 /**
- * One shared repository as the ordinary Open owner takes it: a fresh clone into the suggested folder, or, when the
- * member adopted a clone they already have, that folder attached as it is (its working bytes stay untouched).
+ * One shared repository as the ordinary Open owner takes it: the member's registered checkout of the Source when
+ * one exists, a clone they adopted through Find (attached as it is), or else a fresh clone into the suggested folder.
  */
 export function buildTeamSetupRepository(
   source: ProjectSourceV1,
   target: TeamSetupRepositoryTarget,
   adoptedPath: string | null,
+  checkout: WorkspaceRefV1 | null = null,
 ): TeamSetupRepository | null {
   const subject = { kind: 'source' as const, source };
   const base: ProjectOpenChoiceState = {
@@ -43,7 +45,9 @@ export function buildTeamSetupRepository(
     checkouts: [],
   };
   let state: ProjectOpenChoiceState;
-  if (adoptedPath) {
+  if (checkout) {
+    state = { ...base, use: 'existing', checkoutId: checkout.id, checkouts: [checkout] };
+  } else if (adoptedPath) {
     state = selectProjectOpenDiscoveredClone(base, {
       rootPath: adoptedPath,
       repositoryIdentity: readSourceIdentity(source)!,
@@ -53,7 +57,7 @@ export function buildTeamSetupRepository(
     if (!destination) return null;
     state = { ...base, destination };
   }
-  const input = buildProjectOpenInput(buildProjectOpenDraft(state), []);
+  const input = buildProjectOpenInput(buildProjectOpenDraft(state), state.checkouts);
   if (!input) return null;
   const { serverId: _serverId, machineId: _machineId, ...rest } = input;
   return { id: source.id, input: rest };

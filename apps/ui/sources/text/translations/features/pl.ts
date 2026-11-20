@@ -17017,6 +17017,8 @@ const polish: TeamsTranslationRoot = {
                 anotherMachine: 'Skonfiguruj inną maszynę',
                 anotherMachineDescription: ({ team }: { team: string }) => `Uruchom tę samą konfigurację ${team} na innej swojej maszynie.`,
                 anotherMachineAction: 'Skonfiguruj',
+                repositoriesReady: ({ machine }: { machine: string }) => `Gotowe na ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `Brak klonów tych repozytoriów w ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Otwórz ${team}`,
             expiredTitle: 'To zaproszenie wygasło',

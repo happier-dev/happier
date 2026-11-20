@@ -16979,6 +16979,8 @@ const portuguese: TeamsTranslationRoot = {
                 anotherMachine: 'Configurar outra máquina',
                 anotherMachineDescription: ({ team }: { team: string }) => `Execute a mesma configuração de ${team} em outra das suas máquinas.`,
                 anotherMachineAction: 'Configurar',
+                repositoriesReady: ({ machine }: { machine: string }) => `Pronto em ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `Nenhum clone destes repositórios em ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Abrir ${team}`,
             expiredTitle: 'Este convite expirou',

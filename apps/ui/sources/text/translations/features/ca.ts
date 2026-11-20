@@ -17007,6 +17007,8 @@ const catalan: TeamsTranslationRoot = {
                 anotherMachine: 'Configura una altra màquina',
                 anotherMachineDescription: ({ team }: { team: string }) => `Fes la mateixa configuració de ${team} en una altra de les teves màquines.`,
                 anotherMachineAction: 'Configura',
+                repositoriesReady: ({ machine }: { machine: string }) => `A punt a ${machine}.`,
+                clonesNone: ({ folder }: { folder: string }) => `No hi ha clons d’aquests repositoris a ${folder}`,
             },
             openTeam: ({ team }: { team: string }) => `Obre ${team}`,
             expiredTitle: 'Aquesta invitació ha caducat',

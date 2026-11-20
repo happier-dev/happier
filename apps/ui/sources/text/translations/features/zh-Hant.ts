@@ -16868,6 +16868,8 @@ const traditionalChinese: TeamsTranslationRoot = {
                 anotherMachine: '設定另一台機器',
                 anotherMachineDescription: ({ team }: { team: string }) => `在你的另一台機器上執行 ${team} 的相同設定。`,
                 anotherMachineAction: '設定',
+                repositoriesReady: ({ machine }: { machine: string }) => `已在 ${machine} 上就緒。`,
+                clonesNone: ({ folder }: { folder: string }) => `${folder} 中沒有這些儲存庫的複製`,
             },
             openTeam: ({ team }: { team: string }) => `開啟 ${team}`,
             expiredTitle: '此邀請已到期',

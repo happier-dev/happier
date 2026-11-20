@@ -41,7 +41,6 @@ const api = teamProjectSourceFixture({
 function view(overrides: Partial<ViewProps>): React.ReactElement {
   const props: ViewProps = {
     header: null,
-    serverId: 'home',
     teamName: 'Acme',
     selection: createMachineAdministrationTargetSelectionFixture(),
     machineId: 'devbox',
