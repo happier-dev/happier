@@ -7,9 +7,9 @@ type ProcessOwnershipRead = Awaited<ReturnType<ReturnType<typeof createProcessOw
 /**
  * Projects the ownership runtime's census into Storage "in use" facts (plan 40 §4.6, §7(h)).
  * The census exposes cwd only for the same principal; Windows exposes none. Other programs
- * hold their cwd and its ancestors. A registered workspace is also a cwd fact,
- * not a claim on every descendant. Explicit executables and absolute arguments
- * remain dependency paths, including for Sessions running in a parent workspace.
+ * hold their cwd, ancestors and ordinary descendants. A registered workspace is
+ * also a cwd fact, allowing the worktree owner to exempt an unused exact child
+ * worktree. Explicit executables and absolute arguments remain dependency paths.
  */
 export function projectStorageProcessUse(owners: ProcessOwnershipRead): StoragePathUse {
     if (owners.status !== 'ok') return { reliable: false, paths: [], cwdPaths: [], sessions: [] };

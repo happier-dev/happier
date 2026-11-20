@@ -72,7 +72,7 @@ export function contains(root: string, path: string): boolean {
 }
 export function isInUse(path: string, context: StorageCategoryContext): boolean {
     return context.inUse.paths.some(live => context.pathComparator.contains(path, live) || context.pathComparator.contains(live, path))
-        || (context.inUse.cwdPaths ?? []).some(cwd => context.pathComparator.contains(path, cwd));
+        || (context.inUse.cwdPaths ?? []).some(cwd => context.pathComparator.contains(path, cwd) || context.pathComparator.contains(cwd, path));
 }
 export const check: StorageCategoryVerdict = { verdict: 'check', reason: { code: 'facts_unavailable' }, collectable: false };
 export const inUse: StorageCategoryVerdict = { verdict: 'keep', reason: { code: 'in_use' }, collectable: true, loses: [{ code: 'in_use' }] };

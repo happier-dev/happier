@@ -23,8 +23,10 @@ export type StorageProtectionFacts = Readonly<{
   personalFolders?: readonly string[];
   mainCheckouts?: readonly string[];
   inUsePaths?: readonly string[];
-  /** Any process's cwd protects the held folder/ancestors, without claiming its whole subtree. */
+  /** Process cwd/workspace holds protect the folder, its ancestors and ordinary descendants. */
   inUseCwds?: readonly string[];
+  /** SCM-resolved child worktree roots; only the exact root may bypass an ancestor cwd hold. */
+  cwdExemptWorktreePaths?: readonly string[];
   /** Session bindings projected from the canonical process ownership roots. */
   inUseSessions?: readonly Readonly<{ path: string; sessionId: string; tree?: boolean }>[];
   agentHomes?: readonly string[];
@@ -38,12 +40,12 @@ export type StorageProtectionFacts = Readonly<{
   /** Exact current catalog item; this never exempts the data root or an ancestor. */
   managedItemPath?: string;
 }>;
-export type StoragePathClassification = Readonly<{ tier: null; reason?: never; loses?: never }> | Readonly<{
+export type StoragePathClassification = Readonly<{ inUse?: true }> & (Readonly<{ tier: null; reason?: never; loses?: never }> | Readonly<{
   tier: 'forbidden' | 'keep' | 'caution';
   reason: StorageReasonV1;
   loses?: StorageReasonV1[];
-}>;
-type Rule = Readonly<{ path: string; tier: 'forbidden' | 'keep' | 'caution'; code: StorageReasonV1['code']; tree: boolean; except?: string; cloudSynced?: boolean; sessionId?: string }>;
+}>);
+type Rule = Readonly<{ path: string; tier: 'forbidden' | 'keep' | 'caution'; code: StorageReasonV1['code']; tree: boolean; cwd?: boolean; except?: string; cloudSynced?: boolean; sessionId?: string }>;
 
 /** Scan and Trash share the protection owner's system-tree decision before touching a mount. */
 export function storageSystemPartitionReason(path: string): 'system_partition' | undefined {
@@ -118,8 +120,8 @@ export function storageProtectionRules(facts: StorageProtectionFacts): readonly 
   }
   for (const path of new Set(facts.inUseCwds ?? [])) {
     const sessions = holders.filter(holder => holder.tree === false && comparator.equal(holder.path, path));
-    if (sessions.length) for (const holder of sessions) rules.push({ path, tier: 'keep', code: 'in_use', tree: false, sessionId: holder.sessionId });
-    else add([path], 'keep', 'in_use', false);
+    if (sessions.length) for (const holder of sessions) rules.push({ path, tier: 'keep', code: 'in_use', tree: true, cwd: true, sessionId: holder.sessionId });
+    else rules.push({ path, tier: 'keep', code: 'in_use', tree: true, cwd: true });
   }
   add(facts.agentHomes ?? [], 'keep', 'agent_home');
   add(facts.browserProfileRoots ?? [], 'keep', 'credentials', false);
@@ -131,7 +133,7 @@ export function storageProtectionRules(facts: StorageProtectionFacts): readonly 
   // same rule adds no protection or confirmation, but multiplies every item read.
   const seen = new Set<string>();
   return rules.filter(rule => {
-    const key = JSON.stringify([rule.path, rule.tier, rule.code, rule.tree, rule.except, rule.cloudSynced, rule.sessionId]);
+    const key = JSON.stringify([rule.path, rule.tier, rule.code, rule.tree, rule.cwd, rule.except, rule.cloudSynced, rule.sessionId]);
     if (seen.has(key)) return false;
     seen.add(key); return true;
   });
@@ -160,7 +162,7 @@ function physicalComparisonKeys(platform: NodeJS.Platform) {
 }
 
 function classifyAgainstRules(path: string, facts: StorageProtectionFacts, rules: readonly Rule[],
-  readKey?: (path: string) => string, comparison?: StoragePathComparator): StoragePathClassification {
+  readKey?: (path: string) => string, comparison?: StoragePathComparator, cwdExemptKeys?: ReadonlySet<string>): StoragePathClassification {
   const platform = facts.platform ?? process.platform;
   const key = readKey ?? physicalComparisonKeys(platform);
   const comparator = comparison ?? createStoragePathComparator(platform);
@@ -168,11 +170,13 @@ function classifyAgainstRules(path: string, facts: StorageProtectionFacts, rules
   const inside = (root: string, child: string) => comparator.contains(key(root), key(child));
   const equal = (left: string, right: string) => comparator.equal(key(left), key(right));
   const managed = facts.managedItemPath && equal(normalized, facts.managedItemPath);
+  const exemptAncestorCwd = (cwdExemptKeys ?? new Set((facts.cwdExemptWorktreePaths ?? []).map(key))).has(normalized);
   const matches: StoragePathClassification[] = [];
   for (const rule of rules) {
     const ancestor = inside(normalized, rule.path) && !equal(normalized, rule.path);
     const descendant = rule.tree && inside(rule.path, normalized);
     if (!ancestor && !equal(normalized, rule.path) && !descendant) continue;
+    if (rule.cwd && exemptAncestorCwd && descendant && !equal(normalized, rule.path)) continue;
     if (rule.except && inside(rule.except, normalized)) continue;
     if (rule.code === 'happier_data' && !facts.trashRoots?.some(root => inside(root, normalized))
       && facts.dataHomes?.some(root => equal(root, rule.path)) && managed && !equal(normalized, rule.path) && !ancestor) continue;
@@ -186,12 +190,14 @@ function classifyAgainstRules(path: string, facts: StorageProtectionFacts, rules
   }
   const match = matches.find(value => value.tier === 'forbidden') ?? matches.find(value => value.tier === 'keep')
     ?? matches.find(value => value.tier === 'caution');
-  if (match?.tier === 'forbidden') return match;
+  // Keep the holder fact even when a stronger protection determines the verdict.
+  const inUse = matches.some(value => value.loses?.some(reason => reason.code === 'in_use'));
+  if (match?.tier === 'forbidden') return inUse ? { ...match, inUse: true } : match;
   const deployment = classifyDeploymentPath(path, facts, key);
-  if (deployment) return deployment;
+  if (deployment) return inUse ? { ...deployment, inUse: true } : deployment;
   if (match?.tier === 'keep' || match?.tier === 'caution') {
     const loses = matches.flatMap(value => value.loses ?? []);
-    return { ...match, loses: loses.filter((value, index) => loses.findIndex(previous => previous.code === value.code
+    return { ...match, ...(inUse ? { inUse: true as const } : {}), loses: loses.filter((value, index) => loses.findIndex(previous => previous.code === value.code
       && equal(String(previous.detail?.path), String(value.detail?.path)) && previous.detail?.sessionId === value.detail?.sessionId
       && previous.detail?.cloudSynced === value.detail?.cloudSynced) === index) };
   }
@@ -273,18 +279,20 @@ export async function classifyPaths(candidates: readonly Readonly<{ path: string
     const expanded = candidates.map(candidate => ({ path: expand(candidate.path),
       managedItemPath: candidate.managedItemPath ?? facts.managedItemPath }));
     const paths = await physicalStoragePathsWithoutFollowingLeaf(expanded.flatMap(candidate => [candidate.path,
-      ...(candidate.managedItemPath ? [expand(candidate.managedItemPath)] : [])]));
+      ...(candidate.managedItemPath ? [expand(candidate.managedItemPath)] : [])]).concat(
+        (facts.cwdExemptWorktreePaths ?? []).map(expand)));
+    const cwdExemptKeys = new Set((facts.cwdExemptWorktreePaths ?? []).map(path => readKey(paths.get(expand(path))!)));
     return Promise.all(expanded.map(async (candidate): Promise<StoragePathClassification> => {
       const physical = paths.get(candidate.path)!;
       const candidateFacts = { ...resolved, managedItemPath: candidate.managedItemPath
         ? paths.get(expand(candidate.managedItemPath)) : undefined };
-      const direct = classifyAgainstRules(physical, candidateFacts, physicalRules, readKey, comparison);
+      const direct = classifyAgainstRules(physical, candidateFacts, physicalRules, readKey, comparison, cwdExemptKeys);
       if (direct.tier === 'forbidden') return direct;
       if (resolved.deploymentPaths) {
         try {
           if ((await lstat(storagePathToFs(physical))).isSymbolicLink()) {
             const deployment = classifyDeploymentPath(await realpathWithAbsentSuffix(physical), resolved, readKey);
-            if (deployment) return deployment;
+            if (deployment) return direct.inUse ? { ...deployment, inUse: true } : deployment;
           }
         } catch (error) { if (!['ENOENT', 'ELOOP'].includes(String((error as NodeJS.ErrnoException).code))) throw error; }
       }

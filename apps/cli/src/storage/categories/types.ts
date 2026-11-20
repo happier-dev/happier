@@ -40,8 +40,9 @@ export type StorageCategoryItem = StorageCleanupItem & Readonly<{ categoryId: Ha
 export type SizedStorageCategoryItem = StorageCategoryItem & Pick<StorageItemV1, 'size'>;
 export type StorageTrackedSession = Readonly<{ sessionId: string; cwd: string; running: boolean; stoppedAt?: number; archived?: boolean }>;
 export type StoragePathUse = Readonly<{ reliable: boolean; paths: readonly string[];
-    /** Same-principal cwd holders protect that folder and its ancestors, not its descendants. */
+    /** Cwd/workspace holds protect ordinary descendants; the worktree owner may exempt an exact child root. */
     cwdPaths?: readonly string[];
+    /** tree:false identifies a cwd/workspace binding, preserving its narrow worktree exemption. */
     sessions?: readonly Readonly<{ path: string; sessionId: string; tree?: boolean }>[];
 }>;
 export type StorageTemporaryFact = Readonly<{ path: string; state: 'closed' | 'delivered' | 'ended' | 'in_use' | 'unknown' }>;

@@ -25,6 +25,25 @@ async function fixture() {
 }
 afterEach(async () => { await Promise.all(fixtures.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 describe('storage physical path protection', () => {
+  it.each(['linux', 'darwin', 'win32'] as const)('protects ordinary cwd descendants and exempts only the exact child worktree on %s', platform => {
+    const path = (value: string) => platform === 'win32' ? `C:${value.replaceAll('/', '\\')}` : value;
+    const cwd = path('/workspace/parent');
+    const child = path('/workspace/parent/.dev/worktree/unused');
+    const facts = { platform, homeDir: path('/people/alice'), inUseCwds: [cwd], cwdExemptWorktreePaths: [child] };
+    for (const candidate of [cwd, path('/workspace'), path('/workspace/parent/ordinary'),
+      path('/workspace/parent/.dev/worktree'), `${child}-sibling`, path('/workspace/parent/.dev/worktree/unused/ordinary')]) {
+      expect(classifyPhysicalPath(candidate, facts), candidate).toMatchObject({ tier: 'keep' });
+    }
+    expect(classifyPhysicalPath(child, facts).tier).toBeNull();
+    expect(classifyPhysicalPath(child, { ...facts, inUseCwds: [cwd, path('/workspace/parent/.dev/worktree/unused/nested')] }))
+      .toMatchObject({ tier: 'keep' });
+    expect(classifyPhysicalPath(child, { ...facts, inUsePaths: [path('/workspace/parent/.dev/worktree/unused/input')] }))
+      .toMatchObject({ tier: 'keep' });
+    expect(classifyPhysicalPath(child, { ...facts, inUsePaths: [cwd] })).toMatchObject({ tier: 'keep' });
+    expect(classifyPhysicalPath(child, { ...facts, inUseCwds: [child] })).toMatchObject({ tier: 'keep' });
+    expect(classifyPhysicalPath(child, { ...facts, inUseCwds: [child], dataHomes: [cwd] }))
+      .toMatchObject({ tier: 'forbidden', inUse: true });
+  });
   it.skipIf(process.platform === 'win32')('excludes boot partitions without excluding user data mounts or sibling prefixes', () => {
     expect(storageSystemPartitionReason('/boot/efi')).toBe('system_partition');
     expect(storageSystemPartitionReason('/efi/EFI')).toBe('system_partition');

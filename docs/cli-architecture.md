@@ -4939,19 +4939,17 @@ Apply checks current facts again at admission and immediately before each effect
 The existing Keep confirmation/approval rules still apply, and Forbidden is
 never removed.
 The daemon projects the ownership runtime's existing census through
-`daemon/resources/projectStorageProcessUse.ts`: Happier-owned work holds its
-explicit workspace, executable and absolute arguments, with live Session bindings;
-all processes hold their cwd and its ancestors. The census exposes cwd only for same-principal
-processes on Linux/macOS; Windows has no per-folder cwd protection for other
-programs. A daemon or helper's ambient cwd does not protect every child folder;
-an explicit Session workspace still protects its subtree. A plain
-terminal's initial workspace is also a cwd fact, not a recursive workspace hold;
-opening a terminal in the home folder does not mark all new descendants in use.
-The private
-`StoragePathUse.cwdPaths` observation flows through category, physical-protection
-and scan projections; workspace and executable/argument holds remain `paths`.
-Directional cwd Session bindings retain the holder's loss/stop attribution without
-promoting that cwd into a workspace hold.
+`daemon/resources/projectStorageProcessUse.ts`: cwd and registered workspace
+holds protect the folder, its ancestors and ordinary descendants. Only an exact
+SCM-resolved child worktree root may bypass an ancestor cwd/workspace hold;
+ordinary folders, worktree descendants and sibling paths receive no exemption.
+A cwd or explicit dependency inside that child still keeps the worktree in use.
+The census exposes cwd only for same-principal processes on Linux/macOS; Windows
+has no per-folder cwd protection for other programs. The private
+`StoragePathUse.cwdPaths` observation carries cwd/workspace holds separately from
+executable and absolute-argument dependency `paths`, retaining live Session
+attribution. The physical-protection owner decides the exact worktree exemption
+for Review, Apply and scan projections.
 This projection performs no second census.
 Summary RPCs and watches publish two previews of at most eight rows each: the
 largest verified suggestions and the largest Safe suggestions. Eight matches the

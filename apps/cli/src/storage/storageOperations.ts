@@ -124,6 +124,9 @@ export function createStorageOperations(input: Readonly<{
             volumeRoots: deps.readVolumes().map(volume => volume.mount), trashRoots,
             mainCheckouts: projects?.projects?.map(project => project.repositoryRoot) ?? [],
             inUsePaths: [...new Set(use?.paths ?? [])], inUseCwds: [...new Set(use?.cwdPaths)],
+            cwdExemptWorktreePaths: discovered.filter(item => item.categoryId === 'worktrees' && item.repositoryRoot
+                && item.retirementKind !== 'main' && item.retirementKind !== 'common'
+                && !canonicalAbsolutePathsEqual(item.repositoryRoot, item.path)).map(item => item.path),
             inUseSessions: use?.sessions ?? [], userProtectedFolders: policy().protectedFolders.map(folder => folder.path),
             agentHomes: discovered.filter(item => item.categoryId === 'agentHomes' && item.verdict === 'keep').map(item => item.path),
             cloudSyncedFolders: [...(environment?.cloudSyncedFolders ?? []), process.env.OneDrive, process.env.OneDriveConsumer, process.env.OneDriveCommercial]
@@ -355,8 +358,6 @@ export function createStorageOperations(input: Readonly<{
                 protectionSnapshot([], undefined, undefined, paths.filter((path): path is string => path !== undefined)));
             const catalogPaths = createStoragePathIndex(discovered, item => item.path);
             const dataRoots = createStoragePathIndex(catalog.dataRoots(), path => path);
-            const livePaths = createStoragePathIndex(facts.inUsePaths ?? [], path => path);
-            const liveCwds = createStoragePathIndex(facts.inUseCwds ?? [], path => path);
             const page: { node: DiskNodeV1; path: string; owner: StorageCategoryItem | undefined;
                 enclosing: StorageCategoryItem[]; children: StorageCategoryItem[] }[] = [];
             for (const [index, node] of nodes.entries()) {
@@ -399,7 +400,7 @@ export function createStorageOperations(input: Readonly<{
                     ...(projected.loses?.length ? { loses: projected.loses } : {}), flags: { ...node.flags,
                     happier: dataRoots.hasAncestor(path) || catalogPaths.overlaps(path),
                     protection: forbidden ? 'forbidden' : keep ? 'keep' : 'none',
-                    inUse: livePaths.overlaps(path) || liveCwds.hasDescendant(path),
+                    inUse: classification.inUse === true,
                 } });
             }
             return nodes.map(node => projectedNodes.get(node) ?? node);
