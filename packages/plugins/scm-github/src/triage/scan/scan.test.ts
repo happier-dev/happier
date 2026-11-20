@@ -17,6 +17,7 @@ import {
   githubCheckRunsResponse,
   githubCombinedStatusResponse,
 } from '../__fixtures__/githubResponses.js';
+import { runGithubTriageGet } from '../get.js';
 import {
   createStubGithubTransport,
   githubChecksBatchResponse,
@@ -813,6 +814,56 @@ describe('GitHub triage scan', () => {
 
     expect(requestedPages.filter((page) => page === '2')).toHaveLength(5);
     expect(requestedPages).not.toContain('3');
+  });
+
+  it('keeps an exact detail response separate from a pending scan continuation', async () => {
+    const lane = GITHUB_SCAN_LANE_ORDER_V1[0];
+    const laneQuery = buildGithubLaneQuery({ laneId: lane, repositoryKeys: [REPOSITORY_KEY] });
+    const nextLink = githubSearchLinkHeader({ laneQuery, perPage: 1, nextPage: 2 });
+    const nextUrl = nextLink.match(/<([^>]+)>/u)?.[1];
+    if (nextUrl === undefined) throw new Error('Expected a scan continuation URL');
+    let pageRequested!: () => void;
+    let releasePage!: () => void;
+    const pageStarted = new Promise<void>(resolve => { pageRequested = resolve; });
+    const pageHeld = new Promise<void>(resolve => { releasePage = resolve; });
+    const transport = createStubGithubTransport({ async respond(request) {
+      const url = new URL(request.url);
+      if (url.pathname === '/graphql') return githubChecksBatchResponse(request);
+      if (url.pathname.endsWith('/pulls/1284')) {
+        return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, title: 'Exact detail' } };
+      }
+      if (url.pathname !== '/search/issues') return undefined;
+      if (request.url === nextUrl) {
+        pageRequested();
+        await pageHeld;
+        return { status: 200, body: githubSearchResponse({ items: pullRequestItems(1) }) };
+      }
+      if (laneOf(request) !== lane) return emptyPage();
+      return { status: 200, headers: { link: nextLink },
+        body: githubSearchResponse({ items: [GITHUB_SEARCH_PULL_REQUEST_ITEM] }) };
+    } });
+    const deps = { client: await createTestGithubApiClient(transport), now: fixedClock(1_000),
+      signal: transport.context.signal };
+    const first = await runGithubTriageScan({ page: { kind: 'initial', limit: 1 }, repositoryKeys: [REPOSITORY_KEY] }, deps);
+    if (first.kind !== 'page') throw new Error('Expected the first scan page to carry a continuation');
+    const continuation = runGithubTriageScan({ page: { kind: 'continuation', token: first.continuation },
+      repositoryKeys: [REPOSITORY_KEY] }, deps);
+    try {
+      await Promise.race([pageStarted, continuation.then(() => { throw new Error('The scan did not request page two'); })]);
+      const localRef = { kindId: 'pull-request', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`,
+        entryId: '1284' } as const;
+      expect(first.observations.map(row => row.localRef)).toEqual([localRef]);
+      const detail = await runGithubTriageGet({ localRef, routingToken: REPOSITORY_KEY }, deps);
+      expect(detail.observation).toMatchObject({ kind: 'present', localRef, snapshot: { title: 'Exact detail' } });
+    } finally {
+      releasePage();
+    }
+    const second = await continuation;
+    expect(second).toMatchObject({ observations: [{ kind: 'present', localRef: {
+      kindId: 'pull-request', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '1000',
+    } }] });
+    expect(transport.requests.filter(request => request.url === nextUrl)).toHaveLength(1);
+    expect(transport.requests.filter(request => request.url.endsWith('/pulls/1284'))).toHaveLength(1);
   });
 
   it('keeps five GitHub lane frontiers private and settles partial at the projection budget', async () => {
