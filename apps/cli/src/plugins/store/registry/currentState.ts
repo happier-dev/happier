@@ -196,6 +196,8 @@ export type PreparedPluginRegistryRuntime = Readonly<{
 
 export type PluginDevelopmentRuntimeCandidate = Readonly<{
     pluginId: string;
+    /** The installation owner supplies this before preparing a first adoption. */
+    materializationId?: string;
     manifest: CanonicalPluginManifest;
     sourceAuthority: Extract<PluginRuntimeSourceAuthority, DevelopmentPluginSourceCustody>;
     preparedActivationGraph: PreparedPluginDevelopmentActivationGraph;
@@ -211,7 +213,7 @@ export type PluginRegistryRuntimeLifecycle = Readonly<{
   prepareDevelopment?: (candidate: PluginDevelopmentRuntimeCandidate) => Promise<Readonly<{
     diagnostic?: PluginCompatibilityDiagnostic;
     abort: () => Promise<void>;
-    adopt: () => Promise<void>;
+    adopt: (record?: PluginRegistryCommitRecord) => Promise<void>;
   }>>;
   prepareDevelopmentRemoval?: (removal: PluginDevelopmentRuntimeRemoval) => Promise<Readonly<{
     abort: () => Promise<void>;
@@ -368,6 +370,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     trust: PluginTrustRecord;
     updatePolicy: PluginUpdatePolicyV1;
     optionalAccess: readonly PluginAccessSelection[];
+    prepareRuntime?: (materializationId: string) => Promise<PreparedPluginRegistryRuntime>;
     installReviewPrincipalDigest?: PluginInstallReviewPrincipalDigest;
     installReviewPrincipalPresentation?: PluginInstallReviewPrincipalPresentationV1;
   }>) => Promise<PluginRegistryStateMutationResult | null>;
@@ -841,6 +844,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     changedPluginIds: readonly string[];
     onApplied?: () => void;
     retryRuntime?: PreparedPluginRegistryRuntime;
+    preparedRuntime?: PreparedPluginRegistryRuntime;
     retainRuntimeOnConflict?: boolean;
     preparedActivationGraphsByPluginId?: ReadonlyMap<string, PreparedPluginActivationGraph>;
   }>): Promise<
@@ -893,6 +897,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       expectedCurrent: params.current.commit,
       prepare: async () => ({ installationState }),
       validateAndActivate: async () => {
+        if (params.preparedRuntime) return params.preparedRuntime;
         const candidate = {
           mutationKind: params.mutationKind,
           runningSessionDisposition: params.runningSessionDisposition,
@@ -1433,6 +1438,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     trust: PluginTrustRecord;
     updatePolicy: PluginUpdatePolicyV1;
     optionalAccess: readonly PluginAccessSelection[];
+    prepareRuntime?: (materializationId: string) => Promise<PreparedPluginRegistryRuntime>;
     installReviewPrincipalDigest?: PluginInstallReviewPrincipalDigest;
     installReviewPrincipalPresentation?: PluginInstallReviewPrincipalPresentationV1;
   }>): Promise<PluginRegistryStateMutationResult | null> {
@@ -1527,16 +1533,28 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       if (nextCatalogRecord.source.kind === 'path' && nextCatalogRecord.source.devWatch === true) {
         delete pluginOccurrenceIds[input.pluginId];
       }
-      const committed = await commitRevision({
-        current,
-        revision,
-        pluginOccurrenceIds,
-        transactionId: `development-authority-${randomUUID()}`,
-        createdAtMs,
-        mutationKind: 'state',
-        runningSessionDisposition: 'retainRunningSessions',
-        changedPluginIds: Object.freeze([]),
-      });
+      // Prepare against the same installation epoch that this transaction will
+      // persist. First development adoption has no incumbent runtime ID to inherit.
+      const preparedRuntime = await input.prepareRuntime?.(
+        revision.plugins[input.pluginId]!.materializationId!,
+      );
+      let committed: PluginRegistryTransactionResult;
+      try {
+        committed = await commitRevision({
+          current,
+          revision,
+          pluginOccurrenceIds,
+          transactionId: `development-authority-${randomUUID()}`,
+          createdAtMs,
+          mutationKind: 'state',
+          runningSessionDisposition: 'retainRunningSessions',
+          changedPluginIds: Object.freeze([]),
+          ...(preparedRuntime ? { preparedRuntime } : {}),
+        });
+      } catch (error) {
+        await preparedRuntime?.abort().catch(() => undefined);
+        throw error;
+      }
       if (committed.status === 'conflict') continue;
       if (committed.status === 'aborted' || committed.status === 'precommit_failed') {
         throwPrecommitFailure(committed);

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -39,6 +40,7 @@ function createRuntime(happyHomeDir: string, pluginId: string,
     happyHomeDir,
     staleCandidateCleanup: 'disabled',
     reloadController,
+    resolveCurrentMachineId: () => 'machine-development-lifecycle',
     connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
     ...(reconcileConnectedAccountPurposePublication ? { reconcileConnectedAccountPurposePublication } : {}),
     ...(invalidateProjection ? {
@@ -100,6 +102,13 @@ it('publishes a daemon projection revision for a process-local development repla
     expect(projection.readRevision()).toBe(revisionBeforeInstall + 1);
     expect(publications).toHaveLength(publicationsBeforeInstall + 1);
     await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 1 } });
+    const installed = await createPluginRegistryStateStore({ happyHomeDir: root }).readSnapshot();
+    const materializationId = installed.materializationIdsByPluginId[pluginId];
+    expect(materializationId).toEqual(expect.any(String));
+    expect(runtime.reloadController.getState().activeRegistry!
+      .resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
+      pluginId, machineId: 'machine-development-lifecycle', materializationId,
+    });
     const revisionBeforeDurableUpdate = projection.readRevision();
     const publicationsBeforeDurableUpdate = publications.length;
     await expect(runtime.owner.changeService.requestPluginChange({
@@ -138,6 +147,58 @@ it('publishes a daemon projection revision for a process-local development repla
     expect(publications).toHaveLength(publicationsBeforeReload + 1);
   } finally {
     await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it('reports an uncertain development adoption when the daemon stops after preparation', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-adoption-')));
+  const pluginId = 'acme.development-adoption';
+  const entryPath = join(root, 'plugin.ts');
+  let releaseActivation!: () => void;
+  const activationMayFinish = new Promise<void>(resolve => { releaseActivation = resolve; });
+  let markActivationEntered!: () => void;
+  const activationEntered = new Promise<void>(resolve => { markActivationEntered = resolve; });
+  // A real network request holds plugin activation while the real daemon
+  // controller shuts down; no lifecycle or registry decision is substituted.
+  const server = createServer(async (_request, response) => {
+    markActivationEntered();
+    await activationMayFinish;
+    response.end();
+  });
+  await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve); });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected an HTTP listener');
+  const runtime = createRuntime(root, pluginId);
+  const manifest = createPluginManifestV2Fixture({ id: pluginId, entrypoints: undefined,
+    contributes: { actions: [{ id: 'identity', title: 'Identity', scopes: ['global'], surfaces: ['cli'],
+      execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
+  });
+  try {
+    await writeFile(entryPath, [
+      `export const manifest = ${JSON.stringify(manifest)};`,
+      'export async function activate(api) {',
+      "api.actions.register('identity', () => ({ revision: 1 }));",
+      `await fetch(${JSON.stringify(`http://127.0.0.1:${address.port}`)});`,
+      '}',
+    ].join('\n'));
+    const initial = await runtime.reloadController.acquireRuntimeRegistry();
+    await initial.release();
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: entryPath });
+    const pending = (await runtime.owner.changeService.listPendingPluginChanges()).changes[0]!;
+    const decision = runtime.owner.changeService.decidePluginChange({
+      pendingChangeId: pending.pendingChangeId, decision: 'installAndTrust',
+    });
+    await activationEntered;
+    await runtime.reloadController.shutdown();
+    releaseActivation();
+    await expect(decision).resolves.toMatchObject({ kind: 'outcomeUnknown', pluginId });
+    expect((await createPluginRegistryStateStore({ happyHomeDir: root }).read()).plugins[pluginId]).toBeDefined();
+    expect(runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeNull();
+  } finally {
+    releaseActivation();
+    await runtime.dispose();
+    await new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); });
     await rm(root, { recursive: true, force: true });
   }
 }, 120_000);

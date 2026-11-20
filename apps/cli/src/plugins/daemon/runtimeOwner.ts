@@ -13,6 +13,7 @@ import {
 import { createDaemonNpmPluginChangePreparer } from '@/plugins/daemon/npmChangePreparer';
 import { createMarketplaceIndexService, type MarketplaceRegistrySourcesReaderV1, type MarketplaceRegistryHostV1 } from '@/plugins/store/marketplace/service';
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
+import { projectPluginTransactionChangeResult } from '@/plugins/daemon/transactionChangeResult';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { projectPluginInstalledAvailabilityInventory } from '@/plugins/availability/releaseLessDeclarations';
@@ -507,63 +508,74 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       });
     },
     applyDevelopment: async (candidate, decision) => {
-      if (!runtimeLifecycle.prepareDevelopment) {
+      const prepareDevelopment = runtimeLifecycle.prepareDevelopment;
+      if (!prepareDevelopment) {
         throw new Error('Plugin development runtime lifecycle is unavailable');
       }
-      const prepared = await runtimeLifecycle.prepareDevelopment(candidate);
-      try {
-        // An author update retains its incumbent on failure; registry composition
-        // itself still publishes healthy peers through partial adoption.
-        if (prepared.diagnostic) throw new PluginDiagnosticError(prepared.diagnostic);
-        {
-          if (
-            candidate.registryRevision === undefined
-            || !candidate.priorOptionalAccess
-            || !candidate.installReviewPrincipal
-          ) {
-            throw new Error('Plugin development authority candidate is incomplete');
-          }
-          const optionalAccess = decision
-            ? updateSelectedPluginOptionalAccess({
-                pluginId: candidate.pluginId,
-                manifest: candidate.manifest,
-                existing: candidate.priorOptionalAccess,
-                decisions: decision.optionalSelections,
-                selectedAtMs: Date.now(),
-              })
-            : candidate.preservedOptionalAccess ?? null;
-          if (!optionalAccess) throw new Error('Plugin development authority requires a fresh review');
-          const principal = decision
-            ? candidate.installReviewPrincipal
-            : candidate.priorInstallReviewPrincipal;
-          const authorityCommit = await createPluginRegistryStateStore({
-            happyHomeDir: params.happyHomeDir,
-            runtimeLifecycle,
-          }).approveDevelopmentAuthorityWithResult({
+      if (
+        candidate.registryRevision === undefined
+        || !candidate.priorOptionalAccess
+        || !candidate.installReviewPrincipal
+      ) {
+        throw new Error('Plugin development authority candidate is incomplete');
+      }
+      const optionalAccess = decision
+        ? updateSelectedPluginOptionalAccess({
             pluginId: candidate.pluginId,
-            expectedRevision: candidate.registryRevision,
-            approvedAuthorityManifest: candidate.manifest,
-            catalogRecord: candidate.catalogRecord,
-            trust: candidate.trust,
-            updatePolicy: candidate.updatePolicy,
-            optionalAccess,
-            ...(principal
-              ? {
-                  installReviewPrincipalDigest: principal.digest,
-                  installReviewPrincipalPresentation: principal.presentation,
-                }
-              : {}),
+            manifest: candidate.manifest,
+            existing: candidate.priorOptionalAccess,
+            decisions: decision.optionalSelections,
+            selectedAtMs: Date.now(),
+          })
+        : candidate.preservedOptionalAccess ?? null;
+      if (!optionalAccess) throw new Error('Plugin development authority requires a fresh review');
+      const principal = decision
+        ? candidate.installReviewPrincipal
+        : candidate.priorInstallReviewPrincipal;
+      const authorityCommit = await createPluginRegistryStateStore({
+        happyHomeDir: params.happyHomeDir,
+        runtimeLifecycle,
+        onApplied: onRegistryApplied,
+      }).approveDevelopmentAuthorityWithResult({
+        pluginId: candidate.pluginId,
+        expectedRevision: candidate.registryRevision,
+        approvedAuthorityManifest: candidate.manifest,
+        catalogRecord: candidate.catalogRecord,
+        trust: candidate.trust,
+        updatePolicy: candidate.updatePolicy,
+        optionalAccess,
+        prepareRuntime: async (materializationId) => {
+          const prepared = await prepareDevelopment({
+            ...candidate, materializationId,
           });
-          if (!authorityCommit) {
+          // Reject a failed author update before committing its authority;
+          // healthy peers and the incumbent remain available.
+          if (prepared.diagnostic) {
             await prepared.abort().catch(() => undefined);
-            return Object.freeze({
-              kind: 'failed' as const,
-              code: 'plugin_dev_conflict',
-              message: 'The plugin registry changed while this development candidate was being prepared; re-preparing against the current registry. Any active incumbent is retained.',
-            });
+            throw new PluginDiagnosticError(prepared.diagnostic);
           }
-        }
-        await prepared.adopt();
+          return prepared;
+        },
+        ...(principal
+          ? {
+              installReviewPrincipalDigest: principal.digest,
+              installReviewPrincipalPresentation: principal.presentation,
+            }
+          : {}),
+      });
+      if (!authorityCommit) {
+        return Object.freeze({
+          kind: 'failed' as const,
+          code: 'plugin_dev_conflict',
+          message: 'The plugin registry changed while this development candidate was being prepared; re-preparing against the current registry. Any active incumbent is retained.',
+        });
+      }
+      const result = projectPluginTransactionChangeResult({
+        pluginId: candidate.pluginId,
+        desiredGeneration: null,
+        transaction: authorityCommit.transaction,
+      });
+      if (result.kind === 'committed') {
         const occurrenceId = params.reloadController.readCurrentPluginOccurrenceId?.(candidate.pluginId);
         developmentRoots?.recordSourceCommit({
           sourceRootPath: candidate.sourceAuthority.registeredRootId,
@@ -571,17 +583,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           pluginId: candidate.pluginId,
           ...(occurrenceId ? { occurrenceId } : {}),
         });
-        return Object.freeze({
-          kind: 'committed' as const,
-          pluginId: candidate.pluginId,
-          desiredGeneration: null,
-          appliedGeneration: null,
-          pendingSurfaces: Object.freeze([]),
-        });
-      } catch (error) {
-        await prepared.abort().catch(() => undefined);
-        throw error;
       }
+      return result;
     },
   });
   developmentRoots = createDaemonPluginDevelopmentRootsOwner({

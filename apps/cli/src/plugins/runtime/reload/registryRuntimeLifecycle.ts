@@ -1,4 +1,5 @@
 import { collectBlockingPluginReloadDiagnostics } from './diagnostics';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createMergedContributionRegistry, selectPluginContributionInputs } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
@@ -103,7 +104,9 @@ async function projectDevelopmentContributes(
           devWatch: true,
         }),
       })],
-      materializationIdsByPluginId: active.materializationIdsByPluginId,
+      materializationIdsByPluginId: candidate.materializationId
+        ? { ...active.materializationIdsByPluginId, [candidate.pluginId]: candidate.materializationId }
+        : active.materializationIdsByPluginId,
       diagnosticsByPluginId: Object.freeze({}),
     };
   const referenceGraph = { loadedPlugins: active.pluginDeclarations ?? [], diagnosticsByPluginId: active.pluginDiagnosticsByPluginId };
@@ -315,7 +318,10 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         // Refuse a candidate with no adoptable source before the caller commits
         // installation authority. Publication repeats this same source check.
         if (!isDevelopmentCandidateCurrent(developmentCandidate)) {
-          throw Object.assign(new Error('Prepared plugin development candidate was superseded before preparation'), { code: 'plugin_change_superseded' });
+          throw new PluginError({
+            code: 'plugin_change_superseded',
+            message: 'Prepared plugin development candidate was superseded before preparation',
+          });
         }
       }
       let valid = true;
@@ -696,7 +702,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         return Object.freeze({
           ...(developmentCandidate ? { diagnostic: collectBlockingPluginReloadDiagnostics(registry, [developmentCandidate.pluginId])[0]?.diagnostics[0] } : {}),
           abort: disposeOnce,
-          async adopt() {
+          async adopt(record?: PluginRegistryCommitRecord) {
             if (adopted) return;
             if (candidateToAdopt) {
               try {
@@ -709,6 +715,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             const adoption = await params.reloadController.adoptPreparedRuntimeRegistry({
               registry,
               changedPluginIds: changedPluginIdList,
+              ...(record ? { durableRevision: record.revision } : {}),
               runningSessionDisposition: 'retainRunningSessions',
               isDevelopmentCandidateCurrent: () => {
                 if (!valid) return false;
@@ -725,7 +732,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               throw new Error('Prepared plugin development runtime adoption did not publish');
             }
             adopted = true;
-            params.onRuntimeProjectionInvalidated?.();
+            if (!record) params.onRuntimeProjectionInvalidated?.();
           },
         });
       }
@@ -870,7 +877,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
       return Object.freeze({
         ...(prepared.diagnostic ? { diagnostic: prepared.diagnostic } : {}),
         abort: prepared.abort,
-        adopt: async () => { await prepared.adopt(); },
+        adopt: async (record) => { await prepared.adopt(record); },
       });
     },
     async prepareDevelopmentRemoval(removal) {
