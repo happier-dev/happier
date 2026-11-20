@@ -17,6 +17,8 @@ struct DesktopWebRuntimeConfig {
     organization_policy_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     organization_policy_error: Option<OrganizationPolicyReadError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    first_open_candidate: Option<crate::first_open::Candidate>,
 }
 
 fn read_non_empty_env_with<F>(read_env: &F, key: &str) -> Option<String>
@@ -135,6 +137,13 @@ pub(crate) fn build_desktop_web_runtime_config_init_script_from_env() -> Option<
         organization_policy::read_machine_policy(),
     )?;
     build_desktop_web_runtime_config_init_script(&config)
+}
+
+pub(crate) fn build_first_open_candidate_script(candidate: crate::first_open::Candidate) -> Option<String> {
+    build_desktop_web_runtime_config_init_script(&DesktopWebRuntimeConfig {
+        first_open_candidate: Some(candidate),
+        ..Default::default()
+    })
 }
 
 const PERSONAL_HOME_QA_OBSERVER_ENV: &str = "HAPPIER_TAURI_PERSONAL_HOME_QA_OBSERVE_NO_WELCOME";

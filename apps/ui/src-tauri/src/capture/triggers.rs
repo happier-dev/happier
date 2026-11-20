@@ -64,8 +64,22 @@ pub fn second_launch(app: &AppHandle, args: &[String]) -> bool {
 }
 
 pub fn cold_launch_is_capture_only(app: &AppHandle) -> bool {
+    cold_launch_window_intent(app) == ColdLaunchWindowIntent::CaptureOnly
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColdLaunchWindowIntent { Ordinary, Link, CaptureOnly }
+
+pub(crate) fn cold_launch_window_intent(app: &AppHandle) -> ColdLaunchWindowIntent {
     use tauri_plugin_deep_link::DeepLinkExt;
-    app.deep_link().get_current().ok().flatten().is_some_and(|urls|
-        !urls.is_empty() && urls.iter().all(|url| classify(url) != NativeUrlIntent::MainWindow)
-            && urls.iter().any(|url| classify(url) == NativeUrlIntent::Capture))
+    let Some(urls) = app.deep_link().get_current().ok().flatten() else { return ColdLaunchWindowIntent::Ordinary; };
+    let mut capture = false;
+    for url in &urls {
+        match classify(url) {
+            NativeUrlIntent::MainWindow => return ColdLaunchWindowIntent::Link,
+            NativeUrlIntent::Capture => capture = true,
+            NativeUrlIntent::Ignore => {}
+        }
+    }
+    if capture { ColdLaunchWindowIntent::CaptureOnly } else { ColdLaunchWindowIntent::Ordinary }
 }

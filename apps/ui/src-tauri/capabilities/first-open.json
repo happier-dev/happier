@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "first-open",
+  "description": "Presentation-only first-open desktop window",
+  "windows": ["first_open_overlay"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-desktop-first-open-overlay-ready",
+    "allow-desktop-first-open-overlay-unavailable",
+    "allow-desktop-first-open-swap",
+    "allow-desktop-first-open-close"
+  ]
+}

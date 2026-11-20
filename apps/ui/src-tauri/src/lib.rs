@@ -41,6 +41,9 @@ mod window_sizing;
 mod window_chrome;
 
 #[cfg(desktop)]
+mod first_open;
+
+#[cfg(desktop)]
 mod activity_overlay;
 
 #[cfg(desktop)]
@@ -203,6 +206,7 @@ pub fn run() {
             .manage(desktop_downloads::DesktopDownloadsState::default())
             .manage(capture::CaptureState::default())
             .manage(window_sizing::WindowSizingState::default())
+            .manage(first_open::FirstOpenState::default())
             .manage(app_window::AppWindowState::default())
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
@@ -287,6 +291,10 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            #[cfg(desktop)]
+            if let tauri::RunEvent::WindowEvent { label, event, .. } = &event {
+                first_open::on_window_event(app_handle, label, event);
+            }
             #[cfg(desktop)]
             match event {
                 tauri::RunEvent::Ready => {

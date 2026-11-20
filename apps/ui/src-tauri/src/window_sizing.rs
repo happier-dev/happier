@@ -248,7 +248,7 @@ pub(crate) fn app_window_work_area(
 }
 
 #[cfg(desktop)]
-fn monitor_work_area(monitor: &tauri::Monitor) -> WindowFrame {
+pub(crate) fn monitor_work_area(monitor: &tauri::Monitor) -> WindowFrame {
     let scale = monitor.scale_factor();
     let area = monitor.work_area();
     WindowFrame {
@@ -879,7 +879,7 @@ pub(crate) fn configure_main_window(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     initial_visibility: InitialWindowVisibility,
-) -> tauri::Result<()> {
+) -> tauri::Result<bool> {
     let state_path = resolve_state_path_handle(app)?;
     let mode_path = resolve_mode_path_handle(app)?;
     let persisted = app.state::<WindowSizingState>().frames.saved(&state_path);
@@ -922,7 +922,7 @@ pub(crate) fn configure_main_window(
     present_initial_main_window(initial_visibility, || {
         let _ = window.show();
     });
-    Ok(())
+    Ok(persisted.is_none())
 }
 
 #[cfg(desktop)]

@@ -11,7 +11,7 @@ pub(crate) fn configure_floating_surface<R: tauri::Runtime>(
         let native_window = window.clone();
         run_on_main_thread(window.app_handle(), move || {
             let native = native_window.gtk_window().map_err(|error| error.to_string())?;
-            if gtk::prelude::GtkWindowExt::screen(&native).is_some_and(|screen| screen.is_composited()) { return Ok(background); }
+            if gtk::prelude::GtkWindowExt::screen(&native).as_ref().is_some_and(screen_has_compositor) { return Ok(background); }
             // Without a compositor, alpha cannot reveal the desktop. Use the platform's own
             // opaque surface colour for square corners rather than WebKit's default white.
             let style = native.style_context();
@@ -29,20 +29,31 @@ pub(crate) fn configure_floating_surface<R: tauri::Runtime>(
     window.set_shadow(false).map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "linux")]
+fn screen_has_compositor(screen: &gtk::gdk::Screen) -> bool {
+    screen.is_composited()
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn allows_positioned_transparency(window: &tauri::WebviewWindow) -> bool {
+    use gtk::prelude::*;
+    let window = window.clone();
+    run_on_main_thread(window.app_handle(), {
+        let window = window.clone();
+        move || {
+            let Ok(native) = window.gtk_window() else { return false };
+            let display = gtk::prelude::WidgetExt::display(&native);
+            let screen = gtk::prelude::GtkWindowExt::screen(&native);
+            display.type_().name() == "GdkX11Display" && screen.as_ref().is_some_and(screen_has_compositor)
+        }
+    }, "Desktop transparency availability did not return").unwrap_or(false)
+}
+
 /// Let WebKit load and paint an ordered capture host without exposing its initial page.
 pub(crate) fn prepare_first_paint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
     configure_floating_surface(window)?;
     #[cfg(target_os = "macos")]
-    {
-        let app = window.app_handle().clone();
-        let window = window.clone();
-        run_on_main_thread(&app, move || {
-            let pointer = window.ns_window().map_err(|error| error.to_string())?;
-            let native: &objc2_app_kit::NSWindow = unsafe { &*pointer.cast() };
-            native.setAlphaValue(0.);
-            Ok::<_, String>(())
-        }, "Capture first paint preparation did not return")??;
-    }
+    set_window_alpha(window, 0.)?;
     Ok(())
 }
 
@@ -50,17 +61,24 @@ pub(crate) fn prepare_first_paint<R: tauri::Runtime>(window: &tauri::WebviewWind
 pub(crate) fn reveal_after_paint<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
     configure_floating_surface(window)?;
     #[cfg(target_os = "macos")]
-    {
-        let app = window.app_handle().clone();
-        let window = window.clone();
-        run_on_main_thread(&app, move || {
-            let pointer = window.ns_window().map_err(|error| error.to_string())?;
-            let native: &objc2_app_kit::NSWindow = unsafe { &*pointer.cast() };
-            native.setAlphaValue(1.);
-            Ok::<_, String>(())
-        }, "Capture first paint acknowledgement did not return")??;
-    }
+    set_window_alpha(window, 1.)?;
     Ok(())
+}
+
+/// Order a first paint without changing the destination window's chrome or backing colour.
+#[cfg(target_os = "macos")]
+pub(crate) fn set_window_alpha<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    alpha: f64,
+) -> Result<(), String> {
+    let app = window.app_handle().clone();
+    let window = window.clone();
+    run_on_main_thread(&app, move || {
+        let pointer = window.ns_window().map_err(|error| error.to_string())?;
+        let native: &objc2_app_kit::NSWindow = unsafe { &*pointer.cast() };
+        native.setAlphaValue(alpha);
+        Ok::<_, String>(())
+    }, "Window first-paint alpha did not return")?
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

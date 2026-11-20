@@ -20,6 +20,8 @@
         "notch-presentation",
         "capture",
         "capture-selection",
+        "first-open",
+        "first-open-main",
         "pet_overlay"
       ],
       "csp": null

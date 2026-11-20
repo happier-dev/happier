@@ -1130,17 +1130,22 @@ pub(crate) fn show_main_window(
 /// forward with focus; the app's own request (a login-item or `open -g` launch) shows it without
 /// taking focus from the app the user is working in.
 #[cfg(desktop)]
-fn reveal_main_window(
+pub(crate) fn reveal_main_window(
     app: &tauri::AppHandle,
     window: &WebviewWindow,
     request: presentation::MainWindowRevealRequest,
 ) -> tauri::Result<()> {
-    if presentation::reveal_takes_focus(request, app_is_active(app)) {
+    if reveal_request_takes_focus(app, request) {
         window.unminimize()?;
         window.show()?;
         return window.set_focus();
     }
     show_main_window_without_focus(app, window)
+}
+
+#[cfg(desktop)]
+pub(crate) fn reveal_request_takes_focus(app: &tauri::AppHandle, request: MainWindowRevealRequest) -> bool {
+    presentation::reveal_takes_focus(request, false) || app_is_active(app)
 }
 
 /// Whether Happier is the active (frontmost) app. macOS answers for the app, including a launch the
@@ -1203,6 +1208,9 @@ pub(crate) fn request_show_main_window(
 ) {
     let app = app.clone();
     std::thread::spawn(move || {
+        if request == MainWindowRevealRequest::User && crate::first_open::close(&app, request) {
+            return;
+        }
         if let Err(error) = show_main_window(&app, request) {
             log::warn!("failed to show the main window: {error}");
         }
@@ -1243,6 +1251,15 @@ pub(crate) fn create_main_window(
     app: &tauri::AppHandle,
     initial_visibility: crate::window_sizing::InitialWindowVisibility,
 ) -> tauri::Result<WebviewWindow> {
+    create_main_window_for_startup(app, initial_visibility, None)
+}
+
+#[cfg(desktop)]
+fn create_main_window_for_startup(
+    app: &tauri::AppHandle,
+    initial_visibility: crate::window_sizing::InitialWindowVisibility,
+    first_open: Option<FirstOpenStartup>,
+) -> tauri::Result<WebviewWindow> {
     {
         let state = app.state::<MainWindowPresentationState>();
         let mut presentation = state.0.lock().unwrap();
@@ -1275,14 +1292,28 @@ pub(crate) fn create_main_window(
         })
         .build()?;
     configure_main_window(app, &window);
-    crate::window_sizing::configure_main_window(app, &window, crate::window_sizing::InitialWindowVisibility::Hidden)?;
+    let unsaved = crate::window_sizing::configure_main_window(app, &window, crate::window_sizing::InitialWindowVisibility::Hidden)?;
+    if let Some(first_open) = first_open.filter(|_| unsaved) {
+        let candidate = crate::first_open::prepare(&window, first_open.supports_overlay);
+        if let Some(script) = crate::web_runtime_config::build_first_open_candidate_script(candidate) {
+            if let Err(error) = window.eval(&script) {
+                log::info!("Could not publish the opening candidate: {error}");
+                crate::first_open::close(app, MainWindowRevealRequest::App);
+            }
+        }
+    }
     Ok(window)
+}
+
+#[cfg(desktop)]
+struct FirstOpenStartup {
+    supports_overlay: bool,
 }
 
 /// The main shell (or its recovery screen) acknowledges its first nonempty committed layout.
 #[cfg(desktop)]
 #[tauri::command]
-pub async fn desktop_main_window_content_rendered(window: Window) -> Result<bool, String> {
+pub async fn desktop_main_window_content_rendered(window: Window, welcome: Option<serde_json::Value>) -> Result<bool, String> {
     if window.label() != MAIN_WINDOW_LABEL {
         return Err("main window content acknowledgement requires the main caller".into());
     }
@@ -1293,6 +1324,9 @@ pub async fn desktop_main_window_content_rendered(window: Window) -> Result<bool
     };
     let main = window.app_handle().get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or("main window unavailable")?;
+    if crate::first_open::on_main_content(&main, request, welcome) {
+        return Ok(true);
+    }
     reveal_main_window(window.app_handle(), &main, request).map_err(|error| error.to_string())?;
     Ok(true)
 }
@@ -1468,13 +1502,19 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
         windows: std::collections::HashMap::new(),
     })));
     register_glass_accessibility(app);
-    if crate::menu_bar::launched_in_menu_bar_mode(app.handle())
-        || crate::capture::triggers::cold_launch_is_capture_only(app.handle()) {
+    use crate::capture::triggers::{cold_launch_window_intent, ColdLaunchWindowIntent};
+    use crate::menu_bar::policy::StartupLaunch;
+    let intent = cold_launch_window_intent(app.handle());
+    let launch = crate::menu_bar::startup_launch(app.handle());
+    if launch == StartupLaunch::MenuBar || intent == ColdLaunchWindowIntent::CaptureOnly {
         return Ok(());
     }
-    create_main_window(
+    create_main_window_for_startup(
         app.handle(),
         crate::window_sizing::InitialWindowVisibility::Visible,
+        Some(FirstOpenStartup {
+            supports_overlay: intent == ColdLaunchWindowIntent::Ordinary && launch == StartupLaunch::User,
+        }),
     )?;
     Ok(())
 }
