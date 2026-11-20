@@ -212,6 +212,23 @@ describe('buildLocalServiceRows', () => {
         expect(selectLocalServiceRunningCount(rows)).toBe(0);
         expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('ready');
     });
+    it('offers Start rather than Open when a stopped managed Service retains its preview target', () => {
+        // Captured from the ended-preview failure: launcher availability and a retained
+        // Browser target survive the supervisor's stopped publication.
+        const running = LocalServiceLaunchTargetV1Schema.parse(openableTarget({
+            source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'instance-a' },
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } },
+            state: 'available', serviceState: 'running', actions: [],
+            browserTarget: { kind: 'localServicePreview', targetId: 'preview-a', machineId: 'machine-a' },
+        }));
+        const rowsFor = (target: LocalServiceLaunchTarget) => buildLocalServiceRows({
+            inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace',
+        });
+        expect(rowsFor(running)[0]?.primaryAction).toEqual({ kind: 'open', openTarget: running });
+        const stopped = { ...running, serviceState: 'stopped' as const };
+        expect(rowsFor(stopped)[0]).toMatchObject({ status: 'stopped', primaryAction: { kind: 'start', target: stopped } });
+    });
     it.each([
         { serviceState: 'running', status: 'running', section: 'running', canStart: false },
         { serviceState: 'healthy', status: 'running', section: 'running', canStart: false },

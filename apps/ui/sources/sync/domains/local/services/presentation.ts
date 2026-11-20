@@ -1,6 +1,7 @@
 import { t } from '@/text';
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
+import { isLocalServiceStateRunningV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -77,7 +78,7 @@ export function resolveLocalServicePortLabel(row: PortBearingRow): string | null
 /**
  * Returns the launch target itself when its service is openable in the browser —
  * i.e. it carries a daemon-projected `browserTarget` or a private-preview registration
- * action and is not `unavailable`.
+ * action, is not `unavailable`, and has no explicitly inactive managed lifetime.
  * Returns `null` otherwise so callers render no open affordance (fail-closed).
  *
  * Openability is judged purely from the **service** launch target. This helper
@@ -89,6 +90,10 @@ export function resolveLocalServiceOpenableTarget(
     target: LocalServiceLaunchTarget,
 ): LocalServiceLaunchTarget | null {
     if (target.state === 'unavailable') {
+        return null;
+    }
+    if (target.source === 'managed_service' && target.serviceState !== undefined
+        && !isLocalServiceStateRunningV1(target.serviceState)) {
         return null;
     }
     return target.browserTarget || target.actions.includes('register_preview') ? target : null;
