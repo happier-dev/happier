@@ -59,6 +59,7 @@ import { sync } from '@/sync/sync';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -72,7 +73,6 @@ import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServ
 import { getServerProfileLegacyServerIds } from '@/sync/domains/server/serverProfiles';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
-import { Icon } from '@/components/ui/icons/Icon';
 import { WorkspaceActivationContentPolicyFields, WorkspaceActivationDestinationFields, WorkspaceActivationModeField } from '@/components/workspaces/activation/WorkspaceActivationEditor';
 import { createWorkspaceSyncConflictDetailsResource } from '@/components/workspaces/sync/workspaceSyncConflictDetailsTab';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -81,8 +81,17 @@ import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/server
 import { readManagedMachineSelectionName, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { NoticeLine } from '@/components/ui/lists/NoticeLine';
+import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { useRouter } from 'expo-router';
+import { openNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
+import type { ManagedMachineConfigurationRequest } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 const SessionHandoffMachineSelectionContent = React.lazy(async () => ({
     default: (await import('./SessionHandoffMachineSelectionContent')).SessionHandoffMachineSelectionContent,
+}));
+// New Session's one "New machine" review, presented in this sheet's place instead of a second dialog over it.
+const ManagedMachineSelectionConfiguration = React.lazy(async () => ({
+    default: (await import('@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers')).ManagedMachineSelectionConfiguration,
 }));
 
 export type SessionHandoffPickerModalProps = CustomModalInjectedProps & Readonly<{
@@ -95,7 +104,7 @@ export type SessionHandoffPickerModalProps = CustomModalInjectedProps & Readonly
     inlineErrorCode?: string | null;
 }>;
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     body: {
         flex: 1,
     },
@@ -105,8 +114,18 @@ const stylesheet = StyleSheet.create(() => ({
         justifyContent: 'flex-end',
         gap: 10,
     },
+    // A phone is too narrow for the reason beside two actions: it takes its own line above them.
+    footerPhone: {
+        flexWrap: 'wrap',
+    },
+    // The reason reads on the sheet in both themes (the bare text default is dark ink on a dark sheet).
     blockedReason: {
         flex: 1,
+        color: theme.colors.text.secondary,
+    },
+    blockedReasonPhone: {
+        width: '100%',
+        color: theme.colors.text.secondary,
     },
 }));
 
@@ -202,6 +221,12 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const isExternalSession = Boolean(
         readExternalSessionLink(currentSessionMetadata),
     );
+    // Which session, and where it runs now (lab scene 4); the Action's own description stays for agents.
+    const sessionName = sessionRecord ? getSessionName(sessionRecord, serverId) : sessionRenderable ? getSessionName(sessionRenderable, serverId) : null;
+    const sourceMachineName = sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? null;
+    const subtitle = sessionName && sourceMachineName
+        ? t('sessionHandoff.sheetSubtitle', { session: sessionName, machine: sourceMachineName })
+        : actionSpec.description;
     const machines = React.useMemo(() => {
         return allServerMachines.filter((machine: any) => {
             const machineId = normalizeId(machine?.id);
@@ -231,6 +256,11 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(null);
     const [managedTarget, setManagedTarget] = React.useState<ManagedMachineSelectionDraft | null>(null);
     const [machineMenuOpenRequest, requestMachineMenuOpen] = React.useReducer((count: number) => count + 1, 0);
+    // A preset's "New machine" review stands in this sheet's place until it is used or left.
+    const [configurationRequest, setConfigurationRequest] = React.useState<ManagedMachineConfigurationRequest | null>(null);
+    const closeConfiguration = React.useCallback(() => setConfigurationRequest(null), []);
+    const phoneLayout = useDeviceType() === 'phone';
+    const router = useRouter();
     // The receiving Machine's refusal belongs to the machine it refused; a new choice clears it.
     const [refusalCode, setRefusalCode] = React.useState(inlineErrorCode);
     const [choiceChangedSinceRefusal, setChoiceChangedSinceRefusal] = React.useState(false);
@@ -454,7 +484,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             stateTransfer: existingStateRequested ? 'existing' : 'transfer',
             targetMachineLabel: managedTarget
                 ? readManagedMachineSelectionName(managedTarget)
-                : normalizeId(selectedMachine?.metadata?.displayName) || targetMachineId,
+                : selectedMachine ? getMachineSentenceName(selectedMachine) : targetMachineId,
+            // The progress dialog's "<session> · <source> → <machine>" line uses the names this sheet shows.
+            ...(sessionName ? { sessionLabel: sessionName } : {}),
+            ...(sourceMachineName ? { sourceMachineLabel: sourceMachineName } : {}),
             // A no-folder session gets its own private folder on the target; no path is chosen here.
             ...(resolvedTargetPath && !sourceWithoutFolder ? { targetPath: resolvedTargetPath } : {}),
             ...(sourceRootPath ? { sourceRootPath } : {}),
@@ -469,7 +502,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             ...(reviewSummary ? { workspaceSyncReviewRelationshipIds: selectedLinkedWorkspace && linkedWorkspaceChoice
                 ? linkedWorkspaceChoice.relationshipIds : [reviewSummary.relationshipId] } : {}),
         });
-    }, [awaitingAdmission, binding, canAttemptSelectedMachine, currentSessionMetadata?.path, directTargetMode, existingStateAvailability, existingStateRequested, sourceWithoutFolder, isExternalSession, linkedWorkspaceChoice, managedTarget, onResolve, parsedWorkspaceAction, relationshipSummaries, requestApproval, resolvedTargetPath, selectedLinkedWorkspace, selectedMachine?.metadata?.displayName, selectedMachineId, selectedRelationshipId, selectedRelationshipSummary, startReadiness.canStart, workspaceEngineRequired, workspaceSourcePathSafety.allowed, workspaceTargetPathSafety.allowed]);
+    }, [awaitingAdmission, binding, canAttemptSelectedMachine, currentSessionMetadata?.path, directTargetMode, existingStateAvailability, existingStateRequested, sourceWithoutFolder, isExternalSession, linkedWorkspaceChoice, managedTarget, onResolve, parsedWorkspaceAction, relationshipSummaries, requestApproval, resolvedTargetPath, selectedLinkedWorkspace, selectedMachine, selectedMachineId, selectedRelationshipId, selectedRelationshipSummary, sessionName, sourceMachineName, startReadiness.canStart, workspaceEngineRequired, workspaceSourcePathSafety.allowed, workspaceTargetPathSafety.allowed]);
 
     const selectMachine = (machineId: string) => {
         if (awaitingAdmission) return;
@@ -485,63 +518,107 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     };
 
     const canStart = startReadiness.canStart && (!existingStateRequested || existingStateAvailability === 'available');
+    // The source can't hand anything over: the sheet says so once and offers the step that works (continue from
+    // its retained history on another machine), never a form that can't succeed.
+    // Only a source the inventory shows and the current Account can't reach: an inventory still loading, a
+    // presence not yet answered, or an Account binding not yet current isn't a verdict.
+    const sourceUnavailable = scope !== null && sourceMachine !== null && !canAttemptSourceMachine && !awaitingAdmission
+        && resolveMachineReachability(scope, sourceMachine) !== 'unknown';
+    const continueElsewhere = React.useCallback(() => {
+        if (!binding?.isCurrent()) return;
+        // The sheet's Account binding retires with the sheet, so the sheet closes once New Session has opened.
+        void openNewSessionSourceContextNavigation({
+            sourceSessionId: sessionId,
+            forkPoint: { type: 'latest' },
+            serverId,
+            accountLifetime: readServerAccountScopeOwnerLifetime(binding),
+            navigateToNewSession: route => router.push(route as never),
+        }).finally(handleCancel);
+    }, [binding, handleCancel, router, serverId, sessionId]);
 
-    const footer = React.useMemo(() => (
-        <View style={styles.footer}>
-            {awaitingAdmission ? (
-                <Text testID="session-handoff-awaiting-admission" style={styles.blockedReason} accessibilityLiveRegion="polite">
-                    {t('sessionHandoff.awaitingAdmission')}
-                </Text>
-            ) : blockedReasonKey ? (
-                <Text
-                    testID="session-handoff-start-blocked-reason"
-                    style={styles.blockedReason}
-                    accessibilityLiveRegion="polite"
-                >
-                    {t(blockedReasonKey)}
-                </Text>
-            ) : null}
-            <RoundButton display="inverted" title={t(awaitingAdmission ? 'common.close' : 'common.cancel')} onPress={handleCancel} />
-            <RoundButton
+    const footer = React.useMemo(() => {
+        const reason = awaitingAdmission ? (
+            <Text testID="session-handoff-awaiting-admission" style={phoneLayout ? styles.blockedReasonPhone : styles.blockedReason} accessibilityLiveRegion="polite">
+                {t('sessionHandoff.awaitingAdmission')}
+            </Text>
+        ) : blockedReasonKey && !sourceUnavailable ? (
+            <Text
+                testID="session-handoff-start-blocked-reason"
+                style={phoneLayout ? styles.blockedReasonPhone : styles.blockedReason}
+                accessibilityLiveRegion="polite"
+            >
+                {t(blockedReasonKey)}
+            </Text>
+        ) : null;
+        const actions = [
+            <RoundButton key="cancel" display="inverted" title={t(awaitingAdmission || sourceUnavailable ? 'common.close' : 'common.cancel')} onPress={handleCancel} />,
+            sourceUnavailable ? null : <RoundButton
+                key="start"
                 testID="session-handoff-start"
                 title={actionSpec.title}
                 onPress={handleStart}
                 disabled={!canStart || awaitingAdmission}
                 accessibilityHint={awaitingAdmission ? t('sessionHandoff.awaitingAdmission') : blockedReasonKey ? t(blockedReasonKey) : undefined}
-            />
-        </View>
-    ), [actionSpec.title, awaitingAdmission, blockedReasonKey, canStart, handleCancel, handleStart, styles.blockedReason, styles.footer]);
+            />,
+        ];
+        return (
+            <View style={[styles.footer, phoneLayout && styles.footerPhone]}>
+                {reason}
+                {actions}
+            </View>
+        );
+    }, [actionSpec.title, awaitingAdmission, blockedReasonKey, canStart, handleCancel, handleStart, phoneLayout, sourceUnavailable, styles.blockedReason, styles.blockedReasonPhone, styles.footer, styles.footerPhone]);
 
-    // Which session, and where it runs now (lab scene 4); the Action's own description stays for agents.
-    const sessionName = sessionRecord ? getSessionName(sessionRecord, serverId) : sessionRenderable ? getSessionName(sessionRenderable, serverId) : null;
-    const sourceMachineName = sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? null;
-    const subtitle = sessionName && sourceMachineName
-        ? t('sessionHandoff.sheetSubtitle', { session: sessionName, machine: sourceMachineName })
-        : actionSpec.description;
-    const chrome = React.useMemo(() => ({
+    const chrome = React.useMemo(() => configurationRequest ? {
+        // The same sheet, at the same size, shows the review; its back returns to the handoff choices.
+        kind: 'card' as const,
+        title: t('managedMachines.picker.newMachine'),
+        leading: <ModalBackButton testID="session-handoff-configuration-back" accessibilityLabel={t('common.back')} onPress={closeConfiguration} />,
+        // The frame merges chrome: each body names every field the other one sets.
+        subtitle: null,
+        footer: null,
+        testID: 'session-handoff-modal',
+        dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92 },
+        phonePresentation: 'sheet' as const,
+    } : {
         kind: 'card' as const,
         title: actionSpec.title,
         subtitle,
+        leading: null,
         testID: 'session-handoff-modal',
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92 },
         phonePresentation: 'sheet' as const,
         footer,
-    }), [actionSpec.title, footer, subtitle]);
+    }, [actionSpec.title, closeConfiguration, configurationRequest, footer, subtitle]);
 
     useModalCardChrome(setChrome, chrome);
+
+    if (configurationRequest) return (
+        <View style={styles.body}>
+            <React.Suspense fallback={null}>
+                <ManagedMachineSelectionConfiguration {...configurationRequest} onClose={closeConfiguration} />
+            </React.Suspense>
+        </View>
+    );
+
+    if (sourceUnavailable) return (
+        <View style={styles.body}>
+            <ItemList presentation="grouped" style={{ paddingTop: 0 }}>
+                <SurfaceStateCard
+                    testID="session-handoff-retained-history"
+                    kind="warning"
+                    size="line"
+                    title={t('machineRequester.handoffUnavailable')}
+                    reason={t('machineRequester.resumeElsewhere', { machine: sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? t('status.unknown') })}
+                    action={{ testID: 'session-handoff-retained-history:continue', label: t('common.continue'), onPress: continueElsewhere }}
+                />
+            </ItemList>
+        </View>
+    );
 
     return (
             <View style={styles.body}>
                 <ItemList presentation="grouped" keyboardAware style={{ paddingTop: 0 }} pointerEvents={awaitingAdmission ? 'none' : 'auto'} importantForAccessibility={awaitingAdmission ? 'no-hide-descendants' : 'auto'}>
-                    {!canAttemptSourceMachine ? (
-                        <SurfaceStateCard
-                            testID="session-handoff-retained-history"
-                            kind="warning"
-                            size="line"
-                            title={t('machineRequester.handoffUnavailable')}
-                            reason={t('machineRequester.resumeElsewhere', { machine: sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? t('status.unknown') })}
-                        />
-                    ) : null}
                     <WorkspaceActivationDestinationFields
                         disabled={awaitingAdmission}
                         machineNotice={sandboxPresetRequired ? (
@@ -586,6 +663,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                     handleTargetPathChange(resolvedSourceRootPath);
                                 }}
                                 onToggleFavorite={toggleFavorite}
+                                presentManagedMachineConfiguration={setConfigurationRequest}
                                 maxHeight={maxHeight}
                                 requestClose={() => requestClose('selection')}
                             /></React.Suspense> : undefined,
@@ -644,10 +722,11 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             title={existingStateRequested ? t('settingsSession.handoff.workspaceMode.title') : selectedLinkedWorkspace && linkedWorkspaceChoice
                                     ? t('settingsSession.handoff.workspaceMode.linkedTitle', { hub: linkedWorkspaceChoice.hubMachineName })
                                     : selectedRelationshipChoice?.title ?? t('settingsSession.handoff.workspaceMode.title')}
+                            // The value beside the label names the mode (its menu says what each does); the row
+                            // describes only what that value doesn't: why it is locked, or which route it takes.
                             subtitle={existingStateRequested ? t('sessionHandoff.transferSessionData.workspaceRequiresTransfer') : selectedLinkedWorkspace && linkedWorkspaceChoice
                                     ? linkedWorkspaceChoice.routeLabel
-                                    : selectedRelationshipChoice?.subtitle ?? t(selectedWorkspaceSyncMode.subtitleKey)}
-                            icon={<Icon name="folder" size={16} color={theme.colors.text.secondary} />}
+                                    : selectedRelationshipChoice?.subtitle}
                             testID="session-handoff-workspace-sync-mode-trigger"
                             disabled={awaitingAdmission || existingStateRequested}
                             items={[
@@ -693,7 +772,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                     {...state.headerProps}
                                     title={t('settingsSession.handoff.advanced.title')}
                                     subtitle={t('settingsSession.handoff.advanced.subtitle')}
-                                    icon={<Icon name="sliders-horizontal" size={16} color={theme.colors.text.secondary} />}
                                 />
                             )}
                         >
@@ -704,7 +782,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                     selectedId={existingStateRequested ? 'none' : workspaceSyncMode}
                                     title={t('settingsSession.handoff.advanced.modeTitle')}
                                     subtitle={t(existingStateRequested ? 'sessionHandoff.transferSessionData.workspaceRequiresTransfer' : selectedWorkspaceSyncMode.subtitleKey)}
-                                    icon={<Icon name="warning" size={16} color={theme.colors.text.secondary} />}
                                     testID="session-handoff-advanced-workspace-mode-trigger"
                                     disabled={awaitingAdmission || existingStateRequested}
                                     items={SESSION_HANDOFF_ADVANCED_WORKSPACE_SYNC_MODE_OPTIONS.map((item) => ({
@@ -759,7 +836,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                 itemTrigger={{
                                     title: t('settingsSession.handoff.directTargetMode.title'),
                                     subtitle: t('settingsSession.handoff.directTargetMode.subtitle'),
-                                    icon: <Icon name="arrows-left-right" size={16} color={theme.colors.text.secondary} />,
                                     itemProps: { disabled: awaitingAdmission },
                                 }}
                                 items={SESSION_HANDOFF_DIRECT_TARGET_MODE_OPTIONS.map((item) => ({

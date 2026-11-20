@@ -1288,6 +1288,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "Rien n’a été déplacé. Ta session tourne toujours là où elle était.",
       chooseAnotherMachine: "Choisir une autre machine",
       chooseSandboxPreset: "Choisir un préréglage d’environnement isolé",
+      couldntCreate: ({ machine }: { machine: string }) => `Impossible de créer ${machine}`,
       partialLinked: 'Certains fichiers ont été synchronisés, mais le prochain espace de travail lié demande ton attention. La session n’a pas repris sur la destination. Ouvre les détails pour voir le lien bloqué.',
     },
     cancelled: {
@@ -7924,6 +7925,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       openInTreeBrowserLabel: "Ouvrir dans l’explorateur",
       openFolderLabel: "Afficher le contenu du dossier",
       emptyNewFolder: "Aucun dossier correspondant. Appuie sur ↵ pour utiliser le chemin tel quel.",
+      typedPathOnly: "Le chemin est utilisé tel que saisi.",
       favoriteAdd: "Ajouter aux favoris",
       favoriteRemove: "Retirer des favoris",
       hints: {
@@ -8106,6 +8108,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
 
   sessionHandoff: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · actuellement sur ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nouvelle)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · nouvelle machine`,
       createsFirst: "Crée d’abord la machine, puis y déplace la session.",

@@ -1243,6 +1243,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   ru: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · сейчас на ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (новая)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · новая машина`,
       createsFirst: "Сначала создаёт машину, затем переносит сессию.",
@@ -1302,6 +1304,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "Ничего не перенесено. Сессия по-прежнему работает там же.",
       chooseAnotherMachine: "Выбрать другую машину",
       chooseSandboxPreset: "Выбрать предустановку песочницы",
+      couldntCreate: ({ machine }: { machine: string }) => `Не удалось создать ${machine}`,
       partialLinked: 'Часть файлов синхронизирована, но следующему связанному рабочему пространству требуется внимание. Сессия не возобновилась в месте назначения. Откройте подробности, чтобы увидеть заблокированную связь.',
       title: 'Не удалось передать сессию',
       message: 'Не удалось завершить передачу. Вы можете повторить попытку.',
@@ -7837,6 +7840,7 @@ export const ru: TranslationStructure = {
       openInTreeBrowserLabel: "Открыть в дереве",
       openFolderLabel: "Показать содержимое папки",
       emptyNewFolder: "Нет подходящей папки. Нажмите ↵, чтобы использовать путь как есть.",
+      typedPathOnly: "Путь используется так, как введён.",
       favoriteAdd: "Добавить в избранное",
       favoriteRemove: "Удалить из избранного",
       hints: {

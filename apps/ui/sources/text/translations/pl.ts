@@ -1242,6 +1242,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   pl: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · teraz na ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nowa)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · nowa maszyna`,
       createsFirst: "Najpierw tworzy maszynę, potem przenosi sesję.",
@@ -1302,6 +1304,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "Nic nie zostało przeniesione. Sesja nadal działa tam, gdzie była.",
       chooseAnotherMachine: "Wybierz inną maszynę",
       chooseSandboxPreset: "Wybierz ustawienie wstępne piaskownicy",
+      couldntCreate: ({ machine }: { machine: string }) => `Nie udało się utworzyć ${machine}`,
       partialLinked: 'Niektóre pliki zsynchronizowano, ale kolejny połączony obszar roboczy wymaga uwagi. Sesja nie została wznowiona w miejscu docelowym. Otwórz szczegóły, aby sprawdzić zablokowane połączenie.',
       message: 'Nie udało się ukończyć przekazania. Możesz spróbować ponownie.',
     },
@@ -7938,6 +7941,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       openInTreeBrowserLabel: "Otwórz w przeglądarce drzewa",
       openFolderLabel: "Pokaż zawartość folderu",
       emptyNewFolder: "Brak pasującego folderu. Naciśnij ↵, aby użyć ścieżki w tej postaci.",
+      typedPathOnly: "Ścieżka zostanie użyta tak, jak ją wpisano.",
       favoriteAdd: "Dodaj do ulubionych",
       favoriteRemove: "Usuń z ulubionych",
       hints: {

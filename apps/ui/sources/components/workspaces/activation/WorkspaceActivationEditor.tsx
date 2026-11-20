@@ -53,13 +53,14 @@ export function WorkspaceActivationModeField(props: Readonly<{
     onOpenChange: (open: boolean) => void;
     selectedId: string;
     title: string;
-    subtitle: string;
+    /** The current state or consequence when the value beside the label doesn't say it; it wraps, never cut mid-word. */
+    subtitle?: string;
     items: ReadonlyArray<{ id: string; title: string; subtitle: string; disabled?: boolean }>;
     onSelect: (id: string) => void;
     testID?: string;
     disabled?: boolean;
-    icon?: React.ReactNode;
 }>) {
+    // A preference row: no leading icon (anatomy: only navigation rows and identity marks carry one).
     return <DropdownMenu
         open={props.open}
         onOpenChange={props.onOpenChange}
@@ -72,10 +73,9 @@ export function WorkspaceActivationModeField(props: Readonly<{
         rowKind="item"
         itemTrigger={{
             title: props.title,
-            subtitle: props.subtitle,
-            ...(props.icon ? { icon: props.icon } : {}),
+            ...(props.subtitle ? { subtitle: props.subtitle } : {}),
             // A field select sits beside its label while there is room and moves beneath it on a phone.
-            itemProps: { accessoryLayout: 'adaptive', disabled: props.disabled, ...(props.testID ? { testID: props.testID } : {}) },
+            itemProps: { accessoryLayout: 'adaptive', subtitleLines: 0, disabled: props.disabled, ...(props.testID ? { testID: props.testID } : {}) },
         }}
         items={props.items}
         onSelect={(id) => { if (!props.disabled) props.onSelect(id); }}

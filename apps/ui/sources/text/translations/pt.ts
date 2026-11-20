@@ -1277,6 +1277,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   pt: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · agora em ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nova)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · máquina nova`,
       createsFirst: "Primeiro cria a máquina, depois move a sessão.",
@@ -1336,6 +1338,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "Nada foi movido. Sua sessão continua em execução onde estava.",
       chooseAnotherMachine: "Escolher outra máquina",
       chooseSandboxPreset: "Escolher uma configuração de ambiente isolado",
+      couldntCreate: ({ machine }: { machine: string }) => `Não foi possível criar ${machine}`,
       partialLinked: 'Alguns arquivos foram sincronizados, mas o próximo workspace vinculado precisa de atenção. A sessão não foi retomada no destino. Abra os detalhes para ver o vínculo bloqueado.',
       title: 'Falha ao transferir a sessao',
       message: 'Nao foi possivel concluir a transferencia. Voce pode tentar novamente.',
@@ -8206,6 +8209,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       openInTreeBrowserLabel: "Abrir no navegador de árvore",
       openFolderLabel: "Mostrar conteúdo da pasta",
       emptyNewFolder: "Nenhuma pasta corresponde. Pressione ↵ para usar o caminho como está.",
+      typedPathOnly: "O caminho é usado como foi digitado.",
       favoriteAdd: "Adicionar aos favoritos",
       favoriteRemove: "Remover dos favoritos",
       hints: {

@@ -3,7 +3,7 @@ import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperat
 import type { ActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 
-import { SessionHandoffProgressModal, type SessionHandoffMachineCreationProgress } from './SessionHandoffProgressModal';
+import { SessionHandoffProgressModal, type SessionHandoffMachineCreationProgress, type SessionHandoffRoute } from './SessionHandoffProgressModal';
 
 export type SessionHandoffProgressPresentation = Readonly<{
     close: () => void;
@@ -24,6 +24,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
     /** Runs the same selection again after a failure before anything moved (a new machine that wasn't created). */
     onRetry?: () => void;
     onDismiss?: () => void;
+    route?: SessionHandoffRoute;
 }>): SessionHandoffProgressPresentation {
     let attached = true;
     let unsubscribe = () => {};
@@ -41,6 +42,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
             ...(params.machineCreation ? { machineCreation: params.machineCreation } : {}),
             ...(params.onOpenConflicts ? { onOpenConflicts: params.onOpenConflicts } : {}),
             ...(params.onRetry ? { onRetry: params.onRetry } : {}),
+            ...(params.route ? { route: params.route } : {}),
         },
         onRequestClose: () => { detach(); params.onDismiss?.(); },
         closeOnBackdrop: false,

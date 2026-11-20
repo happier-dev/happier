@@ -17,6 +17,8 @@ type Props = Readonly<{
     onSelectMachine: (machineId: string) => void;
     onSelectManagedMachine: NonNullable<React.ComponentProps<typeof NewSessionMachineSelectionContent>['onSelectManagedMachine']>;
     onToggleFavorite: (machine: Machine) => void;
+    /** The sheet presents the "New machine" review in its own place (never a second dialog on the sheet). */
+    presentManagedMachineConfiguration: NonNullable<React.ComponentProps<typeof NewSessionMachineSelectionContent>['presentManagedMachineConfiguration']>;
     requestClose: () => void;
     maxHeight: number;
 }>;
@@ -59,6 +61,7 @@ export function SessionHandoffMachineSelectionContent(props: Props) {
             requestClose();
         }}
         onSelectManagedMachine={props.onSelectManagedMachine}
+        presentManagedMachineConfiguration={props.presentManagedMachineConfiguration}
         onToggleFavorite={props.onToggleFavorite}
         disableOfflineMachines
         // Each row says what a new Session does there, so a Machine that would refuse a bare

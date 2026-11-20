@@ -1241,6 +1241,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   it: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ora su ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nuova)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · macchina nuova`,
       createsFirst: "Crea prima la macchina, poi sposta la sessione.",
@@ -1302,6 +1304,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "Non è stato spostato nulla. La sessione è ancora in esecuzione dov’era.",
       chooseAnotherMachine: "Scegli un’altra macchina",
       chooseSandboxPreset: "Scegli una configurazione della sandbox",
+      couldntCreate: ({ machine }: { machine: string }) => `Impossibile creare ${machine}`,
       partialLinked: 'Alcuni file sono stati sincronizzati, ma la prossima area di lavoro collegata richiede attenzione. La sessione non è stata ripresa nella destinazione. Apri i dettagli per vedere il collegamento bloccato.',
     },
     cancelled: {
@@ -8325,6 +8328,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       openInTreeBrowserLabel: "Apri nel browser ad albero",
       openFolderLabel: "Mostra contenuto della cartella",
       emptyNewFolder: "Nessuna cartella corrispondente. Premi ↵ per usare il percorso così com’è.",
+      typedPathOnly: "Il percorso viene usato così come scritto.",
       favoriteAdd: "Aggiungi ai preferiti",
       favoriteRemove: "Rimuovi dai preferiti",
       hints: {

@@ -1249,6 +1249,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   ja: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 現在は ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → 新しい ${machine}`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · 新しいマシン`,
       createsFirst: "先にマシンを作成してから、セッションを移動します。",
@@ -1308,6 +1310,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "何も移動していません。セッションは元の場所で実行を続けています。",
       chooseAnotherMachine: "別のマシンを選ぶ",
       chooseSandboxPreset: "サンドボックスのプリセットを選ぶ",
+      couldntCreate: ({ machine }: { machine: string }) => `${machine} を作成できませんでした`,
       partialLinked: '一部のファイルは同期されましたが、次のリンク先ワークスペースに対応が必要です。移行先でセッションは再開されていません。詳細を開いて、停止しているリンクを確認してください。',
       title: 'セッションの引き継ぎに失敗しました',
       message: '引き継ぎを完了できませんでした。もう一度転送を試せます。',
@@ -8408,6 +8411,7 @@ localTailscale: {
       openInTreeBrowserLabel: "ツリーブラウザーで開く",
       openFolderLabel: "フォルダーの内容を表示",
       emptyNewFolder: "一致するフォルダーはありません。↵ で入力したパスを使います。",
+      typedPathOnly: "入力したパスをそのまま使います。",
       favoriteAdd: "お気に入りに追加",
       favoriteRemove: "お気に入りから削除",
       hints: {

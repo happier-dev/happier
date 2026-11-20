@@ -9296,6 +9296,7 @@ const enNewSession = {
     // matters for screen-reader correctness.
     openFolderLabel: 'Show folder contents',
     emptyNewFolder: 'No matching folder. Press ↵ to use the path as typed.',
+    typedPathOnly: "Uses the path as typed.",
     favoriteAdd: 'Add to favorites',
     favoriteRemove: 'Remove from favorites',
     hints: {
@@ -9481,6 +9482,8 @@ const enSessionHistory = {
 
 const enSessionHandoff = {
   sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · now on ${machine}`,
+  route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+  routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → new ${machine}`,
   managedTarget: {
     selected: ({ name }: { name: string }) => `${name} · new machine`,
     createsFirst: "Creates the machine first, then moves the session.",
@@ -9547,6 +9550,7 @@ const enSessionHandoff = {
     nothingMoved: "Nothing moved. Your session is still running where it was.",
     chooseAnotherMachine: "Choose another machine",
     chooseSandboxPreset: "Choose a sandbox preset",
+    couldntCreate: ({ machine }: { machine: string }) => `Couldn’t create ${machine}`,
     partialLinked:
       'Some files synchronized, but the next linked workspace needs attention. The session did not resume on the target. Open details to see the blocked link.',
   },

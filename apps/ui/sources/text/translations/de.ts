@@ -8043,6 +8043,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             // matters for screen-reader correctness.
             openFolderLabel: 'Ordnerinhalt zeigen',
             emptyNewFolder: 'Kein passender Ordner. Drücke ↵, um den Pfad so zu verwenden.',
+            typedPathOnly: "Der Pfad wird so verwendet, wie er eingegeben ist.",
             favoriteAdd: 'Zu Favoriten hinzufügen',
             favoriteRemove: 'Aus Favoriten entfernen',
             hints: {
@@ -8213,6 +8214,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
 
     sessionHandoff: {
         sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · jetzt auf ${machine}`,
+        route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+        routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (neu)`,
         managedTarget: {
           selected: ({ name }: { name: string }) => `${name} · neuer Computer`,
           createsFirst: "Erstellt zuerst den Computer und verschiebt dann die Session.",
@@ -8274,6 +8277,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             nothingMoved: "Nichts wurde verschoben. Deine Session läuft weiter, wo sie war.",
             chooseAnotherMachine: "Anderen Computer wählen",
             chooseSandboxPreset: "Sandbox-Vorlage wählen",
+            couldntCreate: ({ machine }: { machine: string }) => `${machine} konnte nicht erstellt werden`,
             partialLinked: 'Einige Dateien wurden synchronisiert, aber der nächste verknüpfte Workspace benötigt Aufmerksamkeit. Die Session wurde am Ziel nicht fortgesetzt. In den Details steht, welcher Link blockiert ist.',
         },
         cancelled: {

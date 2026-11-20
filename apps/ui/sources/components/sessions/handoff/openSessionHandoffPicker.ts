@@ -19,8 +19,11 @@ export type SessionHandoffPickerResult = (
         onApprovalPending: (value: ActionApprovalRegistration) => void;
     }> }>
 ) & Readonly<{
-    /** Display-only identity used by consequential confirmation copy. */
+    /** Display-only identity used by consequential confirmation copy and the progress dialog's route line. */
     targetMachineLabel?: string;
+    /** Display-only: the session's and its current machine's names, as the sheet shows them. */
+    sessionLabel?: string;
+    sourceMachineLabel?: string;
     targetPath?: string;
     /** Display-only source path used by consequential confirmation copy. */
     sourceRootPath?: string;

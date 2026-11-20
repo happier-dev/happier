@@ -1242,6 +1242,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   ca: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ara a ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nova)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · màquina nova`,
       createsFirst: "Primer crea la màquina i després hi mou la sessió.",
@@ -1301,6 +1303,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "No s’ha mogut res. La sessió continua en execució on era.",
       chooseAnotherMachine: "Tria una altra màquina",
       chooseSandboxPreset: "Tria una configuració d’entorn aïllat",
+      couldntCreate: ({ machine }: { machine: string }) => `No s’ha pogut crear ${machine}`,
       partialLinked: 'S’han sincronitzat alguns fitxers, però el següent espai de treball enllaçat necessita atenció. La sessió no s’ha reprès a la destinació. Obre els detalls per veure l’enllaç bloquejat.',
       title: 'No s ha pogut transferir la sessio',
       message: 'No s ha pogut completar la transferencia. Pots tornar-ho a provar.',
@@ -7514,6 +7517,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             openInTreeBrowserLabel: 'Obre al navegador d’arbre',
             openFolderLabel: 'Mostra el contingut de la carpeta',
             emptyNewFolder: 'Cap carpeta coincident. Prem ↵ per fer servir el camí tal com està.',
+            typedPathOnly: "S’usa el camí tal com l’has escrit.",
             favoriteAdd: 'Afegeix als preferits',
             favoriteRemove: 'Treu dels preferits',
             hints: {

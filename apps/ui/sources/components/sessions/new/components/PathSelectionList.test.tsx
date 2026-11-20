@@ -621,6 +621,33 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
+    it('claims no missing folder when there is no machine to look in (one still to be created)', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue="/Users/leeroy/current"
+                initialSuggestionMode="history"
+                favorites={[]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId={null}
+                serverId="srv_1"
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+        await act(async () => {
+            screen.changeTextByTestId('path-selection-list:header:input', 'recipe-box');
+        });
+        await flushPathSelectionDynamicResolver();
+
+        const { t } = await import('@/text');
+        expect(screen.getTextContent()).not.toContain(t('newSession.pathPicker.emptyNewFolder'));
+        expect(screen.getTextContent()).toContain(t('newSession.pathPicker.typedPathOnly'));
+        act(() => screen.tree.unmount());
+    });
+
     it('tells the person that Enter uses a typed folder that does not exist yet, instead of a bare "No matches"', async () => {
         // Live 2026-10-16 (PLUGVIS r2k/r2l): typing a new folder name showed only "No matches".
         listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({

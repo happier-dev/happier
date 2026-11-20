@@ -1245,6 +1245,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   'zh-Hant': {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 目前在 ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → 新的 ${machine}`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · 新機器`,
       createsFirst: "先建立機器，再移動工作階段。",
@@ -1304,6 +1306,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "沒有移動任何內容。你的工作階段仍在原處執行。",
       chooseAnotherMachine: "選擇其他機器",
       chooseSandboxPreset: "選擇沙盒預設",
+      couldntCreate: ({ machine }: { machine: string }) => `無法建立 ${machine}`,
     },
     cancelled: {
       title: '工作階段移交已取消',
@@ -6736,6 +6739,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             openInTreeBrowserLabel: '在樹狀瀏覽器中開啟',
             openFolderLabel: '顯示資料夾內容',
             emptyNewFolder: '沒有相符的資料夾。按 ↵ 依原樣使用此路徑。',
+            typedPathOnly: "依輸入的路徑使用。",
             favoriteAdd: '加入我的最愛',
             favoriteRemove: '從我的最愛移除',
             hints: {

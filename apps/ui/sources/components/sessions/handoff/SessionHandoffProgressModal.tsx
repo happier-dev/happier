@@ -36,6 +36,15 @@ export type SessionHandoffMachineCreationProgress = Readonly<{
     progress: ManagedMachineCreationProgress;
 }>;
 
+/** Which session moves where, by the names the handoff sheet showed: "<session> · <source> → [new] <machine>". */
+export type SessionHandoffRoute = Readonly<{
+    session: string;
+    source: string;
+    machine: string;
+    /** The machine is created first (a preset), so the line reads "→ new <machine>". */
+    newMachine: boolean;
+}>;
+
 type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
     message?: string;
@@ -50,6 +59,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     onOpenConflicts?: (blockedRelationshipId: string | null) => void;
     /** Present when the same selection can run again: a new machine that couldn't be created, before anything moved. */
     onRetry?: () => void;
+    route?: SessionHandoffRoute;
 }>;
 
 type PrimaryProgressStepId = 'preparing' | 'moving' | 'ready';
@@ -452,7 +462,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry, route }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const styles = stylesheet;
@@ -584,9 +594,12 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         effectiveStatus?.progress?.current?.relativePath
         ?? effectiveStatus?.progress?.current?.phaseDetail
         ?? null;
+    // A machine that couldn't be created is what failed: the title says so, and its step carries the cause.
     const resolvedTitle =
         title
-        ?? (isAwaitingRecovery
+        ?? (creationFailed
+            ? t('sessionHandoff.failure.couldntCreate', { machine: machineCreation?.name ?? t('managedMachines.picker.newMachine') })
+            : isAwaitingRecovery
             ? t('sessionHandoff.recovery.title')
             : isFailureState
                 ? t('sessionHandoff.failure.title')
@@ -663,6 +676,9 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         || operation?.state === 'failed'
         || operation?.state === 'cancelled'
         || outcomeLabel);
+    const routeLine = !route ? null : route.newMachine
+        ? t('sessionHandoff.routeToNewMachine', { session: route.session, source: route.source, machine: route.machine })
+        : t('sessionHandoff.route', { session: route.session, source: route.source, machine: route.machine });
     const operationStopTarget = React.useMemo(() => (
         operation && serverId ? { serverId, snapshot: operation } : undefined
     ), [operation, serverId]);
@@ -670,6 +686,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
         title: resolvedTitle,
+        ...(routeLine ? { subtitle: routeLine } : {}),
         testID: 'session-handoff-progress-modal',
         bodyScroll: 'auto' as const,
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, maxHeightRatio: 0.92 },
@@ -688,7 +705,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 onClose={onClose}
             />
         ),
-    }), [creationFailed, onClose, onRetry, operation, operationStopTarget, operationTerminal, resolvedTitle, styles.retryFooter]);
+    }), [creationFailed, onClose, onRetry, operation, operationStopTarget, operationTerminal, resolvedTitle, routeLine, styles.retryFooter]);
 
     useModalCardChrome(setChrome, chrome);
 

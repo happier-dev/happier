@@ -79,6 +79,12 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     let result: ExecuteSessionHandoffActionResult | null = null;
     let progressDismissed = false;
     const machineName = readManagedMachineSelectionName(selection.managedTarget?.draft);
+    // The dialog's "<session> · <source> → [new] <machine>" line, from the names the sheet showed.
+    const routeMachine = machineName ?? selection.targetMachineLabel;
+    const route = selection.sessionLabel && selection.sourceMachineLabel && routeMachine ? {
+        session: selection.sessionLabel, source: selection.sourceMachineLabel, machine: routeMachine,
+        newMachine: Boolean(selection.managedTarget),
+    } : undefined;
     let creationProgress: ManagedMachineCreationProgress | undefined;
     const openProgress = () => openObservedSessionHandoffProgressModal({
         requestId,
@@ -86,6 +92,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         serverId: args.serverId,
         accountId,
         workspaceSyncEnabled,
+        ...(route ? { route } : {}),
         ...(creationProgress ? { machineCreation: { name: machineName, progress: creationProgress } } : {}),
         onDismiss: () => { progressDismissed = true; if (result?.ok) closePicker(); },
         // Creation failed before the handoff began: the same selection retries with its retained acquisition.

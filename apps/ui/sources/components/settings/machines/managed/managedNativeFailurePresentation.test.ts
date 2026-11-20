@@ -47,7 +47,8 @@ describe('managed native failure Details', () => {
         'permission_denied', 'controller_unavailable', 'credential_unavailable', 'provider_unavailable',
         'controller_retired', 'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired',
     ] as const)('localizes the preset availability refusal %s through the existing Session copy', (code) => {
-        const expected = t(`session.startFailure.cause.${code}`);
+        // The controller refusal says what the machine list says beside the same preset.
+        const expected = code === 'controller_unavailable' ? t('managedMachines.controller.requiredUnnamed') : t(`session.startFailure.cause.${code}`);
         expect(expected).not.toContain('startFailure.cause.');
         expect(describeManagedPresetAvailabilityFailure(code)).toBe(expected);
     });

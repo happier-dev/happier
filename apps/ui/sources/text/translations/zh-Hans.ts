@@ -1247,6 +1247,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   'zh-Hans': {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 当前在 ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → 新的 ${machine}`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · 新机器`,
       createsFirst: "先创建机器，再移动会话。",
@@ -1308,6 +1310,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "没有移动任何内容。你的会话仍在原处运行。",
       chooseAnotherMachine: "选择其他机器",
       chooseSandboxPreset: "选择沙盒预设",
+      couldntCreate: ({ machine }: { machine: string }) => `无法创建 ${machine}`,
       partialLinked: '部分文件已同步，但下一处关联工作区需要处理。会话未在目标位置恢复。请打开详情查看受阻的关联。',
     },
     cancelled: {
@@ -7798,6 +7801,7 @@ export const zhHans: TranslationStructure = {
       openInTreeBrowserLabel: "在树浏览器中打开",
       openFolderLabel: "显示文件夹内容",
       emptyNewFolder: "没有匹配的文件夹。按 ↵ 按原样使用此路径。",
+      typedPathOnly: "按输入的路径使用。",
       favoriteAdd: "添加到收藏",
       favoriteRemove: "从收藏中移除",
       hints: {

@@ -1242,6 +1242,8 @@ const promptLibraryUxRefinementTranslationExtension = {
 const sessionHandoffTranslationExtensions = {
   es: {
     sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ahora en ${machine}`,
+    route: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine}`,
+    routeToNewMachine: ({ session, source, machine }: { session: string; source: string; machine: string }) => `${session} · ${source} → ${machine} (nueva)`,
     managedTarget: {
       selected: ({ name }: { name: string }) => `${name} · máquina nueva`,
       createsFirst: "Primero crea la máquina y luego mueve la sesión.",
@@ -1303,6 +1305,7 @@ const sessionHandoffTranslationExtensions = {
       nothingMoved: "No se movió nada. Tu sesión sigue ejecutándose donde estaba.",
       chooseAnotherMachine: "Elegir otra máquina",
       chooseSandboxPreset: "Elegir una configuración de entorno aislado",
+      couldntCreate: ({ machine }: { machine: string }) => `No se pudo crear ${machine}`,
       partialLinked: 'Se sincronizaron algunos archivos, pero el siguiente espacio de trabajo vinculado necesita atención. La sesión no se reanudó en el destino. Abre los detalles para ver el vínculo bloqueado.',
     },
     cancelled: {
@@ -8101,6 +8104,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       openInTreeBrowserLabel: "Abrir en el navegador de árbol",
       openFolderLabel: "Mostrar contenido de la carpeta",
       emptyNewFolder: "Ninguna carpeta coincide. Pulsa ↵ para usar la ruta tal cual.",
+      typedPathOnly: "Se usa la ruta tal como la escribiste.",
       favoriteAdd: "Añadir a favoritos",
       favoriteRemove: "Quitar de favoritos",
       hints: {

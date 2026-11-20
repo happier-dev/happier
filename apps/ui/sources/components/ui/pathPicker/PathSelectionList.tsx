@@ -678,8 +678,9 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             inputPlaceholder: initialSuggestionMode === 'history' && initialValue && !hasUserEditedInput
                 ? formatPathRelativeToHome(initialValue, machineHomeDir)
                 : t('newSession.pathPicker.enterPathPlaceholder'),
-            // Nothing matches (a new folder name): Enter still uses the path as typed.
-            emptyStateLabel: t('newSession.pathPicker.emptyNewFolder'),
+            // Nothing matches (a new folder name): Enter still uses the path as typed. With no machine to
+            // look in (none chosen yet, or one still to be created) nothing was searched, so it says only that.
+            emptyStateLabel: t(canBrowseMachine ? 'newSession.pathPicker.emptyNewFolder' : 'newSession.pathPicker.typedPathOnly'),
             sections,
             footerHints: [
                 { id: 'navigate', label: '↑↓', description: t('newSession.pathPicker.hints.navigate') },

@@ -19,6 +19,7 @@ import {
 } from './machineSelection/useMachineSelectionListModel';
 import type { MachinePoolSelectionStatus } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
 import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft, ManagedMachineSelectionOffer, ManagedMachineUse } from './machineSelection/managedMachineSelection';
+import type { PresentManagedMachineConfiguration } from './machineSelection/ManagedMachineSelectionOffers';
 
 const ManagedMachineSelectionOffers = retryableLazy<React.ComponentProps<
     typeof import('./machineSelection/ManagedMachineSelectionOffers').ManagedMachineSelectionOffers
@@ -56,6 +57,8 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     onConnectMachine?: () => void;
     /** Called as a preset's or a one-off's configurator opens; a popover host closes itself here. */
     onConfigureManagedMachine?: () => void;
+    /** A host sheet presents the "New machine" review in place of its own body instead of a second dialog. */
+    presentManagedMachineConfiguration?: PresentManagedMachineConfiguration;
     onManagedMachineProjection?: (serverId: string, projection: ManagedMachineDestinationProjection) => void;
     poolSelectionStatus?: MachinePoolSelectionStatus;
     onRefreshMachines?: () => void;
@@ -181,7 +184,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         {props.managedMachines === undefined && props.selectedServerId && props.onSelectManagedMachine ?
             <React.Suspense fallback={null}><ManagedMachineSelectionOffers key={props.selectedServerId} serverId={props.selectedServerId}
                 onOffers={receiveOffers} onUse={props.onSelectManagedMachine} startsSession={props.managedMachineStartsSession}
-                onConfigure={props.onConfigureManagedMachine} /></React.Suspense> : null}
+                onConfigure={props.onConfigureManagedMachine} presentConfiguration={props.presentManagedMachineConfiguration} /></React.Suspense> : null}
         <SelectionList
             testID={props.testID ?? 'new-session-machine-list'}
             currentUiContextCommandScope={props.currentUiContextCommandScope}

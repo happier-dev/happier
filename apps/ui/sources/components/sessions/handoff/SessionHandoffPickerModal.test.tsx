@@ -704,6 +704,9 @@ describe('SessionHandoffPickerModal', () => {
         expect(onResolve).toHaveBeenCalledWith({
             targetMachineId: 'machine_target',
             targetMachineLabel: 'Target machine',
+            // The names the sheet shows, for the progress dialog's route line.
+            sessionLabel: 'happier',
+            sourceMachineLabel: 'Source machine',
             targetPath: '/home/target/happier',
             stateTransfer: 'transfer',
             sourceRootPath: '~/projects/happier',
@@ -1237,6 +1240,9 @@ describe('SessionHandoffPickerModal', () => {
         expect(onResolve).toHaveBeenCalledWith({
             targetMachineId: 'machine_target',
             targetMachineLabel: 'Target machine',
+            // The names the sheet shows, for the progress dialog's route line.
+            sessionLabel: 'happier',
+            sourceMachineLabel: 'Source machine',
             sourceRootPath: '~/projects/happier',
             targetSessionStorageMode: 'persisted',
             stateTransfer: 'transfer',
@@ -1348,12 +1354,12 @@ describe('SessionHandoffPickerModal', () => {
         ];
         machineListByServerIdState = {
             [homeA.id]: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+                { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
         };
         allMachinesState = [
-            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+            { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ];
 
@@ -1399,12 +1405,12 @@ describe('SessionHandoffPickerModal', () => {
         ];
         machineListByServerIdState = {
             [homeA.id]: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+                { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
         };
         allMachinesState = [
-            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
+            { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ];
 
@@ -1432,7 +1438,7 @@ describe('SessionHandoffPickerModal', () => {
         activeServerIdState = homeB.id;
         machineListByServerIdState = {
             [homeA.id]: [
-                createMachineFixture({ id: 'machine_source', activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: 'A source', homeDir: '/Users/tester' } }),
+                createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: 'A source', homeDir: '/Users/tester' } }),
                 createMachineFixture({ id: 'machine_shared', activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: 'A target' } }),
             ],
             [homeB.id]: [
@@ -1476,7 +1482,8 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => { recordMachineRequestSucceeded({ serverId: homeA.id, accountId: 'account-a', machineId: 'machine_shared' }); });
         expect(start().props.disabled).toBe(false);
         await act(async () => { recordMachineRequestFailed({ serverId: homeA.id, accountId: 'account-a', machineId: 'machine_source' }); });
-        expect(start().props.disabled).toBe(true);
+        // The unreachable source replaces the form with its one message; the choices made so far are kept.
+        expect(findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start')).toBeNull();
         expect(screen.tree.findAllByProps({ testID: 'session-handoff-retained-history' }).length).toBeGreaterThan(0);
         await act(async () => { recordMachineRequestSucceeded({ serverId: homeA.id, accountId: 'account-a', machineId: 'machine_source' }); });
         expect(start().props.disabled).toBe(false);
@@ -1554,11 +1561,11 @@ describe('SessionHandoffPickerModal', () => {
     it('falls back to the active machine record when the server-scoped list lags behind', async () => {
         machineListByServerIdState = {
             [homeA.id]: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+                { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local' } },
             ],
         };
         allMachinesState = [
-            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+            { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ];
 
@@ -1613,11 +1620,11 @@ describe('SessionHandoffPickerModal', () => {
     it('renders a second online machine from the authoritative machine storage update', async () => {
         machineListByServerIdState = {
             [homeA.id]: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+                { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local' } },
             ],
         };
         allMachinesState = [
-            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+            { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local' } },
         ];
 
         const onResolve = vi.fn();
@@ -1641,7 +1648,7 @@ describe('SessionHandoffPickerModal', () => {
 
         machineListByServerIdState = {
             [homeA.id]: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
+                { id: 'machine_source', active: true, activeAt: Date.now(), metadata: { displayName: 'Source machine', host: 'source.local' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
         };
@@ -1731,24 +1738,31 @@ describe('SessionHandoffPickerModal', () => {
         screen.unmount();
     });
 
-    it('keeps an unavailable source from moving and explains retained-history continuation without copying files', async () => {
+    it('keeps an unavailable source from moving: one message and the step that works, never a form that cannot succeed', async () => {
         settingsState.sessionHandoffDefaultsV1 = { v: 1, workspaceSyncMode: 'none', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], directTargetMode: 'keep_direct' };
-        allMachinesState = allMachinesState.filter(machine => machine.id !== 'machine_source');
+        // The source is listed but offline (it went away after the menu let the sheet open).
+        allMachinesState = allMachinesState.map(machine => machine.id === 'machine_source'
+            ? createMachineFixture({ ...machine, active: false, activeAt: 0 }) : machine);
         machineListByServerIdState[homeA.id] = allMachinesState;
         let chrome: CustomModalChromeConfig | null = null;
         const onResolve = vi.fn();
+        const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
         const screen = await renderScreen(<SessionHandoffPickerModal
-            onClose={vi.fn()} setChrome={next => { chrome = next; }} onResolve={onResolve}
+            onClose={onClose} setChrome={next => { chrome = next; }} onResolve={onResolve}
             sessionId="sess_1" sourceMachineId="machine_source" serverId={homeA.id}
         />);
-        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', { id: 'machine_target' }); });
-        const start = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
-        expect(start.props.disabled).toBe(true);
         expect(screen.findByTestId('session-handoff-retained-history')).toBeTruthy();
         expect(screen.getTextContent()).toContain('machineRequester.resumeElsewhere');
-        await act(async () => { start.props.onPress(); });
-        expect(onResolve).not.toHaveBeenCalled();
+        // No machine row to pick, no Hand off to press, and the footer doesn't repeat the message.
+        expect(screen.tree.findAllByType(MachineSelector)).toHaveLength(0);
+        const footer = requireCardChrome(chrome).footer;
+        expect(findElementByTestId(footer, 'session-handoff-start')).toBeNull();
+        expect(findElementByTestId(footer, 'session-handoff-start-blocked-reason')).toBeNull();
+        // Continuing from the retained history on another machine leaves the sheet without a handoff.
+        await screen.pressByTestIdAsync('session-handoff-retained-history:continue');
+        await vi.waitFor(() => expect(onResolve).toHaveBeenCalledWith(null));
+        expect(onClose).toHaveBeenCalled();
         await screen.unmount();
     });
 
@@ -1784,6 +1798,34 @@ describe('SessionHandoffPickerModal', () => {
         expect((startButton!.props as { disabled?: boolean }).disabled).toBe(false);
         expect(findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start-blocked-reason')).toBeNull();
         screen.unmount();
+    });
+
+    // After the lazy-load checks: opening the machine list loads the managed offers' modules.
+    it('presents a preset\'s "New machine" review in the sheet\'s own place, not as a second dialog, and comes back on Back', async () => {
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={next => { chrome = next; }}
+            onResolve={vi.fn()} sessionId="sess_1" sourceMachineId="machine_source" serverId={homeA.id} />);
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
+        const list = screen.tree.findByType(NewSessionMachineSelectionContent);
+        const shownBefore = modalMock.spies.show.mock.calls.length;
+        // A preset row's press reaches the shared list's configurator, which asks the host to present the review.
+        await act(async () => {
+            invokeTestInstanceHandler(list, 'presentManagedMachineConfiguration', {
+                serverId: homeA.id, preset: null, accountId: 'account-a', startsSession: false,
+                onUse: list.props.onSelectManagedMachine,
+            });
+        });
+        expect(modalMock.spies.show.mock.calls.length).toBe(shownBefore);
+        expect(requireCardChrome(chrome).title).toBe('managedMachines.picker.newMachine');
+        expect(screen.tree.findAllByType(MachineSelector)).toHaveLength(0);
+        const back = findElementByTestId(requireCardChrome(chrome).leading, 'session-handoff-configuration-back') as React.ReactElement<{ onPress: () => void }>;
+        await act(async () => { back.props.onPress(); });
+        expect(requireCardChrome(chrome).title).not.toBe('managedMachines.picker.newMachine');
+        expect(screen.tree.findAllByType(MachineSelector)).toHaveLength(1);
+        await screen.unmount();
     });
 
     // Last: opening the machine list loads the managed offers' modules, which later lazy-load checks must not see.
