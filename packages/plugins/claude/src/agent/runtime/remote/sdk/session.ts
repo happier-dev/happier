@@ -325,7 +325,7 @@ function projectPromptTransportOutcome(outcome: ClaudeSdkPromptTransportOutcome)
     const reason = sanitizeProviderErrorPreview(outcome.error.message) ?? 'Claude SDK prompt transport failed.';
     const startupFailure = readClaudeMcpStartupFailure(outcome.error);
     const failureCause = projectSessionRuntimeFailureCause(outcome.error, startupFailure ? 'client_start' : 'turn_start', 'agent.turn');
-    return { kind: outcome.kind, reason, failureCause, ...startupFailure };
+    return { kind: outcome.kind, reason, ...startupFailure, failureCause };
 }
 
 function sanitizeProviderErrorPreview(value: unknown): string | null {

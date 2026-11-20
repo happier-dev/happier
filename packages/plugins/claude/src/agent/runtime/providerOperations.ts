@@ -8,6 +8,7 @@ import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/plugin-sdk/agent
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
 import type { ClaudeProviderEvent } from './providerEvents.js';
 import type { ClaudeRuntimeAuthIdentity } from '../auth/services/runtime/requestIdentity.js';
+import type { ClaudeMcpStartupFailureCode } from '../mcp/managedPolicy.js';
 
 /**
  * Claude-provider operations below the canonical AgentRuntime owner.
@@ -127,8 +128,19 @@ export type ClaudeRuntimeTurnOperations = Readonly<{
 
 export type ClaudeRuntimePromptSubmissionOutcome =
   | Readonly<{ kind: 'accepted' }>
-  | Readonly<{ kind: 'rejected_before_effect'; reason: string; failureCause?: SessionRuntimeIssueV1['failureCause']; code?: 'browser_media_unavailable' | 'claude_image_input_unsupported' | 'claude_skill_source_unavailable' | 'claude_managed_mcp_policy_conflict'; retryable?: boolean }>
-  | Readonly<{ kind: 'effect_may_have_occurred'; reason: string; failureCause?: SessionRuntimeIssueV1['failureCause'] }>
+  | Readonly<{
+    kind: 'rejected_before_effect';
+    reason: string;
+    failureCause?: SessionRuntimeIssueV1['failureCause'];
+    code?: ClaudeMcpStartupFailureCode | 'browser_media_unavailable' | 'claude_image_input_unsupported' | 'claude_skill_source_unavailable';
+    retryable?: boolean;
+  }>
+  | Readonly<{
+    kind: 'effect_may_have_occurred';
+    reason: string;
+    failureCause?: SessionRuntimeIssueV1['failureCause'];
+    code?: ClaudeMcpStartupFailureCode;
+  }>
   | Readonly<{ kind: 'custody_observed' }>;
 
 export type ClaudeRuntimePromptSendMeta = Readonly<{
