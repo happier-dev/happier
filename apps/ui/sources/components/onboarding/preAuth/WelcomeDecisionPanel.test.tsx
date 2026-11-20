@@ -32,7 +32,8 @@ it('renders the same display model live and in an inert opening replica', async 
     const [published] = publish.mock.calls[0] ?? [];
     expect(published).toBeDefined();
     const serialized = JSON.stringify(published);
-    expect(serialized).not.toMatch(/home-a|relay\.example\.test|authority|execution|profileRef/);
+    expect(serialized).not.toMatch(/home-a|https:\/\/relay\.example\.test|authority|execution|profileRef/);
+    expect(published?.selfHosting?.display.title).toBe('relay.example.test');
     const replica = await renderScreen(<WelcomeEntryView
         model={JSON.parse(serialized)} compact={false}
     />);
@@ -43,6 +44,15 @@ it('renders the same display model live and in an inert opening replica', async 
     );
     expect(screen.findByTestId('welcome-retention')).toBeTruthy();
     expect(replica.findByTestId('welcome-retention')).toBeTruthy();
+});
+
+it('explains when this build locks the Home choice', async () => {
+    const screen = await renderScreen(
+        <WelcomeDecisionPanel authEntryOptions={baseOptions} canChangeHome={false}
+            onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onContinueWithHomeAuthentication={vi.fn()} />,
+    );
+    expect(screen.findByTestId('welcome-self-hosting')).toBeNull();
+    expect(screen.findByTestId('welcome-home-change-unavailable')).toBeTruthy();
 });
 
 // The controller supplies the camera affordance to the panel as a fact.
@@ -433,6 +443,7 @@ describe('WelcomeDecisionPanel', () => {
             const replica = await renderScreen(<WelcomeEntryView model={JSON.parse(serialized)} compact={false} />);
             expect(replica.findByTestId(support)?.props.accessibilityState?.disabled).toBe(true);
             expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
+            expect(screen.findByTestId('welcome-self-hosting')).toBeNull();
             expect(screen.findByTestId('welcome-scan-existing-home')).toBeNull();
             expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
         } finally {
@@ -586,7 +597,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-auth-loading')).toBeTruthy();
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
-        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-self-hosting')).toBeTruthy();
 
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
@@ -617,7 +628,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-auth-blocked')).toBeTruthy();
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('welcome-use-different-home');
+        await screen.pressByTestIdAsync('welcome-self-hosting');
         await screen.pressByTestIdAsync('welcome-auth-blocked-retry');
 
         expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
@@ -938,7 +949,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-provider-primary')).toHaveLength(0);
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
-        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-self-hosting')).toBeTruthy();
 
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
 
@@ -1103,9 +1114,13 @@ describe('WelcomeDecisionPanel', () => {
                 expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
                 await screen.unmount();
 
-                const chosen = await renderPanel().screenPromise;
+                const selected = renderPanel({ serverUrlForCopy: 'https://relay.example.test:8443' });
+                const chosen = await selected.screenPromise;
                 expect(chosen.getTextContent()).not.toContain(t('welcome.welcomeRunYourOwnHome'));
-                expect(chosen.findByTestId('welcome-use-different-home')).toBeTruthy();
+                expect(chosen.getTextContent()).toContain('relay.example.test:8443');
+                expect(chosen.findByTestId('welcome-use-different-home')).toBeNull();
+                await chosen.pressByTestIdAsync('welcome-self-hosting');
+                expect(selected.callbacks.onChangeRelay).toHaveBeenCalledOnce();
                 await chosen.unmount();
             });
         });
@@ -1119,7 +1134,9 @@ describe('WelcomeDecisionPanel', () => {
         const screen = await screenPromise;
         const notice = screen.findByTestId('welcome-signup-disabled');
 
-        expect(notice?.props.children).toBe(t('personalHome.auth.signupClosed'));
-        expect(notice?.props.children).not.toBe(t('errors.signupDisabled'));
+        // The closed-signup notice is the door-width notice line carrying the policy's own sentence.
+        expect(notice).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('personalHome.auth.signupClosed'));
+        expect(screen.getTextContent()).not.toContain(t('errors.signupDisabled'));
     });
 });

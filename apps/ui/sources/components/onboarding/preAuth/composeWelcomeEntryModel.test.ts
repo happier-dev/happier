@@ -40,6 +40,17 @@ describe('composeWelcomeEntryModel', () => {
         if (userHistory === 'first_time') expect(model.actions).toHaveLength(2);
     });
 
+    it('keeps the Home picker in the corner after selecting a custom Home', () => {
+        const custom = composeWelcomeEntryModel({ ...ownHome, selectedHomeAddress: 'relay.example.test:8443' });
+        expect(custom.homeCorner).toEqual({ kind: 'selected', address: 'relay.example.test:8443' });
+        expect(custom.chooseHomeDestination).toBe('picker');
+        expect(custom.actions.some(({ action }) => action.kind === 'choose_home')).toBe(false);
+        expect(composeWelcomeEntryModel({ ...ownHome, target: { kind: 'none' } }).homeCorner).toEqual({ kind: 'default' });
+        expect(composeWelcomeEntryModel({
+            ...ownHome, allowedNavigation: { ...ownHome.allowedNavigation, changeHome: false },
+        }).homeCorner).toBeUndefined();
+    });
+
     it('places the first-run restore door and self-hosting footer from device and Home facts', () => {
         const input = {
             target: { kind: 'none' },
@@ -53,7 +64,7 @@ describe('composeWelcomeEntryModel', () => {
         const firstRun = composeWelcomeEntryModel(input);
         expect(firstRun.actions[0]?.action).toEqual({ kind: 'scan_or_paste_home', labelRole: 'login' });
         expect(firstRun.restore).toEqual({ title: 'welcome.welcomeSecondaryButton', subtitle: 'welcome.welcomeSecondarySubtitle', icon: 'qr-code' });
-        expect(firstRun.showSelfHostingFooter).toBe(false);
+        expect(firstRun.homeCorner).toEqual({ kind: 'default' });
 
         const returning = composeWelcomeEntryModel({
             ...input,
@@ -63,7 +74,7 @@ describe('composeWelcomeEntryModel', () => {
             placement: { ...input.placement, hasHome: true, platform: 'computer' },
         });
         expect(returning.restore).toEqual({ title: 'welcome.welcomeReturningLoginButton', subtitle: 'welcome.loginSubtitleKeyFirst', icon: 'qr-code' });
-        expect(returning.showSelfHostingFooter).toBe(true);
+        expect(returning.homeCorner).toEqual({ kind: 'default' });
     });
 
     it('keeps Home actions live while optional service discovery is loading', () => {

@@ -149,6 +149,7 @@ describe('WelcomeDecisionPanel on a phone', () => {
             // No Home was requested (no ?server=): the build's own Home, which can generate a key here.
             const screen = await renderScreen(<WelcomeDecisionPanel
                 authEntryOptions={{ ...firstRunOptions, homeTarget: target, requestedHomeTarget: null, homeLabel: 'QA Home',
+                    homePairingAvailable: true,
                     serverUrlForCopy: url, authenticationActions: [{
                         method: { id: 'key_challenge', enabledActions: [{ id: 'provision', mode: 'keyed' }, { id: 'login', mode: 'keyed' }] },
                         action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'generated_key' },

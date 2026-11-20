@@ -41,7 +41,8 @@ export type WelcomeAction =
 export type WelcomeEntryModel = Readonly<{
     heading: 'first_time' | 'returning';
     chooseHomeDestination: 'direct' | 'picker';
-    showSelfHostingFooter: boolean;
+    homeCorner?: Readonly<{ kind: 'default' } | { kind: 'selected'; address: string }>;
+    homeChangeLocked: boolean;
     showWaysHeading: boolean;
     showKeyProvisioningIntro: boolean;
     hasLoginDoor: boolean;
@@ -73,6 +74,8 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
     homeMethods: readonly WelcomeAuthenticationMethod[];
     /** Decision from the exact Home observation, including the client's pairing policy. */
     homePairingAvailable?: boolean;
+    /** The host and port of an explicitly selected custom Home. */
+    selectedHomeAddress?: string;
     /**
      * Exact identity the Home methods were observed from. Only an equal service
      * identity may be a same-server (`self`) deployment eligible for dedupe.
@@ -352,7 +355,10 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     return {
         heading: input.userHistory,
         chooseHomeDestination,
-        showSelfHostingFooter: !isRestore && hasHome && input.target.kind === 'none' && input.allowedNavigation.changeHome,
+        homeCorner: !isRestore && input.allowedNavigation.changeHome
+            ? input.selectedHomeAddress ? { kind: 'selected', address: input.selectedHomeAddress } : { kind: 'default' }
+            : undefined,
+        homeChangeLocked: !isRestore && !input.allowedNavigation.changeHome,
         showWaysHeading: !isRestore && firstTime && !hasLoginDoor,
         showKeyProvisioningIntro,
         hasLoginDoor,

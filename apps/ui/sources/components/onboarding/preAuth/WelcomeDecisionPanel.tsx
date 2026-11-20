@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isHappierCloudServerUrl } from '@happier-dev/cli-common/happierCloud';
 import { usePendingTerminalConnect } from '@/hooks/session/usePendingTerminalConnect';
 
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
@@ -7,7 +8,7 @@ import { readAccountServiceDisplayName } from '@/components/account/auth/account
 import { createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { useHasCompletedAuthOnce, useLastSignInMethod } from '@/sync/domains/state/onboardingUiState';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 import { presentUseServiceAsHomeSheet } from '@/components/homes/journeys/serviceHome/UseServiceAsHomeSheet';
 import { resolveReverseQrTargetProfileId } from '@/components/onboarding/restore/loginWays';
@@ -102,6 +103,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const accountServiceEntry = props.accountServiceEntry;
     const requestedHomeTarget = options.requestedHomeTarget;
     const homeTarget = options.homeTarget;
+    const customHomeUrl = requestedHomeTarget && !isHappierCloudServerUrl(options.serverUrlForCopy)
+        ? canonicalizeServerUrl(options.serverUrlForCopy) : null;
     // A build without a default Home has nothing to report on: status lines about "this Home" would
     // describe a Home nobody chose.
     const hasHome = homeTarget != null && options.serverUrlForCopy.trim().length > 0;
@@ -153,6 +156,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     : { kind: 'none' },
         homeMethods,
         homePairingAvailable: options.homePairingAvailable,
+        selectedHomeAddress: customHomeUrl ? new URL(customHomeUrl).host : undefined,
         ...(homeTarget && homeMethods.length > 0 && accountServiceEntry
             && createServerUrlComparableKey(accountServiceEntry.endpoint.url) === createServerUrlComparableKey(options.serverUrlForCopy)
             && (!accountServiceEntry.endpoint.serverIdentityId || accountServiceEntry.endpoint.serverIdentityId === options.observedHomeServerIdentityId)

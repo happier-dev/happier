@@ -20,7 +20,7 @@ type Action = Readonly<{
 }>;
 
 type Notice = Readonly<{
-    slot: 'home' | 'service' | 'recovery';
+    slot: 'home' | 'service' | 'recovery' | 'home_change';
     testID: string;
     kind: 'loading' | 'unavailable' | 'warning';
     title: string;
@@ -72,7 +72,7 @@ function describeAction(
             return { ...frame, testID: 'welcome-scan-existing-home', title: t(model.restore.title),
                 subtitle: t(model.restore.subtitle), iconName: model.restore.icon };
         case 'choose_home':
-            if (model.showSelfHostingFooter) return null;
+            if (model.homeCorner && model.chooseHomeDestination === 'picker') return null;
             return model.chooseHomeDestination === 'picker'
                 ? { ...frame, testID: 'welcome-use-different-home', title: t('welcome.useDifferentHome'),
                     subtitle: t('welcome.useDifferentHomeSubtitle', { home }), iconName: 'house' }
@@ -160,6 +160,11 @@ export function projectWelcomeEntryViewModel(
         if (display) (row.emphasis === 'tertiary' ? quietWays : doors).push({ index, display });
     });
     const notices: Notice[] = [];
+    if (model.homeChangeLocked && input.policy?.kind !== 'invalid'
+        && !(input.policy?.kind === 'managed' && input.policy.field === 'home')) {
+        notices.push({ slot: 'home_change', testID: 'welcome-home-change-unavailable', kind: 'unavailable',
+            title: t('welcome.useDifferentHome'), reason: t('common.unavailable') });
+    }
     if (status === 'loading') {
         notices.push({ slot: 'home', testID: 'welcome-auth-loading', kind: 'loading', title: t('common.loading') });
     } else if (status === 'unavailable' || status === 'incompatible') {
@@ -226,8 +231,13 @@ export function projectWelcomeEntryViewModel(
             testID: 'welcome-auth-entry-degraded', kind: 'warning', title: t('welcome.signInOptionsPartialTitle'),
             action: retry('welcome-auth-entry-degraded-retry'),
         } : undefined,
-        selfHosting: model.showSelfHostingFooter ? {
-            display: { testID: 'welcome-self-hosting', title: t('welcome.welcomeRunYourOwnHome'), presentation: 'pill', iconName: 'hard-drives' },
+        selfHosting: model.homeCorner ? {
+            display: {
+                testID: 'welcome-self-hosting',
+                title: model.homeCorner.kind === 'selected' ? model.homeCorner.address : t('welcome.welcomeRunYourOwnHome'),
+                presentation: 'pill',
+                iconName: 'hard-drives',
+            },
         } : undefined,
     };
 }
