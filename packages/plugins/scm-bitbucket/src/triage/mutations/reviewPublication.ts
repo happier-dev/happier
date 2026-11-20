@@ -575,8 +575,7 @@ export async function publishBitbucketReview(
       : undefined;
     if (summaryRef === null
       && summaryFailure === undefined
-      && claim.instructions.verdict === 'dispatch'
-      && foldedEntries.every((folded) => claim.instructions.entries[folded.index] === 'dispatch')) {
+      && claim.instructions.verdict === 'dispatch') {
       const summary = await writeComment(dependencies, [
         ...foldedEntries.map((folded) => `${folded.entry.body}\n\n${folded.marker}`),
         `${input.plan.verdict.body}\n\n${marker}`,
