@@ -10,7 +10,6 @@ import {
   observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
-import { VERCEL_IDENTITY_SCOPES } from './oauth.js';
 import { ACCOUNT_PURPOSE, nativeFetch, PROJECT_REQUIRED, readAccountScope } from './machine/credentials.js';
 import { createVercelNativeClient } from './machine/nativeClient.js';
 import { createVercelPreparationClient, VERCEL_PREPARATION_HOME, VercelPreparationInputSchema, VercelPreparedArtifactSchema, VercelPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
@@ -76,7 +75,7 @@ export const PLUGIN = definePlugin({
     declaration: { title: label('account'), ui: { category: 'cloud-machines' }, capabilities: ['usage'], authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
       // No callbackUrl: the attempt uses the Home's Connected Account relay. The Home advertises the public client.
-      id: 'oauth', kind: 'oauthAuthorizationCode', title: label('signIn'), scopes: [...VERCEL_IDENTITY_SCOPES], pkce: 'required',
+      id: 'oauth', kind: 'oauthAuthorizationCode', title: label('signIn'), scopes: ['openid', 'email', 'profile', 'offline_access'], pkce: 'required',
       outcomeReconciliation: 'none', postAuthenticationFieldIds: ['teamId', 'projectId'],
       configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
         { ...scopeFields[0], description: label('signInTeamIdDescription') }, scopeFields[1],

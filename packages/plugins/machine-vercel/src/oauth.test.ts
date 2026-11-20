@@ -56,6 +56,7 @@ async function harness(
     attempt?: 'connect' | 'reconnect';
     values?: Record<string, string>;
     publicClient?: boolean;
+    publicClientScopes?: string[];
     teams?: readonly { id: string; name: string }[];
     retained?: Record<string, string>;
   } = {},
@@ -127,7 +128,7 @@ async function harness(
   const getPublicOAuthClient = vi.fn(async () =>
     options.publicClient === false
       ? null
-      : { clientId, scopes: ['openid', 'email', 'profile', 'offline_access'] },
+      : { clientId, scopes: options.publicClientScopes ?? ['openid', 'email', 'profile', 'offline_access'] },
   );
   const values: Record<string, string> = { ...options.values };
   const attempt =
@@ -273,7 +274,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
   ] as const)(
     'begins a %s with the Home public client and PKCE (prompt=consent: %s)',
     async (attempt, consent) => {
-      const h = await harness({ attempt });
+      const h = await harness({ attempt, publicClientScopes: ['openid', 'offline_access'] });
       const result = await h.mode.begin(
         { callbackUrl, state: 'attempt-1.nonce', pkce },
         h.authentication,
@@ -292,7 +293,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
         client_id: clientId,
         redirect_uri: callbackUrl,
         response_type: 'code',
-        scope: 'openid email profile offline_access',
+        scope: 'openid offline_access',
         state: 'attempt-1.nonce',
         code_challenge: 'challenge-value',
         code_challenge_method: 'S256',

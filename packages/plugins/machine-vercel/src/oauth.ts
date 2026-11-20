@@ -39,12 +39,6 @@ import {
  * refresh tokens rotate; `prompt=consent` forces consent again.
  */
 export const VERCEL_OAUTH_ISSUER = 'https://vercel.com';
-export const VERCEL_IDENTITY_SCOPES = [
-  'openid',
-  'email',
-  'profile',
-  'offline_access',
-] as const;
 const tokenUrl = `${origin}/login/oauth/token`;
 const userinfoUrl = `${origin}/login/oauth/userinfo`;
 const revokeUrl = `${origin}/login/oauth/token/revoke`;
@@ -84,45 +78,21 @@ function signalOf(context: Pick<Context, 'signal'>, signal?: AbortSignal) {
   return signal ? AbortSignal.any([context.signal, signal]) : context.signal;
 }
 
-/** The grant's client: retained from its attempt, or this Home's advertised public client when beginning. */
-async function client(
+/** Completion, refresh and revocation use the client that issued the grant. */
+async function retainedClientId(
   context: Context,
   store: Pick<ConnectedAccountCredentialStore, 'get'>,
   signal: AbortSignal,
-  beginning = false,
-) {
+): Promise<string> {
   if (context.configuration.target.modeId !== 'oauth')
     throw new OAuthFailure(reconnect());
   const retained = await store.get('oauthClientId', { signal });
   signal.throwIfAborted();
-  if (retained !== null) {
-    if (!validToken(retained))
-      throw new OAuthFailure(
-        reconnect('Reconnect Vercel to restore the sign-in client.'),
-      );
-    return { clientId: retained, scopes: [...VERCEL_IDENTITY_SCOPES] };
-  }
-  if (!beginning)
+  if (!validToken(retained))
     throw new OAuthFailure(
       reconnect('Reconnect Vercel to restore the sign-in client.'),
     );
-  const selected = await context.configuration.getPublicOAuthClient?.({
-    signal,
-  });
-  signal.throwIfAborted();
-  if (!selected || !validToken(selected.clientId)) {
-    throw new OAuthFailure({
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        'vercel_oauth_public_client_unavailable',
-        'This Home does not offer Sign in with Vercel. Connect with an access token instead.',
-      ),
-    });
-  }
-  return {
-    clientId: selected.clientId,
-    scopes: [...new Set([...VERCEL_IDENTITY_SCOPES, ...selected.scopes])],
-  };
+  return retained;
 }
 
 async function request(
@@ -434,12 +404,19 @@ export const vercelOAuthMode: Extract<
     const signal = signalOf(context, options?.signal);
     signal.throwIfAborted();
     try {
-      const selected = await client(
-        context,
-        context.attemptCredentials,
-        signal,
-        true,
-      );
+      if (context.configuration.target.modeId !== 'oauth')
+        return reconnect();
+      const selected = await context.configuration.getPublicOAuthClient?.({ signal });
+      signal.throwIfAborted();
+      if (!selected || !validToken(selected.clientId)) {
+        return {
+          status: 'unavailable',
+          diagnostic: diagnostic(
+            'vercel_oauth_public_client_unavailable',
+            'This Home does not offer Sign in with Vercel. Connect with an access token instead.',
+          ),
+        };
+      }
       if (input.pkce.method !== 'S256' || !validToken(input.pkce.challenge))
         return reconnect('Restart the connection with its PKCE challenge.');
       await context.attemptCredentials.set('oauthClientId', selected.clientId, {
@@ -472,7 +449,7 @@ export const vercelOAuthMode: Extract<
     const signal = signalOf(context, options?.signal);
     signal.throwIfAborted();
     try {
-      const { clientId } = await client(
+      const clientId = await retainedClientId(
         context,
         context.attemptCredentials,
         signal,
@@ -621,7 +598,7 @@ export async function refreshVercelOAuth(
   const signal = signalOf(context, options?.signal);
   signal.throwIfAborted();
   try {
-    const { clientId } = await client(context, context.credentials, signal);
+    const clientId = await retainedClientId(context, context.credentials, signal);
     const refresh = await context.credentials.get('refreshToken', { signal });
     if (!validToken(refresh))
       throw new OAuthFailure(
@@ -673,7 +650,7 @@ export async function revokeVercelOAuth(
     ),
   };
   try {
-    const { clientId } = await client(context, context.credentials, signal);
+    const clientId = await retainedClientId(context, context.credentials, signal);
     const token = await context.credentials.get('refreshToken', { signal });
     if (!validToken(token)) return manual;
     const response = await request(context, revokeUrl, signal, {
