@@ -2822,8 +2822,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     let preparedHostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
     let observePendingOperation = existingAdmission?.observePendingOperation;
     const deploymentAuthorization = ctx.externalActionExecutionAuthorization;
-    const authorizedCandidate = deploymentAuthorization?.binding.deploymentCandidatePublication?.reviewed;
-    const confirmation = ctx.presentUserConfirmation;
+    // Reviewed provider children inherit the signed root. The candidate belongs to that root's admission.
+    const authorizedCandidate = deploymentAuthorization?.binding.actionId === actionId
+      ? deploymentAuthorization.binding.deploymentCandidatePublication?.reviewed : undefined;
+    const confirmation = ctx.presentUserConfirmation?.actionId === actionId ? ctx.presentUserConfirmation : undefined;
     const compactRollout = confirmation?.reviewDigest !== undefined && readDeploymentRolloutSemanticInput(actionId, semanticInput);
     let deploymentConfirmation: ReturnType<typeof admitPresentUserConfirmationV1> = null;
     if (!existingAdmission && (authorizedCandidate !== undefined || confirmation?.reviewedDeploymentInput !== undefined || compactRollout)) {

@@ -921,6 +921,7 @@ describe('deployment UI Action callbacks', () => {
         { action: 'deploy', mode: 'plain', choice: 'confirms' },
         { action: 'deploy', mode: 'e2ee', choice: 'confirms' },
         { action: 'deploy', mode: 'plain', choice: 'cancels' },
+        { action: 'platform deploy', mode: 'plain', choice: 'confirms' },
         { action: 'redeploy PostgreSQL', mode: 'plain', choice: 'confirms' },
         { action: 'image', mode: 'plain', choice: 'confirms' },
         { action: 'rebuild', mode: 'plain', choice: 'confirms' },
@@ -942,7 +943,8 @@ describe('deployment UI Action callbacks', () => {
             environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(serverId);
-        const deploy = action === 'deploy' || action === 'redeploy PostgreSQL';
+        const platform = action === 'platform deploy';
+        const deploy = action === 'deploy' || action === 'redeploy PostgreSQL' || platform;
         const actionId = deploy ? 'deployments.deploy' : 'deployments.promote';
         const pins = { serverId: homeId, environmentId: environment.id, expectedRevision: environment.revision,
             targetLinkId: 'target-link', expectedTargetLinkRevision: 1, requestKey: 'controller-prepared-request',
@@ -959,7 +961,9 @@ describe('deployment UI Action callbacks', () => {
         const receivedRequestIds: Array<string | undefined> = [];
         const outcomes: { ok: boolean; errorCode?: string }[] = [];
         let effects = 0;
+        let receiptAdmissions = 0;
         let preparations = 0;
+        const providerAction = { pluginId: 'fixture.platform', localId: 'deploy' };
         const controllerReview = { summary: action === 'redeploy PostgreSQL'
             ? 'Redeploy PostgreSQL from its live revision, keeping the data volume'
             : 'Deploy the reviewed Compose services', sourceMethod: 'storedCompose',
@@ -977,17 +981,32 @@ describe('deployment UI Action callbacks', () => {
             resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.id } }),
             prepareDeploymentAction: async ({ input }) => {
                 // The installed controller authors a new candidate for raw intent. Reviewed refs retain that candidate.
+                if (platform) {
+                    if (!('contentArtifactId' in input)) preparations += 1;
+                    return { input: 'contentArtifactId' in input ? input : prepared, preview: controllerReview,
+                        hostReviewedChildren: { children: [{ action: providerAction, role: 'deploy' }] } };
+                }
                 if ('contentArtifactId' in input) return { input, preview: controllerReview };
                 preparations += 1;
                 return { input: preparations === 1 ? prepared : { ...prepared,
                     requestKey: `controller-prepared-request-${preparations}`,
                     contentArtifactId: `artifact-candidate-${preparations}` }, preview: controllerReview };
             },
-            deploymentAction: async (_actionId, effectInput) => {
+            deploymentAction: async (_actionId, effectInput, context) => {
                 expect(effectInput).toEqual(prepared);
-                effects += 1;
+                receiptAdmissions += 1;
+                if (platform) {
+                    const provider = await context.hostReviewedChild!.invoke({ action: providerAction, role: 'deploy',
+                        input: { deploymentId: 'reviewed-deployment' } });
+                    if (!provider.ok) return provider;
+                } else effects += 1;
                 return { ok: true, environmentId: environment.id, revision: 2,
                     deploymentId: 'reviewed-deployment', deploymentRevision: 1, state: 'succeeded' };
+            },
+            invokeContributedAction: async ({ action }) => {
+                expect(action).toEqual(providerAction);
+                effects += 1;
+                return { ok: true, result: null };
             },
             approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: account.accountId,
                 read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
@@ -1018,6 +1037,7 @@ describe('deployment UI Action callbacks', () => {
                 admissions.push({ authority, reviewDigest: transport.invocation.presentUserConfirmation?.reviewDigest });
                 const result = await receiver.execute(actionId, input, {
                     surface: transport.invocation.surface, authority, actionCaller: transport.invocation.caller,
+                    actionsSettings: resolveActionsSettingsV1FromState({ settings: await account.readSettings() }),
                     presentUserConfirmation: transport.invocation.presentUserConfirmation,
                     serverId, serverIdentityId: homeId, runtimeAccountId: account.accountId,
                     externalActionTarget: transport.target, externalActionExecutionAuthorization: transport.authorization,
@@ -1045,6 +1065,7 @@ describe('deployment UI Action callbacks', () => {
                     { authority: 'present_user', reviewDigest: expect.any(String) }]);
                 expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }, { ok: true }]);
                 expect(effects).toBe(1);
+                expect(receiptAdmissions).toBe(1);
                 expect(receivedInputs[1]).toEqual(receivedInputs[0]);
                 expect(receivedReviewedInputs).toEqual([undefined, prepared]);
                 expect(preparations).toBe(1);
@@ -1054,6 +1075,7 @@ describe('deployment UI Action callbacks', () => {
                 await expect(run).rejects.toMatchObject({ code: 'approval_canceled' });
                 expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }]);
                 expect(effects).toBe(0);
+                expect(receiptAdmissions).toBe(0);
             }
             expect(Modal.confirm).not.toHaveBeenCalled();
             expect(nativeReview.shown).toHaveLength(1);
