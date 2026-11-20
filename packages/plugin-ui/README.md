@@ -661,6 +661,27 @@ and Back returns to their parent. Checkbox leaves stay open; `SheetMenu` keeps
 all choices open until its explicit close control. These overlays require the
 existing presentation host; a standalone hosted-web frame does not provide it.
 
+### Review summaries (0.3 development source)
+
+Import `HappierReviewSummary` and `projectHappierReviewGlance` from
+`@happier-dev/plugin-ui/components` to present a related Review. Pass the saved
+Review relation into the existing host Resource reader:
+
+```ts
+const reference = { hostRead: 'review.get', input: { reviewId } } as const;
+```
+
+Use `useLivePluginResourceProjection` from `@happier-dev/plugin-ui/hostApi`
+with that reference. Its decoded value contains the canonical `review` and
+`human` projections. Give `projectHappierReviewGlance` the current round, the
+Review projection and localized words, then pass its result to the summary's
+`glance` prop. The shared projection decides the finding counts and status.
+Keep loading and unavailable presentation beside the summary, and use
+`host.openResource({ kind: 'artifact', artifactId: reviewId })` for its open
+action. When the containing item has no saved Review relation, omit the summary
+and its Resource subscription. The bundled [GitHub PR summary](../plugins/scm-github/src/ui/detail/happierReviewSummary.tsx)
+demonstrates this composition.
+
 ### Bot identity and page layout (0.3 development source)
 
 Use `BotFace` with a Bot's public saved `face` value, a stable `seed` and a
