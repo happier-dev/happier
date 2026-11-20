@@ -80,10 +80,10 @@ describe('WelcomeDecisionPanel native email/password entry', () => {
         const screen = await screenPromise;
 
         // The login action must reach its own controller with sign-in wording.
-        expect(screen.findByTestId('welcome-email-password-login-title')?.props.children)
+        expect(screen.findByTestId('welcome-email-password-login')?.props.accessibilityLabel)
             .toBe('Email and password');
         // The extra provision action must not repeat the generic "New here?" card.
-        expect(screen.findByTestId('welcome-email-password-provision-title')?.props.children)
+        expect(screen.findByTestId('welcome-email-password-provision')?.props.accessibilityLabel)
             .toBe(t('settingsAccount.nativePassword.signUpWithEmail'));
         expect(screen.findAllHostsByTestId('restore-new-account')).toHaveLength(1);
 
