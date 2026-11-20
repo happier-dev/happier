@@ -78,6 +78,12 @@ In unreleased 0.3 development, reopening an account with a pending sign-in shows
 one **Sign-in in progress** row. Choose **Continue** to reopen that attempt or
 **Cancel** to end it; opening the account page alone does not expand the form.
 
+For a token-based connection that supports verified reconnect, open the
+Connected Account and choose **Replace** or **Sign in again**. Happier checks
+the replacement token with the service before saving it. If the service refuses
+the token, Happier keeps the previous one. After Happier saves the verified token,
+the **Signed out** status clears.
+
 Some self-hosted services in unreleased 0.3 development source offer installation
 on a selected machine before sign-in. Review the Machine setup changes and run
 Apply; the same connection flow opens sign-in after installation succeeds.

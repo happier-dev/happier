@@ -16,8 +16,11 @@ import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } f
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
-import { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -29,6 +32,7 @@ import { ManagedListInputV1Schema, ManagedListOutputV1Schema, managedMachineActi
 
 const managedListPath = managedMachineActionEndpointPathV1('machines.managed.list');
 
+const route = vi.hoisted(() => ({ params: {} as Record<string, string>, push: vi.fn() }));
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
 // Native HTTP is a platform boundary. Home/vendor HTTP below uses the installed
@@ -39,7 +43,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ params: () => route.params, router: { push: route.push } }).module);
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
@@ -72,7 +76,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const [{ preparePublicAuthorInventory, prepareAuthenticationInventory, answerAttemptTransaction }, { ConnectedAccountSetupController },
+const [{ preparePublicAuthorInventory, prepareAuthenticationInventory, answerAttemptTransaction }, { ConnectedAccountServiceView, ConnectedAccountSetupController },
     { useMachineAdministrationTargetSelection }, { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 },
     { InjectedAuthProvider }, { AppShellPluginUiProjectionProvider },
     { PluginAccountAvailabilityMaterializationsReadResponseV1Schema, PluginAccountAvailabilityIntentsListResponseV1Schema,
@@ -157,6 +161,8 @@ const runtimePlatformOsDescriptor = Object.getOwnPropertyDescriptor(runtimePlatf
 
 
 afterEach(async () => {
+    route.params = {};
+    route.push.mockClear();
     const { getInstalledPluginUiClientExecutableComposition } = await import('@/components/plugins/reactNative/clientExecutableContributions');
     await getInstalledPluginUiClientExecutableComposition().unload();
     await connection?.dispose();
@@ -201,7 +207,7 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
 }
 
 async function restorePortableFixture(requestedService = service, homeClient = false, vendorResponseReady?: Promise<void>, machinePresence: boolean | 'online' | 'legacy' | 'guests' | 'mixed' = false, offlineMachineId?: string, vendorStatus = 503,
-    accountsReady?: Promise<void>) {
+    accountsReady?: Promise<void>, rejectVercelToken?: string) {
     const accountId = 'portable-controller';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const serverUrl = 'https://portable-controller.test';
@@ -217,6 +223,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
     } }, features: {
         plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
     } });
+    homes.answer(serverId, '/v4/connect/qualified/accounts', { body: { service: requestedService, accounts: [] } });
     homes.answer(serverId, '/v1/features', { body: features });
     homes.answer(serverId, '/v1/features/authenticated', { body: features });
     homes.answer(serverId, '/v1/account/encryption/currentness', {
@@ -282,6 +289,9 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 vendorRequests.push(request.href);
                 vendorCredentialMatches.push(new Headers(init?.headers).get('authorization') === 'Bearer portable-cloudflare-token-fixture');
                 if (request.origin === 'https://api.vercel.com') {
+                    if (rejectVercelToken && new Headers(init?.headers).get('authorization') === `Bearer ${rejectVercelToken}`) {
+                        return Response.json({ error: { code: 'invalid_token' } }, { status: 401 });
+                    }
                     if (request.pathname === '/v2/teams') return Response.json({
                         teams: [{ id: 'team_fixture', name: 'Fixture team' }], pagination: { next: null },
                     });
@@ -323,10 +333,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 return Response.json(SharedSavedSecretPromoteOutputV1Schema.parse({ resourceId: promotion.resourceId, settingsVersion: 0,
                     connectedAccountCredential: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'configured-account-1' } }));
             }
-            if (request.pathname === '/v4/connect/qualified/accounts') {
-                await accountsReady;
-                return Response.json({ service: requestedService, accounts: [] });
-            }
+            if (request.pathname === '/v4/connect/qualified/accounts') await accountsReady;
             return homes.request(input, init);
         },
     });
@@ -896,6 +903,124 @@ it.each(['configurationRequired', 'awaitingManual'] as const)('recovers Vercel f
         expect(fixture.machineReads).toBe(0);
     } finally { await screen.unmount(); }
 });
+
+it('verifies Replace before rotating the held Vercel token and clearing needs sign-in', () => withPortableSheetBrowser(async () => {
+    const invalidToken = 'fixture-vercel-invalid';
+    const replacement = 'fixture-vercel-replacement';
+    const original = 'fixture-vercel-original';
+    const fixture = await restorePortableFixture(vercel, false, undefined, false, undefined, 503, undefined, invalidToken);
+    const resourceId = 'held-vercel-token';
+    const ref = formatSharedSavedSecretRefV1(resourceId);
+    const heldRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const nextRevision = 'csr_123456789ABCDEFGHJKMNPQRST';
+    const configurationRevision = 'configured-vercel';
+    const account = { service: vercel, accountId: 'work-vercel' };
+    const seal = (kind: 'credential' | 'configuration', payload: unknown) => sealQualifiedConnectedAccountContentEnvelope({
+        kind, accountMode: 'plain', payload, randomBytes: size => new Uint8Array(size),
+    });
+    let profile = QualifiedConnectedAccountProfileV4Schema.parse({
+        ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned', status: 'needs_reauth',
+        credentialRevision: heldRevision, configurationReady: true, configurationRevision, savedSecretResourceIds: [resourceId],
+    });
+    let health: ReturnType<typeof QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse>['health'] = { v: 1, status: 'needs_reauth', reconnectRequired: true };
+    let content = seal('credential', { v: 1, values: {}, secretRefs: { token: ref } });
+    let metadata: Record<string, unknown> = { kind: 'token', displayName: 'Fixture team', scopes: [] };
+    let material = { v: 1, name: 'Work token', kind: 'token', value: original };
+    let secretRevision = 1;
+    let listUnavailable = true;
+    const publishProfile = async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [profile] });
+    };
+    const entry = () => ({
+        ref, source: 'shared_resource', relationship: 'owner', name: material.name, kind: material.kind,
+        encryptionMode: 'plain', ownerAccountId: 'portable-controller', revision: secretRevision, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+        audience: { accounts: [], teams: [], groups: [] },
+    });
+    homes.answer(fixture.serverId, '/v4/connect/qualified/accounts', { select: () => listUnavailable
+        ? { status: 503, body: { error: 'fixture_list_unavailable' } }
+        : { body: { service: vercel, accounts: [profile] } } });
+    homes.answer(fixture.serverId, 'GET /v4/connect/qualified/credential', { select: () => ({
+        body: { ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned',
+            credentialRevision: profile.credentialRevision, configurationRevision, metadata, content, health },
+    }) });
+    homes.answer(fixture.serverId, 'GET /v4/connect/qualified/configuration', { body: {
+        target: { kind: 'account', ref: account }, authenticationModeId: 'token',
+        revisionSemantics: 'revisioned', credentialRevision: heldRevision, configurationRevision,
+        configurationContent: seal('configuration', { values: { teamId: 'team_fixture' }, secretRefs: {} }),
+    } });
+    homes.answer(fixture.serverId, '/v1/account/saved-secrets/resources', { select: () => ({ body: { resources: [entry()] } }) });
+    homes.answer(fixture.serverId, '/v1/account/saved-secrets/resources/materials', { select: () => ({ body: {
+        resources: [{ resourceId, encryptionMode: 'plain', entry: entry(),
+            storedContent: { t: 'plain', v: material }, recipientEnvelope: null }],
+    } }) });
+    homes.answer(fixture.serverId, SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.update'], { select: input => {
+        const update = SharedSavedSecretUpdateInputV1Schema.parse(input);
+        expect(update).toMatchObject({ resourceId, expectedRevision: secretRevision });
+        if (update.storedContent.t !== 'plain' || update.storedContent.v.v !== 1) throw new Error('Expected a plain token');
+        material = update.storedContent.v;
+        secretRevision += 1;
+        return { body: { resourceId, revision: secretRevision } };
+    } });
+    homes.answer(fixture.serverId, 'POST /v4/connect/qualified/credential', { select: input => {
+        const mutation = QualifiedConnectedAccountCredentialMutationV4Schema.parse(input);
+        expect(mutation).toMatchObject({ ref: account, expectedCredentialRevision: heldRevision,
+            expectedConfigurationRevision: configurationRevision, savedSecretResourceIds: [resourceId] });
+        content = mutation.content;
+        metadata = mutation.metadata;
+        profile = { ...profile, credentialRevision: nextRevision };
+        return { body: { success: true, credentialRevision: nextRevision, configurationRevision } };
+    } });
+    homes.answer(fixture.serverId, 'PATCH /v4/connect/qualified/credential/health', { select: async input => {
+        const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input);
+        expect(patch).toMatchObject({ ref: account, expectedCredentialRevision: nextRevision, expectedConfigurationRevision: configurationRevision,
+            health: { status: 'connected', reconnectRequired: false } });
+        health = patch.health;
+        profile = { ...profile, status: 'connected' };
+        await publishProfile();
+        return { body: { success: true, credentialRevision: nextRevision, configurationRevision } };
+    } });
+    await publishProfile();
+    const [{ captureActiveServerAccountScopeLifetime }, { refreshSavedSecretCatalog }] = await Promise.all([
+        import('@/sync/domains/scope/activeServerAccountScope'), import('@/sync/engine/settings/savedSecretCatalogEngine'),
+    ]);
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected active Vercel fixture Account');
+    await refreshSavedSecretCatalog(lifetime.scope, { includeMaterial: false });
+    route.params = { ...vercel, accountId: account.accountId };
+    const { ModalProvider } = await import('@/modal');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={fixture.credentials}>
+        <AppShellPluginUiProjectionProvider><ModalProvider><ConnectedAccountServiceView /></ModalProvider></AppShellPluginUiProjectionProvider>
+    </InjectedAuthProvider>);
+    try {
+        const replace = 'qualified-account-detail:key:replace';
+        await vi.waitFor(() => expect(screen.findHostByTestId(replace), screen.getTextContent()).not.toBeNull());
+        await vi.waitFor(() => expect(fixture.paths).toContain('/v4/connect/qualified/accounts'));
+        expect(screen.findHostByTestId('qualified-account-detail:signed-out-banner:sign-in-again')).not.toBeNull();
+        expect(screen.findHostByTestId('qualified-account-detail:live-unavailable')).toBeNull();
+        await screen.pressByTestIdAsync(replace);
+        expect(route.push).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token'), screen.getTextContent()).not.toBeNull());
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', invalidToken));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error'), screen.getTextContent()).not.toBeNull());
+        await screen.pressByTestIdAsync('connected-account:error-details-toggle');
+        expect(screen.findHostByTestId('connected-account:error-details-code')?.props.children).toContain('vercel_invalid_token');
+        expect(fixture.vendorRequests).toContain('https://api.vercel.com/v2/teams/team_fixture');
+        expect({ value: material.value, secretRevision, status: profile.status, credentialRevision: profile.credentialRevision })
+            .toEqual({ value: original, secretRevision: 1, status: 'needs_reauth', credentialRevision: heldRevision });
+
+        listUnavailable = false;
+        await screen.pressByTestIdAsync('connected-account:error:retry');
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token'), screen.getTextContent()).not.toBeNull());
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', replacement));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(profile).toMatchObject({ status: 'connected', credentialRevision: nextRevision }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:signed-out-banner')).toBeNull());
+        expect({ value: material.value, secretRevision }).toEqual({ value: replacement, secretRevision: 2 });
+    } finally { await screen.unmount(); }
+}));
 
 it('renders Vercel configuration and secret token fields with a stale registry after effect replay', async () => {
     const fixture = await restorePortableFixture(vercel);

@@ -4,14 +4,17 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
     ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
-import type {
-    PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import {
+    isAccountDirectConnectedAccountModeV1,
+    type PluginConnectedAccountAuthenticationModeV2,
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type {
     QualifiedConnectedAccountProfileV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type {
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
+import { buildCredentialsSecretRoute } from '../collection/connectedServicesCollectionRoutes';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -133,6 +136,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     machineScopeLine?: React.ReactNode;
     /** The selected account retains its page while this controller-owned sign-in runs. */
     signInFlow?: React.ReactNode;
+    signInUnavailable?: React.ReactNode;
     /** The account detail's in-place rename (lab D2). */
     onRenameAccount?(account: QualifiedConnectedAccountRef, label: string): void | boolean | Promise<void | boolean>;
     onConfigureAccount?(account: QualifiedConnectedAccountRef): void;
@@ -415,6 +419,16 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         const accountIsRevisioned =
             account.revisionSemantics === 'revisioned';
         const authenticationMode = props.modes.find((mode) => mode.id === account.authenticationModeId) ?? null;
+        const onReconnect = canReconnect(account) ? () => props.onBeginReconnect?.(account.ref) : undefined;
+        const usesVerifiedReplacement = authenticationMode?.kind === 'manual'
+            && !isAccountDirectConnectedAccountModeV1(authenticationMode);
+        const signInFlow = props.signInFlow ?? (usesVerifiedReplacement && onReconnect ? undefined : props.signInUnavailable);
+        let onReplace: ((ref: string) => void) | undefined;
+        if (usesVerifiedReplacement) {
+            if (!props.busy && !signInFlow) onReplace = onReconnect;
+        } else if (authenticationMode) {
+            onReplace = ref => router.push(buildCredentialsSecretRoute({ ref }) as never);
+        }
         return (
             <QualifiedAccountDetail
                 key={JSON.stringify([props.serverId, account.ref.service.pluginId, account.ref.service.localId, account.ref.accountId])}
@@ -423,7 +437,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 machineId={props.machineId}
                 machineSetupSection={props.machineSetupSection}
                 machineScopeLine={props.machineScopeLine}
-                signInFlow={props.signInFlow}
+                signInFlow={signInFlow}
                 account={account.ref}
                 serviceLabel={props.title}
                 legacyServiceId={props.legacyServiceId ?? null}
@@ -484,11 +498,10 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                         serverId={shareServerId}
                         account={account.ref}
                         savedSecretResourceIds={account.savedSecretResourceIds}
+                        onReplace={onReplace}
                     />,
                 } : {})}
-                {...(canReconnect(account) ? {
-                    onReconnect: () => props.onBeginReconnect?.(account.ref),
-                } : {})}
+                onReconnect={onReconnect}
                 {...(accountIsRevisioned && props.onDisconnectAccount ? {
                     onDisconnect: async () => {
                         // The account is gone once revoked; its detail screen is not.

@@ -1208,10 +1208,12 @@ const ConnectedAccountServiceController = React.memo(
     }, [acceptAttemptResponse, accountLifetime, assertCapturedAccountCurrent, attempt, beginIntent, cancelDiscardedAttempt, errorPhase, executeAction, expectedActiveServer, isControllerCurrent, getLifecycleSignal,
         pendingIntent, refreshDescription, retryingDescription, serverId]);
 
+    const descriptorModes =
+        description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? registryEntry?.authenticationModes ?? [];
+    const canReadActiveMode = description !== null || selectedModeIsPortable && pendingIntent?.kind === 'reconnect';
     const activeMode: PluginConnectedAccountAuthenticationModeV2 | null =
-        configuration?.mode ?? description?.descriptor.authentication.modes.find(
-            (candidate) => candidate.id === activeModeId,
-        ) ?? accountDirectMode ?? (panelIntent?.kind === 'add' ? selectedSetupMode : null);
+        configuration?.mode ?? (canReadActiveMode ? descriptorModes.find(candidate => candidate.id === activeModeId) : null)
+        ?? accountDirectMode ?? (panelIntent?.kind === 'add' ? selectedSetupMode : null);
     const activeModeKind = activeMode?.kind ?? null;
     const flowActive = Boolean(accountDirectMode || attempt || configuration || errorCode
         || panelIntent?.kind === 'add' && activeMode?.kind === 'manual');
@@ -1513,8 +1515,6 @@ const ConnectedAccountServiceController = React.memo(
         });
     };
     const transport = description?.operationTransport;
-    const descriptorModes =
-        description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? registryEntry?.authenticationModes ?? [];
     const mutationModes = hasAccountDirectSetup || hasPortableAuthenticationModes || transport?.kind === 'v4'
         ? descriptorModes
         : transport?.kind === 'legacy'
@@ -2057,6 +2057,8 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
+    const passiveSignInUnavailable = accountDetailAvailable && errorCode && errorPhase === 'load'
+        && !pendingIntent && !attempt && !configuration;
     const routeBody = (
         <>
             <ConnectedAccountActionApprovalNotice execution={actionExecution} testID="connected-account-approval-pending" />
@@ -2065,10 +2067,12 @@ const ConnectedAccountServiceController = React.memo(
                 <ConnectedAccountServiceContent
                     machineId={focusedAccountHasMachineAugmentation ? machineId || null : null}
                     testConnectionMachineId={selectedMachineId || undefined}
-                    signInFlow={focusedScreenOwnsScroll && route.focus?.kind === 'account' && (attempt || configuration || errorCode)
-                        ? accountDetailAvailable && errorCode && errorPhase === 'load' && !attempt && !configuration
-                            ? <SurfaceStateCard testID="qualified-account-detail:live-unavailable" size="line" kind="unavailable" title={t('common.unavailable')} />
-                            : attempt && 'attemptId' in attempt && attempt.attemptId === collapsedRestoredAttemptId ? (
+                    signInUnavailable={passiveSignInUnavailable
+                        ? <SurfaceStateCard testID="qualified-account-detail:live-unavailable" size="line" kind="unavailable" title={t('common.unavailable')} />
+                        : undefined}
+                    signInFlow={focusedScreenOwnsScroll && route.focus?.kind === 'account'
+                        && !passiveSignInUnavailable && (attempt || configuration || errorCode)
+                        ? attempt && 'attemptId' in attempt && attempt.attemptId === collapsedRestoredAttemptId ? (
                                 // Found, not asked for: one line until the person continues it (lab A1).
                                 <SurfaceFreshnessLine
                                     testID="qualified-account-detail:sign-in-pending"
@@ -2132,6 +2136,9 @@ const ConnectedAccountServiceController = React.memo(
                         });
                     } : undefined}
                     onBeginReconnect={credentialWriteAllowed ? (account) => {
+                        if (busy) return;
+                        resetSetupCompletion();
+                        setErrorCode(null);
                         void beginIntent({ kind: 'reconnect', account });
                     } : undefined}
                     canReconnectAccount={(account) => (

@@ -10,7 +10,6 @@ import {
   useSavedSecretUsedBy,
   useSavedSecretUsedBySourcesDemand,
 } from '@/components/secrets/useSavedSecretUsedBy';
-import { buildCredentialsSecretRoute } from '@/components/settings/connectedServices/collection/connectedServicesCollectionRoutes';
 import { SecretUsedByRows } from '@/components/settings/secrets/SecretsSettingsPage';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -19,8 +18,7 @@ import { t } from '@/text';
 
 /**
  * An API-key account's key, on the account's own page (lab `crDetail-key`): the value row the Secret
- * page uses (Show, Copy, Replace through the Saved Secret's own guard and writer) and what else picks
- * the same key. The key is one Saved Secret record; this page never holds a second copy or writer.
+ * page uses (Show and Copy) and what else picks the same key. The account detail owns the Replace action.
  */
 export const ConnectedAccountKeySection = React.memo(
   function ConnectedAccountKeySection(
@@ -29,6 +27,7 @@ export const ConnectedAccountKeySection = React.memo(
       serverId: string;
       account: QualifiedConnectedAccountRef;
       savedSecretResourceIds: readonly string[];
+      onReplace?: (ref: string) => void;
     }>,
   ) {
     const resolution = useServerCredentialAccountScopeResolution(
@@ -49,6 +48,7 @@ function BoundKeySection(
     scope: ServerAccountScope;
     account: QualifiedConnectedAccountRef;
     savedSecretResourceIds: readonly string[];
+    onReplace?: (ref: string) => void;
   }>,
 ) {
   const router = useRouter();
@@ -96,14 +96,9 @@ function BoundKeySection(
           entry={entry}
           active
           replaceTestID={`${props.testID}:replace`}
-          {...(entry.capabilities.rotate
-            ? {
-                onReplace: () =>
-                  router.push(
-                    buildCredentialsSecretRoute({ ref: entry.ref }) as never,
-                  ),
-              }
-            : {})}
+          onReplace={entry.capabilities.rotate && props.onReplace
+            ? () => props.onReplace?.(entry.ref)
+            : undefined}
         />
       ))}
       <SecretUsedByRows
