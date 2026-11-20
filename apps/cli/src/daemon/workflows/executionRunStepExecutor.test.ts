@@ -384,6 +384,34 @@ describe('workflow detached Execution Run step executor', () => {
     expect(reads).toBe(1);
   });
 
+  it('retains the classified detached startup failure cause on the Workflow invocation', async () => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const params = baseParams({ execution: { agentTarget: CLAUDE_TARGET, permissionMode: 'default',
+      conversation: { kind: 'fresh' } } });
+    const failureCause = { phase: 'execution.run.start', errorClass: 'Error',
+      errorCode: 'ECONNRESET', httpStatus: null } as const;
+    const executionRunGet = vi.fn(async () => completedRun('unexpected-run', 'unexpected-input', {}));
+    const actionExecutor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async () => ({
+        ok: false, errorCode: 'target_unavailable', error: 'Target unavailable', failureCause,
+        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+      }),
+      executionRunGet,
+    });
+    const executeStep = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext, resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null });
+    const coordinator = createWorkflowCoordinator({ store, executeStep,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+    await expect(coordinator.run({ runId: params.runId,
+      definition: { version: 1, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: { kind: 'detached_run' }, authorization: params.authorization,
+    })).resolves.toEqual({ state: 'interrupted', reason: 'target_unavailable' });
+    expect(store.list().find(row => row.blockId === params.step.id))
+      .toMatchObject({ lifecycle: 'failed', reason: 'target_unavailable', failureCause });
+    expect(executionRunGet).not.toHaveBeenCalled();
+  });
+
   it.each([1_794_340_800_000, null])('settles a detached refusal with quota attention and its reported reset (%s)', async resetAtMs => {
     const runtimeIssueV1 = {
       v: 1, scope: 'primary_session', status: 'failed', code: 'claude.usage_limit', source: 'usage_limit', occurredAt: 100,

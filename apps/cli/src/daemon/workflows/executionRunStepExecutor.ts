@@ -180,7 +180,7 @@ function classifyActionFailure(
     return { kind: 'outcome_uncertain', code: result.errorCode };
   }
   if (result.errorCode === 'execution_run_initial_input_outcome_unknown') {
-    return { kind: 'needs_attention', code: result.errorCode };
+    return { kind: 'needs_attention', code: result.errorCode, failureCause: result.failureCause };
   }
   if (result.errorCode === 'cancelled') {
     if (classifyWorkflowAbort(signal) === 'interrupted') {
@@ -199,9 +199,9 @@ function classifyActionFailure(
     || result.errorCode === 'execution_run_target_unavailable'
     || result.errorCode === 'execution_run_protocol_unsupported'
   )) {
-    return { kind: 'needs_attention', code: 'continuation_unavailable' };
+    return { kind: 'needs_attention', code: 'continuation_unavailable', failureCause: result.failureCause };
   }
-  return { kind: 'failed', code: result.errorCode };
+  return { kind: 'failed', code: result.errorCode, failureCause: result.failureCause };
 }
 
 function projectObservation(
