@@ -5,6 +5,7 @@ import {
   defineProtocolUnion,
   TriageIdentifierV1ProtocolSchema,
 } from '@happier-dev/plugin-sdk/protocol';
+import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 import {
   TriageEntryLocatorV1Schema,
   TriageEntryRefV1Schema,
@@ -17,7 +18,7 @@ import {
 
 import { TriageProjectedObservationV1Schema } from './listEntriesProtocol.js';
 
-export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
+const exactEntryInput = {
   v: defineProtocolLiteral(1),
   entryRef: TriageEntryRefV1Schema,
   sourceInstanceId: TriageSourceInstanceIdV1Schema,
@@ -28,6 +29,11 @@ export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
   includeTaskFields: defineProtocolLiteral(true).optional(),
   /** The opened detail's field directories; never read for a list row. */
   includeTaskFieldChoices: defineProtocolLiteral(true).optional(),
+};
+export const TriageReadPullRequestStatusInputV1Schema = defineProtocolObject(exactEntryInput, { policy: 'closed' });
+export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
+  ...exactEntryInput,
+  includeComparisonSource: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 export type TriageReobserveEntryActionInputV1 = ReturnType<
   typeof TriageReobserveEntryInputV1Schema.parse
@@ -41,6 +47,7 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
     taskFields: TriageTaskFieldsV1Schema.optional(),
     taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
     investigationDefaults: TriageInvestigationDefaultsV1Schema.optional(),
+    comparisonSource: ScmComparisonSourceProtocolSchema.optional(),
     detailData: defineProtocolJsonValue().optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), failure: TriageSourceFailureV1Schema.optional() }, { policy: 'closed' }),

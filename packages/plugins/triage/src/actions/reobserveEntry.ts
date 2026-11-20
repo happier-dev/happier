@@ -3,6 +3,7 @@ import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
+import type { ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageEntryLocatorV1,
@@ -41,10 +42,11 @@ export type TriageReobserveEntryInputV1 = Readonly<{
   lastKnownLocator?: TriageEntryLocatorV1;
   includeTaskFields?: true;
   includeTaskFieldChoices?: true;
+  includeComparisonSource?: true;
 }>;
 
 export type TriageReobserveEntryResultV1 =
-  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue; investigationDefaults?: TriageInvestigationDefaultsV1 }>
+  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue; investigationDefaults?: TriageInvestigationDefaultsV1; comparisonSource?: ScmComparisonSource }>
   | Readonly<{ kind: 'unavailable'; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
@@ -134,6 +136,8 @@ export async function reobserveTriageEntry(
             ? { taskFields: observed.taskFields } : {}),
           ...(input.includeTaskFieldChoices === true && observed.kind === 'present' && observed.taskFieldChoices !== undefined
             ? { taskFieldChoices: observed.taskFieldChoices } : {}),
+          ...(input.includeComparisonSource === true && observed.kind === 'present' && observed.comparisonSource !== undefined
+            ? { comparisonSource: observed.comparisonSource } : {}),
           ...(observed.kind === 'present' && observed.detailData !== undefined ? { detailData: observed.detailData } : {}),
           ...(observed.kind === 'present' && observed.investigationDefaults !== undefined
             ? { investigationDefaults: observed.investigationDefaults } : {}) }
@@ -185,6 +189,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
         ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
         ...(result.taskFieldChoices === undefined ? {} : { taskFieldChoices: result.taskFieldChoices }),
         ...(result.investigationDefaults === undefined ? {} : { investigationDefaults: result.investigationDefaults }),
+        ...(result.comparisonSource === undefined ? {} : { comparisonSource: result.comparisonSource }),
         ...(result.detailData === undefined ? {} : { detailData: result.detailData }) };
     }
     return result.kind === 'unavailable'

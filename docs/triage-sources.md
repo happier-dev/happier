@@ -997,6 +997,13 @@ The shared `prepareReviewWorkspace` role admits both plugin calls and the mounte
 UI press used by prepared New Session authoring. It retains `writesLocal`
 approval policy and the selected Machine; mounted callers keep UI authority.
 Final workspace verification remains plugin-only.
+In unreleased 0.3 source, agents can request the source's exact pull request
+comparison with `includeComparisonSource: true` on `entries/reobserve-v1`.
+Pass the returned `comparisonSource` as `singleIntent.comparison` with
+`kind: 'comparison'` on `sessions/run-configured-v1`. The source owns the
+comparison endpoints and Action references. Triage returns them on the
+requested exact read and keeps them out of the corpus.
+
 In unreleased 0.3 source, Triage's
 `entries/prepare-pull-request-review-v1` Action exposes that same preparation
 owner to workflows without creating a Session or starting reviewers. Its saved

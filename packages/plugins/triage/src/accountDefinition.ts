@@ -29,7 +29,7 @@ import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_LINKS_RESOURC
 import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME } from './sessions/sessionPullRequestResource.js';
 import { TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_RUNTIME } from './sessions/sessionPullRequestInbox.js';
 import { observeTriageSourceSessionLinks } from './sessions/sessionLinksObservation.js';
-import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryInputV1Schema, TriageReobserveEntryResultV1Schema } from './actions/reobserveEntryProtocol.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReadPullRequestStatusInputV1Schema, TriageReobserveEntryInputV1Schema, TriageReobserveEntryResultV1Schema } from './actions/reobserveEntryProtocol.js';
 import { createTriageListPinnedEntriesActionHandler, createTriageSetEntryPinnedActionHandler } from './actions/userMarks.js';
 import { createTriageReadFixPullRequestsActionHandler, createTriageSetFixPullRequestActionHandler } from './actions/fixPullRequests.js';
 import { TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1, TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1, TriageReadFixPullRequestsInputV1Schema, TriageReadFixPullRequestsResultV1Schema, TriageSetFixPullRequestInputV1Schema, TriageSetFixPullRequestResultV1Schema } from '@happier-dev/triage-protocol/v1';
@@ -75,7 +75,7 @@ export type TriageAccountActionSchemas = {
   readonly [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadEntryDetailInputV1Schema, typeof TriageReadEntryDetailResultV1Schema];
   readonly [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageResolveResourceActionInputV1Schema, typeof TriageResolveResourceActionResultV1Schema];
   readonly [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReobserveEntryInputV1Schema, typeof TriageReobserveEntryResultV1Schema];
-  readonly [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReobserveEntryInputV1Schema, typeof TriagePullRequestStatusResultV1Schema];
+  readonly [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadPullRequestStatusInputV1Schema, typeof TriagePullRequestStatusResultV1Schema];
   readonly [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadSavedViewsInputV1Schema, typeof TriageReadSavedViewsResultV1Schema];
   readonly [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriageAdministerSavedViewInputV1Schema, typeof TriageAdministerSavedViewResultV1Schema];
   readonly [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadActionsActionInputV1Schema, typeof TriageReadActionsActionResultV1Schema];
@@ -489,7 +489,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
         readOnly: true,
         title: 'Re-read an entry after a provider change',
-        description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
+        description: 'Reads the exact selected entry through its configured source after a provider Action settles. For a pull request Review, pass includeComparisonSource:true and use the returned comparisonSource as singleIntent.comparison in sessions/run-configured-v1.',
         surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReobserveEntryInputV1Schema,
@@ -505,7 +505,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         placementBindings: [],
         dangerLevel: 'safe',
         readOnly: true,
-        inputSchema: TriageReobserveEntryInputV1Schema,
+        inputSchema: TriageReadPullRequestStatusInputV1Schema,
         resultSchema: TriagePullRequestStatusResultV1Schema,
         hostAccess: ['account-storage'],
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,

@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import type { TriageGetInputV1, TriageGetResultV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,8 +7,11 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { createTriageReobserveEntryActionHandler, reobserveTriageEntry } from './reobserveEntry.js';
-import { TriageReobserveEntryInputV1Schema, TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryInputV1Schema, TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js';
 import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from '../ui/detail/postMutationReobservation.js';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema } from './configuredActionRunProtocol.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from './entryDetailProtocol.js';
+import { registeredTriageActionHandler } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 
 const fixture = createTriageSourceV1Fixture();
 
@@ -111,7 +114,7 @@ describe('reobserveTriageEntry', () => {
     expect(row).not.toHaveProperty('taskFieldChoices');
   });
 
-  it.each(['host', 'otherPlugin', 'exactRow', 'wrongId', 'retiredRow', 'wrongSource', 'missingRow'] as const)('publishes an authoritative source reread through the strict Action result contract for %s', async (reader) => {
+  it.each(['host', 'mcp', 'otherPlugin', 'exactRow', 'wrongId', 'retiredRow', 'wrongSource', 'missingRow'] as const)('publishes an authoritative source reread through the strict Action result contract for %s', async (reader) => {
     const { collections, control } = createTestkitCorpusCollections();
     const source = fixture.detailInput.observation.entryRef.source;
     const sourceInstanceRowId = `a${'0'.repeat(42)}`;
@@ -126,17 +129,21 @@ describe('reobserveTriageEntry', () => {
     }));
     const configuredGets = vi.spyOn(collections.sourceInstances, 'get');
     const configuredQueries = vi.spyOn(collections.sourceInstances, 'query');
-    const exact = reader !== 'host' && reader !== 'otherPlugin';
+    const exact = reader !== 'host' && reader !== 'mcp' && reader !== 'otherPlugin';
     const getHandle = {};
+    const comparison = { kind: 'pullRequest', locator: { providerId: 'github', repository: 'octo/example',
+      number: 17, baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } } satisfies
+      Extract<TriageGetResultV1, { kind: 'present' }>['comparisonSource'];
+    const { lastKnownLocator, ...getByIdentity } = fixture.getInput;
     const executeGet = vi.fn(async (operation: unknown, input: TriageGetInputV1) => {
       expect(operation).toBe(getHandle);
-      expect(input).toEqual(fixture.getInput);
-      return { ...fixture.getResult, taskFields: { title: 'Confirmed title', body: 'Exact notes' } };
+      expect(input).toEqual(input.lastKnownLocator === undefined ? getByIdentity : fixture.getInput);
+      return { ...fixture.getResult, taskFields: { title: 'Confirmed title', body: 'Exact notes' }, comparisonSource: comparison };
     });
     // The host's Collection transport, admitted handle and external-source dispatch
     // are the boundaries; qualification and Action result production stay real.
     const context = {
-      surface: 'cli',
+      surface: reader === 'mcp' ? 'mcp' : 'cli',
       ...(reader === 'otherPlugin' ? { caller: { kind: 'plugin', pluginId: 'example.other-plugin' } } : {}),
       signal: new AbortController().signal,
       services: {
@@ -152,17 +159,30 @@ describe('reobserveTriageEntry', () => {
           }] }),
           dispose: () => {},
         }) },
-        actions: { executeAdmittedTargetedOperation: executeGet },
+        actions: {
+          executeAdmittedTargetedOperation: executeGet,
+          async execute(action: string | { localId: string }, input: JsonValue): Promise<JsonValue | void> {
+            if (typeof action !== 'string' && action.localId === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
+              return registeredTriageActionHandler(action.localId)(input, context);
+            }
+            if (typeof action !== 'string' && action.localId === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
+              return { kind: 'read', instance: fixture.configuredInstance, linkedSessions: [] };
+            }
+            if (action === 'projects.list') return { items: [], truncated: false };
+            throw new Error('Unexpected host Action');
+          },
+        },
       },
     } as unknown as PluginInvocationContext;
-    const result = await createTriageReobserveEntryActionHandler()({
+    const result = await createTriageReobserveEntryActionHandler()(TriageReobserveEntryInputV1Schema.parse({
       v: 1,
       entryRef: fixture.detailInput.observation.entryRef,
       sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
       ...(exact ? { sourceInstanceRowId } : {}),
-      lastKnownLocator: fixture.detailInput.observation.locator,
+      lastKnownLocator,
       includeTaskFields: true,
-    }, context);
+      ...(reader === 'mcp' ? { includeComparisonSource: true } : {}),
+    }), context);
 
     if (exact) {
       expect(configuredGets).toHaveBeenCalledTimes(1);
@@ -180,7 +200,26 @@ describe('reobserveTriageEntry', () => {
     expect(result).not.toHaveProperty('observation.outcome.nativeRevision');
     expect(result).toHaveProperty('taskFields', { title: 'Confirmed title', body: 'Exact notes' });
     expect(result).not.toHaveProperty('observation.outcome.taskFields');
-    expect(TriageReobserveEntryResultV1Schema.safeParse(result)).toMatchObject({ success: true });
+    const observed = TriageReobserveEntryResultV1Schema.parse(result);
+    if (reader === 'mcp') {
+      expect(observed).toHaveProperty('comparisonSource', comparison);
+      if (observed.kind !== 'observed') throw new Error('Expected exact observation');
+      const selected = { entryRef: observed.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId };
+      const start = TriageRunConfiguredActionInputV1Schema.parse({
+        v: 1,
+        handoff: {
+          task: 'investigate', configuredActionId: 'walk-comparison',
+          context: { kind: 'entries', entries: [selected], destination: 'single' },
+          evidence: [{ kind: 'entry', entry: selected }], sessionChoice: { kind: 'configured' },
+          agentChoice: { kind: 'configured' }, delivery: 'configured',
+        },
+        singleIntent: { kind: 'comparison', comparison: observed.comparisonSource },
+      });
+      await expect(registeredTriageActionHandler(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1)(start, context))
+        .resolves.toMatchObject({ status: 'unavailable', reason: 'newSessionUnsupported' });
+    } else {
+      expect(observed).not.toHaveProperty('comparisonSource');
+    }
   });
 
   it('asks the source for its field directory and hands it back only for the detail that requested it', async () => {
