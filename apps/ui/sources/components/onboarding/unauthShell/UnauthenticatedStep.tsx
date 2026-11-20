@@ -11,6 +11,9 @@ import { StepEntranceBody } from '@/components/ui/motion/stepMotion/StepEntrance
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import type { IconName } from '@/components/ui/icons/Icon';
+
+import { StepMark } from './StepMark';
 
 import { useUnauthShellLayout } from './useUnauthShellLayout';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_LEAVE_TEST_ID, useStepLeave, useStepRowBack } from './stepBack';
@@ -68,6 +71,37 @@ export function UnauthenticatedStepHeading(props: Readonly<{
         {props.title}
       </Text>
       {props.subtitle ? <Text testID={props.subtitleTestID} style={styles.subtitle}>{props.subtitle}</Text> : null}
+    </View>
+  );
+}
+
+/**
+ * A body that owns its heading and turns into a terminal answer in place (a scanned code that cannot be used): the
+ * problem step's placement, lower over the planet, with its round mark over the heading. The same object as a routed
+ * problem step ({@link UnauthenticatedStepProps.problem}), announced as a status.
+ */
+export function StepProblemHeading(props: Readonly<{
+  iconName: IconName;
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  context?: React.ReactNode;
+  testID?: string;
+  subtitleTestID?: string;
+}>) {
+  useUnistyles();
+  const styles = stylesheet;
+  const compact = useUnauthShellLayout() === 'compact';
+  return (
+    <View style={compact ? styles.rootProblemCompact : styles.rootProblem}
+      accessibilityRole="text" accessibilityLiveRegion="polite" aria-live="polite" role="status">
+      <UnauthenticatedStepHeading
+        mark={<StepMark iconName={props.iconName} />}
+        title={props.title}
+        subtitle={props.subtitle}
+        context={props.context}
+        testID={props.testID}
+        subtitleTestID={props.subtitleTestID}
+      />
     </View>
   );
 }

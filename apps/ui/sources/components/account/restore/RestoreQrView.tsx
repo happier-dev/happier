@@ -31,7 +31,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { EnrolledComputerSetup } from './EnrolledComputerSetup';
-import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
 import { StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 
 const RESTORE_MANUAL_TEST_ID = 'restore-open-manual';
@@ -120,15 +120,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: theme.space.s24,
         alignItems: 'center',
         gap: theme.space.s16,
-    },
-    embeddedWays: {
-        width: '100%',
-        gap: theme.space.s16,
-    },
-    embeddedWaysRow: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        gap: theme.space.s20,
     },
     embeddedPrimary: {
         width: '100%',
@@ -470,10 +461,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             </>;
                             return props.renderAdditionalSignInWays
                                 ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading, props.onOpenTerminalLink, approvalVisible)
-                                : <View style={styles.embeddedWays}>
-                                    <StepOrDivider label={t('common.or')} />
-                                    <View style={styles.embeddedWaysRow}>{leading}</View>
-                                </View>;
+                                : <StepWaysRow>{leading}</StepWaysRow>;
                         })()}
                     </View>
                 ) : null}

@@ -30,6 +30,7 @@ import {
     StepForm,
     StepOrDivider,
     StepQuietAction,
+    StepQuietActions,
     stepFieldLabelStyle,
 } from '@/components/onboarding/unauthShell/StepFormParts';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
@@ -674,18 +675,18 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                             provisioningStep ? submitProvision : submitLogin,
                         )}
                         {!provisioningStep ? (
-                            <StepQuietAction
-                                testID="email-password-forgot"
-                                label={t('settingsAccount.nativePassword.forgotPassword')}
-                                onPress={() => setView({ kind: 'forgot' })}
-                            />
-                        ) : null}
-                        {!provisioningStep && props.onOpenEmailProvision ? (
-                            <StepQuietAction
-                                testID="email-password-open-provision"
-                                label={t('settingsAccount.nativePassword.signUpWithEmail')}
-                                onPress={() => { void props.onOpenEmailProvision?.(); }}
-                            />
+                            <StepQuietActions actions={[
+                                {
+                                    testID: 'email-password-forgot',
+                                    label: t('settingsAccount.nativePassword.forgotPassword'),
+                                    onPress: () => setView({ kind: 'forgot' }),
+                                },
+                                ...(props.onOpenEmailProvision ? [{
+                                    testID: 'email-password-open-provision',
+                                    label: t('settingsAccount.nativePassword.signUpWithEmail'),
+                                    onPress: () => { void props.onOpenEmailProvision?.(); },
+                                }] : []),
+                            ]} />
                         ) : null}
                     </StepActions>
                 </View>

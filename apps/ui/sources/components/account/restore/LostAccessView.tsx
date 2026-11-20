@@ -4,10 +4,11 @@ import { useRouter } from 'expo-router';
 import { Linking, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepPrimaryButton } from '@/components/onboarding/unauthShell/stepBack';
+import { StepActions, UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
@@ -47,8 +48,8 @@ async function guardOrdinaryAuthIngress(
 }
 
 /**
- * Lost access is always a step inside a host that titles it and owns its way back (the welcome pane's
- * chevron, the setup card's back), so the view is its explanation and the reset actions only.
+ * Lost access is a step that titles itself (its mark, heading and what is left on this Home) inside a host that owns
+ * its way back (the welcome pane's Back, the setup card's back), then its reset actions.
  */
 export type LostAccessViewProps = Readonly<{
     returnTo: string;
@@ -61,20 +62,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     loading: {
         width: '100%',
-        alignItems: 'flex-start',
-    },
-    // The consequence of a reset, not more of the purpose line above it: it reads in ink.
-    body: {
-        ...Typography.variant('reading'),
-        color: theme.colors.text.primary,
-    },
-    actions: {
-        width: '100%',
-        gap: theme.space.s12,
-    },
-    actionButton: {
-        width: '100%',
-        maxWidth: 360,
+        alignItems: 'center',
     },
 }));
 
@@ -177,28 +165,49 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
         }
     }, [props.returnTo]);
 
+    const openRecoveryKey = () => moveToRoute(() => router.push('/restore/manual'));
+    // The step titles itself under its key mark (lab "Lost your key?"): what is left on this Home is its purpose line.
+    const heading = (subtitle?: string) => (
+        <UnauthenticatedStepHeading
+            mark={<StepMark iconName="key" />}
+            title={t('setupOnboarding.authLostAccessTitle')}
+            subtitle={subtitle}
+            subtitleTestID="lost-access-body"
+        />
+    );
+
     if (featuresSnapshot.status === 'loading') {
         return (
-            <View style={styles.loading}>
-                <ActivitySpinner size="small" />
+            <View style={styles.root}>
+                {heading()}
+                <View style={styles.loading}>
+                    <ActivitySpinner size="small" />
+                </View>
             </View>
         );
     }
 
     if (featuresSnapshot.status !== 'ready') {
-        return <SurfaceStateCard
-            testID="lost-access-unavailable"
-            kind="unavailable"
-            title={t('errors.operationFailed')}
-            action={{
-                testID: 'lost-access-retry',
-                label: t('common.retry'),
-                onPress: () => fireAndForget(retryServerFeaturesSnapshot({
-                    serverId: getActiveServerSnapshot().serverId,
-                }), { tag: 'LostAccessView.retryRecoveryProviders' }),
-            }}
-            accessibilitySemantics="status"
-        />;
+        return (
+            <View style={styles.root}>
+                {heading()}
+                <SurfaceStateCard
+                    testID="lost-access-unavailable"
+                    size="line"
+                    lineLayout="notice"
+                    kind="unavailable"
+                    title={t('errors.operationFailed')}
+                    action={{
+                        testID: 'lost-access-retry',
+                        label: t('common.retry'),
+                        onPress: () => fireAndForget(retryServerFeaturesSnapshot({
+                            serverId: getActiveServerSnapshot().serverId,
+                        }), { tag: 'LostAccessView.retryRecoveryProviders' }),
+                    }}
+                    accessibilitySemantics="status"
+                />
+            </View>
+        );
     }
 
     const features = featuresSnapshot.features;
@@ -209,36 +218,29 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
     return (
         <View testID="lost-access-view" style={styles.root}>
             {/* The reset copy describes the reset; a Home that offers none says what is left instead. */}
-            <Text testID="lost-access-body" style={styles.body}>
-                {providers.length > 0 ? t('connect.lostAccessBody') : t('connect.lostAccessNoResetBody')}
-            </Text>
-            {providers.length > 0 ? (
-                <View style={styles.actions}>
-                    {providers.map((providerId) => (
-                        <View key={providerId} style={styles.actionButton}>
-                            <RoundButton
+            {heading(providers.length > 0 ? t('connect.lostAccessBody') : t('connect.lostAccessNoResetBody'))}
+            <StepActions>
+                {providers.length > 0 ? (
+                    <>
+                        {providers.map((providerId) => (
+                            <StepPrimaryButton
+                                key={providerId}
                                 testID={`lost-access-provider-${providerId}`}
-                                size="large"
                                 title={t('connect.lostAccessContinue', {
                                     provider: getAuthProvider(providerId)?.displayName ?? providerId,
                                 })}
-                                action={() => startReset(providerId)}
+                                onPress={() => startReset(providerId)}
                             />
-                        </View>
-                    ))}
-                </View>
-            ) : (
-                <View style={styles.actions}>
-                    <View style={styles.actionButton}>
-                        <RoundButton
-                            testID="lost-access-use-key"
-                            size="large"
-                            title={t('connect.restoreWithSecretKeyInstead')}
-                            action={async () => moveToRoute(() => router.push('/restore/manual'))}
-                        />
-                    </View>
-                </View>
-            )}
+                        ))}
+                        {/* The key is still the quieter way back in (lab "I found my key"). */}
+                        <StepQuietAction testID="lost-access-use-key" label={t('connect.restoreWithSecretKeyInstead')}
+                            onPress={openRecoveryKey} />
+                    </>
+                ) : (
+                    <StepPrimaryButton testID="lost-access-use-key" title={t('connect.restoreWithSecretKeyInstead')}
+                        iconName="key" onPress={openRecoveryKey} />
+                )}
+            </StepActions>
         </View>
     );
 });

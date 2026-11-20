@@ -2,9 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { StepFieldGroup, StepFieldHelp, StepFieldLabel } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepPrimaryButton } from '@/components/onboarding/unauthShell/stepBack';
+import { StepActions } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Text, type TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -17,18 +18,11 @@ export type PairingLinkEntryFormProps = Readonly<{
     onBack?: () => void;
     onSubmit: (link: string) => Promise<boolean>;
     /**
-     * Inside a host that already titles the step (the welcome pane, a setup card), the form is its
-     * field and actions on the host's column: no heading of its own, the field and its action on one
-     * row, the explanation under the field, and the way back as a quiet text action. It sits beside
-     * other ways in, so the primary action is the host's: a pasted link proceeds on its own and a typed
-     * one goes with Return or the row's secondary Continue.
+     * Inside a step that already titles itself (lab direction A "Paste a pairing link"): the field, a line under it
+     * only when the host passes one or a link is refused, then the step's actions (Back beside one primary). A pasted
+     * link proceeds on its own; a typed one goes with Return or the primary.
      */
     embedded?: boolean;
-    /**
-     * Embedded: the row's action while the field is still empty (this device's camera), in place of
-     * Continue. Typing a link brings Continue back.
-     */
-    emptyAction?: React.ReactNode;
     /** Focus the field on arrival (default). A host offering several ways turns it off when another is open. */
     autoFocus?: boolean;
     /**
@@ -65,18 +59,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     actions: {
         gap: theme.space.s12,
     },
-    fieldRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
-    // The field gives way to its action at any width (a phone keeps both on screen).
-    fieldInput: {
-        flex: 1,
-        minWidth: 0,
-    },
-    quietAction: {
-        alignItems: 'flex-start',
+    // The field, then the step's actions a section below (the step frame's rhythm).
+    step: {
+        width: '100%',
+        gap: theme.space.s24,
     },
 }));
 
@@ -122,8 +108,6 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
     const submitButton = (
         <RoundButton
             testID="restore-pairing-link-submit"
-            size={embedded ? 'normal' : undefined}
-            display={embedded ? 'secondary' : undefined}
             title={props.submitLabel ?? t('common.continue')}
             action={submit}
             loading={isSubmitting}
@@ -134,7 +118,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
             ref={inputRef}
             testID="restore-pairing-link-input"
             accessibilityLabel={fieldLabel}
-            accessibilityLabelledBy={LABEL_ID}
+            accessibilityLabelledBy={embedded ? undefined : LABEL_ID}
             accessibilityHint={description}
             placeholder={props.placeholder ?? t('connect.pairingLinkPlaceholder')}
             value={link}
@@ -153,34 +137,33 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
             keyboardType="url"
             returnKeyType="go"
             monospace
-            style={embedded ? styles.fieldInput : undefined}
         />
     );
     const help = error ? (
         <StepFieldHelp testID="restore-pairing-link-error" tone="error">{error}</StepFieldHelp>
-    ) : embedded ? (
-        <StepFieldHelp testID="restore-pairing-link-hint">{description}</StepFieldHelp>
+    ) : embedded && props.description ? (
+        <StepFieldHelp testID="restore-pairing-link-hint">{props.description}</StepFieldHelp>
     ) : null;
 
     if (embedded) {
+        // The heading names the field, so it carries no visible label of its own (one message per state).
         return (
-            <StepFieldGroup testID="pairing-link-entry-form">
-                <StepFieldLabel nativeID={LABEL_ID}>{fieldLabel}</StepFieldLabel>
-                <View style={styles.fieldRow}>
-                    {field}
-                    {props.emptyAction && link.trim().length === 0 ? props.emptyAction : submitButton}
-                </View>
-                {help}
-                {props.onBack && props.backLabel ? (
-                    <View style={styles.quietAction}>
-                        <TextLinkButton
-                            testID="restore-pairing-link-back"
-                            label={props.backLabel}
-                            onPress={props.onBack}
-                        />
-                    </View>
-                ) : null}
-            </StepFieldGroup>
+            <View testID="pairing-link-entry-form" style={styles.step}>
+                <StepForm>
+                    <StepFieldGroup>
+                        {field}
+                        {help}
+                    </StepFieldGroup>
+                </StepForm>
+                <StepActions onBack={props.onBack}>
+                    <StepPrimaryButton
+                        testID="restore-pairing-link-submit"
+                        title={props.submitLabel ?? t('common.continue')}
+                        onPress={submit}
+                        loading={isSubmitting}
+                    />
+                </StepActions>
+            </View>
         );
     }
 

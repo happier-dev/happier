@@ -3480,6 +3480,14 @@ const enConnect = {
   unsupportedEnrollmentResponseBody:
     'This Home returned a response this version of Happier cannot use. Update Happier or scan another Home.',
   updateRequiredTitle: 'Update required',
+  pairingExpiredTitle: "This code expired",
+  pairingWrongHomeTitle: "This code is for a different Home",
+  pairingUsedTitle: "Already used on another device",
+  pairingRejectedTitle: "Request declined",
+  pairingInvalidTitle: "This code can’t be used",
+  pairingUnfinishedTitle: "Couldn’t finish",
+  pairingPartialTitle: "Adding this Home didn’t finish",
+  pairingAddedTitle: "All set",
   updateRequiredBody:
     'This Home uses an older enrollment format that cannot be accepted safely. Update Happier on both devices and try again.',
   legacyPairingUpdateRequiredBody:

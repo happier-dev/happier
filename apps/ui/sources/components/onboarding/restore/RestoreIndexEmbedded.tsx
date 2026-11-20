@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions, type ViewStyle } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { StepEntranceBody } from '@/components/ui/motion/stepMotion/StepEntranceBody';
-import { StepMotionLayer, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { StepMotionLayer, useFirstRunRouteMove, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { StepTransitionFrame, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 
@@ -19,10 +20,10 @@ import {
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 
-import { resolveReverseQrTargetProfileId } from './loginWays';
-import { RestoreSignInWays } from './RestoreSignInWays';
+import { resolveReverseQrTargetProfileId, useLoginLeadsWithLink } from './loginWays';
 import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
-import { StepRowBack, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
+import { StepRowWayButton, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
+import { StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
 import { t } from '@/text';
 
 type RestoreView = 'qr' | 'scanner' | 'paste';
@@ -91,8 +92,10 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     const [ways, setWays] = React.useState<Readonly<{ history: readonly RestoreWay[]; direction: StepTransitionDirection; pastedLink?: string }>>({
         history: [], direction: 'replace',
     });
-    // The camera says where to point it while it is live; a scan's result keeps the step's own heading.
-    const [scannerLive, setScannerLive] = React.useState(() => !props.initialPairingLink && !props.initialResult);
+    // The camera says where to point it while it is live; a scan's result titles itself as a problem step.
+    const [scannerHeading, setScannerHeading] = React.useState<'camera' | 'result' | null>(() => (
+        props.initialResult ? 'result' : props.initialPairingLink ? null : 'camera'
+    ));
     const defaultView = props.initialView ?? (showScannerFirst ? 'scanner' : 'qr');
     const activeView = ways.history.at(-1) ?? defaultView;
     const move = (kind: 'step' | 'back', history: readonly RestoreWay[], pastedLink?: string) => {
@@ -107,6 +110,11 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     const backSlot = useStepBackOverride(previousWay);
     const onBack = backSlot?.onBack ?? previousWay ?? props.onBack;
     const openPasteEntry = () => openWay('paste');
+    const phone = useLoginLeadsWithLink();
+    const router = useRouter();
+    const moveToRoute = useFirstRunRouteMove();
+    // The recovery key is its own step: the wizard's, or the standalone key route.
+    const openSecretKeyLogin = props.onOpenSecretKeyLogin ?? (() => moveToRoute(() => router.push('/restore/manual')));
     const openScanner = canUseScanner ? () => openWay('scanner') : undefined;
     const openQr = reverseTargetProfileId ? () => openWay('qr') : undefined;
 
@@ -126,25 +134,47 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                     placeholder={t('connect.terminalUrlPlaceholder')}
                     onSubmit={submitPastedPairingLink}
                     onBack={backSlot ? undefined : onBack}
-                    backLabel={t('common.back')}
                 />
-                <StepRowBack />
             </View>
         ) : activeView === 'paste' ? (
+            // A pairing link from a device that is already signed in (lab "Paste a pairing link"): the field and its
+            // one primary, then this device's other ways in on the ways row.
             <View style={VIEW_STYLE}>
-                <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />
-                <RestoreSignInWays
-                    onSubmitLink={submitPastedPairingLink}
-                    onOpenScanner={openScanner}
-                    onShowQr={openQr}
-                    offerSecretKey={props.entryIntent === 'enter_home'}
-                    onLostAccess={props.onOpenLostAccess}
+                <UnauthenticatedStepHeading title={t('connect.pairingLinkPlaceholder')}
+                    subtitle={t(phone && openScanner ? 'connect.signInPairingLinkHelpScan' : 'connect.signInPairingLinkHelp')} />
+                <PairingLinkEntryForm
+                    embedded
+                    onSubmit={submitPastedPairingLink}
+                    onBack={backSlot ? undefined : onBack}
+                    // A phone focuses nothing: its keyboard would cover the ways beneath.
+                    autoFocus={!phone}
                 />
-                {props.renderAdditionalSignInWays?.(undefined, <StepRowBack />)}
+                {(() => {
+                    const ways = <>
+                        {props.entryIntent === 'enter_home' ? (
+                            <StepRowWayButton testID="restore-open-manual" iconName="key"
+                                accessibilityLabel={t('connect.secretKeyInputLabel')} tooltip={t('connect.secretKeyInputLabel')}
+                                onPress={openSecretKeyLogin} />
+                        ) : null}
+                        {openScanner ? (
+                            <StepRowWayButton testID="restore-sign-in-use-camera" iconName="camera"
+                                accessibilityLabel={t('homesJourneys.useCamera')} tooltip={t('homesJourneys.useCamera')}
+                                onPress={openScanner} />
+                        ) : null}
+                        {openQr ? (
+                            <StepRowWayButton testID="restore-sign-in-show-qr" iconName="qr-code"
+                                accessibilityLabel={t('connect.signInShowQr')} tooltip={t('connect.signInShowQr')}
+                                onPress={openQr} />
+                        ) : null}
+                    </>;
+                    return props.renderAdditionalSignInWays
+                        ? props.renderAdditionalSignInWays(undefined, ways)
+                        : props.entryIntent === 'enter_home' || openScanner || openQr ? <StepWaysRow>{ways}</StepWaysRow> : null;
+                })()}
             </View>
         ) : activeView === 'scanner' ? (
             <View style={VIEW_STYLE}>
-            {scannerLive && props.entryIntent === 'enter_home'
+            {scannerHeading === 'result' ? null : scannerHeading === 'camera' && props.entryIntent === 'enter_home'
                 ? <UnauthenticatedStepHeading title={t('connect.pointAtComputerTitle')} subtitle={t('connect.pointAtComputerSubtitle')} />
                 : <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />}
             <StepEntranceBody>
@@ -157,7 +187,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                     showBack={false}
                     onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
                     renderAdditionalSignInWays={props.renderAdditionalSignInWays}
-                    onCameraLiveChange={setScannerLive}
+                    onHeadingChange={setScannerHeading}
                     onOpenPairingLinkEntry={openPasteEntry}
                     onShowQrInstead={openQr}
                     onNavigationLockChange={props.onNavigationLockChange}

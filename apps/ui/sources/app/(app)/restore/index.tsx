@@ -105,6 +105,8 @@ export default function RestoreIndex() {
                 )}
                 onBack={handleBack}
                 backDisabled={navigationLocked}
+                // Signing in here, each way titles itself; approving a device or adding a Home keeps the route's title.
+                bodyOwnsHeading={entryIntent === 'enter_home' && !approvesRequesterDevice}
             >
                 <View testID="restore-route-content">
                     <RestoreIndexEmbedded

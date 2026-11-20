@@ -705,7 +705,8 @@ describe('OnboardingWizardSurface', () => {
         try {
             await pressOnboarding(screen, 'welcome-account-service-choose');
             expect(screen.findByTestId('account-service-selection-form')).toBeTruthy();
-            await pressOnboarding(screen, 'account-service-selection-back');
+            // The step's Back is the shell's (the corner's on a phone); it abandons the check first.
+            await pressOnboarding(screen, 'unauth-shell-back-chevron');
             expect(getOnboardingStepId(screen)).toBe('auth_restore');
         } finally {
             await screen.unmount();

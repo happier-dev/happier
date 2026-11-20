@@ -544,22 +544,27 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
     }
 
     if (state.kind === 'invalid' || state.kind === 'unavailable') {
-        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
-            <Text testID="native-auth-verify-invalid" accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
-                {state.kind === 'invalid' ? t('settingsAccount.nativePassword.linkExpired') : problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
-            </Text>
-            {landingTarget.kind === 'unavailable' && landingTarget.retry ? (
-                <LandingRetryAction testID="native-auth-verify-retry-home" onPress={landingTarget.retry} />
-            ) : state.kind === 'unavailable' && landingTarget.kind === 'ready' ? (
-                // The Home is already acquired; only the preview read failed,
-                // so this is not a dead end.
-                <LandingRetryAction testID="native-auth-verify-retry" onPress={previewRead.retry} />
-            ) : null}
-            <WelcomeActionCard
-                testID="native-auth-verify-return"
-                title={t('settingsAccount.nativePassword.returnToSignIn')}
-                iconName="arrow-left"
-                onPress={() => router.replace('/')}
+        // The same problem step as a reset link's (lab direction A): the mail mark, what went wrong as the notice
+        // line with its retry when there is one, and the quiet way back to sign in.
+        const retry = landingTarget.kind === 'unavailable' && landingTarget.retry
+            ? { testID: 'native-auth-verify-retry-home', onPress: landingTarget.retry }
+            : state.kind === 'unavailable' && landingTarget.kind === 'ready'
+                // The Home is already acquired; only the preview read failed, so this is not a dead end.
+                ? { testID: 'native-auth-verify-retry', onPress: previewRead.retry }
+                : null;
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify"
+            mark="mail"
+            title={t('settingsAccount.nativePassword.verifyTitle')}
+            secondary={{ testID: 'native-auth-verify-return', label: t('settingsAccount.nativePassword.returnToSignIn'), onPress: () => router.replace('/') }}>
+            <SurfaceStateCard
+                testID="native-auth-verify-invalid"
+                size="line"
+                lineLayout="notice"
+                kind="warning"
+                title={state.kind === 'invalid' ? t('settingsAccount.nativePassword.linkExpired') : problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
+                accessibilitySemantics="alert"
+                actionGlyph={retry ? 'retry' : undefined}
+                action={retry ? { testID: retry.testID, label: t('common.retry'), onPress: retry.onPress } : undefined}
             />
         </LandingShell>;
     }

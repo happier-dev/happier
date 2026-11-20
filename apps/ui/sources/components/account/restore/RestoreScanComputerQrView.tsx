@@ -16,7 +16,7 @@ import { authQRWait } from '@/auth/flows/qrWait';
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { openTerminalConnectApproval } from '@/auth/terminal/terminalConnectContinuation';
 import { useAuth } from '@/auth/context/AuthContext';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { pairingConsume, pairingRequest, pairingStart, type PairingRequestResult } from '@/sync/api/account/apiPairingAuth';
 import {
@@ -46,7 +46,11 @@ import { Typography } from '@/constants/Typography';
 import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { PairingStatusPill, PairingStatusWaitingDot, pairingStatusStyles } from '@/components/auth/pairing/PairingStatusPill';
-import { StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
+import { StepPrimaryButton, StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
+import { StepActions, StepProblemHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import { StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
+import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { trackAccountRestored, trackAuthEnrollmentTransientRetry } from '@/track';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { promptAccountConnectApprovalRequired } from './accountConnectApprovalGuidance';
@@ -206,7 +210,30 @@ const stylesheet = StyleSheet.create((theme) => ({
     embeddedFooterButton: {
         width: '100%',
     },
+    // The problem step's heading, then its actions a section below (the step frame's rhythm).
+    resultStep: {
+        width: '100%',
+        gap: theme.space.s24,
+    },
 }));
+
+/** Each terminal answer's own heading and mark when it stands as a problem step. */
+const SCANNER_RESULT_HEADINGS: Readonly<Record<HomeEnrollmentScannerResult, Readonly<{
+    titleKey: TranslationKeyNoParams;
+    iconName: IconName;
+}>>> = {
+    succeeded: { titleKey: 'connect.pairingAddedTitle', iconName: 'checkmark' },
+    partial_commit: { titleKey: 'connect.pairingPartialTitle', iconName: 'warning' },
+    retryable_error: { titleKey: 'connect.pairingUnfinishedTitle', iconName: 'warning' },
+    expired: { titleKey: 'connect.pairingExpiredTitle', iconName: 'clock' },
+    invalid_request: { titleKey: 'connect.pairingInvalidTitle', iconName: 'unlink' },
+    already_requested: { titleKey: 'connect.pairingUsedTitle', iconName: 'qr-code' },
+    rejected: { titleKey: 'connect.pairingRejectedTitle', iconName: 'hand-left' },
+    wrong_target: { titleKey: 'connect.pairingWrongHomeTitle', iconName: 'home' },
+    malformed_response: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
+    legacy_pairing: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
+    update_required: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
+};
 
 function resolveDeviceLabel(): string | null {
     return resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS });
@@ -225,8 +252,12 @@ export type RestoreScanComputerQrViewProps = Readonly<{
      * view also takes a pairing link) for the live camera's row, and with none under the unavailable state.
      */
     renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode) => React.ReactNode;
-    /** Whether the camera is live (the host's heading says "Point at your computer" only while it is). */
-    onCameraLiveChange?: (live: boolean) => void;
+    /**
+     * The host's heading follows this view: `camera` while the camera is live ("Point at your computer"), `result`
+     * while this view draws a terminal answer as its own problem step (mark, heading, its one way on), so the host
+     * draws none, and `null` otherwise. A host that passes this yields a result's heading to the view.
+     */
+    onHeadingChange?: (heading: 'camera' | 'result' | null) => void;
     onOpenPairingLinkEntry?: () => void;
     onShowQrInstead?: () => void;
     initialResult?: 'legacy_pairing' | 'expired';
@@ -1116,10 +1147,12 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     // The same conditions that draw the live camera below (no desktop or requester result in front of it).
     const cameraLive = (pairingState === 'enabled' || pairingState === 'unknown') && !enrollmentResult
         && !desktopEnrollment && !pendingRequesterApproval && phase === 'idle';
-    const onCameraLiveChange = props.onCameraLiveChange;
+    const onHeadingChange = props.onHeadingChange;
+    const resultStep = embedded && onHeadingChange !== undefined && enrollmentResult != null;
+    const heading = cameraLive ? 'camera' : resultStep ? 'result' : null;
     React.useEffect(() => {
-        onCameraLiveChange?.(cameraLive);
-    }, [cameraLive, onCameraLiveChange]);
+        onHeadingChange?.(heading);
+    }, [heading, onHeadingChange]);
 
     if (pairingState === 'unknown' && !enrollmentResult) {
         const frame = (
@@ -1247,9 +1280,10 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         );
     }
 
-    if (phase === 'idle' && !enrollmentResult && embedded && props.renderAdditionalSignInWays) {
+    if (phase === 'idle' && !enrollmentResult && embedded && (props.renderAdditionalSignInWays || props.onHeadingChange)) {
         // The camera step (lab "Point at your computer"): the camera as a window on the column, its one status line,
-        // then the same ways row as Approve, with this view's own ways leading it.
+        // then the same ways row as Approve, with this view's own ways leading it. A step host without the model's
+        // ways (the standalone restore route) gets this view's own ways on the shared row.
         const leading = <>
             {rowBack ? <StepRowBackButton onPress={rowBack} /> : null}
             {/* The recovery key opens its own step (lab direction A), as Approve's key does. */}
@@ -1260,6 +1294,19 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 iconName="key"
                 onPress={openSecretKeyLogin}
             />
+        </>;
+        const ownWays = <>
+            {leading}
+            {props.onOpenPairingLinkEntry ? (
+                <StepRowWayButton testID="restore-enter-pairing-link" iconName="link"
+                    accessibilityLabel={t('connect.pairingLinkPlaceholder')} tooltip={t('connect.pairingLinkPlaceholder')}
+                    onPress={props.onOpenPairingLinkEntry} />
+            ) : null}
+            {props.onShowQrInstead ? (
+                <StepRowWayButton testID="restore-show-qr-instead" iconName="qr-code"
+                    accessibilityLabel={t('connect.signInShowQr')} tooltip={t('connect.signInShowQr')}
+                    onPress={openShowQrInstead} />
+            ) : null}
         </>;
         return (
             <View style={styles.cameraStep}>
@@ -1284,7 +1331,9 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         <Text style={pairingStatusStyles.text}>{t('connect.lookingForCode')}</Text>
                     </View>
                 </PairingStatusPill>
-                {props.renderAdditionalSignInWays(undefined, leading)}
+                {props.renderAdditionalSignInWays
+                    ? props.renderAdditionalSignInWays(undefined, leading)
+                    : <StepWaysRow>{ownWays}</StepWaysRow>}
             </View>
         );
     }
@@ -1325,6 +1374,34 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     </>
                 }
             />
+        );
+    }
+
+    if (resultStep) {
+        // A terminal answer on a step column is its own problem step (lab direction A): its mark and heading, what to
+        // do, then its one way on beside the step's Back.
+        const resultHeading = SCANNER_RESULT_HEADINGS[enrollmentResult];
+        return (
+            <View style={styles.resultStep}>
+                <StepProblemHeading
+                    iconName={resultHeading.iconName}
+                    title={t(resultHeading.titleKey)}
+                    subtitle={statusText}
+                    subtitleTestID="restore-enrollment-result"
+                    context={enrollmentPresentation.contextualFacts !== 'none' && activeInvite
+                        ? <HomeContextLine testID="restore-enrollment-home" label={formatHomeEnrollmentTargetLabel(activeInvite.home)} />
+                        : undefined}
+                />
+                <StepActions>
+                    <StepPrimaryButton
+                        testID={resultAction.testID}
+                        title={resultAction.title}
+                        onPress={resultAction.onPress}
+                        iconName={enrollmentPresentation.recoveryAction === 'scan_new_code' ? 'qr-code'
+                            : enrollmentPresentation.recoveryAction === 'enter_new_link' ? 'link' : null}
+                    />
+                </StepActions>
+            </View>
         );
     }
 

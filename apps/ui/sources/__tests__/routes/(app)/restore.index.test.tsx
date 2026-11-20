@@ -46,7 +46,8 @@ describe('/restore route', () => {
 
         expect(screen.findByTestId('unauth-shell-restore-wizard')).toBeTruthy();
         expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
-        expect(screen.findByTestId('restore-wizard-title')).toBeTruthy();
+        // Each way titles itself (Approve, the camera, a pairing link), so the route adds no second heading.
+        expect(screen.findByTestId('restore-wizard-title')).toBeNull();
     });
 
     it('keeps the focused wizard card when a signed-in person reaches restore from Settings', async () => {

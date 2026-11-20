@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 
 /**
  * The parts every signed-out form is made of, so Login, the email forms and Connect to a Home read as
@@ -73,6 +74,21 @@ export function StepOrDivider(props: Readonly<{ label: string }>) {
 }
 
 /**
+ * A step's other ways in under its actions (lab direction A Approve): the "or", then one centred row of round wells
+ * (`StepRowWayButton`).
+ */
+export function StepWaysRow(props: Readonly<{ children: React.ReactNode; label?: string; testID?: string }>) {
+    return (
+        <View testID={props.testID} style={styles.ways}>
+            <StepOrDivider label={t('common.or')} />
+            <View role="group" aria-label={props.label} style={styles.waysRow}>
+                {props.children}
+            </View>
+        </View>
+    );
+}
+
+/**
  * A step's quiet way on under its actions ("Lost your key?", "Back to sign in"): the shared text action, centred on
  * the column like the primary above it (lab direction A `.r3-quiet`).
  */
@@ -80,6 +96,22 @@ export function StepQuietAction(props: Readonly<{ label: string; onPress: () => 
     return (
         <View style={styles.quiet}>
             <TextLinkButton testID={props.testID} label={props.label} onPress={props.onPress} disabled={props.disabled} />
+        </View>
+    );
+}
+
+/** Two or three quiet ways on as one centred line, a dot between them (lab direction A "Forgot password? · Create an account"). */
+export function StepQuietActions(props: Readonly<{
+    actions: readonly Readonly<{ label: string; onPress: () => void; testID?: string; disabled?: boolean }>[];
+}>) {
+    return (
+        <View style={styles.quietLine}>
+            {props.actions.map((action, index) => (
+                <React.Fragment key={action.testID ?? action.label}>
+                    {index > 0 ? <Text style={styles.quietDot} accessibilityElementsHidden importantForAccessibility="no">·</Text> : null}
+                    <TextLinkButton testID={action.testID} label={action.label} onPress={action.onPress} disabled={action.disabled} />
+                </React.Fragment>
+            ))}
         </View>
     );
 }
@@ -114,6 +146,17 @@ const styles = StyleSheet.create((theme) => ({
     quiet: {
         alignItems: 'center',
     },
+    quietLine: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        alignItems: 'center',
+        columnGap: theme.space.s8,
+    },
+    quietDot: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
+    },
     // The rule's width on every step (lab direction A: 380 px, centred), whatever the column around it.
     or: {
         width: '100%',
@@ -132,5 +175,15 @@ const styles = StyleSheet.create((theme) => ({
     orText: {
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
+    },
+    ways: {
+        width: '100%',
+        gap: theme.space.s16,
+    },
+    waysRow: {
+        flexDirection: 'row',
+        alignSelf: 'center',
+        justifyContent: 'center',
+        gap: theme.space.s20,
     },
 }));

@@ -33,6 +33,7 @@ export default function RestoreShowQrRoute() {
             subtitle={t(entryIntent === 'add_home' ? 'setupOnboarding.addHomeSubtitle' : 'setupOnboarding.authRestoreSubtitle')}
             onBack={handleBack}
             backDisabled={navigationLocked}
+            bodyOwnsHeading={entryIntent === 'enter_home'}
         >
             <View testID="restore-route-content">
                 <RestoreIndexEmbedded

@@ -10,6 +10,7 @@ import { admitOpaqueInternalReturnPath } from '@/utils/path/routeUtils';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
+import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -24,6 +25,7 @@ import {
 export default function Restore() {
     const router = useRouter();
     const auth = useAuth();
+    const moveToRoute = useFirstRunRouteMove();
     const params = useLocalSearchParams<{
         returnTo?: string | string[];
         resumeCreate?: string | string[];
@@ -94,7 +96,13 @@ export default function Restore() {
                         {t('settingsAccount.nativePassword.serverUnavailable')}
                     </Text>
                 ) : (
-                    <SecretKeyLoginForm returnTo={completedReturnTo ?? '/'} onSuccess={landAfterRestore} />
+                    <SecretKeyLoginForm returnTo={completedReturnTo ?? '/'} onSuccess={landAfterRestore}
+                        // Signed out, the key step offers its way on when the key is gone (lab "Your recovery key").
+                        secondaryAction={auth.isAuthenticated ? undefined : {
+                            label: t('connect.lostYourKey'),
+                            testID: 'restore-open-lost-access',
+                            onPress: () => moveToRoute(() => router.push('/restore/lost-access')),
+                        }} />
                 )}
             </>
         </AuthRouteStepFrame>

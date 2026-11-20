@@ -19,6 +19,7 @@ export default function LostAccessScreen() {
             title={t('setupOnboarding.authLostAccessTitle')}
             subtitle={t('setupOnboarding.authLostAccessSubtitle')}
             onBack={handleBack}
+            bodyOwnsHeading
         >
             <LostAccessEmbedded />
         </AuthRouteStepFrame>

@@ -163,6 +163,8 @@ const wizardStepRegistryEntries = [
         id: 'auth_lost_access',
         titleKey: 'setupOnboarding.authLostAccessTitle',
         subtitleKey: 'setupOnboarding.authLostAccessSubtitle',
+        // The step titles itself under its key mark, with what is left on this Home as its purpose line.
+        bodyOwnsHeading: true,
         kind: 'recovery',
         surface: 'onboarding',
         // Another way in, not an optional step: Back is its way out.

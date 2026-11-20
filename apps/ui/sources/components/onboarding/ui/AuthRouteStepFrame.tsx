@@ -52,7 +52,9 @@ type RouteStepProps = Readonly<{
  * and the Team invitation and sign-in routes (which keep the split in both auth states) compose
  * through this, so a terminal answer reads like every other step instead of a card or list.
  */
-export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
+export function UnauthenticatedRouteStep(props: Omit<RouteStepProps, 'title'> & Readonly<{
+    /** Omitted when the body titles itself (its heading changes with its own sub-views). */
+    title?: string;
     /** The shell's testID when a route names it; defaults to `unauth-shell-<testID>`. */
     shellTestID?: string;
     /** The shell's step identity when it differs from the step's testID. */
@@ -148,6 +150,11 @@ type AuthRouteStepFrameProps = RouteStepProps & Readonly<{
     progress?: Readonly<{ index: number; count: number }>;
     /** A terminal answer (a failed sign-in): announced, and drawn signed out as a problem step under its mark. */
     status?: boolean;
+    /**
+     * Signed out, the body titles itself (each of its ways has its own heading, as the welcome wizard's
+     * `bodyOwnsHeading` steps do); the signed-in card keeps the route's title.
+     */
+    bodyOwnsHeading?: boolean;
     children: React.ReactNode;
 }>;
 
@@ -165,8 +172,8 @@ export function AuthRouteStepFrame(props: AuthRouteStepFrameProps) {
             <UnauthenticatedRouteStep
                 testID={props.testID}
                 stepId={props.stepId}
-                title={props.title}
-                subtitle={props.subtitle}
+                title={props.bodyOwnsHeading ? undefined : props.title}
+                subtitle={props.bodyOwnsHeading ? undefined : props.subtitle}
                 subtitleTestID={props.subtitleTestID}
                 context={props.context}
                 onBack={onBack}

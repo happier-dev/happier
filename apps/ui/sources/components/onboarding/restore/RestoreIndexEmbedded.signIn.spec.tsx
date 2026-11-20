@@ -27,6 +27,8 @@ vi.mock('react-native', async () => {
   });
 });
 
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+
 vi.mock('@/utils/platform/platform', () => ({
   isRunningOnMac: () => false,
 }));
@@ -38,18 +40,13 @@ vi.mock('@/utils/platform/qrScannerSupport', () => ({
   canUseCurrentDeviceQrScanner: () => camera.available,
 }));
 
-// The camera scanner, the QR display and the secret-key journey are their own owners, each with
-// camera, pairing-transport or credential-custody boundaries beneath; this spec is about which of
-// them the Login screen offers, so they render as markers.
+// The camera scanner and the QR display are their own owners, each with camera or pairing-transport
+// boundaries beneath; this spec is about which ways the pairing-link step offers, so they render as markers.
 vi.mock('@/components/account/restore/RestoreScanComputerQrView', () => ({
   RestoreScanComputerQrView: () => React.createElement('scan'),
 }));
 vi.mock('@/components/account/restore/RestoreQrView', () => ({
   RestoreQrView: () => React.createElement('qr'),
-}));
-vi.mock('@/components/account/restore/SecretKeyLoginForm', () => ({
-  SecretKeyLoginForm: (props: { embedded?: boolean }) =>
-    React.createElement('secret-key-form', props),
 }));
 
 async function renderLogin(
@@ -78,67 +75,51 @@ function pressable(tree: renderer.ReactTestRenderer, testID: string) {
   )[0];
 }
 
-describe('RestoreIndexEmbedded — Login keeps its promise', () => {
-  /** Which way comes first on the screen, in reading order. */
-  function firstWay(tree: renderer.ReactTestRenderer) {
-    const first = tree.root.findAll(
-      (node) =>
-        node.type === ('secret-key-form' as never) ||
-        node.props.testID === 'restore-pairing-link-input',
-    )[0];
-    return first?.type === ('secret-key-form' as never) ? 'recovery-key' : 'pairing-link';
-  }
-
-  it('leads with the open recovery key on a computer, then the pairing link', async () => {
+describe('RestoreIndexEmbedded — the pairing-link step', () => {
+  it('is one field and its primary, with the recovery key one way away on a computer', async () => {
     camera.available = false;
     viewport.current = DESKTOP;
-    const tree = await renderLogin();
+    const openKey = vi.fn();
+    const tree = await renderLogin({ onOpenSecretKeyLogin: openKey });
     try {
-      // Always open: no disclosure to press before the key field shows.
-      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(1);
-      expect(pressable(tree, 'restore-sign-in-secret-key')).toBeUndefined();
-      expect(firstWay(tree)).toBe('recovery-key');
-      expect(
-        tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })
-          .length,
-      ).toBeGreaterThan(0);
-      expect(
-        tree.root.findAllByProps({ testID: 'restore-sign-in-use-camera' }),
-      ).toHaveLength(0);
+      const input = tree.root.findAllByProps({ testID: 'restore-pairing-link-input' });
+      expect(input.length).toBeGreaterThan(0);
+      expect(input.some((node) => node.props.autoFocus === true)).toBe(true);
+      expect(pressable(tree, 'restore-pairing-link-submit')).toBeTruthy();
+      // The key is its own step, reached from the ways row; no camera way on a computer without one.
+      expect(pressable(tree, 'restore-sign-in-use-camera')).toBeUndefined();
+      await act(async () => {
+        pressable(tree, 'restore-open-manual')!.props.onPress();
+      });
+      expect(openKey).toHaveBeenCalledTimes(1);
     } finally {
       act(() => tree.unmount());
     }
   });
 
-  it('leads with the pairing link and the camera on a phone, then the open recovery key', async () => {
+  it('offers the camera on a phone and focuses nothing, so the keyboard does not cover the ways', async () => {
     camera.available = true;
     viewport.current = PHONE;
     const tree = await renderLogin();
     try {
-      expect(firstWay(tree)).toBe('pairing-link');
       expect(pressable(tree, 'restore-sign-in-use-camera')).toBeTruthy();
-      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(1);
-      // Nothing takes focus on a phone: a raised keyboard would cover the camera and the key.
       expect(
         tree.root
           .findAllByProps({ testID: 'restore-pairing-link-input' })
           .some((node) => node.props.autoFocus === true),
       ).toBe(false);
-      expect(tree.root.findByType('secret-key-form' as never).props.autoFocus).toBe(false);
     } finally {
       viewport.current = DESKTOP;
       act(() => tree.unmount());
     }
   });
 
-  it('scans a QR code with the camera from the same screen when there is one', async () => {
+  it('scans a QR code with the camera from the same step when there is one', async () => {
     camera.available = true;
     const tree = await renderLogin();
     try {
-      const useCamera = pressable(tree, 'restore-sign-in-use-camera');
-      expect(useCamera).toBeTruthy();
       await act(async () => {
-        useCamera!.props.onPress();
+        pressable(tree, 'restore-sign-in-use-camera')!.props.onPress();
       });
       expect(tree.root.findAllByType('scan' as never)).toHaveLength(1);
     } finally {
@@ -150,10 +131,8 @@ describe('RestoreIndexEmbedded — Login keeps its promise', () => {
     camera.available = false;
     const tree = await renderLogin({ reverseTargetProfileId: 'home-b' });
     try {
-      const showQr = pressable(tree, 'restore-sign-in-show-qr');
-      expect(showQr).toBeTruthy();
       await act(async () => {
-        showQr!.props.onPress();
+        pressable(tree, 'restore-sign-in-show-qr')!.props.onPress();
       });
       expect(tree.root.findAllByType('qr' as never)).toHaveLength(1);
     } finally {
@@ -172,12 +151,7 @@ describe('RestoreIndexEmbedded — Login keeps its promise', () => {
         tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })
           .length,
       ).toBeGreaterThan(0);
-      expect(
-        tree.root.findAllByProps({ testID: 'restore-sign-in-secret-key' }),
-      ).toHaveLength(0);
-      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(
-        0,
-      );
+      expect(pressable(tree, 'restore-open-manual')).toBeUndefined();
     } finally {
       act(() => tree.unmount());
     }

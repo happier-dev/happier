@@ -61,7 +61,7 @@ describe('AccountServiceSelectionForm', () => {
         expect(screen.findByTestId('account-service-url-input')).toBeNull();
         expect(screen.findByTestId('organization-policy-accountService')).not.toBeNull();
         expect(screen.findByTestId('organization-policy-accountService-support')).not.toBeNull();
-        await screen.pressByTestIdAsync('account-service-selection-back');
+        await screen.pressByTestIdAsync('unauth-shell-back-chevron');
         expect(onBack).toHaveBeenCalledOnce();
     });
 
@@ -165,11 +165,9 @@ describe('AccountServiceSelectionForm', () => {
             input.props.onChangeText('https://home.example.test');
         });
         await screen.pressByTestIdAsync('account-service-url-submit');
-        await vi.waitFor(() => expect(screen.findByTestId('account-service-url-error')?.props.children).toBe('welcome.signInServiceUnsupportedBody'));
-        const { StyleSheet } = await import('react-native');
-        const { lightTheme } = await import('@/theme');
-        expect(StyleSheet.flatten(screen.findByTestId('account-service-url-error')?.props.style).color)
-            .toBe(lightTheme.colors.state.danger.textForeground);
+        // The check's answer is the step's error notice, not a second line of copy under the field.
+        await vi.waitFor(() => expect(screen.findByTestId('account-service-url-error')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('welcome.signInServiceUnsupportedBody');
 
         expect(onSelect).toHaveBeenCalledWith(
             'https://home.example.test',
@@ -178,7 +176,7 @@ describe('AccountServiceSelectionForm', () => {
             }),
         );
         expect(screen.findByTestId('account-service-url-input')?.props.value).toBe('https://home.example.test');
-        expect(screen.findByTestId('account-service-url-error')?.props.children).toBe('welcome.signInServiceUnsupportedBody');
+        expect(screen.getTextContent()).toContain('welcome.signInServiceUnsupportedBody');
     });
 
     it('opens URL entry without discovery when the source build has no default service', async () => {
@@ -335,7 +333,7 @@ describe('AccountServiceSelectionForm', () => {
         });
         await vi.waitFor(() => expect(network.request).toHaveBeenCalledTimes(1));
 
-        await screen.pressByTestIdAsync('account-service-selection-back');
+        await screen.pressByTestIdAsync('unauth-shell-back-chevron');
         response.resolve(new Response(JSON.stringify(supportedAccountService('srv_abandoned_service')), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },

@@ -144,7 +144,7 @@ describe('PairingLinkEntryForm', () => {
         expect(tree.root.findByProps({ testID: 'restore-pairing-link-error' })).toBeTruthy();
     });
 
-    it('lets a pasted link proceed on its own beside other ways in, leaving the primary action to its host', async () => {
+    it('on a step, lets a pasted link proceed on its own while a typed one waits for the primary', async () => {
         const submit = vi.fn(async () => true);
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
@@ -157,8 +157,7 @@ describe('PairingLinkEntryForm', () => {
             input().props.onChangeText('h');
         });
         expect(submit).not.toHaveBeenCalled();
-        const typedAction = tree.root.findByProps({ testID: 'restore-pairing-link-submit' });
-        expect(typedAction.props.display).toBe('secondary');
+        expect(tree.root.findAllByProps({ testID: 'restore-pairing-link-submit' }).length).toBeGreaterThan(0);
         await act(async () => {
             input().props.onChangeText('');
         });

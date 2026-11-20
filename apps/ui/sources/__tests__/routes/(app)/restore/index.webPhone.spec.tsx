@@ -256,8 +256,8 @@ describe('/restore (web phone)', () => {
             expect(restoreRouteIngressState.scannerProps?.initialPairingLink).toBeNull();
             expect(restoreRouteIngressState.scannerProps?.entryIntent).toBe('enter_home');
             expect(screen.findAllByProps({ 'data-testid': 'RestoreQrView' })).toHaveLength(0);
-            expect(screen.getTextContent()).toContain('setupOnboarding.authRestoreTitle');
-            expect(screen.getTextContent()).toContain('setupOnboarding.authRestoreSubtitle');
+            // Signing in, the camera step titles itself; nothing reads as adding a Home.
+            expect(screen.getTextContent()).toContain('connect.pointAtComputerTitle');
             expect(screen.getTextContent()).not.toContain('setupOnboarding.addHomeTitle');
         },
     );
