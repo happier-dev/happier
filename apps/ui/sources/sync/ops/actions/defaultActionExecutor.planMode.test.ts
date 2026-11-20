@@ -37,6 +37,7 @@ import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/m
 import { bindMachineAccessActionHttpRequestV1, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { answerExternalActionAccountForHome, createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -2598,78 +2599,76 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(homes.requestsFor(`/v1/sessions/${sessionId}`)).toHaveLength(0);
   });
 
-  it('cancels stop-and-delete when its Account retires and never issues a late Delete', async () => {
-    const sessionId = 'retired-stop-and-delete';
-    installSession(sessionId, { machineId: 'machine-a', flavor: 'codex',
-      terminal: { mode: 'plain', controlServiceabilityV1: { v: 1, state: 'servable', observedAt: 1 } } });
-    const stopped = createDeferred<void>();
-    const releaseStop = createDeferred<void>();
-    daemonAnswer = async () => { stopped.resolve(); await releaseStop.promise; return { status: 'stopped' }; };
-    let deletes = 0;
-    homes.answer(serverId, `/v1/sessions/${sessionId}`, { select: () => {
-      deletes += 1; return { status: 400, body: { error: 'Session is active' } };
-    } });
+  it.each([
+    { title: 'cancels stop-and-delete when its Account retires and never issues a late Delete', retire: true },
+    { title: 'sends only Delete from the UI and lets its reviewed active refusal own Stop and the retry', retire: false },
+  ])('$title', async ({ retire }) => {
+    const sessionId = 'stop-and-delete-session';
+    installSession(sessionId, { machineId: 'machine-a', flavor: 'codex' });
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions');
     const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
     const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
-    const session = storage.getState().sessions[sessionId]!;
+    const effects: string[] = [];
+    const stopping = createDeferred<void>();
+    const releaseStop = createDeferred<void>();
+    const nativeSettled = createDeferred<void>();
+    let active = true;
+    const native = createActionExecutor({
+      homeDomainAction: async () => {
+        effects.push('delete');
+        return active ? { ok: false, errorCode: 'session_active', error: 'session_active' } : { success: true };
+      },
+      sessionStop: async ({ sessionId: stoppedId }) => {
+        effects.push('stop');
+        expect(stoppedId).toBe(sessionId);
+        stopping.resolve();
+        if (retire) await releaseStop.promise;
+        active = false;
+        return { sessionId: stoppedId, stopped: true, success: true };
+      },
+    });
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: 'machine-a', actionId: 'session.delete', tokenEpoch: 0,
+      async execute(input, request) {
+        expect(input).toEqual({ sessionId });
+        expect(request.invocation).toMatchObject({ surface: 'ui', authority: 'present_user' });
+        try {
+          const result = await native.execute('session.delete', input, {
+            ...context(), signal: request.signal ?? undefined, actionCaller: { kind: 'host' },
+            actionsSettings: normalizeActionsSettingsV1({ v: 1 }),
+            presentUserConfirmation: { actionId: 'session.delete' },
+          });
+          return result.ok ? result.result : result;
+        } finally { nativeSettled.resolve(); }
+      },
+      failure: result => {
+        const failure = ActionExecuteFailureSchema.safeParse(result);
+        return failure.success ? failure.data : null;
+      },
+    });
+    homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
     const deleting = executeSessionAction({ actionId: 'ui.session.delete',
-      target: createSessionActionTarget({ session, serverId, isConnected: true }),
+      target: createSessionActionTarget({ session: storage.getState().sessions[sessionId]!, serverId, isConnected: true }),
       context: { confirmed: true },
     }).then(() => null, error => error);
     try {
-    await Promise.race([stopped.promise, deleting.then(error => { throw error ?? new Error('Delete completed before Stop'); })]);
-    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-    await TokenStorage.removeCredentialsForServerUrl('https://mode-actions.test', { serverId });
-    releaseStop.resolve();
-    expect(await deleting).toBeInstanceOf(Error);
-    expect(deletes).toBe(1);
-    } finally { releaseStop.resolve(); await deleting; }
-  });
-
-  it('sends only Delete from the UI and lets its reviewed active refusal own Stop and the retry', async () => {
-    const sessionId = 'stop-and-delete-session';
-    installSession(sessionId, { machineId: 'machine-a', flavor: 'codex',
-      terminal: { mode: 'plain', controlServiceabilityV1: { v: 1, state: 'servable', observedAt: 1 } } });
-    let active = true;
-    const effects: string[] = [];
-    const stopped = createDeferred<void>();
-    daemonAnswer = () => {
-      effects.push('stop');
-      active = false;
-      // The native boundary publishes its observed Stop. No UI waiter owns deletion.
-      const current = storage.getState().sessions[sessionId]!;
-      const ownerMetadata = readSessionOwnerMetadataView(current)!;
-      const retired = { ...ownerMetadata, terminal: { ...ownerMetadata.terminal,
-        controlServiceabilityV1: { v: 1 as const, state: 'unknown' as const, observedAt: 2, retired: true } } };
-      storage.getState().applySessions([{ ...current, active: false, activeAt: 0, presence: 0,
-        metadata: retired, ownerMetadataView: retired, metadataVersion: current.metadataVersion + 1, updatedAt: current.updatedAt + 1 }]);
-      stopped.resolve();
-      return { status: 'stopped' };
-    };
-    homes.answer(serverId, `/v1/sessions/${sessionId}`, { select: () => {
-      effects.push('delete');
-      return active ? { status: 400, body: { error: 'Session is active' } } : { body: { success: true } };
-    } });
-    const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
-    const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
-    const target = createSessionActionTarget({ session: storage.getState().sessions[sessionId]!, serverId, isConnected: true });
-    let settled = false;
-    const deleting = executeSessionAction({ actionId: 'ui.session.delete', target,
-      context: { confirmed: true } })
-      .then(() => { settled = true; return null; }, error => { settled = true; return error; });
-    try {
-    await Promise.race([stopped.promise, deleting.then(error => { throw error ?? new Error('Delete completed before Stop'); })]);
-    expect(effects.slice(0, 2)).toEqual(['delete', 'stop']);
-    expect(await deleting).toBeNull();
-    expect(effects).toEqual(['delete', 'stop', 'delete']);
-    expect(outgoing.filter(request => request.method.endsWith(`:${RPC_METHODS.STOP_SESSION}`)))
-      .toEqual([{ method: `machine-a:${RPC_METHODS.STOP_SESSION}`, params: { sessionId } }]);
-    expect(homes.requests.some(request => request.path.endsWith(`/${sessionId}/archive`))).toBe(false);
-    } finally {
-      if (!settled) {
+      if (retire) {
+        await Promise.race([stopping.promise, deleting.then(error => { throw error ?? new Error('Delete completed before Stop'); })]);
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         await TokenStorage.removeCredentialsForServerUrl('https://mode-actions.test', { serverId });
+        releaseStop.resolve();
+        await nativeSettled.promise;
+        expect(await deleting).toBeInstanceOf(Error);
+        expect(effects).toEqual(['delete', 'stop']);
+      } else {
+        expect(await deleting).toBeNull();
+        expect(effects).toEqual(['delete', 'stop', 'delete']);
       }
+      expect(homes.requestsFor('/v1/actions/session.delete')).toHaveLength(1);
+      expect(homes.requestsFor(`/v1/sessions/${sessionId}`)).toHaveLength(0);
+      expect(outgoing).toEqual([]);
+    } finally {
+      releaseStop.resolve();
       await deleting;
     }
   });
