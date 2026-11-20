@@ -231,9 +231,12 @@ describe('TeamAuthEntrySurface', () => {
         home.answer(homeId, ACCEPT_PATH, { select: () => acceptHttpResponse() });
         const serviceId = await home.addHome({ name: 'Acme Accounts', serverUrl: 'https://accounts.example.test',
             serverIdentityId: 'srv_accounts', accountId: null, active: false });
-        const features = createSignInServiceFeaturesResponse('https://accounts.example.test');
-        features.capabilities.serverIdentity = { serverIdentityId: 'srv_accounts' };
-        features.accountServicePresentation = { v: 1, displayName: 'Acme Accounts' };
+        const serviceFeatures = createSignInServiceFeaturesResponse('https://accounts.example.test');
+        const features = {
+            ...serviceFeatures,
+            capabilities: { ...serviceFeatures.capabilities, serverIdentity: { serverIdentityId: 'srv_accounts' } },
+            accountServicePresentation: { v: 1, displayName: 'Acme Accounts' },
+        };
         home.answer(serviceId, '/v1/features', { select: () => accountServiceAvailable
             ? { body: features } : { dispatchThenFail: true } });
         home.answer(serviceId, ENTRY_PATH, { body: AuthEntryProjectionV1Schema.parse({

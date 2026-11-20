@@ -1,5 +1,5 @@
 import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
-import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import type { AuthEntryActionV1 } from '@happier-dev/protocol/auth/entry';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -52,6 +52,15 @@ const capability = {
     homeEnrollment: true,
     homeLoginAssertion: { keyId: 'a'.repeat(64), publicKeyBase64Url: 'A'.repeat(43) },
 };
+
+function directoryActions(actions: AuthEntryActionV1[]): AccountServiceAuthenticationFlowProps['service']['authenticationActions'] {
+    const projected = projectAuthEntryMethodCapabilities({ v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null, actions });
+    return projected.authenticationActions.map(({ method, action, execution }) => {
+        if (execution.kind === 'mtls' || execution.kind === 'email_password') throw new Error('Unexpected authentication method in the Directory fixture');
+        return { method, action, execution };
+    });
+}
+
 const service = {
     authority: {
         endpointUrl: 'https://accounts.example.test', serverIdentityId: 'srv_accounts',
@@ -59,15 +68,12 @@ const service = {
         snapshot: { status: 'ready' as const, features: createRootLayoutFeaturesResponse(), serverIdentityId: 'srv_accounts' },
     },
     displayName: 'Acme',
-    authenticationActions: projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
-        v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
-        actions: [
-            { kind: 'authenticate', methodId: 'github', action: 'provision', mode: 'either', origin: 'home', presentation: { displayName: 'GitHub' } },
-            { kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless', origin: 'home', presentation: { displayName: 'GitHub' } },
-            { kind: 'authenticate', methodId: 'key_challenge', action: 'provision', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
-            { kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
-        ],
-    })).authenticationActions,
+    authenticationActions: directoryActions([
+        { kind: 'authenticate', methodId: 'github', action: 'provision', mode: 'either', origin: 'home', presentation: { displayName: 'GitHub' } },
+        { kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless', origin: 'home', presentation: { displayName: 'GitHub' } },
+        { kind: 'authenticate', methodId: 'key_challenge', action: 'provision', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
+        { kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } },
+    ]),
     transport: { runtimeOrigin: 'http://127.0.0.1:43123' },
 } satisfies AccountServiceAuthenticationFlowProps['service'];
 const intent = { kind: 'enter', target: { kind: 'automatic' } } as const;
@@ -142,10 +148,9 @@ describe('AccountServiceAuthenticationFlow', () => {
     ] as const)('opens the %s browser wait for %s and goes Back to the methods', async (os, providerId, presentation) => {
         host.os = os;
         vi.stubGlobal('window', { location: { assign: host.sameTab } });
-        const { authenticationActions } = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
-            v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
-            actions: [{ kind: 'authenticate', methodId: providerId, action: 'login', mode: 'keyless', origin: 'home', presentation }],
-        }));
+        const authenticationActions = directoryActions([
+            { kind: 'authenticate', methodId: providerId, action: 'login', mode: 'keyless', origin: 'home', presentation },
+        ]);
         const screen = await renderScreen(<AccountServiceAuthenticationFlow service={{ ...service, authenticationActions }} intent={intent}
             onPostAuthContinuation={() => {}} returnTo="/setup/wizard" onResult={vi.fn()}
             onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);

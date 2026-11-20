@@ -4,7 +4,7 @@ import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks }
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
-import { AuthEntryProjectionV1Schema, type AuthEntryActionV1 } from '@happier-dev/protocol/auth/entry';
+import type { AuthEntryActionV1 } from '@happier-dev/protocol/auth/entry';
 
 
 const nativeStorage = new Map<string, string>();
@@ -42,9 +42,9 @@ const { Icon } = await import('@/components/ui/icons/Icon');
 const { HomeAuthenticationFlow } = await import('./HomeAuthenticationFlow');
 
 function actionFromEntry(action: Extract<AuthEntryActionV1, { kind: 'authenticate' }>) {
-    return projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
+    return projectAuthEntryMethodCapabilities({
         v: 1, state: 'ready', scope: { kind: 'home' }, actions: [action], autoRedirect: null,
-    })).authenticationActions[0]!;
+    }).authenticationActions[0]!;
 }
 const keyAction = actionFromEntry({ kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home', presentation: { displayName: 'Secret key' } });
 const oauthAction = actionFromEntry({ kind: 'authenticate', methodId: 'team-oidc', action: 'connect', mode: 'either', origin: 'home',

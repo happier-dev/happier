@@ -656,9 +656,12 @@ function OAuthProviderReturnBody() {
                 const home = !ctx.teamContinuation && !ctx.accountContinuation && ctx.intent !== 'signup' && ctx.serverId
                     ? getServerProfileById(ctx.serverId)
                     : null;
-                const restart: Href = home
-                    ? buildHomeRecoveryHref({ profileRef: home.id, returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/' })
-                    : admitInternalRouteHref(failureReturnTo);
+                let restart: Href;
+                if (home) {
+                    restart = buildHomeRecoveryHref({ profileRef: home.id, returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/' });
+                } else {
+                    restart = admitInternalRouteHref(failureReturnTo);
+                }
                 setExternalFailure({ presentation, iconName, restart, ...(home ? { retry: {
                     profileRef: home.id, providerId: ctx.providerId,
                     returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/',
@@ -1280,15 +1283,14 @@ function OAuthProviderReturnBody() {
                         });
                     }
                 }
-                const restart: Href = flow === 'auth'
-                    && !isFirstKeyReturn
-                    && !isPasswordEnrollmentReturn
-                        ? authenticationReturnTo
-                        : isPasswordEnrollmentReturn
-                            ? admitInternalRouteHref(passwordEnrollmentReturnTo)
-                            : flow !== 'auth'
-                                ? admitInternalRouteHref(connectReturnTo)
-                                : '/settings/account';
+                let restart: Href = '/settings/account';
+                if (flow === 'auth' && !isFirstKeyReturn && !isPasswordEnrollmentReturn) {
+                    restart = authenticationReturnTo;
+                } else if (isPasswordEnrollmentReturn) {
+                    restart = admitInternalRouteHref(passwordEnrollmentReturnTo);
+                } else if (flow !== 'auth') {
+                    restart = admitInternalRouteHref(connectReturnTo);
+                }
                 if (disposed || controller.signal.aborted) return;
                 if (failure === 'cancelled' || flow !== 'auth') router.replace(restart);
                 else setExternalFailure({ presentation: describeOAuthSignInFailure(failure), iconName, restart, retry: homeRetry });

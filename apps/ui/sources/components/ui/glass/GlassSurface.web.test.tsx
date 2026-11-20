@@ -909,7 +909,7 @@ describe('web glass material', () => {
         const settings = { glassSurfaceMaterials: glassPresetMaterials('auto') };
         const page = lightTheme.colors.surface.base;
         const ink = lightTheme.colors.text.primary;
-        const rgb = (color: Color): [number, number, number] => [color.red(), color.green(), color.blue()];
+        const rgb = (color: ReturnType<typeof Color>): [number, number, number] => [color.red(), color.green(), color.blue()];
         const white: [number, number, number] = [255, 255, 255];
         const black: [number, number, number] = [0, 0, 0];
         for (const solid of ['#000000', '#090909']) {

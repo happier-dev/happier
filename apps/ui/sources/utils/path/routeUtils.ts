@@ -43,7 +43,8 @@ export function tryAdmitInternalRouteHref(destination: string | HrefObject): Hre
     const path = admitOpaqueInternalReturnPath(typeof destination === 'string' ? destination : destination.pathname);
     if (path === null) return null;
     // Approved SDK boundary: Expo dispatch accepts admitted runtime paths beyond generated route names.
-    return typeof destination === 'string' ? path as Href : { ...destination, pathname: path } as Href;
+    const admitted = typeof destination === 'string' ? path : { ...destination, pathname: path };
+    return admitted as Href;
 }
 
 /** Admit a runtime internal destination for callers whose route is already known to be valid. */

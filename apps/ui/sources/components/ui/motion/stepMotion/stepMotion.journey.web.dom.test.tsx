@@ -341,10 +341,10 @@ it.each(['back', 'blur', 'settle'] as const)('keeps stage continuity when a late
         if (interruption === 'back') {
             await act(async () => { find('back').click(); });
             const reverse = travellerAt(0);
-            assert.isNumber(forward?.stepMorphProgress);
+            assert(typeof forward?.stepMorphProgress === 'number');
             expect(reverse?.stepMorphProgress).toBeCloseTo(forward.stepMorphProgress);
-            expect(reverse?.particles.length).toBe(forward!.particles.length);
-            expect(reverse?.particles.every((value, index) => value === forward!.particles[index])).toBe(true);
+            expect(reverse?.particles.length).toBe(forward.particles.length);
+            expect(reverse?.particles.every((value, index) => value === forward.particles[index])).toBe(true);
             expect(document.activeElement).toBe(find('open-approval'));
         } else if (interruption === 'blur') {
             expect(document.visibilityState).toBe('visible');

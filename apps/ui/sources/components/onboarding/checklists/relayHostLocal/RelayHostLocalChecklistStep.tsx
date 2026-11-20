@@ -30,7 +30,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         <View testID={props.testID}>
             <OrganizationPolicyFieldNotice field="personalHome" />
             {!onWizardPrimaryChange ? (
-                <RoundButton title={label} disabled={!request} onPress={request ?? undefined} />
+                <RoundButton title={label} disabled={!request} onPress={request ? () => request() : undefined} />
             ) : null}
         </View>
     );

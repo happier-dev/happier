@@ -23,9 +23,10 @@ export function resolvePostAuthLanding(input: Readonly<{
     returnTo?: string | null;
     revealHome?: () => void;
 }>): void {
-    const team = input.teamContinuation ? tryAdmitInternalRouteHref(input.teamContinuation) : null;
-    const target: Href | null = team ?? input.continuation
-        ?? (typeof input.returnTo === 'string' ? tryAdmitInternalRouteHref(input.returnTo) : null);
+    let target: Href | null = null;
+    if (input.teamContinuation) target = tryAdmitInternalRouteHref(input.teamContinuation);
+    if (target === null && input.continuation !== undefined) target = input.continuation;
+    if (target === null && typeof input.returnTo === 'string') target = tryAdmitInternalRouteHref(input.returnTo);
     if (target && target !== '/') {
         input.replace(target);
         return;

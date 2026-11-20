@@ -127,7 +127,7 @@ describe('WelcomeActionCard', () => {
             <>
                 <WelcomeActionCard testID="quiet-provider" presentation="row" title="Continue with GitHub" iconName="sign-in"
                     accentColor="#24292F" onPress={() => {}} />
-                <WelcomeActionCard testID="quiet-email" presentation="row" title="Email and password" iconName="mail"
+                <WelcomeActionCard testID="quiet-email" presentation="row" title="Email and password" iconName="envelope"
                     onPress={() => {}} />
             </>,
         );
