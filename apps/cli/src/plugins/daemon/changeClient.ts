@@ -92,6 +92,7 @@ export function describeUserPluginChangeFailure(result: Exclude<UserPluginChange
       return {
         code: 'outcome_unknown',
         message: `The daemon may have applied the change for ${result.pluginId}; inspect installed state before retrying.`,
+        ...(result.failureCause ? { failureCause: readActionFailureCauseV1(result.failureCause) } : {}),
         details: { pluginId: result.pluginId, ...(result.expectedCandidate ? { expectedCandidate: result.expectedCandidate } : {}) },
       };
     case 'dataRemovalPartial':

@@ -9,6 +9,8 @@ import { computePluginUiArtifactFileSetSha256DigestV1 } from '@happier-dev/proto
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
+import { decideUserPluginChange } from '@/plugins/daemon/changeClient';
+import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { PluginGenerationCustodyRetirementRemoteDependencies } from '@/plugins/store/registry/generationCustodyRetirement';
 import { readPluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
@@ -973,6 +975,24 @@ describe('createDaemonArchivePluginChangePreparer', () => {
       kind: 'outcomeUnknown',
       pluginId: 'acme.archive-candidate',
       expectedCandidate: expect.any(String),
+    });
+    await expect(executePluginDevLoopAction({
+      actionId: 'plugins.install',
+      input: { path: fixture.archivePath, kind: 'archive' },
+      happyHomeDir,
+    }, {
+      approvedInstallReview: begun,
+      installEffectAdmitted: true,
+      decideUserPluginChange: (input) => decideUserPluginChange(input, {
+        ensureDaemon: async () => undefined,
+        readStatus: service.statusPluginChange,
+        decideChange: service.decidePluginChange,
+      }),
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'outcome_unknown',
+      failureCause: { phase: 'plugins.change.adoption' },
+      change: { kind: 'outcomeUnknown', pluginId: 'acme.archive-candidate', expectedCandidate: expect.any(String) },
     });
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins['acme.archive-candidate'])
       .toMatchObject({

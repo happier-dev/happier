@@ -1,4 +1,5 @@
 import type { PluginGitInstallSource } from '@happier-dev/protocol/plugins/source-spec';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   type MarketplaceRegistryProfileRequiredResultV1,
   type MarketplaceRegistryProfileRequirementV1,
@@ -125,7 +126,7 @@ export type PluginChangeApplyResult =
   | Readonly<{ kind: 'unavailable'; code: string }>
   | Readonly<{ kind: 'conflict'; pluginId: string }>
   | Readonly<{ kind: 'failed'; code: string; message?: string; details?: PluginCompatibilityDiagnostic['details'] }>
-  | Readonly<{ kind: 'outcomeUnknown'; pluginId: string; expectedCandidate?: string }>;
+  | Readonly<{ kind: 'outcomeUnknown'; pluginId: string; expectedCandidate?: string; failureCause?: ActionFailureCauseV1 }>;
 
 /**
  * The npm artifact a change needs is served by a registry this Home has no

@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+
 import type { PluginRegistryCommitResult } from './commitCoordinator';
 import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
 import {
@@ -29,6 +31,7 @@ export type PluginRegistryTransactionResult =
       status: 'outcomeUnknown';
       record: PluginRegistryCommitRecord;
       phase: 'durability' | 'adoption';
+      failureCause: ActionFailureCauseV1;
       message: string;
     }>
   | Readonly<{ status: 'conflict'; expectedRevision: number | null; actualRevision: number | null; abortMessage?: string }>
@@ -79,6 +82,20 @@ function projectTransactionFailureText(error: unknown): string {
 
 function projectTransactionFailureMessage(message: string): string {
   return projectTransactionFailureText(new Error(message));
+}
+
+function projectUnknownTransaction(
+  record: PluginRegistryCommitRecord,
+  phase: 'durability' | 'adoption',
+  error: unknown,
+): Extract<PluginRegistryTransactionResult, { status: 'outcomeUnknown' }> {
+  return {
+    status: 'outcomeUnknown',
+    record,
+    phase,
+    failureCause: projectActionFailureCauseV1(error, `plugins.change.${phase}`),
+    message: projectTransactionFailureText(error),
+  };
 }
 
 export function createPluginRegistryTransactionService(input: Readonly<{
@@ -181,29 +198,15 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       }
       if (commitResult.status === 'committed_durability_pending') {
         if (!activation) {
-          return {
-            status: 'outcomeUnknown',
-            record: commitResult.record,
-            phase: 'adoption',
-            message: 'Plugin registry transaction reached durability ambiguity without an activated candidate',
-          };
+          return projectUnknownTransaction(commitResult.record, 'adoption',
+            new Error('Plugin registry transaction reached durability ambiguity without an activated candidate'));
         }
         try {
           await operation.adopt(commitResult.record, activation.value);
         } catch (error) {
-          return {
-            status: 'outcomeUnknown',
-            record: commitResult.record,
-            phase: 'adoption',
-            message: projectTransactionFailureText(error),
-          };
+          return projectUnknownTransaction(commitResult.record, 'adoption', error);
         }
-        return {
-          status: 'outcomeUnknown',
-          record: commitResult.record,
-          phase: 'durability',
-          message: projectTransactionFailureMessage(commitResult.message),
-        };
+        return projectUnknownTransaction(commitResult.record, 'durability', new Error(commitResult.message));
       }
       if (commitResult.status !== 'committed') {
         if (
@@ -219,24 +222,15 @@ export function createPluginRegistryTransactionService(input: Readonly<{
 
       const record = commitResult.record;
       if (!activation) {
-        return {
-          status: 'outcomeUnknown',
-          record,
-          phase: 'adoption',
-          message: 'Plugin registry transaction reached adoption without an activated candidate',
-        };
+        return projectUnknownTransaction(record, 'adoption',
+          new Error('Plugin registry transaction reached adoption without an activated candidate'));
       }
       let appliedGenerationsByPluginId: Readonly<Record<string, string | null>> | undefined;
       try {
         appliedGenerationsByPluginId =
           await operation.adopt(record, activation.value) ?? undefined;
       } catch (error) {
-        return {
-          status: 'outcomeUnknown',
-          record,
-          phase: 'adoption',
-          message: projectTransactionFailureText(error),
-        };
+        return projectUnknownTransaction(record, 'adoption', error);
       }
       try {
         const reconciliation = await operation.reconcile(record);

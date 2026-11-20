@@ -20,6 +20,7 @@ export function projectPluginTransactionChangeResult(params: Readonly<{
     return Object.freeze({
       kind: 'outcomeUnknown',
       pluginId: params.pluginId,
+      failureCause: params.transaction.failureCause,
       ...(params.desiredGeneration
         ? { expectedCandidate: params.desiredGeneration }
         : {}),

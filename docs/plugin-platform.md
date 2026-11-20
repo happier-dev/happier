@@ -13299,10 +13299,13 @@ keeps its original custody until development adoption, and restart rebuilds the
 registered source. A managed manifest-authority-only update keeps its generation
 selection and existing rollback behavior. Rollback metadata remains bound to the
 selected distribution lineage; unrelated plugins' retained history is unchanged.
-`plugins change status` only inspects pending
-daemon custody. Restart expires that custody, so the original source flow must
-prepare new facts; `outcome_unknown` requires installed-state inspection before
-replay. Optional resource and credential grants retain their canonical owners.
+`plugins change status` inspects pending and retained terminal daemon custody.
+A daemon restart expires that custody. In 0.3 development, `plugins.install`
+returns `outcome_unknown` when the installation transaction cannot confirm
+durability or adoption. The Action failure carries the registry's typed
+`failureCause` and the exact candidate generation when available. Inspect
+installed state before retrying the effect. Optional resource and credential
+grants retain their canonical owners.
 
 Enable, disable, rollback, forget trust and update-policy controls use semantic
 Actions in this same plugin change family on UI, CLI, Agent and MCP. Reversible
