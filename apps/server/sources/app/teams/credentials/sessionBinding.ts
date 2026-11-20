@@ -56,6 +56,19 @@ function persistedSlotKind(slot: SessionTeamCredentialSlotV1, deliveryMode: Team
     return `${slot.kind}:${deliveryMode}`;
 }
 
+async function admitSessionBindingOwnerInTx(tx: Tx, input: Readonly<{ sessionId: string; accountId: string }>) {
+    const session = await tx.session.findUnique({
+        where: { id: input.sessionId }, select: { accountId: true, primaryTeamId: true },
+    });
+    if (!session) return { ok: false, reason: 'session_missing' } as const;
+    if (session.accountId !== input.accountId) return { ok: false, reason: 'session_owner_mismatch' } as const;
+    return { ok: true, primaryTeamId: session.primaryTeamId } as const;
+}
+
+function existingSessionCredentialPolicy(tx: Tx, sessionId: string, primaryTeamId: string | null): SessionTeamCredentialPolicyContext {
+    return { primaryTeamId, isVisibleToTeam: async teamId => (await assertSessionTeamReadableGrantInTx({ tx, sessionId, teamId })).ok };
+}
+
 /** Persist accepted Session selection intent in the same transaction as its owner. */
 export async function writeSessionTeamCredentialBindingsInTx(
     tx: Tx,
@@ -101,12 +114,9 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
         && !await isServerFeatureEnabledForHome("teams.credentialResources", { tx })) {
         return { ok: false, reason: "feature_disabled" };
     }
-    const owner = await tx.session.findUnique({
-        where: { id: input.sessionId },
-        select: { accountId: true },
-    });
-    if (!owner) return { ok: false, reason: "session_missing" };
-    if (owner.accountId !== input.accountId) return { ok: false, reason: "session_owner_mismatch" };
+    const session = await admitSessionBindingOwnerInTx(tx, input);
+    if (!session.ok) return session;
+    const policy = existingSessionCredentialPolicy(tx, input.sessionId, session.primaryTeamId);
     const existingNative = await readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: input.sessionId });
     const replacement = input.intents.find(intent => intent.slot.kind === 'provider_model');
     const reuseNative = existingNative.ok && replacement !== undefined && replacement.resourceId !== null
@@ -138,8 +148,8 @@ export async function writeParsedSessionTeamCredentialBindingsInTx(
         }
         const resolved = consent
             ? await resolveRequiredTeamVisibilityInTx(tx, { ...bindingInput,
-                consentTeamId: consent.teamId, requiredTeamCredential: intent })
-            : await validateExistingSessionTeamCredentialResourceInTx(tx, bindingInput);
+                consentTeamId: consent.teamId, requiredTeamCredential: intent }, session.primaryTeamId)
+            : await validateSessionTeamCredentialResourceForContextInTx(tx, { ...bindingInput, policy });
         const admitted = validateResolvedSessionTeamCredentialBindingIntent(resolved, intent);
         if (!admitted.ok) return admitted;
         if (intent.deliveryMode === 'vendor-native') {
@@ -708,7 +718,9 @@ export async function validateRequiredTeamVisibilityInTx(
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<SessionTeamCredentialBindingWriteResult> {
-    const admitted = await resolveRequiredTeamVisibilityInTx(tx, input);
+    const session = await admitSessionBindingOwnerInTx(tx, input);
+    if (!session.ok) return session;
+    const admitted = await resolveRequiredTeamVisibilityInTx(tx, input, session.primaryTeamId);
     return admitted.ok ? { ok: true } : admitted;
 }
 
@@ -721,13 +733,8 @@ async function resolveRequiredTeamVisibilityInTx(
         requiredTeamCredential: RequiredSessionTeamCredentialV1;
         authentication: SessionAccessAuthentication;
     }>,
+    primaryTeamId: string | null,
 ): Promise<SessionTeamCredentialResourceValidationResult> {
-    const session = await tx.session.findUnique({
-        where: { id: input.sessionId },
-        select: { accountId: true, primaryTeamId: true },
-    });
-    if (!session) return { ok: false, reason: "session_missing" };
-    if (session.accountId !== input.accountId) return { ok: false, reason: "session_owner_mismatch" };
     const resource = await tx.teamCredentialResource.findUnique({
         where: { id: input.requiredTeamCredential.resourceId },
         select: { teamId: true, revision: true, sessionUsePolicy: true },
@@ -742,7 +749,7 @@ async function resolveRequiredTeamVisibilityInTx(
         ...input.requiredTeamCredential,
         authentication: input.authentication,
         policy: {
-            primaryTeamId: session.primaryTeamId,
+            primaryTeamId,
             isVisibleToTeam: async (teamId) => teamId === input.consentTeamId,
         },
     });
@@ -1056,29 +1063,11 @@ export async function validateExistingSessionTeamCredentialResourceInTx(
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<SessionTeamCredentialResourceValidationResult> {
-    const session = await tx.session.findUnique({
-        where: { id: input.sessionId },
-        select: { accountId: true, primaryTeamId: true },
-    });
-    if (!session) return { ok: false, reason: "session_missing" };
-    if (session.accountId !== input.accountId) return { ok: false, reason: "session_owner_mismatch" };
+    const session = await admitSessionBindingOwnerInTx(tx, input);
+    if (!session.ok) return session;
     return validateSessionTeamCredentialResourceForContextInTx(tx, {
-        accountId: input.accountId,
-        resourceId: input.resourceId,
-        expectedResourceRevision: input.expectedResourceRevision,
-        ...(input.expectedBrokerMachineId !== undefined
-            ? { expectedBrokerMachineId: input.expectedBrokerMachineId }
-            : {}),
-        ...(input.brokerSelection ? { brokerSelection: input.brokerSelection } : {}),
-        ...(input.qualifiedAtAdmission ? { qualifiedAtAdmission: true as const } : {}),
-        authentication: input.authentication,
-        deliveryMode: input.deliveryMode,
-        policy: {
-            primaryTeamId: session.primaryTeamId,
-            isVisibleToTeam: async (teamId) => (
-                await assertSessionTeamReadableGrantInTx({ tx, sessionId: input.sessionId, teamId })
-            ).ok,
-        },
+        ...input,
+        policy: existingSessionCredentialPolicy(tx, input.sessionId, session.primaryTeamId),
     });
 }
 

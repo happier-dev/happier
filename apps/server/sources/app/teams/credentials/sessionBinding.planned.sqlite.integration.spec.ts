@@ -5,9 +5,11 @@ import { encodeSessionTeamCredentialSlotKeyV1 } from "@happier-dev/protocol/team
 import { SessionTeamCredentialBindingMetadataPatchV1Schema } from "@happier-dev/protocol/teams/credentials/sessionBindingV1";
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1 } from "@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1";
 
+import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observePrismaReads } from '@/testkit/observePrismaReads';
 
 import {
     admitSessionTeamCredentialBindingInTx,
@@ -957,17 +959,22 @@ describe("planned Session Team credential selection (SQLite)", () => {
             disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ['vendor-native', 'direct'] }, experimentalBindingConfirmations: [] }),
         } });
         await db.teamCredentialMemberGrant.updateMany({ where: { resourceId: f.credential.id }, data: { deliveryMode: '["direct","vendor-native"]' } });
-        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
-            authentication: TEST_AUTHENTICATION, intents: [f.intent, { v: 1, slot: { kind: 'connected_service_purpose',
-                purpose: { consumer: { pluginId: 'fixture.consumer', localId: 'tool' }, purpose: 'search' } },
-                resourceId: f.credential.id, expectedResourceRevision: f.credential.revision, deliveryMode: 'direct' }],
-        }))).resolves.toEqual({ ok: true });
+        const sessionReads = await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['session']);
+            await expect(writeSessionTeamCredentialBindingsInTx(observed.tx, { sessionId: f.session.id, accountId: f.creator.id,
+                authentication: TEST_AUTHENTICATION, intents: [f.intent, { v: 1, slot: { kind: 'connected_service_purpose',
+                    purpose: { consumer: { pluginId: 'fixture.consumer', localId: 'tool' }, purpose: 'search' } },
+                    resourceId: f.credential.id, expectedResourceRevision: f.credential.revision, deliveryMode: 'direct' }],
+            })).resolves.toEqual({ ok: true });
+            return observed.reads.filter(read => read === 'session.findUnique').length;
+        });
         const rows = await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: f.session.id },
             select: { slotKind: true, nativeManagedId: true, nativeDeliveryJson: true } });
         expect(rows).toHaveLength(2);
         expect(rows.find(row => row.slotKind === 'connected_service_purpose:direct'))
             .toEqual({ slotKind: 'connected_service_purpose:direct', nativeManagedId: null, nativeDeliveryJson: null });
         expect(rows.find(row => row.slotKind === 'provider_model:vendor-native')?.nativeManagedId).toBe(f.row.id);
+        expect(sessionReads).toBe(1);
     });
 
 
