@@ -270,22 +270,22 @@ export async function retainAutomationRunProducedSession(params: {
  * Retains a Workflow Run's child Session at the Session birth owner. Workflow
  * startup creates the child through the local Session constructor and therefore
  * does not pass through the Socket start ingress, where the Automation-shaped
- * retention callback normally runs.
+ * retention callback normally runs. The caller supplies the row it just inserted
+ * in this transaction, with its Workflow origin taken from that row.
  */
 export async function retainWorkflowRunProducedSessionInTx(params: {
     tx: Tx;
-    accountId: string;
-    runId: string;
-    sessionId: string;
+    child: Readonly<{ id: string; accountId: string; originKind: "run_step"; originRunId: string }>;
 }): Promise<boolean> {
+    const { id: sessionId, accountId, originRunId: runId } = params.child;
     await acquireWorkflowPublicationLocksInTx(params.tx, {
-        accountId: params.accountId,
-        runIds: [params.runId],
+        accountId,
+        runIds: [runId],
     });
     if (getDbProviderFromEnv(process.env, "postgres") !== "sqlite") {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
             params.tx,
-            params.accountId,
+            accountId,
             "content",
         );
         if (accountFence.status !== "ready") return false;
@@ -293,8 +293,8 @@ export async function retainWorkflowRunProducedSessionInTx(params: {
 
     const run = await params.tx.automationRun.findFirst({
         where: {
-            id: params.runId,
-            accountId: params.accountId,
+            id: runId,
+            accountId,
             workflowAcceptedSnapshotEnvelope: { not: null },
             workflowCustodyState: "pending",
             claimedByMachineId: { not: null },
@@ -309,29 +309,19 @@ export async function retainWorkflowRunProducedSessionInTx(params: {
     });
     if (!run) return false;
 
-    const session = await params.tx.session.findFirst({
-        where: {
-            id: params.sessionId,
-            accountId: params.accountId,
-            originKind: "run_step",
-            originRunId: params.runId,
-        },
-        select: { id: true },
-    });
-    if (!session) return false;
-    if (run.producedSessionId !== null) return run.producedSessionId === session.id;
+    if (run.producedSessionId !== null) return run.producedSessionId === sessionId;
 
     const retained = await params.tx.automationRun.updateMany({
         where: {
-            id: params.runId,
-            accountId: params.accountId,
+            id: runId,
+            accountId,
             state: run.state,
             revision: run.revision,
             workflowCustodyState: run.workflowCustodyState,
             producedSessionId: null,
         },
         data: {
-            producedSessionId: session.id,
+            producedSessionId: sessionId,
             revision: { increment: 1 },
             updatedAt: new Date(),
         },

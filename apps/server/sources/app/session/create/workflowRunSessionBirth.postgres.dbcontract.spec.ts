@@ -6,7 +6,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "@/app/automations/automationAccountCurrentness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { admitWorkflowRun } from "@/app/workflows/workflowRunService";
@@ -25,7 +26,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("W
     });
     afterAll(async () => { await db.$disconnect(); });
 
-    it.each([false, true])("retains a child with shared Workflow audience=%s without sharing the private Session", async shared => {
+    it.each(["private", "shared", "growing"] as const)("retains a child with a %s Workflow audience without sharing the private Session", async audience => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const reader = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
@@ -35,10 +36,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("W
             body: new Uint8Array(decodeBase64(encodePlainArtifactStoredContent({}))),
             dataEncryptionKey: new Uint8Array(decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)),
         } });
-        if (shared) await db.artifactGrant.create({ data: {
+        const grantWorkflowView = () => db.artifactGrant.create({ data: {
             principalKind: "account", artifactId: artifact.id, accountId: reader.id,
             accessLevel: "view", createdByAccountId: owner.id,
         } });
+        if (audience === "shared") await grantWorkflowView();
         const definition = { version: 1, inputs: [],
             defaults: { agentTarget: { kind: "agent", identity: { pluginId: "happier.agent.test", localId: "test" } } },
             blocks: [{ kind: "step", id: "review", document: { text: "Review", references: [], attachments: [] },
@@ -77,7 +79,42 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("W
         });
         if (!input.ok) throw new Error("Invalid Workflow child fixture");
         const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
-        const child = await createOrRejoinLayout1SessionByTag(input.prepared, authentication);
+        const statements: string[] = [];
+        const counted = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(counted, ({ query }) => statements.push(query));
+        const transaction = db.$transaction;
+        let grantedDuringBirth = false;
+        db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args: unknown[]) {
+            const callback = args[0];
+            if (audience !== "growing" || typeof callback !== "function") {
+                return Reflect.apply(counted.$transaction, counted, args);
+            }
+            return Reflect.apply(counted.$transaction, counted, [async (tx: Tx) => callback(new Proxy(tx, {
+                get(client, property, receiver) {
+                    const delegate = Reflect.get(client, property, receiver);
+                    if (property !== "automationRun") return delegate;
+                    return new Proxy(tx.automationRun, { get(model, method, modelReceiver) {
+                        if (method !== "updateMany") return Reflect.get(model, method, modelReceiver);
+                        return async (input: Parameters<Tx["automationRun"]["updateMany"]>[0]) => {
+                            const updated = await model.updateMany(input);
+                            if (!grantedDuringBirth && input?.data.producedSessionId && updated.count === 1) {
+                                // A separate transaction changes the Workflow audience after the Run update.
+                                await grantWorkflowView();
+                                grantedDuringBirth = true;
+                            }
+                            return updated;
+                        };
+                    } });
+                },
+            })), ...args.slice(1)]);
+        } });
+        let child: Awaited<ReturnType<typeof createOrRejoinLayout1SessionByTag>>;
+        try {
+            child = await createOrRejoinLayout1SessionByTag(input.prepared, authentication);
+        } finally {
+            db.$transaction = transaction;
+            await counted.$disconnect();
+        }
         expect(child.kind).toBe("created");
         if (child.kind !== "created") throw new Error("Workflow child was not created");
         expect(child.session).toMatchObject({ accountId: owner.id, originKind: "run_step", originRunId: runId });
@@ -86,5 +123,23 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("W
         expect(await db.sessionGrant.count({ where: { sessionId: child.session.id, accountId: reader.id } })).toBe(0);
         const rejoined = await createOrRejoinLayout1SessionByTag(input.prepared, authentication);
         expect(rejoined).toMatchObject({ kind: "rejoined", session: { id: child.session.id } });
+        const sessionInserts = statements.filter(sql => sql.startsWith('INSERT INTO "public"."Session" (')).length;
+        if (audience === "growing") {
+            expect(grantedDuringBirth).toBe(true);
+            expect(sessionInserts).toBe(2);
+            expect(await db.session.count({ where: { accountId: owner.id, tag: input.prepared.tag } })).toBe(1);
+        } else {
+            expect(sessionInserts).toBe(1);
+            const costs = {
+                parentAudienceReads: statements.filter(sql => sql.startsWith("SELECT") && sql.includes('"AutomationRun"')
+                    && sql.includes('"executionInputEnvelope"') && sql.includes('"producedSessionId"') && sql.includes('"sourceArtifactId"')).length,
+                watchers: statements.filter(sql => sql.includes('"AutomationTrigger"') && sql.includes('"sourceRunId"')).length,
+                followers: statements.filter(sql => sql.includes('"SessionFollowEdge"') && sql.includes('"sourceWorkflowRunId"')).length,
+                insertedChildLookups: statements.filter(sql => sql.includes('FROM "public"."Session"')
+                    && sql.split(' WHERE ')[1]?.includes('"originRunId"')).length,
+            };
+            console.info("WORKFLOW_CHILD_BIRTH_SQL", audience, costs);
+            expect(costs).toEqual({ parentAudienceReads: 5, watchers: 5, followers: 5, insertedChildLookups: 0 });
+        }
     });
 });

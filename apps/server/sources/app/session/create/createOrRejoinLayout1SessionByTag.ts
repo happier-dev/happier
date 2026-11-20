@@ -162,6 +162,15 @@ export async function createOrRejoinLayout1SessionByTagInTx(
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome>> {
     await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
+    return createOrRejoinAdmittedLayout1SessionInTx(tx, prepared, authentication, sessionCreationAuthorization);
+}
+
+async function createOrRejoinAdmittedLayout1SessionInTx(
+    tx: Tx,
+    prepared: PreparedLayout1SessionCreate,
+    authentication: SessionAccessAuthentication,
+    sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
+): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome>> {
     // Both fresh creation and the released tag-rejoin mutation consume the
     // same already-verified invocation inside this transaction.
     await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
@@ -199,12 +208,10 @@ async function insertAdmittedLayout1SessionInTx(
         authentication,
         sessionCreationAuthorization,
     });
-    if (prepared.originKind === "run_step" && prepared.originRunId !== undefined) {
+    if (created.originKind === "run_step" && created.originRunId !== null) {
         await retainWorkflowRunProducedSessionInTx({
             tx,
-            accountId: prepared.accountId,
-            runId: prepared.originRunId,
-            sessionId: created.id,
+            child: { id: created.id, accountId: created.accountId, originKind: created.originKind, originRunId: created.originRunId },
         });
     }
     return {
@@ -272,6 +279,15 @@ export async function rejoinLayout1SessionByTagInTx(
     authentication?: SessionAccessAuthentication,
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome> | null> {
     await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
+    return rejoinAdmittedLayout1SessionByTagInTx(tx, prepared, sessionCreationAuthorization, authentication);
+}
+
+async function rejoinAdmittedLayout1SessionByTagInTx(
+    tx: Tx,
+    prepared: PreparedLayout1SessionCreate,
+    sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
+    authentication?: SessionAccessAuthentication,
+): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome> | null> {
     // The unique-insert loser starts a fresh transaction: its original
     // invocation must still be current before restoring the winner's row.
     await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
@@ -315,7 +331,7 @@ export async function createOrRejoinLayout1SessionByTag(
                 transactionClass: "session.private-create",
             })
             : null;
-        const outcome = fresh ?? await inTx(async (tx) => createOrRejoinLayout1SessionByTagInTx(tx, prepared, authentication, sessionCreationAuthorization), {
+        const outcome = fresh ?? await inTx((tx) => createOrRejoinAdmittedLayout1SessionInTx(tx, prepared, authentication, sessionCreationAuthorization), {
             isolationLevel,
             transactionClass: "session.create-or-rejoin",
             prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
@@ -337,7 +353,7 @@ export async function createOrRejoinLayout1SessionByTag(
         // A competing Layout-1 create can pass the initial lookup and lose the
         // unique `(accountId, tag)` insert. It must rejoin the winner's atomic
         // placement rather than retrying a placement write of its own.
-        const rejoined = await inTx(async (tx) => rejoinLayout1SessionByTagInTx(tx, prepared, sessionCreationAuthorization, authentication), {
+        const rejoined = await inTx((tx) => rejoinAdmittedLayout1SessionByTagInTx(tx, prepared, sessionCreationAuthorization, authentication), {
             isolationLevel,
             transactionClass: "session.rejoin-after-create-race",
             prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
