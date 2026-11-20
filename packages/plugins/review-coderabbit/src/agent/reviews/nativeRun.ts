@@ -9,7 +9,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/plugin-sdk/reviews';
 
 import { createCodeRabbitAgentOutput } from './agentOutput.js';
-import { preflightCodeRabbitReviewScope, readCodeRabbitReviewScopeFacts, resolveCodeRabbitBaseRef } from './scopePreflight.js';
+import { preflightCodeRabbitReviewScope, readCodeRabbitReviewScopeFacts } from './scopePreflight.js';
 import { normalizeCodeRabbitReviewStartInput } from './startInput.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './systemTool.js';
 
@@ -36,18 +36,16 @@ function createRuntime(
       });
       const scopeFacts = readCodeRabbitReviewScopeFacts(reviewInput[REVIEW_SCM_SCOPE_INPUT_KEY]);
       const preflight = await preflightCodeRabbitReviewScope({
-        cwd: request.cwd, reviewInput, scope: scopeFacts,
+        cwd: request.cwd, reviewInput, scope: scopeFacts, actions: context.services.actions, signal,
       });
       if (!preflight.ok) {
         return { status: 'failed', diagnostic: { code: 'coderabbit_scope_unsupported', severity: 'error', message: preflight.error } };
       }
       const engineConfig = reviewInput.engines?.coderabbit;
       const args = ['review', '--agent', '--dir', request.cwd];
-      if (reviewInput.changeType === 'committed') args.push('--committed');
-      if (reviewInput.changeType === 'uncommitted') args.push('--uncommitted');
-      const resolvedBaseRef = resolveCodeRabbitBaseRef({ reviewInput, scope: scopeFacts });
-      if (reviewInput.base.kind === 'commit' && resolvedBaseRef) args.push('--base-commit', resolvedBaseRef);
-      else if (resolvedBaseRef) args.push('--base', resolvedBaseRef);
+      if (preflight.changeType === 'committed') args.push('--committed');
+      if (preflight.changeType === 'uncommitted') args.push('--uncommitted');
+      if (preflight.base) args.push(preflight.base.kind === 'commit' ? '--base-commit' : '--base', preflight.base.ref);
       if (typeof engineConfig?.gate === 'string') args.push('--gate', engineConfig.gate);
       if (Array.isArray(engineConfig?.configFiles)) {
         const configFiles = engineConfig.configFiles.filter((value): value is string => typeof value === 'string' && value.trim().length > 0);

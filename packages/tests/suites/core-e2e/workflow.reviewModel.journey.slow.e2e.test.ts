@@ -48,6 +48,8 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let auditPath: string;
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
   let sourceSessionId: string;
+  let codeRabbitReplyPath: string;
+  let codeRabbitAuditPath: string;
   let panelReplyPath: string;
   let panelAuditPath: string;
   let deepSecAuditPath: string;
@@ -85,8 +87,29 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     recording = await readMuseLoginRecording();
     await nativeReply({ summary: 'No findings in the fixture change', findings: [] });
     const executablePath = await writeFinMuseExecutable({ binDir: bin, recordingPath, auditPath });
-    panelReplyPath = join(testDir, 'panel-reply.json');
+    codeRabbitReplyPath = join(testDir, 'coderabbit-reply.json');
+    codeRabbitAuditPath = join(testDir, 'coderabbit-audit.jsonl');
     nativeHoldPath = join(testDir, 'native-hold');
+    await writeFile(codeRabbitAuditPath, '');
+    await writeFile(codeRabbitReplyPath, JSON.stringify({ events: [{ type: 'complete', status: 'review_completed', findings: 0 }], exitCode: 0 }));
+    // The native executable is the only substituted CodeRabbit boundary. Its
+    // on-disk audit distinguishes a refused launch from a clean empty review.
+    await writeFile(join(bin, 'coderabbit'), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) console.log('CodeRabbit CLI 0.9.5');
+else if (args[0] === 'auth') console.log(JSON.stringify({ type: 'status', phase: 'auth', authenticated: true }));
+else if (args[0] === 'review') {
+  fs.appendFileSync(${JSON.stringify(codeRabbitAuditPath)}, JSON.stringify({ args, cwd: process.cwd() }) + '\\n');
+  const reply = JSON.parse(fs.readFileSync(${JSON.stringify(codeRabbitReplyPath)}, 'utf8'));
+  if (fs.existsSync(${JSON.stringify(nativeHoldPath)})) setInterval(() => {}, 1000);
+  else {
+    for (const event of reply.events) console.log(JSON.stringify(event));
+    process.exitCode = reply.exitCode;
+  }
+} else process.exitCode = 1;
+`, { mode: 0o755 });
+    panelReplyPath = join(testDir, 'panel-reply.json');
     panelAuditPath = join(testDir, 'panel-audit.jsonl');
     await writeFile(panelAuditPath, '');
     await writeFile(panelReplyPath, JSON.stringify(panelNativeReview));
@@ -396,7 +419,7 @@ else {
     const runs = WorkflowRunListResultV1Schema.parse(await act('workflow.run.list', { sourceArtifactId: saved.definitionId }));
     expect(runs.runs.map(row => row.id)).toEqual(expect.arrayContaining([stopped.run.id, retried.run.id]));
   });
-  async function startNativeReview(engineId: string, extra: Readonly<{ comparisonId?: string; scope?: 'repository' }> = {},
+  async function startNativeReview(engineId: string, extra: Readonly<{ comparisonId?: string; scope?: 'repository'; changeType?: 'all' }> = {},
     reviewer: Omit<ReviewEngineReviewerSelectionV1, 'kind' | 'engineId'> = {}) {
     const started = await act('review.start', { target: { kind: 'detached' },
       reviewers: [{ kind: 'engine', engineId, ...reviewer }],
@@ -482,6 +505,66 @@ else {
       expect(commands[start]?.dataRoot).toBeTruthy();
     }
     await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan');
+  });
+  it('F2 CodeRabbit preserves findings through public Actions, New round and Stop and refuses a different captured head', async () => {
+    // CodeRabbit's native uncommitted mode covers the whole working tree;
+    // Review's default pending-only selector is an intentionally unsupported partial scope.
+    const clean = await startNativeReview('coderabbit', { changeType: 'all' });
+    expect(clean, JSON.stringify(clean)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'complete', findings: [] } });
+    const finding = { type: 'finding', severity: 'major', fileName: 'README.md', startLine: 1,
+      title: 'A substantive fixture defect', comment: 'The changed path loses the write.', codegenInstructions: 'Commit the write before returning.' };
+    await writeFile(codeRabbitReplyPath, JSON.stringify({ events: [finding,
+      { type: 'complete', status: 'review_completed', findings: 1 }], exitCode: 0 }));
+    const reviewed = await startNativeReview('coderabbit', { changeType: 'all' });
+    expect(reviewed).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'complete', findings: [{
+      filePath: 'README.md', severity: 'high', suggestion: 'Commit the write before returning.',
+    }] } });
+    const firstRunId = reviewed.run.runId;
+    const reviewId = reviewed.run.display?.groupId;
+    const initialComments = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+    expect(initialComments.items).toHaveLength(1);
+    await writeFile(codeRabbitReplyPath, JSON.stringify({ events: [finding,
+      { type: 'complete', status: 'review_completed', findings: 1, unreviewedFileCount: 1 }], exitCode: 0 }));
+    const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
+      runId: firstRunId, target: { kind: 'detached' },
+    }));
+    expect(next.runId).not.toBe(firstRunId);
+    await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
+    expect(ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId, includeStructured: true })))
+      .toMatchObject({ run: { status: 'succeeded' },
+      reviewFindings: { reviewOutcome: 'partial', findings: [{ filePath: 'README.md' }] } });
+    const carried = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+    expect(carried.items).toHaveLength(1);
+    expect(carried.items[0]).toMatchObject({ id: initialComments.items[0]?.id,
+      author: { kind: 'executionRun', agentId: 'coderabbit', runId: firstRunId } });
+    expect(carried.items[0]?.appearances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roundOrdinal: 2, runId: next.runId }),
+    ]));
+    expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
+      .toMatchObject({ state: 'partial', currentRoundOrdinal: 2, counts: { total: 1 } });
+    await writeFile(codeRabbitReplyPath, JSON.stringify({ events: [{ type: 'error', errorType: 'rate_limit' }], exitCode: 1 }));
+    expect(await startNativeReview('coderabbit', { changeType: 'all' })).toMatchObject({ run: { status: 'failed', error: { code: 'coderabbit_rate_limit' } } });
+    const commands = (await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as unknown);
+    expect(commands).toHaveLength(4);
+    expect(commands).toEqual(expect.arrayContaining([expect.objectContaining({ cwd: machine.workspaceDir,
+      args: ['review', '--agent', '--dir', machine.workspaceDir, '--uncommitted'] })]));
+    await stopNativeRound(firstRunId, codeRabbitAuditPath, args => args[0] === 'review');
+
+    // Capture a committed subject, then advance checkout with a second defect.
+    // Reviewing ambient HEAD would silently review a different set of changes.
+    execGit(machine.workspaceDir, ['add', 'README.md']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: captured review head']);
+    const captured = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'commit', commit: 'HEAD' },
+    }));
+    expect(captured.success).toBe(true);
+    if (!captured.success) throw new Error(captured.errorCode);
+    await writeFile(join(machine.workspaceDir, 'outside-captured-head.ts'), 'export const secondDefect = true;\n');
+    execGit(machine.workspaceDir, ['add', 'outside-captured-head.ts']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: outside captured review']);
+    expect(await startNativeReview('coderabbit', { comparisonId: captured.comparison.id }))
+      .toMatchObject({ run: { status: 'failed', error: { code: 'coderabbit_scope_unsupported' } } });
+    expect((await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n')).toHaveLength(5);
   });
   it('F4 native slices preserve distinct evidence and findings through public Actions, New round and Stop', async () => {
     let result = await startNativeReview('slices', { scope: 'repository' });

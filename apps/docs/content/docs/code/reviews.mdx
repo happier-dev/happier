@@ -39,8 +39,9 @@ workspace permissions when you add it as a reviewer.
 Setup and unsupported-scope reasons belong to the selected reviewer. Repair its
 setup or choose another reviewer. Happier does not silently replace a captured
 comparison with the ambient checkout. In particular,
-[CodeRabbit](/agents/coderabbit) cannot review exact files or captured endpoints
-through this integration.
+[CodeRabbit](/agents/coderabbit) accepts captured comparisons that match the live
+checkout's head and base or whole working-tree scope. It refuses exact file
+selections and comparisons requiring a different checkout.
 
 Leave transcript input off for a code-only review. When offered, explicitly
 include the source Session's transcript to let the reviewer check claims made

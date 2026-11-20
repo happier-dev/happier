@@ -1,6 +1,7 @@
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +11,20 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 const finding = { type: 'finding', severity: 'major', fileName: 'src/auth.ts', startLine: 10, endLine: 12,
   title: 'Validate redirect', comment: 'An unchecked redirect allows an attacker-controlled destination.', codegenInstructions: 'Check the redirect against the allowlist.' };
 const complete = { type: 'complete', status: 'review_completed', outcome: 'completed', findings: 0 };
+
+function checkoutSnapshot(headOid: string): PluginActionResultById['scm.status.snapshot'] {
+  return { success: true, snapshot: {
+    projectKey: '/workspace', fetchedAt: 1,
+    repo: { isRepo: true, rootPath: '/workspace', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
+    capabilities: { capabilityScope: 'local-backend', readStatus: true, readDiffFile: true, readDiffCommit: true, readLog: true,
+      writeInclude: false, writeExclude: false, writeCommit: false, writeCommitPathSelection: false,
+      writeCommitLineSelection: false, writeBackout: false, writeRemoteFetch: false, writeRemotePull: false,
+      writeRemotePush: false, worktreeCreate: false, changeSetModel: 'index', supportedDiffAreas: ['both'] },
+    branch: { head: 'feature', headOid, upstream: 'origin/main', ahead: 1, behind: 0, detached: false },
+    hasConflicts: false, entries: [], totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0,
+      includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+  } };
+}
 
 function request(options: Record<string, unknown> = {}, scope: Record<string, unknown> = {}): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   return { kind: 'create', runId: 'run-1', cwd: '/workspace',
@@ -25,7 +40,7 @@ function request(options: Record<string, unknown> = {}, scope: Record<string, un
   };
 }
 
-async function runFixture(params: { records: readonly unknown[]; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; raw?: string }) {
+async function runFixture(params: { records: readonly unknown[]; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'coderabbit')?.factory;
   if (!factory) throw new Error('Expected CodeRabbit factory');
@@ -34,6 +49,8 @@ async function runFixture(params: { records: readonly unknown[]; exitCode?: numb
   const bytes = new TextEncoder().encode(text);
   let listener: ((chunk: PluginProcessOutput) => void) | undefined;
   let processSignal: AbortSignal | undefined;
+  let enterPreflight = () => {};
+  const preflightEntered = new Promise<void>(resolve => { enterPreflight = resolve; });
   const spawn: PluginServices['exec']['spawn'] = vi.fn(async (_request, options) => {
     processSignal = options?.signal;
     return { write: async () => {}, closeStdin: async () => {}, dispose: async () => {},
@@ -58,15 +75,28 @@ async function runFixture(params: { records: readonly unknown[]; exitCode?: numb
   // The host process service is the genuine system boundary; plugin/runtime logic stays real.
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'coderabbit', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/coderabbit` },
     surface: 'agent', signal: new AbortController().signal, agent: { id: 'coderabbit' },
-    services: { availability: () => ({ status: 'available' }), exec: { spawn,
+    // SCM Actions cross the host transport boundary; the adapter's scope decision stays real.
+    services: { availability: () => ({ status: 'available' }), actions: { execute: vi.fn(async (_action: 'scm.status.snapshot', _input: unknown, options?: { signal?: AbortSignal }) => {
+      if (!params.cancelPreflight) return params.checkout ?? checkoutSnapshot('live-head');
+      enterPreflight();
+      return new Promise<PluginActionResultById['scm.status.snapshot']>((resolve, reject) => {
+        const aborted = () => params.cancelPreflight === 'reject' ? reject(options?.signal?.reason) : resolve({ success: false });
+        if (options?.signal?.aborted) aborted();
+        else options?.signal?.addEventListener('abort', aborted, { once: true });
+      });
+    }) }, exec: { spawn,
       run: async () => ({ termination: { observed: { kind: 'exit', exitCode: params.exitCode ?? 0 }, requestedBy: { kind: 'none' } },
         stdout: bytes, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }),
     } },
   } as unknown as AgentRuntimeContext;
-  const opened = await agent.executionRuns?.open(request(params.options, params.scope), context);
+  const openRequest = request(params.options, params.scope);
+  const opened = await agent.executionRuns?.open({ ...openRequest, input: { ...openRequest.input,
+    ...(params.changeType ? { structuredInput: { ...openRequest.input.structuredInput, changeType: params.changeType } } : {}),
+  } }, context);
   if (!opened) throw new Error('Expected execution runtime');
   const events: AgentExecutionRunEvent[] = [];
   opened.watch(event => events.push(event));
+  if (params.cancelPreflight) { await preflightEntered; await opened.stop(); }
   if (params.cancel) await opened.stop();
   await vi.waitFor(() => expect(['run-complete', 'run-failed', 'run-cancelled']).toContain(events.at(-1)?.kind));
   const output = events.filter(event => event.kind === 'output-delta').map(event => event.text).join('');
@@ -76,12 +106,65 @@ async function runFixture(params: { records: readonly unknown[]; exitCode?: numb
 }
 
 describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)', () => {
+  it.each(['reject', 'result'] as const)('cancels a stopped live SCM preflight before vendor launch (%s)', async cancelPreflight => {
+    const result = await runFixture({ records: [complete], cancelPreflight, scope: {
+      comparison: { id: 'captured-current', source: { kind: 'workingTree', area: 'both' },
+        endpoints: { before: 'live-head', after: 'captured-worktree-tree' } },
+    } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-cancelled' });
+    expect(result.spawn).not.toHaveBeenCalled();
+  });
+
+  it('reviews a captured whole working tree at the current HEAD through the ordinary native adapter', async () => {
+    const result = await runFixture({ records: [complete], scope: {
+      comparison: { id: 'captured-current', source: { kind: 'workingTree', area: 'both' },
+        endpoints: { before: 'live-head', after: 'captured-worktree-tree' } },
+    } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-complete' });
+    expect(result.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      args: ['review', '--agent', '--dir', '/workspace', '--uncommitted'],
+    }), expect.anything());
+  });
+
+  it('pins the captured committed base when its head is the live checkout HEAD', async () => {
+    const result = await runFixture({ records: [complete], changeType: 'committed', scope: {
+      baseRef: { source: 'explicit', ref: 'captured-base' },
+      comparison: { id: 'captured-current', source: { kind: 'branch', base: 'main', head: 'feature' },
+        endpoints: { before: 'captured-base', after: 'live-head' } },
+    } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-complete' });
+    expect(result.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      args: ['review', '--agent', '--dir', '/workspace', '--committed', '--base-commit', 'captured-base'],
+    }), expect.anything());
+  });
+
+  it.each([
+    { source: { kind: 'workingTree', area: 'both' }, endpoints: { before: 'old-head', after: 'tree' } },
+    { source: { kind: 'workingTree', area: 'included' }, endpoints: { before: 'live-head', after: 'index' } },
+    { source: { kind: 'workingTree', area: 'pending' }, endpoints: { before: 'index', after: 'tree' } },
+  ])('refuses a moved HEAD or a partial working-tree scope before the vendor starts: %j', async comparison => {
+    const result = await runFixture({ records: [complete], scope: { comparison: { id: 'unsupported', ...comparison } } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_scope_unsupported' } });
+    expect(result.spawn).not.toHaveBeenCalled();
+  });
+
   it.each([
     { comparison: { id: 'captured-1', source: { kind: 'branch', base: 'main', head: 'feature' }, endpoints: { before: 'old-base', after: 'old-head' } } },
     { revisionRange: { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } },
   ])('refuses captured endpoints before starting an ambient worktree review: %j', async scope => {
-    const result = await runFixture({ records: [complete], scope });
+    const result = await runFixture({ records: [complete], scope, changeType: 'committed' });
     expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_scope_unsupported' } });
+    expect(result.spawn).not.toHaveBeenCalled();
+  });
+
+  it('returns a visible unsupported-scope refusal when live checkout facts are unavailable', async () => {
+    const result = await runFixture({ records: [complete], checkout: { success: false }, scope: {
+      comparison: { id: 'captured-current', source: { kind: 'workingTree' },
+        endpoints: { before: 'live-head', after: 'tree' } },
+    } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: {
+      code: 'coderabbit_scope_unsupported', message: expect.stringMatching(/checkout|SCM/),
+    } });
     expect(result.spawn).not.toHaveBeenCalled();
   });
 

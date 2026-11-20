@@ -4,7 +4,8 @@ description: Run scoped CodeRabbit reviews and understand completion, findings, 
 ---
 
 Use **CodeRabbit** to review changes in a Git worktree and receive findings in
-Happier. Each review is a single run; start another review to check new changes.
+Happier. Each round is a single run; use **New round** to check updated changes
+with the same reviewers.
 
 The structured agent-mode integration described here is part of Happier 0.3
 development. It requires a CodeRabbit CLI with the current
@@ -67,9 +68,12 @@ CodeRabbit reviews the selected Git worktree change scope. Its current
 [CLI review options](https://docs.coderabbit.ai/cli/reference) do not include an
 exact-file selector. For a path-scoped review, Happier omits CodeRabbit from the
 available choices; choose another review Agent or use a worktree scope instead.
-Captured comparisons and exact revision ranges are also refused because the
-local CLI cannot pin both captured endpoints. Choose another review Agent for
-those scopes.
+In 0.3 development, a captured comparison can run when it describes the live
+checkout: a whole working-tree review at the same HEAD, or a committed review
+whose head is the current HEAD and whose captured base is passed to CodeRabbit.
+Happier checks this before launching the native review. Other comparisons,
+including partial working-tree scopes, return an unsupported-scope reason;
+choose another review Agent for those scopes.
 
 ## Troubleshooting
 

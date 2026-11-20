@@ -49,7 +49,7 @@ describe('CodeRabbit review preflight', () => {
       }),
       scope: createSupportedScmReviewScope(),
     })).resolves.toEqual({
-      ok: true, eligibleFileCount: 1,
+      ok: true, eligibleFileCount: 1, changeType: 'uncommitted', base: null,
     });
   });
 
@@ -61,7 +61,7 @@ describe('CodeRabbit review preflight', () => {
         base: { kind: 'none' },
       }),
       scope: createSupportedScmReviewScope(['a.txt']),
-    })).resolves.toEqual({ ok: true, eligibleFileCount: 1 });
+    })).resolves.toEqual({ ok: true, eligibleFileCount: 1, changeType: 'committed', base: { kind: 'branch', ref: 'origin/main' } });
   });
 
   it('does not impose a local file ceiling before the vendor evaluates the scope (U3)', async () => {
@@ -74,7 +74,7 @@ describe('CodeRabbit review preflight', () => {
         base: { kind: 'none' },
       }),
       scope: createSupportedScmReviewScope(['a.txt', 'b.txt']),
-    })).resolves.toEqual({ ok: true, eligibleFileCount: 2 });
+    })).resolves.toEqual({ ok: true, eligibleFileCount: 2, changeType: 'committed', base: { kind: 'branch', ref: 'origin/main' } });
   });
 
   it('rejects empty host-resolved session scopes without local fallback probing', async () => {

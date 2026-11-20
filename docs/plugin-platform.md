@@ -14270,6 +14270,15 @@ admission decision. The engine's existing warning owner decides whether an
 unchecked start requires confirmation before launching vendor work. Hosts keep
 the value in the draft's engine options and never save it as a preference.
 
+### Native review scope preflight (0.3 development)
+
+CodeRabbit's adapter preflight consumes the host SCM Action's checkout facts
+once when admitting a captured comparison. A whole working-tree comparison must
+use the current HEAD; committed comparisons must end at current HEAD and pass
+their captured base through native `--base-commit`. Other captured scopes retain
+the visible `coderabbit_scope_unsupported` refusal. The adapter runs in the live
+checkout and introduces no captured-checkout lifecycle.
+
 ### Review source transcript delivery (0.3 development)
 
 A reviewer receives a source Session transcript when its
