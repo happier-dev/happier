@@ -52,6 +52,7 @@ vi.mock('../process/spawnProcess', () => ({
             child,
             stdoutPath: params.stdoutPath,
             stderrPath: params.stderrPath,
+            hasExitedAndFlushedLogs: () => child.exitCode !== null || child.signalCode !== null,
             stop: async () => {
                 stopCalls += 1;
                 child.exitCode = 0;

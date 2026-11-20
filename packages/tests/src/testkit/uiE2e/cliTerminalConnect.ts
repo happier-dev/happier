@@ -199,14 +199,19 @@ async function waitForTerminalConnectUrlReady(connectUrl: string, env: NodeJS.Pr
   return readyUrl ?? connectUrl;
 }
 
-async function stdoutTail(path: string): Promise<string> {
+async function readLogTail(path: string): Promise<string> {
   const raw = await readFile(path, 'utf8').catch(() => '');
-  return raw.slice(Math.max(0, raw.length - 8_000));
+  return raw.slice(-8_000);
 }
 
-async function stderrTail(path: string): Promise<string> {
-  const raw = await readFile(path, 'utf8').catch(() => '');
-  return raw.slice(Math.max(0, raw.length - 8_000));
+async function describeCliLoginExit(proc: SpawnedProcess, code: number | null, signal: NodeJS.Signals | null): Promise<Error> {
+  const detail = signal ? `signal=${signal}` : `code=${code ?? 'null'}`;
+  const [stdout, stderr] = await Promise.all([readLogTail(proc.stdoutPath), readLogTail(proc.stderrPath)]);
+  return new Error([
+    `CLI auth login exited with ${detail}`,
+    `stdoutTail=${JSON.stringify(redactTerminalConnectKeys(stdout))}`,
+    `stderrTail=${JSON.stringify(redactTerminalConnectKeys(stderr))}`,
+  ].join(' | '));
 }
 
 async function waitForExit(proc: SpawnedProcess, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
@@ -321,6 +326,10 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
       timeoutMs: params.connectUrlTimeoutMs ?? DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS,
       pollMs: 100,
       context: 'CLI terminal connect URL',
+      producer: {
+        isFinished: proc.hasExitedAndFlushedLogs,
+        missingMatch: () => describeCliLoginExit(proc, proc.child.exitCode, proc.child.signalCode),
+      },
     });
     connectUrl = extractTerminalConnectUrl(match.input ?? '') ?? normalizeUrl(match[0] ?? '');
     connectUrl = normalizeTerminalConnectUrlForBrowser({
@@ -341,7 +350,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   }
 
   if (!connectUrl) {
-    const tail = redactTerminalConnectKeys(await stdoutTail(stdoutPath));
+    const tail = redactTerminalConnectKeys(await readLogTail(stdoutPath));
     await proc.stop().catch(() => {});
     throw new Error(`Failed to extract terminal connect URL from CLI stdout | stdoutTail=${JSON.stringify(tail)}`);
   }
@@ -363,16 +372,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
         });
         return;
       }
-      const detail = signal ? `signal=${signal}` : `code=${code ?? 'null'}`;
-      const outTail = redactTerminalConnectKeys(await stdoutTail(stdoutPath));
-      const errTail = redactTerminalConnectKeys(await stderrTail(stderrPath));
-      throw new Error(
-        [
-          `CLI auth login exited with ${detail}`,
-          `stdoutTail=${JSON.stringify(outTail)}`,
-          `stderrTail=${JSON.stringify(errTail)}`,
-        ].join(' | '),
-      );
+      throw await describeCliLoginExit(proc, code, signal);
     },
     stop: async () => {
       await proc.stop().catch(() => {});

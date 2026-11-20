@@ -8,6 +8,10 @@ export async function waitForRegexInFile(params: Readonly<{
   timeoutMs?: number;
   pollMs?: number;
   context?: string;
+  producer?: Readonly<{
+    isFinished: () => boolean;
+    missingMatch: () => Promise<Error>;
+  }>;
 }>): Promise<RegExpMatchArray> {
   const timeoutMs = params.timeoutMs ?? 60_000;
   const pollMs = params.pollMs ?? 100;
@@ -18,13 +22,17 @@ export async function waitForRegexInFile(params: Readonly<{
 
   await waitFor(
     async () => {
+      // Read after observing producer completion so its final write can still match.
+      const finishedProducer = params.producer?.isFinished() ? params.producer : undefined;
       lastText = await readFile(params.path, 'utf8').catch(() => '');
       lastMatch = lastText.match(regex);
+      if (!lastMatch && finishedProducer) throw await finishedProducer.missingMatch();
       return Boolean(lastMatch);
     },
     {
       timeoutMs,
       intervalMs: pollMs,
+      failFast: Boolean(params.producer),
       context: params.context ?? `regex match in file ${params.path}`,
     },
   );

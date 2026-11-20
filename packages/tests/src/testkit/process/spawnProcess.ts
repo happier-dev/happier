@@ -320,7 +320,7 @@ export function spawnLoggedProcess(params: {
   onDescendantObserved?: (pid: number) => void;
   collectDescendants?: typeof collectDescendantPids;
   terminateProcessTree?: typeof terminateProcessTreeByPid;
-}): SpawnedProcess {
+}): SpawnedProcess & { hasExitedAndFlushedLogs: () => boolean } {
   type TimeoutHandle = ReturnType<typeof setTimeout>;
   const unrefTimeout = (handle: TimeoutHandle | null) => {
     if (!handle) return;
@@ -503,5 +503,12 @@ export function spawnLoggedProcess(params: {
     }
   });
 
-  return { child, stdoutPath: params.stdoutPath, stderrPath: params.stderrPath, stop };
+  return {
+    child,
+    stdoutPath: params.stdoutPath,
+    stderrPath: params.stderrPath,
+    stop,
+    hasExitedAndFlushedLogs: () =>
+      (child.exitCode !== null || child.signalCode !== null) && stdout.writableFinished && stderr.writableFinished,
+  };
 }

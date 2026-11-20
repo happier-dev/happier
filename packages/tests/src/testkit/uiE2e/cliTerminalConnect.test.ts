@@ -7,6 +7,22 @@ import { expect, it } from 'vitest';
 import { repoRootDir } from '../paths';
 import { startCliAuthLoginForTerminalConnect } from './cliTerminalConnect';
 
+it('reports a failed CLI startup before the terminal link instead of waiting for a link that cannot appear', async () => {
+  const testDir = await mkdtemp(join(tmpdir(), 'terminal-connect-startup-failure-'));
+  const script = join(testDir, 'failed-startup.mjs');
+  const serverUrl = 'http://127.0.0.1:12345';
+  await writeFile(script, 'console.error("fixture CLI could not load"); process.exitCode = 7;');
+  try {
+    await expect(startCliAuthLoginForTerminalConnect({
+      testDir, cliHomeDir: join(testDir, 'home'), serverUrl, webappUrl: serverUrl,
+      connectUrlTimeoutMs: 3_000, waitForConnectUrlReady: false,
+      env: process.env, cliLaunchSpec: { command: process.execPath, args: [script] },
+    })).rejects.toThrow(/CLI auth login exited with code=7.*fixture CLI could not load/s);
+  } finally {
+    await rm(testDir, { recursive: true, force: true });
+  }
+});
+
 it('keeps pairing material available to approval while removing it from failed-login diagnostics and logs', async () => {
   const testDir = await mkdtemp(join(tmpdir(), 'terminal-connect-redaction-'));
   const script = join(testDir, 'failed-login.mjs');
