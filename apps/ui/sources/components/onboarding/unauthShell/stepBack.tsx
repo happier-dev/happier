@@ -14,13 +14,41 @@ type StepBackSlot = Readonly<{
   /** `row`: a computer, where Back stands in the step's own row; `platform`: a phone's top-left back. */
   placement: 'row' | 'platform';
   claim: () => () => void;
+    claimHandler: (handler: () => void) => () => void;
 }>;
 
 /** The shell's Back for the current step, provided by `WorkflowPanel`. */
 export const StepBackContext = React.createContext<StepBackSlot | null>(null);
 
 const useIsomorphicLayoutEffect =
-  typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
+  Platform.OS === 'web' && typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
+
+export function useStepBackSlot(onBack: (() => void) | undefined, placement: StepBackSlot['placement']) {
+  const parent = React.useRef(onBack);
+  parent.current = onBack;
+  const override = React.useRef<(() => void) | undefined>(undefined);
+  const [rowClaims, setRowClaims] = React.useState(0);
+  const enabled = onBack != null;
+  const slot = React.useMemo<StepBackSlot | null>(() => enabled ? {
+    onBack: () => (override.current ?? parent.current)?.(),
+    placement,
+    claim: () => {
+      setRowClaims((count) => count + 1);
+      return () => setRowClaims((count) => count - 1);
+    },
+    claimHandler: (handler) => {
+      override.current = handler;
+      return () => { if (override.current === handler) override.current = undefined; };
+    },
+  } : null, [enabled, placement]);
+  return { slot, inRow: rowClaims > 0 };
+}
+
+export function useStepBackOverride(handler: (() => void) | undefined) {
+  const slot = React.useContext(StepBackContext);
+  useIsomorphicLayoutEffect(() => handler ? slot?.claimHandler(handler) : undefined, [handler, slot]);
+  return slot;
+}
 
 /**
  * Direction A's Back on a computer (owner 2026-11-19): bottom-left of a centred Continue, or left of Approve's ways

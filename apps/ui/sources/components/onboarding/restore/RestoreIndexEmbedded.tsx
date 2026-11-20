@@ -5,7 +5,8 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
-import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { StepMotionLayer, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { StepTransitionFrame, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 
 import { RestoreQrView, type RestoreQrViewProps } from '@/components/account/restore/RestoreQrView';
@@ -20,10 +21,11 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { resolveReverseQrTargetProfileId } from './loginWays';
 import { RestoreSignInWays } from './RestoreSignInWays';
 import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
-import { StepRowBack } from '@/components/onboarding/unauthShell/stepBack';
+import { StepRowBack, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
 import { t } from '@/text';
 
 type RestoreView = 'qr' | 'scanner' | 'paste';
+type RestoreWay = RestoreView | 'terminal_link';
 const RESTORE_WAY_LAYER = 'restore-way';
 /** Each way is its own step: its heading, then its body a section below (the step frame's rhythm). */
 const VIEW_STYLE: ViewStyle = { width: '100%', gap: 24 };
@@ -77,9 +79,6 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
         () => props.reverseTargetProfileId ?? resolveReverseQrTargetProfileId(props.initialView === 'qr' ? getActiveServerId() : undefined),
         [props.initialView, props.reverseTargetProfileId],
     );
-    // A pasted link is handed to the embedded scanner, the one owner that
-    // classifies and enrolls scanned and pasted links alike.
-    const [pastedPairingLink, setPastedPairingLink] = React.useState<string | null>(null);
     const showScannerFirst =
         Boolean(props.initialPairingLink)
         || Boolean(props.initialResult)
@@ -87,23 +86,34 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
         || !reverseTargetProfileId
         || isNativePhone
         || isWebPhoneWithCamera;
-    const [currentView, setCurrentView] = React.useState<RestoreView | 'terminal_link' | null>(null);
+    const firstRun = useFirstRunWorkflowMotion();
+    const [ways, setWays] = React.useState<Readonly<{ history: readonly RestoreWay[]; direction: StepTransitionDirection; pastedLink?: string }>>({
+        history: [], direction: 'replace',
+    });
     const defaultView = props.initialView ?? (showScannerFirst ? 'scanner' : 'qr');
-    const activeView = currentView ?? defaultView;
-    const openWay = (view: NonNullable<typeof currentView>) => runStepMove({ layer: RESTORE_WAY_LAYER, kind: 'step', commit: () => setCurrentView(view) });
+    const activeView = ways.history.at(-1) ?? defaultView;
+    const move = (kind: 'step' | 'back', history: readonly RestoreWay[], pastedLink?: string) => {
+        const commit = () => setWays({ history, direction: kind === 'step' ? 'forward' : 'backward', pastedLink });
+        if (firstRun) runStepMove({ layer: RESTORE_WAY_LAYER, kind, commit });
+        else commit();
+    };
+    const openWay = (view: RestoreWay, link?: string) => {
+        if (view !== activeView || link) move('step', [...ways.history, view], link);
+    };
+    const previousWay = ways.history.length > 0 ? () => move('back', ways.history.slice(0, -1)) : undefined;
+    const backSlot = useStepBackOverride(previousWay);
+    const onBack = backSlot?.onBack ?? previousWay ?? props.onBack;
     const openPasteEntry = () => openWay('paste');
     const openScanner = canUseScanner ? () => openWay('scanner') : undefined;
     const openQr = reverseTargetProfileId ? () => openWay('qr') : undefined;
 
-    const submitPastedPairingLink = React.useCallback(async (link: string) => {
-        runStepMove({ layer: RESTORE_WAY_LAYER, kind: 'step', commit: () => {
-            setPastedPairingLink(link);
-            setCurrentView('scanner');
-        } });
+    // The embedded scanner remains the owner of scanned and pasted link enrollment.
+    const submitPastedPairingLink = async (link: string) => {
+        openWay('scanner', link);
         return true;
-    }, []);
+    };
 
-    return <StepMotionLayer layerKey={RESTORE_WAY_LAYER} stepKey={activeView} shareFocalWithParent>
+    const content = <>
         {activeView === 'terminal_link' ? (
             <View style={VIEW_STYLE}>
                 <UnauthenticatedStepHeading title={t('terminal.connectTerminal')} />
@@ -112,9 +122,10 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                     fieldLabel={t('connect.enterUrlManually')}
                     placeholder={t('connect.terminalUrlPlaceholder')}
                     onSubmit={submitPastedPairingLink}
-                    onBack={() => openWay('qr')}
+                    onBack={backSlot ? undefined : onBack}
                     backLabel={t('common.back')}
                 />
+                <StepRowBack />
             </View>
         ) : activeView === 'paste' ? (
             <View style={VIEW_STYLE}>
@@ -134,9 +145,9 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
             <RestoreScanComputerQrView
                 entryIntent={props.entryIntent}
                 embedded
-                initialPairingLink={pastedPairingLink ?? props.initialPairingLink}
+                initialPairingLink={ways.pastedLink ?? props.initialPairingLink}
                 initialResult={props.initialResult}
-                onBack={props.onBack}
+                onBack={onBack}
                 showBack={false}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
                 additionalSignInWays={props.renderAdditionalSignInWays?.()}
@@ -153,15 +164,20 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 entryIntent={props.entryIntent}
                 targetProfileId={reverseTargetProfileId}
                 embedded
-                onBack={props.onBack}
+                onBack={onBack}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
                 renderAdditionalSignInWays={props.renderAdditionalSignInWays}
                 onOpenScanQr={openScanner}
                 onOpenPairingLinkEntry={openPasteEntry}
                 onNavigationLockChange={props.onNavigationLockChange}
+                onOpenLostAccess={props.onOpenLostAccess}
                 onOpenTerminalLink={() => openWay('terminal_link')}
             />
             </View>
         )}
-    </StepMotionLayer>;
+    </>;
+
+    return firstRun
+        ? <StepMotionLayer layerKey={RESTORE_WAY_LAYER} stepKey={activeView} shareFocalWithParent>{content}</StepMotionLayer>
+        : <StepTransitionFrame transitionKey={activeView} direction={ways.direction}>{content}</StepTransitionFrame>;
 });

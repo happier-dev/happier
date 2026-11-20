@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 import { Platform, ScrollView, View } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
@@ -240,6 +241,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const moveToRoute = useFirstRunRouteMove();
     const auth = useAuth();
     const isFocused = useIsFocused();
     const embedded = props.embedded === true;
@@ -358,8 +360,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             props.onOpenSecretKeyLogin();
             return;
         }
-        router.push('/restore/manual');
-    }, [embedded, props.onOpenSecretKeyLogin, router]);
+        moveToRoute(() => router.push('/restore/manual'));
+    }, [embedded, moveToRoute, props.onOpenSecretKeyLogin, router]);
 
     const openShowQrInstead = React.useCallback(() => {
         props.onShowQrInstead?.();

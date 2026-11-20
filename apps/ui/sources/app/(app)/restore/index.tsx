@@ -86,6 +86,7 @@ export default function RestoreIndex() {
             style={{ flex: 1 }}
         >
             <AuthRouteStepFrame
+                routeBack
                 testID="restore-wizard"
                 progress={approvesRequesterDevice ? undefined : { index: 1, count: 3 }}
                 title={t(

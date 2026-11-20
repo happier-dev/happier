@@ -6,13 +6,14 @@ import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/foc
 import { motionTokens } from '../motionTokens';
 import { findNativeStepAnchor } from './capturePressedElement.native';
 import { findWebStepAnchor } from './capturePressedElement.web';
-import { useStepMotionStage } from './StepMotionStage';
+import { runStepMove, useStepMotionStage } from './StepMotionStage';
 import type { StepMotionLayerHandle } from './stepMotionTypes';
 import { StepFocalContext } from './useStepFocal';
 
 export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     layerKey: string;
     stepKey?: string | number;
+    active?: boolean;
     compact?: boolean;
     testID?: string;
     backTestID?: string;
@@ -21,6 +22,20 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     shareFocalWithParent?: boolean;
     style?: StyleProp<ViewStyle>;
 }>>;
+
+export const FIRST_RUN_WORKFLOW_LAYER = 'workflow';
+const MotionLayerContext = React.createContext<Readonly<{ active: boolean; firstRun: boolean }> | null>(null);
+
+export function useFirstRunWorkflowMotion() {
+    return React.useContext(MotionLayerContext)?.firstRun === true;
+}
+
+export function useFirstRunRouteMove() {
+    const firstRun = useFirstRunWorkflowMotion();
+    return React.useCallback(<T,>(commit: () => T): T => firstRun
+        ? runStepMove({ layer: FIRST_RUN_WORKFLOW_LAYER, kind: 'step', commit })
+        : commit(), [firstRun]);
+}
 
 function focusStepTarget(target: FocusReturnTarget, fallback?: FocusReturnTarget) {
     if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && !target.hasAttribute('tabindex')) {
@@ -31,6 +46,11 @@ function focusStepTarget(target: FocusReturnTarget, fallback?: FocusReturnTarget
 
 export function StepMotionLayer(props: StepMotionLayerProps) {
     const stage = useStepMotionStage();
+    const parent = React.useContext(MotionLayerContext);
+    const active = parent?.active !== false && props.active !== false;
+    const firstRun = parent?.firstRun === true || props.layerKey === FIRST_RUN_WORKFLOW_LAYER;
+    const scope = React.useMemo(() => ({ active, firstRun }), [active, firstRun]);
+    const wasActive = React.useRef(active);
     const root = React.useRef<View>(null);
     const ownHeading = React.useRef<FocusReturnTarget>(null);
     const ownFocal = React.useRef<FocusReturnTarget>(null);
@@ -105,8 +125,11 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
     }), [layerKey, backTestID, compact, fadeOpacity, focals, warmOnMount, webElement]);
-    React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
-    React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
+    React.useLayoutEffect(() => active ? stage?.attach(layer) : undefined, [active, stage, layer]);
+    React.useLayoutEffect(() => {
+        if (active) stage?.commit(layer, !wasActive.current);
+        wasActive.current = active;
+    }, [active, stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {
         if (root.current) stage?.nativeTouch(event, root.current);
     }, [stage]);
@@ -119,11 +142,13 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             testID={props.testID}
             onTouchStart={Platform.OS !== 'web' ? onTouchStart : undefined}
         >
-            <StepFocalContext.Provider value={focals}>
-                {Platform.OS === 'web'
-                    ? <React.Fragment key={contentKey}>{props.children}</React.Fragment>
-                    : <View key={contentKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
-            </StepFocalContext.Provider>
+            <MotionLayerContext.Provider value={scope}>
+                <StepFocalContext.Provider value={focals}>
+                    {Platform.OS === 'web'
+                        ? <React.Fragment key={contentKey}>{props.children}</React.Fragment>
+                        : <View key={contentKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
+                </StepFocalContext.Provider>
+            </MotionLayerContext.Provider>
         </Animated.View>
     );
 }

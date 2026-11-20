@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -14,6 +15,16 @@ vi.mock('react-native', async () => {
         useWindowDimensions: () => ({ width: 390, height: 844 }),
     });
 });
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
+    useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
@@ -47,6 +58,43 @@ vi.mock('@/components/account/restore/RestoreQrView', () => ({
 }));
 
 describe('RestoreIndexEmbedded', () => {
+    it('returns from the active terminal-link way through the shell Back button', async () => {
+        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
+        const { AuthRouteStepFrame } = await import('@/components/onboarding/ui/AuthRouteStepFrame');
+        const { UNAUTH_BACK_TEST_ID } = await import('@/components/onboarding/unauthShell/stepBack');
+        const leaveRestore = vi.fn();
+        try {
+            const screen = await renderScreen(<AuthRouteStepFrame testID="restore" title="Restore" onBack={leaveRestore}>
+                <RestoreIndexEmbedded entryIntent="enter_home" initialView="qr" reverseTargetProfileId="home-b" onBack={leaveRestore} />
+            </AuthRouteStepFrame>);
+            await act(async () => lastQrProps.onOpenTerminalLink());
+            expect(screen.findByTestId('restore-pairing-link-input')).toBeTruthy();
+            await screen.pressByTestIdAsync(UNAUTH_BACK_TEST_ID);
+            expect(screen.findByTestId('restore-pairing-link-input')).toBeNull();
+            expect(screen.tree.root.findByType('qr')).toBeTruthy();
+            expect(leaveRestore).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync(UNAUTH_BACK_TEST_ID);
+            expect(leaveRestore).toHaveBeenCalledOnce();
+        } finally { await standardCleanup(); }
+    });
+
+    it('uses a routine step when restore is entered with an authenticated Account', async () => {
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
+        const { AuthRouteStepFrame } = await import('@/components/onboarding/ui/AuthRouteStepFrame');
+        const { StepMotionLayer } = await import('@/components/ui/motion/stepMotion/StepMotionLayer');
+        try {
+            const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: 'signed-in' }}>
+                <AuthRouteStepFrame testID="restore" title="Restore" onBack={() => {}}>
+                    <RestoreIndexEmbedded entryIntent="add_home" initialView="qr" reverseTargetProfileId="home-b" onBack={() => {}} />
+                </AuthRouteStepFrame>
+            </InjectedAuthProvider>);
+            await act(async () => lastQrProps.onOpenPairingLinkEntry());
+            expect(screen.findByTestId('restore-pairing-link-input')).toBeTruthy();
+            expect(screen.tree.root.findAllByType(StepMotionLayer)).toHaveLength(0);
+        } finally { await standardCleanup(); }
+    });
+
     it('switches from scanner-first to the QR view via an embedded callback (no route push)', async () => {
         lastScanProps = null;
         lastQrProps = null;
@@ -75,7 +123,6 @@ describe('RestoreIndexEmbedded', () => {
             expect(tree.root.findByType('qr')).toBeTruthy();
             expect(lastQrProps?.embedded).toBe(true);
             expect(lastQrProps?.entryIntent).toBe('enter_home');
-            expect(lastQrProps?.onBack).toBe(onBack);
             expect(lastQrProps?.onOpenSecretKeyLogin).toBe(onOpenSecretKeyLogin);
             expect(lastQrProps?.onOpenPairingLinkEntry).toBeInstanceOf(Function);
 
@@ -159,7 +206,7 @@ describe('RestoreIndexEmbedded', () => {
 
             // The scanner is the one owner that classifies and enrolls scanned
             // and pasted links; the paste form only hands the link over.
-            expect(tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })).toHaveLength(0);
+            expect(tree.root.findByType('scan')).toBeTruthy();
             expect(lastScanProps.initialPairingLink).toBe('happier:///pair?v=2&payload=opaque');
         } finally {
             act(() => {

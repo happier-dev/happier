@@ -68,6 +68,7 @@ export default function Restore() {
 
     return (
         <AuthRouteStepFrame
+            routeBack
             testID="restore-manual-wizard"
             title={t('setupOnboarding.authSecretKeyTitle')}
             subtitle={t('setupOnboarding.authSecretKeySubtitle')}

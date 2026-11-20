@@ -1,12 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FlowSurfaceActions, type FlowSurfaceAction } from '@/components/ui/flowSurface';
 
 import { UnauthenticatedRouteShell } from '../unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
+import { StepBackContext, useStepBackSlot } from '../unauthShell/stepBack';
 import { WizardModalShell } from './WizardModalShell';
 
 export type AuthRouteStepAction = Readonly<{
@@ -102,18 +105,26 @@ export function UnauthenticatedRouteStep(props: RouteStepProps & Readonly<{
  * brand. Signed in (Settings, token repair and Account reach the same routes), it keeps the focused
  * wizard card it has always had.
  */
-export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
+type AuthRouteStepFrameProps = RouteStepProps & Readonly<{
+    /** Back from a standalone restore route to another first-run screen. */
+    routeBack?: boolean;
     /** The signed-out frame's current step when the route hosts more than one. */
     stepId?: string;
     /** The signed-in card's step counter, when the route is a step of a longer setup. */
     progress?: Readonly<{ index: number; count: number }>;
     children: React.ReactNode;
-}>) {
+}>;
+
+export function AuthRouteStepFrame(props: AuthRouteStepFrameProps) {
     const signedIn = useOptionalAuth()?.isAuthenticated === true;
     // Credential publication can precede navigation. Keep the live outgoing step until that commit.
     const [enteredSignedOut] = React.useState(!signedIn);
 
     if (enteredSignedOut || !signedIn) {
+        const back = props.onBack;
+        const onBack = props.routeBack && back
+            ? () => runStepMove({ layer: FIRST_RUN_WORKFLOW_LAYER, kind: 'back', commit: back })
+            : back;
         return (
             <UnauthenticatedRouteStep
                 testID={props.testID}
@@ -121,7 +132,7 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
                 title={props.title}
                 subtitle={props.subtitle}
                 context={props.context}
-                onBack={props.onBack}
+                onBack={onBack}
                 backDisabled={props.backDisabled}
                 primary={props.primary}
                 secondary={props.secondary}
@@ -132,6 +143,11 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
         );
     }
 
+    return <RoutineAuthRouteStepFrame {...props} />;
+}
+
+function RoutineAuthRouteStepFrame(props: AuthRouteStepFrameProps) {
+    const { slot } = useStepBackSlot(props.backDisabled ? undefined : props.onBack, 'platform');
     return (
         <WizardModalShell
             testID={props.testID}
@@ -141,7 +157,7 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
             title={props.title}
             subtitle={props.subtitle}
             headerHint={props.context}
-            onBack={props.onBack}
+            onBack={slot?.onBack ?? props.onBack}
             showBack={props.onBack != null}
             backDisabled={props.backDisabled}
             showSkip={false}
@@ -153,7 +169,7 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
             secondaryDisabled={props.secondary?.disabled}
             footerHint={props.footerHint}
         >
-            {props.children}
+            <StepBackContext.Provider value={slot}>{props.children}</StepBackContext.Provider>
         </WizardModalShell>
     );
 }

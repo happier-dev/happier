@@ -27,6 +27,7 @@ export default function RestoreShowQrRoute() {
 
     return (
         <AuthRouteStepFrame
+            routeBack
             testID="restore-show-qr"
             title={t(entryIntent === 'add_home' ? 'setupOnboarding.addHomeTitle' : 'setupOnboarding.authRestoreTitle')}
             subtitle={t(entryIntent === 'add_home' ? 'setupOnboarding.addHomeSubtitle' : 'setupOnboarding.authRestoreSubtitle')}

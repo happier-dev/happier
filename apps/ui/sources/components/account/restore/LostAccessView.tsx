@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useRouter } from 'expo-router';
 import { Linking, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -79,6 +80,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const LostAccessView = React.memo(function LostAccessView(props: LostAccessViewProps) {
     const router = useRouter();
+    const moveToRoute = useFirstRunRouteMove();
     useUnistyles();
     const styles = stylesheet;
 
@@ -232,7 +234,7 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
                             testID="lost-access-use-key"
                             size="large"
                             title={t('connect.restoreWithSecretKeyInstead')}
-                            action={async () => router.push('/restore/manual')}
+                            action={async () => moveToRoute(() => router.push('/restore/manual'))}
                         />
                     </View>
                 </View>

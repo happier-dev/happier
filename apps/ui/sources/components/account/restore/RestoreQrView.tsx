@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { Platform, View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -202,6 +203,7 @@ export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
     onOpenSecretKeyLogin?: () => void;
+    onOpenLostAccess?: () => void;
     /** The welcome model's ways for this step, following the controls for the active pairing. */
     renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode, onOpenTerminalLink?: () => void) => React.ReactNode;
     onOpenScanQr?: () => void;
@@ -214,6 +216,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const moveToRoute = useFirstRunRouteMove();
     const auth = useAuth();
     const params = useLocalSearchParams() as Readonly<Record<string, string | string[] | undefined>>;
     const [providerResetEnabled, setProviderResetEnabled] = useState(false);
@@ -341,13 +344,13 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         const target = props.targetProfileId
             ? resolveHomeAuthenticationTarget({ kind: 'saved_profile', profileRef: props.targetProfileId })
             : null;
-        router.push(props.targetProfileId ? {
+        moveToRoute(() => router.push(props.targetProfileId ? {
             pathname: '/restore/manual',
             params: {
                 targetServerId: props.targetProfileId,
                 targetServerUrl: target?.canonicalServerUrl ?? '',
             },
-        } : '/restore/manual');
+        } : '/restore/manual'));
     };
 
     if (requiresComputerSetup && pairing.phase === 'succeeded' && canLeaveApproved) {
@@ -530,7 +533,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                     size="small"
                                     title={t('connect.lostAccessLink')}
                                     display="inverted"
-                                    onPress={() => router.push('/restore/lost-access')}
+                                    onPress={props.onOpenLostAccess ?? (() => moveToRoute(() => router.push('/restore/lost-access')))}
                                 />
                             </View>
                         </>

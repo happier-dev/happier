@@ -376,12 +376,12 @@ function createStepMotionStage(
                 else syncPresentation();
             };
         },
-        commit(layer: StepMotionLayerHandle) {
+        commit(layer: StepMotionLayerHandle, reactivated = false) {
             const alreadyCommitted = committedSteps.has(layer);
             committedSteps.add(layer);
             commitOrder++;
             if (pending?.destination !== layer.key) {
-                if (alreadyCommitted && layer.warmOnMount && !pending) {
+                if (alreadyCommitted && !reactivated && layer.warmOnMount && !pending) {
                     settle();
                     showIncoming(layer);
                 }
@@ -389,13 +389,13 @@ function createStepMotionStage(
             }
             if (pending.kind === 'step' || pending.kind === 'back') layer.focus(pending.returnTo?.testID, pending.kind === 'step');
             pending.layoutReady = true;
-            // Personal Home's composer is already laid out under the held setup frame.
-            const releasingExistingHome = pending.kind === 'home' && alreadyCommitted && laidOutLayers.has(layer);
-            if (Platform.OS === 'web' || pending.grammar === 'fade' || releasingExistingHome) enter(layer);
+            // A retained route or the held Personal Home frame can already have a native layout.
+            const alreadyLaidOut = (reactivated || (pending.kind === 'home' && alreadyCommitted)) && laidOutLayers.has(layer);
+            if (Platform.OS === 'web' || pending.grammar === 'fade' || alreadyLaidOut) enter(layer);
         },
         laidOut(layer: StepMotionLayerHandle) {
             laidOutLayers.add(layer);
-            if (pending?.layoutReady) enter(layer);
+            if (layers.has(layer) && pending?.layoutReady) enter(layer);
         },
         nativeTouch(event: GestureResponderEvent, layer?: View) {
             if (!layer && !pending && !active) return;

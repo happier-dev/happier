@@ -3,8 +3,9 @@ import { ScrollView, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
-import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { FIRST_RUN_WORKFLOW_LAYER, StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { t } from '@/text';
@@ -13,7 +14,7 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
-import { StepBackContext } from './stepBack';
+import { StepBackContext, useStepBackSlot } from './stepBack';
 import { ShellCornerContext } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
@@ -98,37 +99,19 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const styles = stylesheet;
     const isMobile = props.variant === 'mobile';
     const isFullBleed = props.presentation === 'fullBleed';
-    // Android Back does what the on-screen Back does; without one the app's own Back handling continues.
-    useNativeBackLayerBackHandler(props.onBack != null, () => {
-        props.onBack?.();
+    const focused = useOptionalScreenIsFocused();
+    const { slot: backSlot, inRow } = useStepBackSlot(focused ? props.onBack : undefined, isMobile || isFullBleed ? 'platform' : 'row');
+    // Android Back and Escape use the same slot as the visible control.
+    useNativeBackLayerBackHandler(backSlot !== null, () => {
+        backSlot?.onBack();
         return true;
     });
     useEscapeLayer({
-        enabled: props.onBack != null,
+        enabled: backSlot !== null,
         priority: ESCAPE_LAYER_PRIORITIES.pane,
-        onEscape: () => { props.onBack?.(); },
+        onEscape: () => backSlot?.onBack(),
     });
-    // Match the legacy WizardCardLayout card-width derivation so the workflow
-    // pane caps at ~500px on desktop and scales down gracefully on narrow
-    // viewports. The maxWidth is applied to the pane root itself (not a child),
-    // so the canvas-background card visibly sits at the wizard's card size and
-    // the brand pane (flex: 1) expands to fill the remaining left-side space
-    // on wider windows.
-    // A computer's Back stands in the step's own row (its Continue footer, Approve's ways) when the step draws one;
-    // the corner Back stays only for a step without such a row. A phone keeps the platform back in its corner.
-    const onBackRef = React.useRef(props.onBack);
-    onBackRef.current = props.onBack;
-    const [rowBackClaims, setRowBackClaims] = React.useState(0);
-    const hasBack = props.onBack != null;
-    const backSlot = React.useMemo(() => hasBack ? {
-        onBack: () => { onBackRef.current?.(); },
-        placement: isMobile ? 'platform' as const : 'row' as const,
-        claim: () => {
-            setRowBackClaims((count) => count + 1);
-            return () => setRowBackClaims((count) => count - 1);
-        },
-    } : null, [hasBack, isMobile]);
-    const cornerBack = isMobile || rowBackClaims === 0;
+    const cornerBack = isMobile || !inRow;
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
     const [cornerDoor, setCornerDoor] = React.useState<Readonly<{ testID: string; label: string; onPress: () => void }> | null>(null);
     const cornerSlot = React.useMemo(() => isMobile ? null : (
@@ -197,7 +180,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     <BrandWordmark height={wordmarkInBackRow ? MOBILE_ROW_WORDMARK_HEIGHT_PX : MOBILE_WORDMARK_HEIGHT_PX} />
                 </View>
             ) : null}
-            {props.onBack && isFullBleed ? (
+            {backSlot && isFullBleed ? (
                 <View
                     style={[
                         styles.backChevronContainer,
@@ -208,12 +191,12 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     ]}
                 >
                     <BackChevron
-                        onPress={props.onBack}
+                        onPress={backSlot.onBack}
                         accessibilityLabel={t('common.back')}
                     />
                 </View>
             ) : null}
-            {props.onBack && !isFullBleed && cornerBack ? (
+            {backSlot && !isFullBleed && cornerBack ? (
                 <View
                     testID="unauth-shell-back-row"
                     style={[
@@ -227,7 +210,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     ]}
                 >
                     <BackChevron
-                        onPress={props.onBack}
+                        onPress={backSlot.onBack}
                         accessibilityLabel={t('common.back')}
                     />
                 </View>
@@ -265,7 +248,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View style={styles.welcomeLead} />
                             <View>
                                 <StepMotionLayer
-                                    layerKey="workflow"
+                                    layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                                    active={focused}
                                     backTestID={UNAUTH_BACK_TEST_ID}
                                     testID="unauth-shell-step-transition"
                                     stepKey={props.transitionKey}
@@ -288,7 +272,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             {/* The welcome's doors stand above the planet: two parts of the free height above, three below. */}
                             <View style={styles.welcomeLead} />
                             <StepMotionLayer
-                                layerKey="workflow"
+                                layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                                active={focused}
                                 backTestID={UNAUTH_BACK_TEST_ID}
                                 testID="unauth-shell-step-transition"
                                 stepKey={props.transitionKey}
@@ -310,7 +295,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     // continue to look right.
                     <>
                         <StepMotionLayer
-                            layerKey="workflow"
+                            layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                            active={focused}
                             backTestID={UNAUTH_BACK_TEST_ID}
                             testID="unauth-shell-step-transition"
                             stepKey={props.transitionKey}

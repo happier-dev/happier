@@ -13,6 +13,7 @@ export default function LostAccessScreen() {
     }, [router]);
     return (
         <AuthRouteStepFrame
+            routeBack
             testID="restore-lost-access-wizard"
             progress={{ index: 1, count: 3 }}
             title={t('setupOnboarding.authLostAccessTitle')}
