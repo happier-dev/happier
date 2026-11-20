@@ -617,8 +617,10 @@ describe('peer mediation loopback server', () => {
     } });
     const app = createPeerMediationLoopbackApp({ nowMs: () => 2000,
       expected: { accountId: 'account_1', machineId: 'machine_1', flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'local' },
-      trustRoots: IROH_TRUST_ROOTS, tunnel: mode === 'no resolver' ? {} : { resolveServiceExport: async () =>
-        mode === 'changed occurrence' ? { ...binding, generation: 'replacement' } : binding },
+      trustRoots: IROH_TRUST_ROOTS, tunnel: mode === 'no resolver' ? {} : { resolveServiceExport: async () => ({
+        binding: mode === 'changed occurrence' ? { ...binding, generation: 'replacement' } : binding,
+        retirementSignal: new AbortController().signal,
+      }) },
       irohMachineAdmission: { localEndpointId: IROH_TARGET_ENDPOINT_ID, role: 'acceptor', allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => null },
     });
     try {

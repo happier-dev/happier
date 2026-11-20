@@ -393,11 +393,11 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 } };
             if (applied) {
                 const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
-                const binding = await dependencies.resolveServiceExportBinding({ exportKey: appliedServiceExports[0]!.key,
+                const applied = await dependencies.resolveServiceExportBinding({ exportKey: appliedServiceExports[0]!.key,
                     deploymentId: sourceDeploymentId, installationId: installation.installationId, service,
                     generation: 'retained-export-generation', destination: { host: '127.0.0.1', port: Number(referencePublication!.port) },
                 }, new AbortController().signal);
-                return binding ? component === 'host' ? binding.destination.host : String(binding.destination.port) : null;
+                return applied ? component === 'host' ? applied.binding.destination.host : String(applied.binding.destination.port) : null;
             }
             return resolvePrivateServiceReferenceForHost({ source: { kind: 'reference', environmentId: environment.id,
                 export: appliedServiceExports[0]!.key, via: 'auto', component },

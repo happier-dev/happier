@@ -51,7 +51,7 @@ type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
     openStreamTimeout?: ReturnType<typeof setTimeout>;
 }> & {
     closeTransport?: () => void | Promise<void>;
-    onPreviewAbort?: () => void;
+    detachLifetime?: () => void;
     pendingControl?: Readonly<{ detach: () => void; close: () => void }>;
 };
 
@@ -119,15 +119,15 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             ...(tunnel.flowKind ? { flowKind: tunnel.flowKind } : {}),
             ...(reasonCode ? { reasonCode } : {}) });
         if (tunnel.openStreamTimeout) clearTimeout(tunnel.openStreamTimeout);
-        if (tunnel.onPreviewAbort) tunnel.previewApplication?.signal.removeEventListener('abort', tunnel.onPreviewAbort);
+        tunnel.detachLifetime?.();
         tunnel.pendingControl?.close();
         return Promise.all([tunnel.closeTransport?.(), tunnel.previewApplication?.close()]).then(() => undefined);
     };
     options.onServiceExportTunnelsReady?.({
         readRequesterAccountIds: () => [...new Set([...activeTunnels.values()]
-            .flatMap(tunnel => tunnel.serviceExportRequesterAccountId ? [tunnel.serviceExportRequesterAccountId] : []))],
+            .flatMap(tunnel => tunnel.serviceExport ? [tunnel.serviceExport.requesterAccountId] : []))],
         async closeByRequester(accountId) {
-            await Promise.all([...activeTunnels].filter(([, tunnel]) => tunnel.serviceExportRequesterAccountId === accountId)
+            await Promise.all([...activeTunnels].filter(([, tunnel]) => tunnel.serviceExport?.requesterAccountId === accountId)
                 .map(([tunnelId]) => releaseTunnel(tunnelId, 'flow.aborted')));
         },
     });
@@ -149,7 +149,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 if (existing) return existing;
                 const tunnel = activeTunnels.get(tunnelId);
                 if (!tunnel) return null;
-                if ((tunnel.previewApplication || tunnel.serviceExportRequesterAccountId) && tunnel.closeTransport) return null;
+                if ((tunnel.previewApplication || tunnel.serviceExport) && tunnel.closeTransport) return null;
                 if (tunnel.previewApplication && !attachPreview) return null;
                 if (attachPreview && !tunnel.previewApplication) return null;
                 if (tunnel.openStreamTimeout) {
@@ -225,7 +225,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     } : {}),
                 };
                 sessions.set(tunnelId, entry);
-                if (tunnel.serviceExportRequesterAccountId) {
+                if (tunnel.serviceExport) {
                     tunnel.closeTransport = async () => {
                         sessions.delete(tunnelId);
                         await substreamMux?.close();
@@ -470,10 +470,15 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     controlSocket.setTimeout(0);
                 }
             });
-            activeTunnel.onPreviewAbort = () => releaseTunnel(result.response.tunnelId, 'flow.aborted');
-            result.previewApplication.signal.addEventListener('abort', activeTunnel.onPreviewAbort, { once: true });
-            if (result.previewApplication.signal.aborted) activeTunnel.onPreviewAbort();
             if (controlSocket.destroyed) onControlClose();
+        }
+        const retirementSignal = result.previewApplication?.signal ?? result.serviceExport?.retirementSignal;
+        if (retirementSignal && activeTunnels.get(result.response.tunnelId) === activeTunnel) {
+            const onRetired = () => releaseTunnel(result.response.tunnelId, 'flow.aborted',
+                result.serviceExport ? 'service_export_unavailable' : undefined);
+            activeTunnel.detachLifetime = () => retirementSignal.removeEventListener('abort', onRetired);
+            retirementSignal.addEventListener('abort', onRetired, { once: true });
+            if (retirementSignal.aborted) onRetired();
         }
         return result.response;
     };

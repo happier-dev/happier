@@ -44,7 +44,8 @@ describe('Machine service export forward', () => {
     const trustRoots = [{ keyId: 'home-key', publicKey: Buffer.from(key.publicKey).toString('base64url') }];
     const target = await startPeerMediationLoopbackServer({ nowMs: () => 2000, endpointExpiresAt: 300000,
       expected: { accountId, machineId: targetId, flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'listener' },
-      trustRoots, tunnel: { resolveServiceExport: async () => binding }, irohMachineAdmission: { localEndpointId: targetEndpoint, role: 'acceptor',
+      trustRoots, tunnel: { resolveServiceExport: async () => ({ binding, retirementSignal: new AbortController().signal }) },
+      irohMachineAdmission: { localEndpointId: targetEndpoint, role: 'acceptor',
         allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => null } });
     let carrierClosed = 0;
     let carrierEndpoint = targetEndpoint;

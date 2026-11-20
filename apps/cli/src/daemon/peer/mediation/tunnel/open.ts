@@ -54,8 +54,8 @@ export type OpenPeerTcpTunnelResult =
          * normalization from the open frame. Absent for `voice_media`, which never dials TCP.
          */
         destination?: PeerTcpTunnelDestinationV1;
-        /** Signed actor retained only for service-export interactive lifetime cleanup. */
-        serviceExportRequesterAccountId?: string;
+        /** The signed actor and applied occurrence own this interactive lifetime. */
+        serviceExport?: Readonly<{ requesterAccountId: string; retirementSignal: AbortSignal }>;
         voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
         limits: PeerTcpTunnelRuntimeLimits;
         previewApplication?: Readonly<{ signal: AbortSignal; close: () => Promise<void> }>;
@@ -87,7 +87,7 @@ export type OpenPeerTcpTunnelInput = Readonly<{
         binding: TcpTunnelServiceExportBindingV1;
         requesterAccountId: string;
         signal?: AbortSignal;
-    }>) => Promise<TcpTunnelServiceExportBindingV1 | null>;
+    }>) => Promise<Readonly<{ binding: TcpTunnelServiceExportBindingV1; retirementSignal: AbortSignal }> | null>;
     acquirePreviewApplication?: (binding: LocalServicePreviewDirectBindingV1, grantId: string, signal?: AbortSignal) => Promise<Readonly<{
         destination: PeerTcpTunnelDestinationV1; signal: AbortSignal; close: () => Promise<void>;
     }>>;
@@ -290,13 +290,14 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
     });
     if (!reservation) return fallback('grant_already_consumed');
 
+    let serviceExport: Readonly<{ requesterAccountId: string; retirementSignal: AbortSignal }> | undefined;
     if (scope.kind === 'tcp_tunnel' && scope.serviceExport) {
         const opening = open.serviceExport;
         if (!opening) {
             reservation.activationFailed();
             return fallback('service_export_unavailable');
         }
-        let current: TcpTunnelServiceExportBindingV1 | null | undefined;
+        let current: Awaited<ReturnType<NonNullable<OpenPeerTcpTunnelInput['resolveServiceExport']>>> | undefined;
         try {
             current = await input.resolveServiceExport?.({ binding: opening.binding,
                 requesterAccountId: grantVerification.payload.accountId, signal: input.signal });
@@ -305,11 +306,13 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
             reservation.activationFailed();
             throw error;
         }
-        if (!current || createCanonicalJsonSigningInput(current) !== createCanonicalJsonSigningInput(opening.binding)
-            || createTcpTunnelServiceExportCommitmentV1(current, opening.nonce) !== scope.serviceExport.commitment) {
+        if (!current || current.retirementSignal.aborted
+            || createCanonicalJsonSigningInput(current.binding) !== createCanonicalJsonSigningInput(opening.binding)
+            || createTcpTunnelServiceExportCommitmentV1(current.binding, opening.nonce) !== scope.serviceExport.commitment) {
             reservation.activationFailed();
             return fallback('service_export_unavailable');
         }
+        serviceExport = { requesterAccountId: grantVerification.payload.accountId, retirementSignal: current.retirementSignal };
     }
 
     if (scope.kind === 'voice_media') {
@@ -376,7 +379,7 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
         receipt: PEER_MEDIATION_RECEIPTS.tunnelOpened,
         flowKind: requestedFlowKind,
         destination,
-        ...(scope.serviceExport ? { serviceExportRequesterAccountId: grantVerification.payload.accountId } : {}),
+        ...(serviceExport ? { serviceExport } : {}),
         ...(previewApplication ? { previewApplication } : {}),
         limits: {},
     };

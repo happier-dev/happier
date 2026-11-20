@@ -134,7 +134,7 @@ describe('real native Machine service export forwarding', () => {
     let applicationPort = 0;
     const admission = await startPeerMediationLoopbackServer({ nowMs: Date.now, endpointExpiresAt: Date.now() + 300000,
       expected: { accountId, machineId: targetMachineId, flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: target.endpoint.endpointId },
-      trustRoots, tunnel: { resolveServiceExport: async () => admittedBinding },
+      trustRoots, tunnel: { resolveServiceExport: async () => ({ binding: admittedBinding, retirementSignal: new AbortController().signal }) },
       irohMachineAdmission: { localEndpointId: target.endpoint.endpointId, role: 'acceptor', allowedFlows: ['tcp_tunnel'],
         resolveApplicationTarget: () => ({ port: applicationPort }) } });
     applicationPort = Number(new URL(admission.url).port);

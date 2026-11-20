@@ -19,7 +19,8 @@ import { resolvePrivateServiceExportAdmissionForHost } from './privateServiceRef
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import * as installationStore from '@/daemon/identity/store';
 
-it('admits the requester against B current export and closes only its open stream on authenticated access loss', async () => {
+it.each(['requester access loss', 'applied export retirement'] as const)(
+    'admits the requester against the current export and closes its open stream on %s', async mode => {
     const sockets: Socket[] = [];
     const upstream = createServer(socket => { sockets.push(socket); socket.resume(); });
     await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
@@ -107,6 +108,18 @@ it('admits the requester against B current export and closes only its open strea
                 await vi.waitFor(() => expect(duplicate.readyState === 3 || sockets.length === 2).toBe(true));
                 expect(sockets).toHaveLength(1);
                 expect(duplicate.readyState).toBe(3);
+                if (mode === 'applied export retirement') {
+                    const handle = lease.registry.projectManagedServices.resolveEnvironmentService(host.serverId, admitted.serviceExport.service);
+                    if (!handle) throw new Error('Applied service handle missing');
+                    await handle.dispose();
+                    await vi.waitFor(() => expect(ws.readyState).toBe(3));
+                    expect(sockets[0]!.destroyed).toBe(true);
+                    expect(upstream.listening).toBe(true);
+                    const denied = await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open',
+                        payload: open(admitted.serviceExport, 'after-withdrawal') });
+                    expect(denied.json()).toMatchObject({ ok: false, reasonCode: 'service_export_unavailable' });
+                    return;
+                }
                 const rpc = new RpcHandlerManager({ scopePrefix: host.machineId, encryptionMode: 'plain', logger() {},
                     authorizeRequest: input => authorizeMachineRpcRequest(input, {
                         machineId: host.machineId, resolveCustodianAccountId: async () => 'custodian',
