@@ -26,7 +26,8 @@ import {
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import {
     normalizeProviderAccountUsageRecordIds,
-    resolveProviderAccountUsageSnapshotState,
+    resolveProviderAccountUsageReadState,
+    type ProviderAccountUsageReadState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors';
 import type {
     ExpectedActiveServerFetchBasis,
@@ -38,7 +39,6 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type {
     ProviderAccountUsageRecordId,
     ProviderAccountUsageSnapshotV1,
-    ProviderAccountUsageStateV1,
 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { useCredentialScopedAccountModeResolver, type CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
 
@@ -48,7 +48,7 @@ export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
 export type ProviderAccountUsageSnapshotsResult = Readonly<{
     snapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
     loadingByRecordId: Readonly<Record<string, boolean>>;
-    stateByRecordId: Readonly<Record<string, ProviderAccountUsageStateV1>>;
+    stateByRecordId: Readonly<Record<string, ProviderAccountUsageReadState>>;
 }>;
 
 function buildRecordIdsSignature(recordIds: ReadonlyArray<string>): string {
@@ -87,7 +87,8 @@ async function readProviderAccountUsageSnapshot(params: Readonly<{
                 params.credentials,
                 response.content,
             );
-            return snapshot?.recordId === params.recordId ? snapshot : null;
+            if (snapshot?.recordId !== params.recordId) throw new Error('Could not open provider account usage snapshot');
+            return snapshot;
         },
     });
 }
@@ -143,7 +144,7 @@ function createUsageRowObserver(input: Readonly<{
                 const previous = readEntry();
                 enqueue({ recordId, current, entry: { snapshot: previous?.snapshot ?? null,
                         nextFetchAtMs: previous?.nextFetchAtMs ?? 0,
-                        loading: true, hadError: previous?.hadError ?? false } });
+                        loading: true, hadError: previous?.hadError ?? false, emptyRead: previous?.emptyRead } });
                 const requestController = new AbortController();
                 controller = requestController;
                 reading = (async () => {
@@ -154,13 +155,13 @@ function createUsageRowObserver(input: Readonly<{
                         const opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId,
                             signal: requestController.signal });
                         entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
-                            loading: false, hadError: false };
+                            loading: false, hadError: false, emptyRead: opened ? undefined : 'missing' };
                     } catch (error) {
                         if (!current()) return;
                         const denied = error instanceof HappyError && (error.status === 401 || error.status === 403);
                         entry = { snapshot: denied ? null : previous?.snapshot ?? null,
                             nextFetchAtMs: Number.POSITIVE_INFINITY,
-                            loading: false, hadError: !denied && Boolean(previous?.snapshot) };
+                            loading: false, hadError: !denied, emptyRead: denied ? 'denied' : undefined };
                     } finally {
                         reading = null;
                         controller = null;
@@ -222,8 +223,9 @@ export function useProviderAccountUsageSnapshots(
         for (const recordId of normalizedRecordIds) {
             const entry = entries?.[recordId];
             selected[`${recordId}\u0000snapshot`] = entry?.snapshot ?? null;
-            selected[`${recordId}\u0000state`] = resolveProviderAccountUsageSnapshotState({
-                snapshot: entry?.snapshot ?? null, loading: entry?.loading ?? false, hadError: entry?.hadError ?? false, nowMs,
+            selected[`${recordId}\u0000state`] = resolveProviderAccountUsageReadState({
+                snapshot: entry?.snapshot ?? null, loading: entry?.loading ?? false, hadError: entry?.hadError ?? false,
+                emptyRead: entry?.emptyRead, nowMs,
             });
             if (presentsLoading) selected[`${recordId}\u0000loading`] = entry?.loading ?? false;
         }
@@ -278,13 +280,13 @@ export function useProviderAccountUsageSnapshots(
 
         const snapshotsByRecordId: Record<string, ProviderAccountUsageSnapshotV1 | null> = {};
         const loadingByRecordId: Record<string, boolean> = {};
-        const stateByRecordId: Record<string, ProviderAccountUsageStateV1> = {};
+        const stateByRecordId: Record<string, ProviderAccountUsageReadState> = {};
         for (const recordId of normalizedRecordIds) {
             const snapshot = (cacheByRecordId[`${recordId}\u0000snapshot`] ?? null) as ProviderAccountUsageSnapshotV1 | null;
             const loading = cacheByRecordId[`${recordId}\u0000loading`] === true;
             snapshotsByRecordId[recordId] = snapshot;
             loadingByRecordId[recordId] = loading;
-            stateByRecordId[recordId] = cacheByRecordId[`${recordId}\u0000state`] as ProviderAccountUsageStateV1;
+            stateByRecordId[recordId] = cacheByRecordId[`${recordId}\u0000state`] as ProviderAccountUsageReadState;
         }
 
         return {

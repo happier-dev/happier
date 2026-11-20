@@ -134,6 +134,16 @@ export function resolveProviderAccountUsageSnapshotState(params: Readonly<{
     return 'loaded_data';
 }
 
+export type ProviderAccountUsageEmptyRead = 'missing' | 'denied';
+export type ProviderAccountUsageReadState = ProviderAccountUsageStateV1 | ProviderAccountUsageEmptyRead | 'failed';
+
+export function resolveProviderAccountUsageReadState(params: Readonly<
+    Parameters<typeof resolveProviderAccountUsageSnapshotState>[0] & { emptyRead?: ProviderAccountUsageEmptyRead }
+>): ProviderAccountUsageReadState {
+    if (!params.snapshot) return params.emptyRead ?? (params.hadError ? 'failed' : 'not_loaded');
+    return resolveProviderAccountUsageSnapshotState(params);
+}
+
 function toGaugeQuotaSnapshot(snapshot: ProviderAccountUsageSnapshotV1): ConnectedServiceQuotaSnapshotV1 {
     return {
         v: 1,
@@ -156,11 +166,11 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
     snapshot: ProviderAccountUsageSnapshotV1 | null;
     /**
      * The state its owner already resolved through
-     * `resolveProviderAccountUsageSnapshotState`. Recomputing it here would have to
+     * `resolveProviderAccountUsageReadState`. Recomputing it here would have to
      * invent a `hadError` value, and inventing `false` silently discards the
      * `error_last_known_good` the caller knows about.
      */
-    state: ProviderAccountUsageStateV1;
+    state: ProviderAccountUsageReadState;
     activeModelId?: string | null;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
     windowModes?: readonly ConnectedServiceQuotaGaugeWindowMode[] | null;

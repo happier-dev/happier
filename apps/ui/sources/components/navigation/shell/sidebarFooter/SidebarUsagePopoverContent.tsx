@@ -189,13 +189,22 @@ export function useUsagePopoverData(): Readonly<{
         }
         return loading;
     }, [quota.loadingByKey, quota.usageRecordIdsByKey, usageRecords.loadingByRecordId]);
+    const errorsByKey = React.useMemo(() => {
+        const errors = { ...quota.errorsByKey };
+        for (const [key, recordId] of Object.entries(quota.usageRecordIdsByKey)) {
+            if (!recordId || errors[key] != null) continue;
+            const state = usageRecords.stateByRecordId[recordId];
+            if (state === 'failed' || state === 'error_last_known_good') errors[key] = t('connectedServices.errors.quotaRefreshFailed');
+        }
+        return errors;
+    }, [quota.errorsByKey, quota.usageRecordIdsByKey, usageRecords.stateByRecordId]);
     const refresh = React.useMemo((): UsagePopoverRefresh => ({
         keys: quota.refreshableKeys,
         loadingByKey,
         refreshingByKey: quota.refreshingByKey,
-        errorsByKey: quota.errorsByKey,
+        errorsByKey,
         run: quota.refresh,
-    }), [loadingByKey, quota.refreshableKeys, quota.refreshingByKey, quota.errorsByKey, quota.refresh]);
+    }), [loadingByKey, quota.refreshableKeys, quota.refreshingByKey, errorsByKey, quota.refresh]);
     return { usage, facts, privacy, refresh };
 }
 
@@ -265,7 +274,9 @@ export function SidebarUsagePopoverView(props: Readonly<{
         ? refresh?.keys.filter((key) => key === session?.accountKey) ?? []
         : refresh?.keys ?? [];
     const refreshing = refreshKeys.some((key) => refresh?.refreshingByKey[key] === true || refresh?.loadingByKey?.[key] === true);
-    const refreshError = refreshKeys.map((key) => refresh?.errorsByKey[key]).find((error) => error != null);
+    const refreshError = scoped
+        ? session?.accountKey && refresh?.errorsByKey[session.accountKey]
+        : Object.values(refresh?.errorsByKey ?? {}).find((error) => error != null);
     const shownAsOf = scoped ? sessionAccount?.account.fetchedAt ?? null : usage.asOf;
 
     // Every account shown together is named at once, so two that read as their service's account are

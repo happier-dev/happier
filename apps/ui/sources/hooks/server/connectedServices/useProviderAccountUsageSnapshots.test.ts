@@ -22,6 +22,8 @@ import { useQualifiedConnectedAccountQuota } from './useQualifiedConnectedAccoun
 import { useUsageSummary } from '@/components/hub/usage/useUsageSummary';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { writeProviderAccountUsageRecordIdToMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
 
 const runtime = vi.hoisted(() => ({ active: true, listeners: new Set<() => void>() }));
 // Visibility is an environment boundary. Auth, Home, mode, features, cache and opening remain real.
@@ -354,6 +356,63 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect('connectedServiceSnapshotsByKey' in hook.getCurrent()).toBe(false);
         expect(boundary.usageRead).toHaveBeenCalledWith(snapshot.recordId);
     });
+
+    it('passes a cold read failure to Session usage and the existing popover error, then recovers on a Home change', async () => {
+        const { useSessionProviderUsage } = await import('@/components/sessions/usage/useSessionProviderUsage');
+        const { SidebarUsagePopoverView, useUsagePopoverData } = await import('@/components/navigation/shell/sidebarFooter/SidebarUsagePopoverContent');
+        const snapshot = quotaTestProviderUsageSnapshot();
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...quotaTestSnapshot, meters: snapshot.meters })));
+        boundary.usageRead.mockImplementation(async () => new Response('{}', { status: 503 }));
+        storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [{ ref: quotaTestRef,
+            status: 'connected', authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
+            configurationReady: true, configurationRevision: null, scopes: [] }] });
+        storage.getState().applySettingsLocal({ sessionProviderUsageGaugeMode: 'auto' });
+        // Only these Session attributes are used by the real usage and context owners.
+        const session = { id: 'usage-fixture', active: true, seq: 1, agentState: {}, encryptionMode: 'plain',
+            metadata: writeProviderAccountUsageRecordIdToMetadata({ flavor: 'claude', host: 'fixture', path: '/fixture' },
+                { recordId: snapshot.recordId, updatedAtMs: snapshot.fetchedAtMs }) } as Session;
+        function Popover() {
+            const data = useUsagePopoverData();
+            return React.createElement(SidebarUsagePopoverView, { ...data, onOpenUsage() {}, onOpenConnectedServices() {} });
+        }
+        const sessionUsage = await renderHook(() => {
+            const sessionRead = useSessionProviderUsage({
+                session, serverId: getActiveServerSnapshot().serverId, agentId: 'claude', activeModelId: null,
+            });
+            const providerRead = useProviderAccountUsageSnapshots([snapshot.recordId]);
+            return {
+                ...sessionRead,
+                readState: providerRead.stateByRecordId[snapshot.recordId],
+                snapshot: providerRead.snapshotsByRecordId[snapshot.recordId],
+            };
+        }, { wrapper: Wrapper });
+        const screen = await renderScreen(React.createElement(Wrapper, null, React.createElement(Popover)));
+        await flushHookEffects({ cycles: 16, turns: 16 });
+        expect(boundary.usageRead).toHaveBeenCalledWith(snapshot.recordId);
+        expect(sessionUsage.getCurrent()).toMatchObject({ gauge: null, quotaReadFailed: true, readState: 'failed' });
+        expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeTruthy();
+
+        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
+        await act(async () => { wake(); });
+        await flushHookEffects({ cycles: 16, turns: 16 });
+        expect(sessionUsage.getCurrent()).toMatchObject({ quotaReadFailed: false, readState: 'loaded_data', snapshot });
+        expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeNull();
+        await screen.unmount();
+        await sessionUsage.unmount();
+    });
+
+    it.each([[404, 'missing'], [403, 'denied'], [503, 'failed']] as const)(
+        'keeps a cold provider usage response with HTTP %s distinct as %s', async (status, state) => {
+            const snapshot = makeUsageSnapshot();
+            boundary.usageRead.mockImplementation(async () => new Response('{}', { status }));
+            const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
+            await flushHookEffects({ cycles: 8, turns: 8 });
+            expect(boundary.usageRead).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toBeNull();
+            expect(hook.getCurrent().stateByRecordId[snapshot.recordId]).toBe(state);
+            await hook.unmount();
+        },
+    );
 
     it('ages retained usage once at its presentation deadline without another read', async () => {
         vi.useFakeTimers();

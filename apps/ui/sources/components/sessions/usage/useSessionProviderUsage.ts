@@ -365,8 +365,13 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       gaugeMode,
       windowMode,
     ]);
+  const quotaReadFailed = quotasEnabled && gaugeMode !== 'hidden' && gauge === null
+    && (quotaProfileRef
+      ? quotaProfileKey !== null && quotaSnapshots.errorsByKey[quotaProfileKey] != null
+      : accountUsageRecordIds.some(id => accountUsageStateByRecordId[id] === 'failed'));
   return {
     gauge,
+    quotaReadFailed,
     /** The released scalar profile identity, its snapshot-store key, and its override-aware snapshot. */
     quotaProfileIdentity,
     quotaProfileKey,

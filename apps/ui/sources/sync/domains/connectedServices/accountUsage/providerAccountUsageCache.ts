@@ -1,12 +1,13 @@
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveProviderAccountUsageSnapshotState } from './providerAccountUsageSelectors';
+import { resolveProviderAccountUsageReadState, type ProviderAccountUsageEmptyRead } from './providerAccountUsageSelectors';
 
 export type ProviderAccountUsageCacheEntry = Readonly<{
     snapshot: ProviderAccountUsageSnapshotV1 | null;
     nextFetchAtMs: number;
     loading: boolean;
     hadError: boolean;
+    emptyRead?: ProviderAccountUsageEmptyRead;
 }>;
 
 export type ProviderAccountUsageCacheState = Readonly<{
@@ -146,8 +147,8 @@ export function updateProviderAccountUsageCacheEntries(
             ? { ...incoming, snapshot: previous.snapshot }
             : incoming;
         const equal = previous && previous.snapshot === next.snapshot && sameStrictJsonValue(previous, next)
-            && resolveProviderAccountUsageSnapshotState({ ...previous, nowMs: publishedAtMs })
-                === resolveProviderAccountUsageSnapshotState({ ...next, nowMs });
+            && resolveProviderAccountUsageReadState({ ...previous, nowMs: publishedAtMs })
+                === resolveProviderAccountUsageReadState({ ...next, nowMs });
         nextEntries[recordId] = equal ? previous : next === previous ? { ...next } : next;
         if (nextEntries[recordId] !== previous) unchanged = false;
     }
