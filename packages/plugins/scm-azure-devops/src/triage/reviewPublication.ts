@@ -482,24 +482,17 @@ async function executePublication(input: Readonly<{
     ? routing.verdictSummaryEntryIndexes
     : [];
 
-  let contexts: readonly PublicationContext[] = [];
+  let contexts: readonly (PublicationContext | null)[] = [];
+  let projectionFailure: AzureDevOpsFailure | undefined;
   if (input.mode.kind !== 'reply') {
     const needsInline = input.plan.entries.some((entry) => (
       entry.anchor.kind === 'file' || entry.anchor.kind === 'line' || entry.anchor.kind === 'range'
     ));
-    if (needsInline && current.row.supportsIterations === null) {
-      return Object.freeze({
-        kind: 'rejected', reason: 'unsupported-anchor', observation: current.observation,
-      });
-    }
     let changed: Awaited<ReturnType<typeof readCurrentChangedFiles>> | null = null;
     if (needsInline && current.row.supportsIterations === true) {
       changed = await readCurrentChangedFiles(input.mutation);
       if (!changed.ok) {
-        return Object.freeze({
-          kind: 'rejected', reason: 'unsupported-anchor', observation: current.observation,
-          failure: projectAzureSourceFailure(changed.failure),
-        });
+        projectionFailure = changed.failure;
       }
     }
     const resolved = input.plan.entries.map((entry, index): PublicationContext | null => {
@@ -514,10 +507,7 @@ async function executePublication(input: Readonly<{
       }
       return null;
     });
-    if (resolved.some((value) => value === null)) {
-      return Object.freeze({ kind: 'rejected', reason: 'unsupported-anchor', observation: current.observation });
-    }
-    contexts = resolved as readonly PublicationContext[];
+    contexts = resolved;
   }
 
   const initialInventory = await readThreadInventory(input.mutation);
@@ -642,7 +632,13 @@ async function executePublication(input: Readonly<{
       entryResults[index] = prior;
       continue;
     }
-    if (summaryEntryIndexes.includes(index)) continue;
+    if (instruction === 'reconcile') {
+      entryResults[index] = reconcileEntry(
+        entry, correlation.publicationCorrelationId, initialInventory.value,
+        input.mode.kind === 'reply' ? input.mode.threadId : undefined,
+      );
+      continue;
+    }
     if (stopped) {
       entryResults[index] = Object.freeze({
         happierCommentId: entry.happierCommentId,
@@ -651,6 +647,19 @@ async function executePublication(input: Readonly<{
       });
       continue;
     }
+    if (contexts[index] === null) {
+      entryResults[index] = Object.freeze({
+        happierCommentId: entry.happierCommentId,
+        publicationCorrelationId: correlation.publicationCorrelationId,
+        outcome: projectionFailure === undefined
+          ? { kind: 'failed' as const, code: 'anchor_unresolvable' }
+          : failureOutcome(projectionFailure),
+      });
+      if (projectionFailure !== undefined) firstFailure ??= projectAzureSourceFailure(projectionFailure);
+      stopped = true;
+      continue;
+    }
+    if (summaryEntryIndexes.includes(index)) continue;
     const exactMarker = formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId);
     const before = await readThreadInventory(input.mutation);
     if (!before.ok) {
@@ -799,8 +808,7 @@ async function executePublication(input: Readonly<{
       }
     }
     for (const index of summaryEntryIndexes) {
-      if (claim.instructions.entries[index] === 'confirmed'
-        || claim.instructions.entries[index] === 'held') continue;
+      if (claim.instructions.entries[index] !== 'dispatch') continue;
       const entry = input.plan.entries[index]!;
       const entryOutcome: ReviewCommentPublicationEntryResultV1['outcome'] =
         summaryOutcome.kind === 'published' && summaryOutcome.externalRef !== undefined

@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
+import type { ReviewCommentClaimPublicationDispatchResponseV1, ReviewCommentPublicationPlanV1, ReviewCommentPublicationResultV1 } from '@happier-dev/plugin-sdk/reviews';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -188,6 +188,8 @@ function harness(input: Readonly<{
   pullRequests?: readonly unknown[];
   threadReads?: readonly unknown[];
   claimDisposition?: 'dispatch' | 'reconcile';
+  priorResult?: ReviewCommentPublicationResultV1;
+  entryInstructions?: Readonly<ReviewCommentClaimPublicationDispatchResponseV1['instructions']['entries']>;
   settlementError?: Error;
   claimError?: Error;
   respond?: (request: Captured) => Reply | undefined;
@@ -250,10 +252,10 @@ function harness(input: Readonly<{
             ? null
             : { publicationCorrelationId: VERDICT_CORRELATION },
           instructions: {
-            entries: candidate.entries.map(() => disposition),
+            entries: input.entryInstructions ?? candidate.entries.map((_entry, index) => input.priorResult?.entries[index]?.outcome.kind === 'published' ? 'confirmed' : disposition),
             verdict: candidate.verdict === null ? null : disposition,
           },
-          priorResult: null,
+          priorResult: input.priorResult ?? null,
         };
       },
     },
@@ -319,6 +321,75 @@ const threadWrites = (requests: readonly Captured[]) =>
     && new URL(candidate.url).pathname.toLowerCase().includes('/threads'));
 
 describe('Azure DevOps Reviews publication', () => {
+
+  it.each([
+    { landed: false, summary: false },
+    { landed: true, summary: false },
+    { landed: false, summary: true },
+  ])('honors a mixed reconcile entry and dispatch verdict with marker=$landed summary=$summary', async ({ landed, summary: summaryEntryKind }) => {
+    const original = summaryEntryKind ? summaryEntry('comment-1') : entry('comment-1');
+    const publicationPlan = plan({
+      entries: [{ ...original, snapshot: { ...original.snapshot, commitSha: ADVANCED_HEAD } }],
+      verdict: { kind: 'comment', body: 'Review summary' },
+    });
+    const existing = landed ? [thread(70, [{ id: 71, content: marker('A'.repeat(43)) }])] : [];
+    const summary = thread(900, [{ id: 901, content: verdictMarker() }]);
+    const { context, requests, claimedPlans } = harness({
+      entryInstructions: ['reconcile'],
+      threadReads: [{ value: existing }, { value: existing }, { value: [...existing, summary] }],
+    });
+    const expected = {
+      entries: [{ outcome: landed ? { kind: 'published', externalRef: '70:71' } : { kind: 'uncertain' } }],
+      verdict: { outcome: { kind: 'published', externalRef: '900:901' } },
+    };
+    await expect(submitAzureDevOpsPullRequestReview(request(publicationPlan), context)).resolves.toMatchObject({ kind: 'settled', publication: expected });
+    expect(claimedPlans.at(-1)).toMatchObject({ settlement: { result: expected } });
+    expect(providerWrites(requests)).toHaveLength(1);
+    expect(threadWrites(requests)[0]?.body).toMatchObject({ comments: [{ content: `Review summary\n\n${verdictMarker()}` }] });
+  });
+
+  it.each(['dispatch', 'reconcile'] as const)('preserves a confirmed %s receipt when its snapshot no longer projects', async (claimDisposition) => {
+    const staleEntry = (id: string) => {
+      const original = entry(id);
+      return { ...original, snapshot: { ...original.snapshot, commitSha: ADVANCED_HEAD } };
+    };
+    const entries = [staleEntry('comment-1'), ...(claimDisposition === 'dispatch' ? [staleEntry('comment-2')] : [])];
+    const publicationPlan = plan({ entries });
+    const priorResult: ReviewCommentPublicationResultV1 = {
+      publicationPlanId: PLAN_ID,
+      entries: entries.map((candidate, index) => ({
+        happierCommentId: candidate.happierCommentId,
+        publicationCorrelationId: String.fromCharCode(65 + index).repeat(43),
+        outcome: index === 0 ? { kind: 'published', externalRef: '70:71' } : { kind: 'skippedPriorFailure' },
+      })),
+      verdict: { kind: 'notRequested' },
+    };
+    const expected = {
+      ...priorResult,
+      entries: priorResult.entries.map((candidate, index) => index === 0 ? candidate : {
+        ...candidate, outcome: { kind: 'failed', code: 'anchor_unresolvable' },
+      }),
+    };
+    const { context, requests, claimedPlans } = harness({ claimDisposition, priorResult });
+    await expect(submitAzureDevOpsPullRequestReview(request(publicationPlan), context)).resolves.toMatchObject({ kind: 'settled', publication: expected });
+    expect(claimedPlans.at(-1)).toMatchObject({ settlement: { result: expected } });
+    expect(providerWrites(requests)).toHaveLength(0);
+  });
+
+  it.each(['inline', 'summary'] as const)('durably fails a fresh unresolvable %s snapshot without provider writes', async (kind) => {
+    const original = kind === 'inline' ? entry('comment-1') : summaryEntry('comment-1');
+    const publicationPlan = plan({
+      entries: [{ ...original, snapshot: { ...original.snapshot, commitSha: ADVANCED_HEAD } }],
+      verdict: kind === 'summary' ? { kind: 'comment', body: 'Summary' } : null,
+    });
+    const { context, requests, claimedPlans } = harness({});
+    await expect(submitAzureDevOpsPullRequestReview(request(publicationPlan), context)).resolves.toMatchObject({
+      kind: 'settled', publication: { entries: [{ outcome: { kind: 'failed', code: 'anchor_unresolvable' } }] },
+    });
+    expect(claimedPlans.at(-1)).toMatchObject({ settlement: { result: { entries: [{ outcome: { kind: 'failed', code: 'anchor_unresolvable' } }] } } });
+    expect(providerWrites(requests)).toHaveLength(0);
+  });
+
   it.each(['claim', 'settlement'] as const)('retains typed %s failure identity beside publication truth', async (phase) => {
     const error = new PluginError({ code: 'review_claim_denied', retryable: false, details: { requestId: 'request-azure-publication' } });
     const landed = { value: [thread(70, [{ id: 71, content: marker('A'.repeat(43)) }])] };
@@ -787,8 +858,8 @@ describe('Azure DevOps Reviews publication', () => {
       await submitAzureDevOpsPullRequestReview(request(plan()), context),
     );
 
-    expect(result).toMatchObject({ kind: 'rejected', reason: 'unsupported-anchor' });
-    expect(claimedPlans).toHaveLength(0);
+    expect(result).toMatchObject({ kind: 'settled', publication: { entries: [{ outcome: { kind: 'failed', code: 'anchor_unresolvable' } }] } });
+    expect(claimedPlans.at(-1)).toMatchObject({ settlement: { result: { entries: [{ outcome: { kind: 'failed', code: 'anchor_unresolvable' } }] } } });
     expect(providerWrites(requests)).toHaveLength(0);
     expect(requests.some(({ url }) => new URL(url).pathname.toLowerCase().includes('/iterations')))
       .toBe(false);
