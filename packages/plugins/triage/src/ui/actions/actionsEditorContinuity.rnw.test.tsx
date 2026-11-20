@@ -5,7 +5,7 @@ import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfa
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { administerTriageAction, readTriageActionsForSurface } from '../../actions/actionsCatalog.js';
 import {
@@ -117,6 +117,28 @@ afterEach(async () => {
 });
 
 describe('action editor draft settlement', () => {
+  it('exposes an empty, uncovered Prompt Library catalog when the host read fails', async () => {
+    const unavailable = {
+      invocations: [],
+      coverage: null,
+    } satisfies ReturnType<typeof useTriagePromptInvocations>;
+    const executeAction = vi.fn(async () => {
+      throw new Error('Prompt Library unavailable');
+    });
+    const surface = defineUiSurface(() => <Text value={JSON.stringify(useTriagePromptInvocations())} />);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'prompt-catalog-unavailable', mountNonce: 'prompt-catalog-unavailable' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture({ requesterExecutionReady: true }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction },
+    });
+    mounted.push(fixture);
+    expect(executeAction).toHaveBeenCalled();
+    await expect(fixture.getByText(JSON.stringify(unavailable))).resolves.toBeDefined();
+  });
+
   it.each([false, true])('reacquires editor catalogs only under admitted requester custody and fences late old results (initially admitted: %s)', async (initiallyAdmitted) => {
     const calls: Array<Readonly<{ action: string; signal: AbortSignal | undefined }>> = [];
     const held: Array<() => void> = [];
