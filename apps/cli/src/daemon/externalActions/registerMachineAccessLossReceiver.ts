@@ -43,6 +43,10 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
   /** Open-ended host resources close on access loss, before member retirement
    * waits for already-admitted finite work to finish. */
   cleanupRequesterMachineResources?: CleanupRequesterMachineTerminals;
+  /** Full loss ends that person's Sessions here at their natural boundary (idle at once,
+   * a running turn when it finishes); Use narrowing never reaches it. */
+  endRequesterSessions?: (input: Readonly<{ requesterAccountId: string; machineId: string;
+    installationId: string; signal: AbortSignal }>) => Promise<MachineAccessLossCustodyResponseV1>;
 }>): void {
   rpc.registerHandler(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS, async (raw: unknown, context) => {
     const forbidden = { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN };
@@ -118,6 +122,10 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
         return { kind: result.success && result.data.kind === 'settled' && stillCurrent() ? 'settled' : 'incomplete' };
       };
       const resources = await cleanupOwnedWork();
+      // Sessions end before member retirement, which waits for their exit.
+      const sessions = options.endRequesterSessions
+        ? MachineAccessLossCustodyResponseV1Schema.safeParse(await options.endRequesterSessions(input)) : null;
+      if (sessions && (!sessions.success || sessions.data.kind !== 'settled')) return { kind: 'incomplete' as const };
       const outcome = options.memberOperations
         ? await options.memberOperations.retire({ accountId: input.requesterAccountId,
           rpcContext: context, isCurrentInstallation, cleanupOwnedWork: async () => resources })

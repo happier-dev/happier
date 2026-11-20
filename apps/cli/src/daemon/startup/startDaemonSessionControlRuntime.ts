@@ -89,6 +89,7 @@ import { createDaemonRunnerPluginMcp } from '../agentRuntime/runnerPluginMcp';
 import { createGuardLeftBehindActionExecutor } from '../guard/actions';
 import { waitForSessionSpawnAdmission, type DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createSessionLiveWorkProducer } from '../lifecycle/sessionLiveWorkProducer';
+import { createRequesterSessionAccessLossEnd } from '../sessions/requesterSessionAccessLossEnd';
 import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher';
 import { createObservedAccountRunFollowRoutes } from '@/agent/runtime/session/follow/accountRunFollowRoutes';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -9359,6 +9360,24 @@ export async function startDaemonSessionControlRuntime(
       ],
       releaseRequesterComputerSelections: async input =>
         await devicesRole()?.computerRoutes()?.releaseRequesterSelections(input) ?? { kind: 'settled' },
+      // Owner ruling 2026-11-20 (RU2 1): a withdrawn person's Sessions end through the
+      // ordinary Stop once their admitted turn finishes. The Machine client attaches after
+      // this runtime returns, so the live-work producer exists before any call arrives.
+      endRequesterSessions: createRequesterSessionAccessLossEnd({
+        serverId: params.serverId,
+        readSessions: () => params.trackedSessionsByKey.values(),
+        readLiveWork: (tracked, signal) => readSessionRunnerLiveWork(tracked, signal),
+        subscribeLiveWork: (sessionId, listener) => sessionLiveWorkProducer.subscribe(listener, sessionId),
+        isRequesterAccessCurrent: async (tracked, signal) =>
+          await tracked.requesterSessionRuntimeContext?.bootstrap.verifyRuntimeMachineAdmissionCurrent?.(signal) ?? false,
+        stopSession: tracked => withSessionStopMetadataContext(tracked.happySessionId!, async metadataContext =>
+          await stopSession(tracked.happySessionId!, { metadataContext, expectedTrackedRunner: {
+            tracked, sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
+            processCommandHash: tracked.processCommandHash,
+          } }, undefined, undefined, metadataContext.credentials),
+        tracked.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal),
+        lifetimeSignal: shutdownCancellationDomains.daemonWorkSignal,
+      }),
       cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
         await Promise.all([
           pluginRuntimeController.retireHostResourceWatches(requesterAccountId),

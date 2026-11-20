@@ -361,6 +361,8 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   /** Installed by the ordinary daemon runtime owner, never by transported caller input. */
   bindRuntimeMachineAdmissionCurrentness(verify: (signal?: AbortSignal) => Promise<boolean>,
     isHomeIdentityCurrent?: () => boolean | Promise<boolean>): void;
+  /** The Home's current answer through the bound runtime verifier; false while none is bound. */
+  verifyRuntimeMachineAdmissionCurrent?(signal?: AbortSignal): Promise<boolean>;
   projectExternalActionAuthorization(authorization: ExternalActionExecutionAuthorizationV1,
     observedServerIdentityId: string, signal?: AbortSignal): Promise<ExternalActionExecutionAuthorizationV1 | null>;
   /** Host-local capture facet; reuses this bootstrap's admitted Account facts. */
@@ -558,6 +560,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
         verifyRuntime = current;
         isRuntimeHomeIdentityCurrent = isHomeIdentityCurrent;
       },
+      verifyRuntimeMachineAdmissionCurrent: async (signal?: AbortSignal) => verifyRuntime ? await verifyRuntime(signal) : false,
       projectExternalActionAuthorization,
       projectHandoffCaptureAccountContext: async (authorization, serverIdentityId, signal) => {
         const { projectRequesterSessionCaptureAccountContext } = await import('./requesterAccountActionProjection');
