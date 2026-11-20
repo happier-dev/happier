@@ -176,7 +176,10 @@ describe('composed CLI managed Action origination', () => {
 
     function createFixtureManifest(nativeControls: boolean, workspaceAttachment = false) {
         const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
-        const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+        const text = defineProtocolString({ minLength: 1 });
+        const native = workspaceAttachment
+            ? defineProtocolObject({ id: text, agent: text, managedId: text }, { policy: 'closed' })
+            : defineProtocolObject({ id: text }, { policy: 'closed' });
         const roles = defineMachineProvisionerSchemas({ launch, resource: native });
         const actions = [
             { id: 'check', inputSchema: roles.checkInput.jsonSchema, resultSchema: MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
@@ -202,7 +205,7 @@ describe('composed CLI managed Action origination', () => {
                     billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
                     actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', ...(nativeControls ? { resize: 'resize' } : {}) },
                     ...(workspaceAttachment ? {
-                        workspaceAttachment: { when: { op: 'eq', path: 'image', value: 'linux' } },
+                        workspaceAttachment: { when: { op: 'eq', path: 'image', value: 'linux' }, resourceIdentityPaths: ['id', 'agent'] },
                         bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put', stream: 'stream' },
                     } : {}),
                     ...(nativeControls ? { resize: { cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
@@ -1079,7 +1082,9 @@ describe('composed CLI managed Action origination', () => {
                 headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
             expect(issued.statusCode, issued.body).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
-            const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'chosen' } };
+            const managedId = managedWorkspaceAttachmentIdV1(homeId, selected.account.id, envelope.requestId);
+            const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1,
+                value: { id: 'chosen', agent: 'main', managedId } };
             const preparedAttachment = { resource, platform: { os: 'linux', arch: 'x64', home: '/home/guest' } };
             const body = { requestId: envelope.requestId, input, continuationPresent: false, originalActionEnvelope: envelope, preparedAttachment };
             const post = (payload: unknown, privateKey = selected.keys.secretKey) => instance.inject({
@@ -1100,7 +1105,7 @@ describe('composed CLI managed Action origination', () => {
             expect(bound.statusCode, bound.body).toBe(200);
             const accepted = ManagedAdmissionOutputV1Schema.parse(bound.json());
             expect(accepted).toMatchObject({ replayed: false, machine: {
-                id: managedWorkspaceAttachmentIdV1(homeId, selected.account.id, envelope.requestId), allocation: 'bound', resource,
+                id: managedId, allocation: 'bound', resource,
                 workspaceAttachment: preparedAttachment.platform, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
             expect(accepted.machine).not.toHaveProperty('guestCli');
             expect(accepted.machine).not.toHaveProperty('enrolledMachineId');
@@ -1108,6 +1113,31 @@ describe('composed CLI managed Action origination', () => {
             expect(replay.statusCode, replay.body).toBe(200);
             expect(replay.json()).toMatchObject({ replayed: true, machine: { id: accepted.machine.id } });
             expect(await rows()).toBe(1);
+            const attachAgain = async (nativeId: string, agent = 'main') => {
+                const nextInput = { ...input, selection: { ...input.selection,
+                    launch: { ...input.selection.launch, name: 'Renamed workspace' } } };
+                const nextEnvelope = { ...envelope, input: nextInput, requestId: crypto.randomUUID() };
+                const issued = await instance.inject({ method: 'POST',
+                    url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                    headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: target.machineId, envelope: nextEnvelope } });
+                expect(issued.statusCode, issued.body).toBe(200);
+                const nextAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                const payload = { ...body, input: nextInput, requestId: nextEnvelope.requestId, originalActionEnvelope: nextEnvelope,
+                    preparedAttachment: { ...preparedAttachment, resource: { ...resource, value: { id: nativeId, agent,
+                        managedId: managedWorkspaceAttachmentIdV1(homeId, selected.account.id, nextEnvelope.requestId) } } } };
+                const response = await instance.inject({ method: 'POST', url: path, payload: JSON.stringify(payload),
+                    headers: { 'content-type': 'application/json', ...createExternalActionAuthorizedRequestHeaders({
+                        authorization: nextAuthorization, effectActionId: 'machines.managed.acquire', target,
+                        installationId: selected.controller.installationId, method: 'POST', path, body: payload, privateKey: selected.keys.secretKey,
+                    }) },
+                });
+                expect(response.statusCode, response.body).toBe(200);
+                return ManagedAdmissionOutputV1Schema.parse(response.json());
+            };
+            const reopened = await attachAgain('chosen');
+            expect(reopened).toMatchObject({ replayed: true, machine: { id: accepted.machine.id, resource } });
+            expect((await attachAgain('other')).machine.id).not.toBe(accepted.machine.id);
+            expect((await attachAgain('chosen', 'secondary')).machine.id).not.toBe(accepted.machine.id);
             const row = await db.managedMachine.findUniqueOrThrow({ where: { id: accepted.machine.id } });
             const selection = { homeId, managedId: row.id };
             await expect(requireManagedPolicyPurposeInTx(db, row, { kind: 'retention' }, { admission: true }))
@@ -1122,6 +1152,9 @@ describe('composed CLI managed Action origination', () => {
                 input: { action: 'machines.managed.retire', requestId: crypto.randomUUID(),
                     input: { ...selection, expectedIntentRevision: 0, manualResponsibility: true } } });
             expect(retired.machine).toMatchObject({ archivedAt: expect.any(Number), allocation: 'bound', resource });
+            const reopenedAfterRetire = await attachAgain('chosen');
+            expect(reopenedAfterRetire.replayed).toBe(false);
+            expect(reopenedAfterRetire.machine.id).not.toBe(accepted.machine.id);
         } finally { await instance.close(); }
     });
 

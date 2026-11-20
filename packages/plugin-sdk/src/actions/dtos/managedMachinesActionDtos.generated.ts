@@ -3651,6 +3651,11 @@ export type ManagedMachinesActionInputById = {
                 effectReview?: undefined | {
                     requiredWhen: unknown;
                 };
+                workspaceAttachment?: undefined | {
+                    when: unknown;
+                    optionsWhen?: unknown;
+                    resourceIdentityPaths?: string[] | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -14140,6 +14145,11 @@ export type ManagedMachinesActionResultById = {
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
                 };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -15714,6 +15724,11 @@ export type ManagedMachinesActionResultById = {
                     effectReview?: undefined | {
                         requiredWhen: InputPredicate;
                     };
+                    workspaceAttachment?: undefined | {
+                        when: InputPredicate;
+                        optionsWhen?: InputPredicate | undefined;
+                        resourceIdentityPaths?: string[] | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -16698,6 +16713,11 @@ export type ManagedMachinesActionResultById = {
                 };
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
+                };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -18884,6 +18904,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -20054,6 +20079,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -22955,6 +22985,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -24125,6 +24160,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -25605,6 +25645,11 @@ export type ManagedMachinesActionResultById = {
                     effectReview?: undefined | {
                         requiredWhen: InputPredicate;
                     };
+                    workspaceAttachment?: undefined | {
+                        when: InputPredicate;
+                        optionsWhen?: InputPredicate | undefined;
+                        resourceIdentityPaths?: string[] | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -26628,6 +26673,11 @@ export type ManagedMachinesActionResultById = {
                     effectReview?: undefined | {
                         requiredWhen: InputPredicate;
                     };
+                    workspaceAttachment?: undefined | {
+                        when: InputPredicate;
+                        optionsWhen?: InputPredicate | undefined;
+                        resourceIdentityPaths?: string[] | undefined;
+                    };
                     resize?: undefined | {
                         cpuCores: {
                             kind: 'supported';
@@ -27620,6 +27670,11 @@ export type ManagedMachinesActionResultById = {
                 };
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
+                };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -29806,6 +29861,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -30976,6 +31036,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -33877,6 +33942,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -35047,6 +35117,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -45395,6 +45470,11 @@ export type ManagedMachinesActionResultById = {
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
                 };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -47580,6 +47660,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -48750,6 +48835,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -51651,6 +51741,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -52821,6 +52916,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -54342,6 +54442,11 @@ export type ManagedMachinesActionResultById = {
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
                 };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -56527,6 +56632,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -57697,6 +57807,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -60598,6 +60713,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -61768,6 +61888,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -63216,6 +63341,11 @@ export type ManagedMachinesActionResultById = {
                 effectReview?: undefined | {
                     requiredWhen: InputPredicate;
                 };
+                workspaceAttachment?: undefined | {
+                    when: InputPredicate;
+                    optionsWhen?: InputPredicate | undefined;
+                    resourceIdentityPaths?: string[] | undefined;
+                };
                 resize?: undefined | {
                     cpuCores: {
                         kind: 'supported';
@@ -65401,6 +65531,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -66571,6 +66706,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -69472,6 +69612,11 @@ export type ManagedMachinesActionResultById = {
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
                                 };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
+                                };
                                 resize?: undefined | {
                                     cpuCores: {
                                         kind: 'supported';
@@ -70642,6 +70787,11 @@ export type ManagedMachinesActionResultById = {
                                 };
                                 effectReview?: undefined | {
                                     requiredWhen: InputPredicate;
+                                };
+                                workspaceAttachment?: undefined | {
+                                    when: InputPredicate;
+                                    optionsWhen?: InputPredicate | undefined;
+                                    resourceIdentityPaths?: string[] | undefined;
                                 };
                                 resize?: undefined | {
                                     cpuCores: {

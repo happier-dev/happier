@@ -30,7 +30,7 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   workspaceAttachment: { when: { op: 'truthy', path: 'existingWorkspaceId' },
-    optionsWhen: { op: 'eq', path: 'attachExisting', value: true } },
+    optionsWhen: { op: 'eq', path: 'attachExisting', value: true }, resourceIdentityPaths: ['workspaceId', 'agentName'] },
   reconciliation: { nativeOperationSchema: CoderOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'cleanup' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 

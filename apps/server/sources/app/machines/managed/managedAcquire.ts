@@ -9,6 +9,7 @@ import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import { isMachineProvisionerWorkspaceAttachmentV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readInputPath } from '@happier-dev/protocol/inputs';
 import {
     ManagedMachineError, invalidateManagedMachineInTx, publishManagedMachinePolicyChangeInTx,
     requireManagedControllerInTx, requireManagedHomeInTx, sameManagedInput,
@@ -298,6 +299,36 @@ export async function admitManagedAcquire(params: Readonly<{
                 throw parsed.error;
             }
             const canonical = ManagedMachineFullV1Schema.parse(parsed.data);
+            const identityPaths = declaration.provisioner.workspaceAttachment?.resourceIdentityPaths;
+            if (prepared && identityPaths && canonical.controller) {
+                const resourceIdentity = identityPaths.map(path => {
+                    const value = readInputPath(prepared.resource.value, path);
+                    if (!(typeof value === 'string' && value.length > 0) && typeof value !== 'number') {
+                        throw new ManagedMachineError('resource_mismatch');
+                    }
+                    return { resource: jsonPathEquals(['value', ...path.split('.')], value) };
+                });
+                // Native custody proved this workspace anew. Reuse only an active attachment
+                // of the same origin and credential selection, under the Account publication lock.
+                const retained = await tx.managedMachine.findMany({ where: {
+                    homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
+                    controllerMachineId: canonical.controller.machineId,
+                    controllerInstallationId: canonical.controller.installationId,
+                    presetId: null, allocation: 'bound', creationState: 'active', archivedAt: null,
+                    AND: [
+                        { resource: jsonPathEquals(['contributionRef', 'pluginId'], launch.provider.pluginId) },
+                        { resource: jsonPathEquals(['contributionRef', 'localId'], launch.provider.localId) },
+                        { resource: jsonPathEquals(['schemaVersion'], launch.schemaVersion) },
+                        ...resourceIdentity,
+                    ],
+                }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+                for (const row of retained) {
+                    if (readManagedEnrollmentAccountId(row) !== params.requesterAccountId
+                        || !readManagedAdmissionState(row.admittedInput).workspaceAttachment) continue;
+                    const machine = projectManagedMachineFull(row);
+                    if (sameManagedInput(machine.launch.credentials ?? [], launch.credentials ?? [])) return { machine, replayed: true };
+                }
+            }
             const row = await tx.managedMachine.create({ data: {
                 ...(prepared ? { id: canonical.id } : {}),
                 homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,

@@ -129,7 +129,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   /** Native source effects that the author reviews when saving a reusable preset. */
   effectReview: z.optional(z.strictObject({ requiredWhen: InputPredicateSchema })),
   /** Launch variants that resolve an existing guest without mutating it. */
-  workspaceAttachment: z.optional(z.strictObject({ when: InputPredicateSchema, optionsWhen: z.optional(InputPredicateSchema) })),
+  workspaceAttachment: z.optional(z.strictObject({
+    when: InputPredicateSchema, optionsWhen: z.optional(InputPredicateSchema),
+    /** Stable native resource fields for reusing an attachment in the same selected Account binding. */
+    resourceIdentityPaths: z.optional(z.array(InputPathSchema).check(z.minLength(1), z.refine(paths => new Set(paths).size === paths.length))),
+  })),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), resize: z.optional(local()), snapshot: z.optional(local()), renew: z.optional(local()) }),
@@ -170,6 +174,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
       .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length))) {
     context.addIssue({ code: 'custom', path: ['workspaceAttachment'],
       message: 'Workspace attachment requires native streaming and declared launch selectors.' });
+  }
+  if (descriptor.workspaceAttachment?.resourceIdentityPaths?.some(path =>
+    !resolveDeclaredInputLeaves(descriptor.resourceSchema, path)?.every(leaf => leaf.type === 'string' || leaf.type === 'integer' || leaf.type === 'number'))) {
+    context.addIssue({ code: 'custom', path: ['workspaceAttachment', 'resourceIdentityPaths'],
+      message: 'Workspace attachment identity paths must name text or number fields of every resource arm.' });
   }
   if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {

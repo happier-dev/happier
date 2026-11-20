@@ -987,6 +987,13 @@ means false. Predicate paths must belong to the declared launch schema. These ar
 unreleased 0.3 author-contract additions: matching SDK and host readers move
 together, and older strict development readers reject the new declaration.
 
+For existing workspaces, `workspaceAttachment.resourceIdentityPaths` names stable
+text or numeric fields in every resource schema arm. Choose fields that identify
+the native target across launch and template updates. Coder uses the workspace
+id and agent name. Home can reuse an active attachment after a fresh native
+probe for the same requester, custodian, controller installation and connected
+Account selection. The original attachment continues to own its lifetime.
+
 Provisioners may also declare optional `preparation` with `inputSchema`,
 `artifactSchema`, `artifactLaunchPath`, `nativeOperationSchema` and local `build`, `inspect` and
 `destroy` Actions. The existing provisioner role owner qualifies those Actions
