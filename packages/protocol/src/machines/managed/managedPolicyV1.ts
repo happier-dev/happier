@@ -11,6 +11,7 @@ import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, type 
 import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1 } from './managedMachineV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
+import { ManagedAdmissionPresetContentV1Schema } from './managedMachinePresetContentCarrierV1.js';
 
 export const MANAGED_POLICY_PROOF_HEADER = 'x-happier-managed-policy-proof';
 /** Advisory Account policy invalidation; the signed census and native driver retain authority. */
@@ -40,6 +41,7 @@ export type ManagedPolicyAdmissionInputV1 = z.infer<typeof ManagedPolicyAdmissio
 const ManagedTargetRequesterV1Schema = lazyZodSchema(() => z.strictObject({
   requesterAccountId: z.string().check(z.minLength(1)),
   committedSessionId: z.optional(z.string().check(z.minLength(1))),
+  includePresetContent: z.optional(z.literal(true)),
 }));
 export type ManagedTargetRequesterV1 = z.infer<typeof ManagedTargetRequesterV1Schema>;
 export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -52,6 +54,7 @@ export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObje
 export const ManagedPolicyCensusOutputV1Schema = lazyZodSchema(() => z.strictObject({
   machines: z.array(ManagedMachineV1Schema), targets: z.array(ManagedWakeTargetV1Schema),
   targetAdmitted: z.optional(z.boolean()),
+  targetPresetContent: z.optional(ManagedAdmissionPresetContentV1Schema),
   /** Private current-set read requested only by a consuming native controller. */
   nativeCredentialPolicies: z.optional(z.array(z.strictObject({ managedId: z.string().check(z.minLength(1)),
     bindings: z.array(ManagedNativeCredentialBindingV1Schema), desiredBindingKeys: z.array(z.string().check(z.minLength(1))),

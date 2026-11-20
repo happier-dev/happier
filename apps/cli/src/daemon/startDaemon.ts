@@ -1867,8 +1867,8 @@ export async function startDaemon(
     const readCurrentManagedMachinePolicy = async (managedId: string, signal?: AbortSignal) =>
       (await readCurrentManagedMachinePolicies(signal, { managedId })).machines[0] ?? null;
     const readCurrentManagedMachineTarget = async (managedId: string, target: ManagedTargetRequesterV1, signal: AbortSignal) => {
-      const { machines: [machine], targetAdmitted } = await readCurrentManagedMachinePolicies(signal, { managedId, target });
-      return machine && targetAdmitted !== undefined ? { machine, admitted: targetAdmitted } : null;
+      const { machines: [machine], targetAdmitted, targetPresetContent } = await readCurrentManagedMachinePolicies(signal, { managedId, target });
+      return machine && targetAdmitted !== undefined ? { machine, admitted: targetAdmitted, presetContent: targetPresetContent } : null;
     };
     const browserRuntimeActionExecute = api.createBrowserRuntimeActionExecutor({
       observeExecution: request => apiMachineForSessions

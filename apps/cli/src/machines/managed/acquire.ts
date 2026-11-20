@@ -73,7 +73,7 @@ import type { MachineSetupReportInputV1 } from '@happier-dev/protocol/machines/m
 
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure, isUncertainManagedControllerRequest } from './controllerErrors';
 import { createManagedPresetHydrator, openManagedPresetCarrier, withManagedOpaquePresetReview,
-    type ManagedPresetDefinitionOpener, type ManagedPresetHydrator } from './presetHydration';
+    type ManagedPresetContentCarrier, type ManagedPresetDefinitionOpener, type ManagedPresetHydrator } from './presetHydration';
 export { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 export type ManagedMachineAcquisitionDriverInput = Readonly<{
@@ -99,7 +99,7 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     subscribeManagedMachineChanges?: import('@/api/apiMachine').ApiMachineClient['onManagedMachinePolicyInvalidated'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     readTargetCurrent?: (managedId: string, target: ManagedTargetRequesterV1, signal: AbortSignal) => Promise<
-        Readonly<{ machine: ManagedMachineV1; admitted: boolean }> | null>;
+        (ManagedPresetContentCarrier & Readonly<{ admitted: boolean }>) | null>;
     /** HTTP boundary shared by Home CLI identity and public release discovery. */
     guestCliFetch?: typeof fetch;
     /** Join the installed host's existing finite Prepare operation, including cleanup. */
@@ -628,8 +628,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         if (!isManagedOpaquePresetMachineV1(machine)) {
             return machine;
         }
-        // Policy census is deliberately structural. Context is the sole cold
-        // daemon delivery edge for an opaque snapshot before a native effect.
+        // Signed effects without preset bytes use their bound context edge.
         const client = createManagedMachineControllerClient(input, options, action, hydrator);
         client.assertConnection(machine);
         const context = await client.post('/v1/machines/managed/controller/context', {
@@ -665,7 +664,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         preparationSignal.throwIfAborted();
         const readTargetCurrent = input.readTargetCurrent;
         if (!readTargetCurrent) throw new ManagedMachineControllerError('admission_unavailable');
-        const target = { requesterAccountId: request.requesterAccountId, committedSessionId: request.committedSessionId };
+        const target: ManagedTargetRequesterV1 = { requesterAccountId: request.requesterAccountId,
+            ...(session ? { committedSessionId: request.committedSessionId } : { includePresetContent: true }) };
         const readCurrent = (signal: AbortSignal) => readTargetCurrent(request.managedId, target, signal);
         const revoked = new AbortController();
         const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
@@ -682,6 +682,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             if (!current.admitted) {
                 revoked.abort();
                 throw new ManagedMachineControllerError('managed_target_access_unavailable');
+            }
+            if (!session && isManagedOpaquePresetMachineV1(current.machine)) {
+                return (await normalizeManagedPresetCarrier(current, hydrator, signal)).machine;
             }
             return await openPolicyMachine(current.machine, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
         };

@@ -286,8 +286,18 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 return { managedId: row.id, bindings: native.ownedBindings,
                     desiredBindingKeys: native.desiredBindings.map(binding => binding.safeFacet.bindingKey) };
             })) : undefined;
-            return { machines: rows.map(projectManagedMachine), retentionContinuations,
-                ...(target ? { targetAdmitted: rows[0] ? await admitsManagedTargetInTx(tx, rows[0], target) : false } : {}),
+            const machines = rows.map(projectManagedMachine);
+            const [targetRow] = rows;
+            const [targetMachine] = machines;
+            const targetAdmitted = target === undefined ? undefined : Boolean(targetRow && await admitsManagedTargetInTx(tx, targetRow, target));
+            // The other census placements are for Account execution and guest Stop.
+            // Retained private content goes to the exact installed controller.
+            const targetPresetContent = target?.includePresetContent && targetAdmitted && targetRow?.controllerMachineId
+                && targetMachine && isManagedOpaquePresetMachineV1(targetMachine)
+                ? readManagedOpaquePresetContent(targetRow) : undefined;
+            return { machines, retentionContinuations,
+                ...(targetAdmitted === undefined ? {} : { targetAdmitted }),
+                ...(targetPresetContent ? { targetPresetContent } : {}),
                 ...(nativeCredentialPolicies ? { nativeCredentialPolicies } : {}) };
         });
         // Exact scheduling reads need the same accepted origins as reconnect.

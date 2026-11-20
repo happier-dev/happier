@@ -7913,6 +7913,11 @@ channels and exits when the holder closes that connection.
     admission for the requester through the signed controller policy read.
     `openSessionTarget` allows `exec`, `putFile` and `stream` against that resource.
     Calling `exec` leaves a stopped target stopped.
+  - Project workspace and Sync opens request the retained preset carrier in their
+    exact signed target census. Home includes it for the selected installed
+    controller after requester admission. The controller opens the same
+    mode-tagged payload locally. Earlier 0.3 daemons omit the request and receive
+    the structural response. The new open path requires a matching Home.
   - Every Session on one target runs as the same guest user and can reach the
     others' holder sockets and files. Home resolves ordinary target access from
     custody and current Machine grants, including Team grants. A requester

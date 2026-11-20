@@ -1262,7 +1262,7 @@ describe('Session placement on a managed target (driver)', () => {
         expect(admission.selectWorkspaceSource({ authorization: { kind: 'session.write', sessionId: 'old-session' } }, { cwd: root })).toBe(oldSource);
     });
 
-    it.each([false, true, 'baked', 'deferred'] as const)('opens the opaque preset context and preserves required Setup even without a retained Setup record (%s)', async requiredSetup => {
+    it.each([false, true, 'baked', 'deferred', 'project'] as const)('opens an admitted opaque target and preserves required Session Setup (%s)', async requiredSetup => {
         const h = harness({ guest: true });
         const provisioner = h.native.manifest.contributes.machineProvisioners[0]!;
         const launch = machine.launch!;
@@ -1272,7 +1272,7 @@ describe('Session placement on a managed target (driver)', () => {
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         let content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'private-target', launch,
-            ...(requiredSetup ? { setup: { scripts: [{ body: 'required-setup-script' }] } } : {}),
+            ...(requiredSetup && requiredSetup !== 'project' ? { setup: { scripts: [{ body: 'required-setup-script' }] } } : {}),
             ...(requiredSetup === 'baked' || requiredSetup === 'deferred' ? { preparationExecution: { launch, binaryPath: '/prepared/happier',
                 ...(requiredSetup === 'deferred' ? { deferredSetup: { scripts: [{ body: 'required-setup-script' }] } } : {}) } } : {}),
             reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
@@ -1298,6 +1298,9 @@ describe('Session placement on a managed target (driver)', () => {
                 return { status: 200, data: { machine: row } };
             }
             expect(String(url)).toBe('https://home.example/v1/machines/managed/controller/context');
+            // The scoped Project target admission is the only authority the
+            // daemon has here. Its ambient token cannot open a bound context.
+            if (requiredSetup === 'project') return { status: 403, data: { code: 'permission_denied' } };
             const body = decodeExternalActionHttpBodyV1(wire)?.body ?? wire;
             contextRequest = { body, signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) };
             contexts++;
@@ -1306,7 +1309,21 @@ describe('Session placement on a managed target (driver)', () => {
         try {
             const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null },
                 externalActionMachineRequestPrivateKey: keys.secretKey,
-                readTargetCurrent: async () => ({ machine: row, admitted: true }) });
+                readTargetCurrent: async (_id, target) => ({
+                    machine: row, admitted: true, ...('includePresetContent' in target && target.includePresetContent === true
+                        ? { presetContent: { content, recipients: [] } } : {}),
+                }) });
+            if (requiredSetup === 'project') {
+                const lifetime = new AbortController();
+                onTestFinished(() => { lifetime.abort(); });
+                const target = await driver.openProjectWorkspaceTarget({
+                    workspace: { serverId: homeId, managedId: row.id, controller: machine.controller!, rootPath: '/g/project' },
+                    requesterAccountId: 'owner', lifetime: lifetime.signal, holder,
+                });
+                await expect(target.exec('true', lifetime.signal)).resolves.toMatchObject({ status: 0 });
+                expect(post).not.toHaveBeenCalled();
+                return;
+            }
             const opening = driver.openSessionTarget({ managedId: row.id, sessionId: 's1', committedSessionId: 'committed-session', requesterAccountId: 'owner',
                 lifetime: new AbortController().signal, holder,
                 operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,

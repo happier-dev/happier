@@ -10075,6 +10075,14 @@ multi-ID invalidations. Earlier strict development readers refuse the new
 field. The 0.2 frontier at `24731ff73c` has no managed-policy census. The
 response, installation proof and stored formats keep their existing shapes.
 
+In unreleased 0.3, an exact target request can include `includePresetContent`.
+Home returns `targetPresetContent` with a positive requester decision for the
+selected installed controller and an opaque preset. The response retains the
+existing plaintext or encrypted carrier and its recipient envelopes. Requests
+that omit the field retain the structural response. Older strict development
+Homes reject the added field, so the updated open path uses a matching Home and
+daemon. There is no persisted-format or released 0.2 change.
+
 Unreleased 0.3 `connectedServices.accounts.revoke` may include
 `savedSecretCleanupReason: 'unreadable_references'` on an incomplete Saved Secret
 cleanup receipt. The keyholding UI host reports this after preserving the secret

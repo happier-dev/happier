@@ -16,7 +16,7 @@ import { resolveEffectiveMachineRoleInTx, resolveMachineAdmissionInTx, removeMac
 import { createManagedPolicyCensusProofV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { applyManagedCreationScopeEndInTx } from './managedCreationBirth';
-import { readManagedMachinePolicyPublicationAudienceInTx } from './managedRows';
+import { readManagedMachinePolicyPublicationAudienceInTx, storeOpaquePresetLaunch } from './managedRows';
 import { publishManagedGuestActivityAvailable } from './managedGuestActivity';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -42,40 +42,53 @@ describe('managed guest grants and controller Manage', () => {
 
     it('projects requester-specific target access from Home grants and the active committed birth', async () => {
         const { homeId, custodian, creator, stranger, controller, row, launch } = await createCreatorFixture();
-        await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound',
-            resource: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} } } });
+        const presetContent = { content: { t: 'plain' as const, v: { v: 1 as const, name: 'Target preset', launch,
+            nativeResult: { kind: 'bound' as const, resource: {
+                contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {},
+            } } } }, recipients: [] };
+        const stored = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', ...presetContent });
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: custodian.id, name: '', launch: stored } });
+        await db.managedMachine.update({ where: { id: row.id }, data: {
+            allocation: 'bound', presetId: preset.id, presetRevision: 1, launch: stored,
+        } });
         const keys = tweetnacl.sign.keyPair();
         await db.machine.update({ where: { id: controller.id }, data: { installationPublicKey: Buffer.from(keys.publicKey) } });
         const placement = { machineId: controller.id, installationId: controller.installationId! };
         const app = createAuthenticatedTestApp();
         registerManagedMachineRoutes(app);
         try {
-            const read = (target?: { requesterAccountId: string; committedSessionId?: string }) => app.inject({
+            const read = (target?: { requesterAccountId: string; committedSessionId?: string }, includePresetContent = true) => app.inject({
                 method: 'POST', url: '/v1/machines/managed/controller/policies', headers: { 'x-test-user-id': custodian.id }, payload: {
                     homeId, controller: placement, managedId: row.id,
                     proof: createManagedPolicyCensusProofV1({ homeId, controller: placement,
                         custodianAccountId: custodian.id, privateKey: keys.secretKey }),
-                    ...(target ? { target } : {}),
+                    ...(target ? { target: { ...target, ...(includePresetContent ? { includePresetContent: true } : {}) } } : {}),
                 },
             });
             const control = await read();
             expect(control.statusCode, control.body).toBe(200);
             expect(control.json().machines).toMatchObject([{ id: row.id }]);
+            expect(control.json()).not.toHaveProperty('targetPresetContent');
+            const ownerRead = await read({ requesterAccountId: custodian.id });
+            expect(ownerRead.statusCode, ownerRead.body).toBe(200);
+            expect(ownerRead.json()).toMatchObject({ targetAdmitted: true, targetPresetContent: presetContent });
 
             const guest = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id, installationId: randomUUID(),
                 metadata: encodePlainMachineStoredContent({ host: 'target-guest', platform: 'linux' }),
                 dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), } });
-            const team = await db.team.create({ data: { name: 'Target admission' } });
+            const team = await db.team.create({ data: { name: 'Target admission' }, select: { id: true } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: stranger.id, role: 'member', status: 'active' } });
             await db.machineGrant.create({ data: { principalKind: 'team', teamId: team.id, machineId: guest.id,
                 accessLevel: 'view', createdByAccountId: custodian.id } });
             await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id } });
             const teamRead = await read({ requesterAccountId: stranger.id });
             expect(teamRead.statusCode, teamRead.body).toBe(200);
-            expect(teamRead.json().targetAdmitted).toBe(true);
-            await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
+            expect(teamRead.json()).toMatchObject({ targetAdmitted: true, targetPresetContent: presetContent });
+            expect((await read({ requesterAccountId: stranger.id }, false)).json()).not.toHaveProperty('targetPresetContent');
+            await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() }, select: { id: true } });
             const revoked = await read({ requesterAccountId: stranger.id });
             expect(revoked.json().targetAdmitted).toBe(false);
+            expect(revoked.json()).not.toHaveProperty('targetPresetContent');
 
             const session = await db.session.create({ data: { accountId: creator.id, tag: randomUUID(), metadata: '{}', managedCreationId: row.id } });
             const use = { requesterAccountId: creator.id, committedSessionId: session.id };
@@ -83,15 +96,17 @@ describe('managed guest grants and controller Manage', () => {
                 admittedInput: { enrollmentAccountId: creator.id, acquisitionMode: 'resource-bound' },
             } });
             const beforeEnd = await read(use);
-            expect(beforeEnd.json().targetAdmitted).toBe(true);
+            expect(beforeEnd.json()).toMatchObject({ targetAdmitted: true, targetPresetContent: presetContent });
             const foreign = await read({ ...use, committedSessionId: randomUUID() });
             expect(foreign.json().targetAdmitted).toBe(false);
+            expect(foreign.json()).not.toHaveProperty('targetPresetContent');
             await inTx(tx => applyManagedCreationScopeEndInTx(tx, { managedId: row.id, accountId: creator.id,
                 source: { kind: 'session', sessionId: session.id }, endedAt: 1 }));
             expect(await db.accountChange.findMany({ where: { entityId: row.id, accountId: custodian.id },
                 select: { hint: true } })).toContainEqual({ hint: { managedMachinePolicy: true, machineId: controller.id } });
             const ended = await read(use);
             expect(ended.json().targetAdmitted).toBe(false);
+            expect(ended.json()).not.toHaveProperty('targetPresetContent');
             expect(ended.json().machines).toMatchObject([{ id: row.id }]);
         } finally { await app.close(); }
     });
