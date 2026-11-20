@@ -185,7 +185,7 @@ async function authenticateAndStartDaemon(params: Readonly<{
       HAPPIER_WEBAPP_URL: params.uiBaseUrl,
       HAPPIER_DISABLE_CAFFEINATE: '1',
       HAPPIER_VARIANT: 'dev',
-      HAPPIER_CLAUDE_CONFIG_DIR: params.claudeConfigDir,
+      CLAUDE_CONFIG_DIR: params.claudeConfigDir, HAPPIER_CLAUDE_CONFIG_DIR: params.claudeConfigDir,
       HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS: '2',
       HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'plaintext_only',
       HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),

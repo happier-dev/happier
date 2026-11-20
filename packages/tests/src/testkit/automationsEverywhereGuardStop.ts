@@ -4,6 +4,10 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { SessionGuardStateV1Schema } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
+import { MachineGuardViewV1Schema } from '@happier-dev/protocol/machines/guard/guardRpcV1';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { resolveSessionMetadataAgentIdentity, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import type { TeamSetupFFixture } from './teamSetupF';
@@ -112,6 +116,25 @@ export async function assertGuardStopLifecycle(fixture: TeamSetupFFixture, actor
   } catch (error) {
     const metadata = await actor.readSessionMetadata(guarded.sessionId);
     const guard = SessionGuardStateV1Schema.safeParse(metadata.sessionGuardStateV1);
+    const identity = resolveSessionMetadataAgentIdentity(metadata);
+    const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+    console.error('F6_GUARD_RESUME_INPUT_DIAGNOSTIC', JSON.stringify({
+      identity, descriptorAgentId: descriptor?.agentId ?? null,
+      descriptorBackendMode: typeof descriptor?.agent.backendMode === 'string' ? descriptor.agent.backendMode : null,
+      descriptorConfigDirPresent: typeof descriptor?.agent.configDir === 'string' && descriptor.agent.configDir.trim().length > 0,
+      nativeResumeIdPresent: identity.agentId ? Boolean(resolveVendorResumeIdFromSessionMetadata(identity.agentId, metadata)) : false,
+      machineMatches: metadata.machineId === machine.target.machineId,
+      workspaceMatches: metadata.path === machine.workspaceDir,
+      creationCorrespondence: metadata.sessionCreationCorrespondenceV1 === undefined ? 'absent'
+        : SessionCreationCorrespondenceV1ReadSchema.safeParse(metadata.sessionCreationCorrespondenceV1).success ? 'valid' : 'invalid',
+    }));
+    const observedGuard = await actor.execute('machines.guard.get', machine.target);
+    const view = observedGuard.ok ? MachineGuardViewV1Schema.parse(observedGuard.result) : null;
+    console.error('F6_GUARD_ELIGIBILITY_DIAGNOSTIC', JSON.stringify(view ? {
+      policyRevision: view.policyRevision, idlePolicy: view.policy.idleSessions,
+      idle: view.idle.map(({ sessionRef, status, stopAt, reason, idleMs }) => ({ sessionRef, status, stopAt, reason, idleMs })),
+      excluded: view.ladder.excluded.map(({ kind, reason }) => ({ kind, reason })),
+    } : { errorCode: observedGuard.ok ? null : observedGuard.errorCode }));
     console.error('F6_GUARD_SETTLEMENT_DIAGNOSTIC', JSON.stringify({ sessionId: guarded.sessionId,
       guard: guard.success ? { kind: guard.data.kind, ...('rule' in guard.data ? { rule: guard.data.rule } : {}),
         ...('at' in guard.data ? { at: guard.data.at } : {}), ...('stopAt' in guard.data ? { stopAt: guard.data.stopAt } : {}) } : null,

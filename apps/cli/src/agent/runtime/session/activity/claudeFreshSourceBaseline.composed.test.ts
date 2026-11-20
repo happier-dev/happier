@@ -1,8 +1,12 @@
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { createMemberTranscriptFilesystemEffect } from '@/rpc/handlers/fileSystem/filesystemEffectOperation';
+import { fakeClaudeFixturePath } from '../../../../../../../packages/tests/src/testkit/fakeClaude';
 import { createPluginTranscriptFileFollowService } from '@/plugins/runtime/context/transcripts/fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from '@/plugins/runtime/context/transcripts/fileFollowGrants';
 import { createHostTerminalTranscriptFollowService } from '../terminal/transcriptFollow';
@@ -342,6 +346,94 @@ it.each(['ordered', 'delayed_grant', 'delayed_follow', 'historical_before_start'
     projection.dispose();
     lifetime.abort();
     await grants.revokeScope({ pluginId: 'happier.agent.claude', runtimeId: 'fresh-source-proof', scope: { kind: 'session', sessionId } });
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.runIf(process.platform === 'linux').each(['vendor_override', 'host_only_override'] as const)(
+  'persists a fake Claude native resume identity inside its selected member home (%s)', async config => {
+  const directory = await mkdtemp(join(tmpdir(), 'claude-fake-native-resume-'));
+  const home = join(directory, 'member');
+  await mkdir(home);
+  const sessionId = 'fake-native-resume';
+  const grants = createTranscriptFileFollowPathGrantRegistry();
+  const terminal = createTerminalHostFixture();
+  const exec = createSdkExecFixture();
+  // The genuine OS process boundary runs the same fake vendor used by F6. SDK
+  // input, accepted-prompt proof, native codec and metadata publication stay real.
+  exec.spawnClient.mockImplementation(async spec => {
+    const child = spawn(process.execPath, [fakeClaudeFixturePath(), ...(spec.launch.args ?? [])], {
+      cwd: home, env: { ...process.env, ...spec.launch.env, HOME: home, USERPROFILE: home,
+        HAPPIER_CLAUDE_CONFIG_DIR: join(directory, 'daemon-claude'),
+        CLAUDE_CONFIG_DIR: config === 'vendor_override' ? join(home, '.claude') : '',
+      }, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const listeners = new Set<(record: unknown) => void | Promise<void>>();
+    const lines = createInterface({ input: child.stdout });
+    let stderr = '';
+    child.stderr.on('data', (bytes: Buffer) => { stderr += bytes.toString(); });
+    lines.on('line', line => {
+      const record: unknown = JSON.parse(line);
+      for (const listener of listeners) void listener(record);
+    });
+    const exit = new Promise<{ exitCode: number | null; signal: string | null; stdout: string; stderr: string }>(
+      (resolve, reject) => { child.once('error', reject); child.once('close', (exitCode, signal) => {
+        lines.close(); resolve({ exitCode, signal, stdout: '', stderr });
+      }); });
+    const dispose = async () => { child.kill(); await exit; };
+    return { client: { closed: exit.then(() => undefined),
+      subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      writeRecord: async record => {
+        await new Promise<void>((resolve, reject) => child.stdin.write(JSON.stringify(record) + '\n', error => error ? reject(error) : resolve()));
+        return { kind: 'written' as const };
+      },
+    }, process: { exit, writeStdin: async input => {
+      await new Promise<void>((resolve, reject) => child.stdin.write(input, error => error ? reject(error) : resolve()));
+    }, kill: () => { child.kill(); }, dispose }, status: 'running' as const,
+    onExit: listener => { void exit.then(listener); return () => {}; }, dispose };
+  });
+  const base = createPluginContextFixture(terminal.service, createEventsFixture().service);
+  const fileFollow = createPluginTranscriptFileFollowService({ pluginId: 'happier.agent.claude', runtimeId: sessionId,
+    readSessionId: () => sessionId, fileFollowPathGrants: grants, memberFilesystem: { home,
+      open: async (configuration, signal) => {
+        if (!configuration.memberTranscript) throw new Error('Expected member transcript operation');
+        const effect = createMemberTranscriptFilesystemEffect(configuration.memberTranscript, signal);
+        return { request: request => effect.execute(request), dispose: async () => {} };
+      },
+    } });
+  const ctx = createPluginContextFixture(terminal.service, createEventsFixture().service, {
+    exec: exec.service, sessionHooks: createSessionHooksFixture().service,
+    transcripts: { ...base.agentRuntime.transcripts, fileFollow },
+  });
+  const operations = createClaudeAgentSdkTurnOperations({ ctx, directory: home, launchEnv: {},
+    permissionMode: 'default', happierSessionId: sessionId, enableSessionResumability: true });
+  let metadata = createTestMetadata({ flavor: 'claude', path: home,
+    runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { backendMode: 'agentSdk' } } });
+  const session = { sessionId, updateMetadata: async (update: (current: typeof metadata) => typeof metadata) => { metadata = update(metadata); } };
+  const state = createCliRuntimeSessionStateBridge({ session, credentials: { token: 'test-home', encryption: null },
+    metadataPort: { update: async (_id, update) => {
+      metadata = createTestMetadata(update(metadata)); return { ok: true, version: 1 };
+    } } }).engine;
+  const context = { session: { services: { activeInput: { bind: () => ({ dispose() {} }) },
+    models: { bind: () => ({ dispose() {} }) } } } } as unknown as AgentSessionRuntimeContext;
+  const native = createClaudeNativeSessionRuntimeFromOperations(operations, { kind: 'create', sessionId, cwd: home }, context);
+  const runtime = createNativeAgentSessionOperations(native, sessionId,
+    undefined, undefined, undefined, undefined, undefined, {
+      context, cwd: home, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+      cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+    });
+  const publication = subscribeSessionRuntimePublicationToMetadata({ session, sessionState: state, runtime,
+    providerSessionMetadataKey: 'claudeSessionId' });
+  const unsubscribe = runtime.subscribeRuntimeEvents(publication.observeRuntimeEvent);
+  try {
+    operations.beginProviderTurn('native-turn');
+    await operations.sendProviderTurnPrompt('Publish this native conversation.');
+    await operations.waitForProviderTurnCompletion();
+    expect(resolveVendorResumeIdFromSessionMetadata('claude', metadata)).toEqual(expect.any(String));
+  } finally {
+    unsubscribe(); publication();
+    await operations.disposeProviderSession();
+    await grants.revokeScope({ pluginId: 'happier.agent.claude', runtimeId: sessionId, scope: { kind: 'session', sessionId } });
     await rm(directory, { recursive: true, force: true });
   }
 });
