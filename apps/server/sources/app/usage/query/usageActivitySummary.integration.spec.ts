@@ -847,7 +847,8 @@ describe('compact Usage activity summary read cache', () => {
         process.env.HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED = 'true';
         await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[0]!.id,
             observedAt: new Date(startMs + 4 * day), agentId: 'codex', modelId: 'summary-priced-model',
-            source: 'runtime', scope: 'turn_delta', inputTokens: 1_000_000, totalTokens: 1_000_000,
+            source: 'runtime', scope: 'turn_delta', inputTokens: 1_000_000, outputTokens: 0, reasoningTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000,
             reportedCostUsd: 9, estimatedCostUsd: 7, costSource: 'provider_reported' } });
         const catalog = (inputUsdPerMillion: number) => JSON.stringify({ v: 1,
             models: { 'summary-priced-model': { inputUsdPerMillion, outputUsdPerMillion: 4 } },
@@ -870,7 +871,8 @@ describe('compact Usage activity summary read cache', () => {
         process.env.HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED = 'true';
         await db.usageEvent.create({ data: { accountId: account.id, sessionId: sessions[0]!.id,
             observedAt: new Date(startMs + 4 * day), agentId: 'codex', modelId: 'summary-reuse-model',
-            source: 'runtime', scope: 'turn_delta', inputTokens: 1_000_000, totalTokens: 1_000_000,
+            source: 'runtime', scope: 'turn_delta', inputTokens: 1_000_000, outputTokens: 0, reasoningTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000,
             reportedCostUsd: 9, estimatedCostUsd: 7, costSource: 'provider_reported' } });
         const catalog = (inputUsdPerMillion: number) => JSON.stringify({ v: 1,
             models: { 'summary-reuse-model': { inputUsdPerMillion, outputUsdPerMillion: 4 } },
