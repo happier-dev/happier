@@ -252,6 +252,7 @@ import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sy
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedServiceAuthGroupsQuery } from '@/hooks/server/connectedServices/useConnectedServiceAuthGroupsQuery';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
+import { useLatestProviderUsageRecordIdsForAgent } from '@/sync/store/hooks';
 import {
     selectProviderUsageDisplaySnapshot,
     type ProviderUsageDisplaySnapshotSource,
@@ -4037,10 +4038,16 @@ function SessionViewLoaded({
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
     const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
-    const providerAccountUsageRecordIds = React.useMemo(
+    const sessionProviderAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
     );
+    const nativeProviderUsageRecordIds = useLatestProviderUsageRecordIdsForAgent(
+        !connectedServiceQuotaProfileRef && sessionProviderAccountUsageRecordIds.length === 0
+            ? liveComposerState.agentId : null,
+    );
+    const providerAccountUsageRecordIds = sessionProviderAccountUsageRecordIds.length > 0
+        ? sessionProviderAccountUsageRecordIds : nativeProviderUsageRecordIds;
     const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;

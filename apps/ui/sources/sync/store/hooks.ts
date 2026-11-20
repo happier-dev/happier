@@ -49,6 +49,8 @@ import {
 } from '../domains/session/organization';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
+import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
+import { readProviderAccountUsageRecordIdsFromMetadata } from '@happier-dev/protocol';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
 import {
   buildMessageLegacySignature,
@@ -1702,6 +1704,20 @@ export function useAllSessions(): Session[] {
       return sortValuesByUpdatedAtDescending(state.sessions);
     })
   );
+}
+
+/** Known native usage for an unbound composer, without subscribing it to other providers' updates. */
+export function useLatestProviderUsageRecordIdsForAgent(agentId: AgentId | null): readonly string[] {
+  return getStorage()(useShallow((state) => {
+    if (!state.isDataReady || !agentId) return [];
+    for (const session of sortValuesByUpdatedAtDescending(state.sessions)) {
+      if (resolveAgentIdFromSessionMetadata(session.metadata) !== agentId) continue;
+      const recordIds = readProviderAccountUsageRecordIdsFromMetadata(session.metadata);
+      // A newer direct session may not have published refs until it is taken over.
+      if (recordIds.length > 0) return recordIds;
+    }
+    return [];
+  }));
 }
 
 export function useAllSessionsForAttention(): Session[] {

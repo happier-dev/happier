@@ -2669,6 +2669,28 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
+  it('shows known native usage before a direct session publishes its own account refs', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    const snapshot = buildProviderAccountUsageSnapshot({ used: 100, accountLabel: 'Last-used Codex account' });
+    providerAccountUsageSnapshotsState.current = { [snapshot.recordId]: snapshot };
+    const currentSessions = storageState.sessions;
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const previousState = storage.getState();
+    storage.setState({ isDataReady: true, sessions: Object.assign({}, currentSessions, {
+      earlier: { ...currentSessions.s1, id: 'earlier', updatedAt: 1_000, metadata: {
+        ...currentSessions.s1.metadata, directSessionV1: undefined,
+        providerAccountUsageRefsV1: { v: 1, recordIds: [snapshot.recordId], updatedAtMs: 1_000 },
+      } },
+    }) });
+    try {
+      const screen = await renderSessionViewAndSettle();
+      expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+        serviceId: 'openai-codex', activeAccountDisplayLabel: 'Last-used Codex account', ringValueLabel: '0',
+      }));
+      expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
+    } finally { await act(async () => storage.setState(previousState)); }
+  });
+
   it('falls back to native provider account usage metadata for the provider usage badge without a connected binding', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     const snapshot = buildProviderAccountUsageSnapshot({
