@@ -45,7 +45,7 @@ describe('managed guest grants and controller Manage', () => {
         await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound',
             resource: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} } } });
         const keys = tweetnacl.sign.keyPair();
-        await db.machine.update({ where: { id: controller.id }, data: { installationPublicKey: keys.publicKey } });
+        await db.machine.update({ where: { id: controller.id }, data: { installationPublicKey: Buffer.from(keys.publicKey) } });
         const placement = { machineId: controller.id, installationId: controller.installationId! };
         const app = createAuthenticatedTestApp();
         registerManagedMachineRoutes(app);
