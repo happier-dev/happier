@@ -2,6 +2,7 @@ import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/au
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRequesterActionOperationV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -2277,6 +2278,96 @@ describe('composed CLI managed Action origination', () => {
                 .toMatchObject(actionId === 'machines.managed.cancel' ? { creationState: 'canceled', intentRevision: 1 }
                     : { machineSetup: { state: 'skipped' } });
         } finally { restoreHttp(); await sockets.close(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
+    });
+
+    it('executes an Account-approved agent install on the Manage requester’s exact Machine after a terminal Ask', async () => {
+        const owner = await fixture(true);
+        const member = await fixture(true);
+        const machineId = owner.controller.machineId;
+        const installationId = owner.controller.installationId;
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId, accountId: member.account.id,
+            accessLevel: 'admin', createdByAccountId: owner.account.id } });
+        const credentials = { token: member.token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const terminalToken = await auth.createToken(member.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const ownerCredentials = { ...credentials, token: owner.token };
+        const serverHttpBaseUrl = 'http://managed-seam.test';
+        const actionId = 'machines.agents.install';
+        const input = { machineId, agentId: 'opencode', intent: 'install', consent: { vendorRecipe: true } };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } });
+        const storedSettings = { actionsSettingsV1: settings };
+        const actionsSettingsProvider = { getActionsSettings: () => settings, getAccountSettings: () => accountSettingsParse(storedSettings) };
+        const resolveTarget = createDaemonExternalActionTargetResolver({ credentials: ownerCredentials });
+        const verifyExecutionAuthorization = (request: Omit<Parameters<typeof verifyExternalActionExecutionAuthorizationCurrent>[0],
+            'privateKey' | 'installationId' | 'serverHttpBaseUrl'>) =>
+            verifyExternalActionExecutionAuthorizationCurrent({ ...request, privateKey: owner.keys.secretKey, installationId, serverHttpBaseUrl });
+        const prepareRequester = (authorization: Parameters<typeof prepareRequesterAccountActionContext>[0]['authorization']) =>
+            prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                machineId, installationId, installationPrivateKey: owner.keys.secretKey, serverId: homeId, serverIdentityId: homeId,
+                serverHttpBaseUrl, ownCredentials: ownerCredentials, isCurrent: async () => true, createExecutor: () => receiver });
+        const installed: unknown[] = [];
+        const receiver = createCliActionExecutorFromCredentials({ credentials, machineId, serverId: homeId,
+            serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl, pluginActionExecutionOwner: 'current_process',
+            externalActionMachineRequestPrivateKey: owner.keys.secretKey, externalActionMachineInstallationId: installationId,
+            actionsSettingsProvider, isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+                accountId: member.account.id, machineId, serverId: homeId,
+                resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
+                resolveTarget, isAccountCurrent: async () => true,
+                listAccountApiTokens: async () => { throw new Error('An Account approval cannot use a PAT'); },
+                externalActionMachinePublicKey: owner.keys.publicKey, verifyExternalExecutionAuthorization: verifyExecutionAuthorization,
+            }),
+            machineActionDirectTargetTransport: { machineId, invoke: async (method, payload, options) => {
+                expect(method).toBe(RPC_METHODS.DAEMON_AGENTS_INSTALL_START);
+                const admission = options?.rpcContext?.machineAdmission;
+                expect(admission).toMatchObject({ actorAccountId: member.account.id, custodianAccountId: owner.account.id,
+                    machineId, installationId, role: 'manage' });
+                installed.push(payload);
+                return { ok: true, jobId: 'approved-opencode-install' };
+            } },
+        });
+        let receive: RpcHandler | undefined;
+        registerExternalActionRpcHandler({ registerHandler: (_method, handler) => { receive = handler; } }, {
+            executor: receiver, machineId, resolveAccountId: async () => owner.account.id,
+            resolveInstallationId: () => installationId, currentServerId: homeId, currentServerHttpBaseUrl: serverHttpBaseUrl,
+            externalActionMachineRequestPrivateKey: owner.keys.secretKey, verifyExecutionAuthorization, resolveTarget,
+            prepareRequesterAccountContext: request => prepareRequester(request.authorization),
+        });
+        const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
+        const instance = await app(async request => {
+            if (!receive) throw new Error('Missing daemon RPC handler');
+            const socket = { id: 'controller-socket', data: { clientType: 'machine-scoped', userId: owner.account.id, machineId,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: installationId },
+                timeout: () => ({ emitWithAck: async () => { throw new Error('Socket delivery is the substituted boundary'); } }) };
+            const machineAdmission = request.machineAdmission ?? await request.createMachineAdmission?.({ target: socket });
+            return { ok: true, result: await receive(request.callParams, { authorization: request.authorization,
+                signal: new AbortController().signal,
+                ...(machineAdmission ? { machineAdmission } : {}) }) };
+        }, http => {
+            registerAccountProfileRoute(http);
+            registerAccountEncryptionRoutes(http);
+            registerAutomationActionIndexRoutes(http);
+            artifactsRoutes(http);
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
+        }, phases);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        const sockets = await createRequesterCurrentnessSocketHarness();
+        try {
+            const createSender = (token: string) => createCliActionExecutorFromCredentials({ credentials: { ...credentials, token },
+                serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl, actionsSettingsProvider,
+                onRequesterSessionCredentialDisclosure: async () => true });
+            const terminal = createSender(terminalToken);
+            const asked = await terminal.execute(actionId, input, { surface: 'cli', authority: 'present_user' });
+            expect(asked, JSON.stringify({ asked, phases })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+            if (!asked.ok || !asked.result || typeof asked.result !== 'object' || !('artifactId' in asked.result)
+                || typeof asked.result.artifactId !== 'string') throw new Error('Missing install approval');
+            expect(installed).toHaveLength(0);
+            const decision = { artifactId: asked.result.artifactId, decision: 'approve' };
+            const refused = await terminal.execute('approval.request.decide', decision, { surface: 'cli', authority: 'present_user' });
+            expect(refused, JSON.stringify({ refused, phases })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            expect(installed).toHaveLength(0);
+            const decided = await createSender(member.token).execute('approval.request.decide', decision, { surface: 'cli', authority: 'present_user' });
+            expect(decided, JSON.stringify({ decided, phases })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+            expect(installed).toMatchObject([{ agentId: 'opencode', intent: 'install' }]);
+        } finally { restoreHttp(); await sockets.close(); await instance.close(); }
     });
 
     it.each([
