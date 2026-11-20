@@ -71,9 +71,9 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     let observationRefreshRequested = true;
     let nativeInvalidations: Set<string> | null = new Set();
     let censusInvalidations: Set<string> | null = null;
-    const enrolledMachineIds = new Set<string>();
-    // Enrollment is unique. Keep its row index so an exact missing/replaced row
-    // withdraws its former readiness subscription without rebuilding siblings.
+    // Enrollment is unique. Keep both directions so guest changes select the
+    // owning row and missing/replaced rows withdraw the old guest mapping.
+    const managedIdByEnrolledMachineId = new Map<string, string>();
     const enrollments = new Map<string, string>();
     let pump: Promise<void> | null = null;
     const abortPolicy = (managedId: string, cancel: AbortController, reasonCode:
@@ -86,17 +86,22 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     const reconcile = async (census: ManagedMachinePolicyCensus, scheduleNew: boolean,
         nativeManagedIds: ReadonlySet<string> | null, managedIds: ReadonlySet<string> | null, refreshObservations: boolean) => {
         const retentionContinuations = new Map(census.retentionContinuations?.map(item => [item.managedId, item.requestId]));
+        const firstWakeTargets = new Map<string, ManagedMachinePolicyCensus['targets'][number]>();
+        for (const target of census.targets) {
+            const { managedId } = target;
+            if (!firstWakeTargets.has(managedId)) firstWakeTargets.set(managedId, target);
+        }
         if (managedIds === null) {
-            enrolledMachineIds.clear();
+            managedIdByEnrolledMachineId.clear();
             enrollments.clear();
         } else for (const id of managedIds) {
             const enrolledId = enrollments.get(id);
-            if (enrolledId) enrolledMachineIds.delete(enrolledId);
+            if (enrolledId && managedIdByEnrolledMachineId.get(enrolledId) === id) managedIdByEnrolledMachineId.delete(enrolledId);
             enrollments.delete(id);
         }
         for (const machine of census.machines) if (machine.enrolledMachineId) {
             enrollments.set(machine.id, machine.enrolledMachineId);
-            enrolledMachineIds.add(machine.enrolledMachineId);
+            managedIdByEnrolledMachineId.set(machine.enrolledMachineId, machine.id);
         }
         const current = new Set<string>();
         for (let machine of census.machines) {
@@ -126,7 +131,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 }
             }
             const target = !canceledCleanup && machine.wakeOnAcceptedMessage
-                ? census.targets.find(target => target.managedId === machine.id) : undefined;
+                ? firstWakeTargets.get(machine.id) : undefined;
             const purpose: ManagedPolicyPurposeV1 | null = canceledCleanup ? { kind: 'creation-cleanup' } : target
                 ? { kind: 'accepted-input-start', target }
                 : machine.retention.kind !== 'until-delete' || await params.supportsNativeLifetimeRenewal?.(machine, lifetime.signal)
@@ -259,29 +264,42 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         })().finally(() => { pump = null; if (changed && !stopped) runPump(); });
         return pump;
     };
-    const notifyChanged = (currentnessOnly = false, nativeManagedIds?: readonly string[]) => {
+    const notifyChanged = ({ currentnessOnly = false, managedIds, refreshNativeCredentials = true }: Readonly<{
+        currentnessOnly?: boolean;
+        managedIds?: readonly string[];
+        refreshNativeCredentials?: boolean;
+    }> = {}) => {
         if (stopped) return;
         if (currentnessOnly && active.size === 0) return;
         changed = true;
-        if (currentnessOnly || !nativeManagedIds?.length) censusInvalidations = null;
-        else for (const id of nativeManagedIds) censusInvalidations?.add(id);
+        if (!managedIds?.length) censusInvalidations = null;
+        else for (const id of managedIds) censusInvalidations?.add(id);
         if (!currentnessOnly) {
             schedulingRequested = true;
-            if (nativeManagedIds === undefined) nativeInvalidations = null;
-            else for (const id of nativeManagedIds) nativeInvalidations?.add(id);
+            if (refreshNativeCredentials) {
+                if (!managedIds) nativeInvalidations = null;
+                else for (const id of managedIds) nativeInvalidations?.add(id);
+            }
         }
         return runPump();
+    };
+    const notifyEnrolledMachinesChanged = (machineIds: readonly string[]) => {
+        const managedIds = machineIds.flatMap(machineId => {
+            const managedId = managedIdByEnrolledMachineId.get(machineId);
+            return managedId ? [managedId] : [];
+        });
+        if (managedIds.length) notifyChanged({ managedIds, refreshNativeCredentials: false });
     };
     const subscriptions: Array<() => void> = [];
     if (params.apiMachine) {
         subscriptions.push(params.apiMachine.onManagedMachinePolicyInvalidated(change => {
-            if (change?.kind === 'machines' && !change.machineIds.some(id => enrolledMachineIds.has(id))) return;
-            notifyChanged(change?.kind === 'currentness', change?.kind === 'managed' ? change.managedIds
-                : change === undefined ? undefined : []);
+            if (change?.kind === 'machines') notifyEnrolledMachinesChanged(change.machineIds);
+            else if (change?.kind === 'managed') notifyChanged({ managedIds: change.managedIds });
+            else notifyChanged({ currentnessOnly: change?.kind === 'currentness' });
         }));
         subscriptions.push(params.apiMachine.onUpdate(update => {
             const body = update.body;
-            if (body.t === 'update-machine' && enrolledMachineIds.has(body.machineId)) notifyChanged(false, []);
+            if (body.t === 'update-machine') notifyEnrolledMachinesChanged([body.machineId]);
             // ApiMachine discovers targeted work. Any change to an origin
             // already held here must also retire it after withdrawal/retargeting.
             if ((body.t === 'pending-changed' || body.t === 'automation-run-updated')
@@ -291,7 +309,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                         && origin.session.sessionId === (body.sessionId ?? body.sid);
                     return origin?.kind === 'workflow-assignment' && origin.runId === body.runId
                         || origin?.kind === 'context-delivery' && origin.delivery.runId === body.runId;
-                })) notifyChanged(false, []);
+                })) notifyChanged({ refreshNativeCredentials: false });
         }));
         subscriptions.push(params.apiMachine.onConnectionStateChange(state => {
             if (state.phase === 'online') {

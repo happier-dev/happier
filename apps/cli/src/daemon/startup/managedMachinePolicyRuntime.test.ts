@@ -18,7 +18,7 @@ import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/a
 
 afterEach(() => vi.restoreAllMocks());
 describe('daemon managed policy census transport', () => {
-    it('reads changed managed rows in one selected census while retaining sibling lifetimes and withdrawing a missing row', async () => {
+    it('reads only changed managed rows or enrolled guests in one selected census and retains sibling lifetimes', async () => {
         const signing = nacl.sign.keyPair();
         const controller = { machineId: 'controller', installationId: 'installation' };
         const machineCount = 128;
@@ -42,6 +42,7 @@ describe('daemon managed policy census transport', () => {
             metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
         const transport = apiMachine as unknown as {
             notifyManagedMachinePolicyInvalidated(signal: undefined, change?: ManagedMachinePolicyInvalidation): Promise<void>;
+            dispatchUpdate(update: Update): boolean;
         };
         const executions: Array<{ id: string; signal: AbortSignal | undefined }> = [];
         const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
@@ -75,11 +76,15 @@ describe('daemon managed policy census transport', () => {
             expect(returnedRows).toEqual([machineCount, 1, 0]);
             // A sibling enrollment still belongs to the retained scheduler state.
             await invalidate({ kind: 'machines', machineIds: ['guest-1'] });
-            expect(returnedRows).toEqual([machineCount, 1, 0, machineCount - 1]);
+            expect(returnedRows).toEqual([machineCount, 1, 0, 1]);
+            transport.dispatchUpdate({ id: 'guest-updated', seq: 1, createdAt: 1,
+                body: UpdateBodySchema.parse({ t: 'update-machine', machineId: 'guest-1' }) });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(returnedRows).toEqual([machineCount, 1, 0, 1, 1]);
             await invalidate();
-            expect(returnedRows).toEqual([machineCount, 1, 0, machineCount - 1, machineCount - 1]);
+            expect(returnedRows).toEqual([machineCount, 1, 0, 1, 1, machineCount - 1]);
             await invalidate({ kind: 'currentness' });
-            expect(returnedRows).toEqual([machineCount, 1, 0, machineCount - 1, machineCount - 1, machineCount - 1]);
+            expect(returnedRows).toEqual([machineCount, 1, 0, 1, 1, machineCount - 1, machineCount - 1]);
             expect(executions).toHaveLength(machineCount + 1);
             machines[0] = ManagedMachineV1Schema.parse({ ...machines[0], retention: { kind: 'deadline', at: 7_200_000, effect: 'stop' } });
             machines = machines.filter(machine => machine.id !== 'managed-2');
@@ -91,6 +96,39 @@ describe('daemon managed policy census transport', () => {
             expect(executions[2]?.signal?.aborted).toBe(true);
             expect(executions.slice(3, machineCount).every(entry => entry.signal?.aborted === false)).toBe(true);
         } finally { await runtime.stop(); await apiMachine.shutdown(); }
+    });
+    it('visits wake targets once per census and schedules the first accepted origin for each Machine', async () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const machines = Array.from({ length: 128 }, (_, index) => ManagedMachineV1Schema.parse({
+            id: `managed-${index}`, homeId: 'home', custodianAccountId: 'owner', controller,
+            enrolledMachineId: `guest-${index}`,
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        }));
+        let targetVisits = 0;
+        const makeTarget = (machine: (typeof machines)[number], pendingRequestId: string) => {
+            const target = ManagedWakeTargetV1Schema.parse({ homeId: 'home', managedId: machine.id,
+                enrolledMachineId: machine.enrolledMachineId, expectedIntentRevision: 0, controller, reason: 'admitted-work',
+                origin: { kind: 'session-input', session: { homeId: 'home', sessionId: `session-${pendingRequestId}` }, pendingRequestId, requestedAt: 1 } });
+            return { ...target, get managedId() { targetVisits += 1; return target.managedId; } };
+        };
+        const targets = machines.map(machine => makeTarget(machine, machine.id));
+        targets.push(makeTarget(machines[0]!, 'second-origin'));
+        const scheduled = new Map<string, string>();
+        const runtime = createDaemonManagedMachinePolicyRuntime({ readCensus: async () => ({ machines, targets }),
+            executePolicy: async ({ machine, purpose }) => {
+                if (purpose.kind === 'accepted-input-start' && purpose.target.origin.kind === 'session-input') {
+                    scheduled.set(machine.id, purpose.target.origin.pendingRequestId);
+                }
+                return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            } });
+        try {
+            await runtime.notifyChanged();
+            expect(scheduled).toEqual(new Map(machines.map(machine => [machine.id, machine.id])));
+            expect(targetVisits).toBe(targets.length);
+        } finally { await runtime.stop(); }
     });
     it('executes the Home wake candidate despite a retained running native observation without private guest reads', async () => {
         const signing = nacl.sign.keyPair();
