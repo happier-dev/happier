@@ -122,7 +122,10 @@ The app's import action selects the machine that holds the login. Each agent
 declares the sources it can read; unavailable native storage is reported rather
 than substituted silently. Antigravity's native `agy` login (`cli`, which
 `happier agy auth login` signs in) and the pinned ACP server login from earlier
-builds (`acp`) are separate sources.
+builds (`acp`) are separate sources. The `cli` source, and so the first command
+above, is available on Linux and macOS only: Happier has not characterized the
+Antigravity CLI's Windows credential storage, so it does not read the native
+login there.
 
 Import copies the credential into Happier's encrypted account storage. It does
 not switch the native agent's login. The copied login can share a refresh grant

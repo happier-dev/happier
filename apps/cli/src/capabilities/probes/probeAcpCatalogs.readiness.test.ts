@@ -1,42 +1,17 @@
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import https from 'node:https';
-import { syncBuiltinESMExports } from 'node:module';
+import { chmod, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it, vi, type MockInstance } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS } from '@happier-dev/agents';
 import type { DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 import { agent as agyEntry } from '@/backends/agy';
-import { configuration } from '@/configuration';
+import { withIsolatedHappierHome } from '@/backends/agy/acp/pinnedAgyAcpServer.testkit';
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { probeAcpCatalogs } from './probeAcpCatalogs';
 
 const CONNECTED_ACCOUNT_ENV = {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'selected' }]),
 };
-
-async function withIsolatedHappierHome(run: (home: string, downloadRequest: MockInstance) => Promise<void>): Promise<void> {
-  // Patch the real OS HTTP adapter, including native ESM bindings in external dependencies.
-  const downloadRequest = vi.spyOn(https, 'request').mockImplementation(() => { throw new Error('Unexpected installation download'); });
-  syncBuiltinESMExports();
-  const home = await mkdtemp(join(tmpdir(), 'happier-agy-readiness-'));
-  const keys = ['happyHomeDir', 'logsDir', 'settingsFile'] as const;
-  const descriptors = keys.map((key) => Object.getOwnPropertyDescriptor(configuration, key)!);
-  Object.defineProperties(configuration, {
-    happyHomeDir: { value: home, configurable: true },
-    logsDir: { value: join(home, 'logs'), configurable: true },
-    settingsFile: { value: join(home, 'settings.json'), configurable: true },
-  });
-  try {
-    await run(home, downloadRequest);
-  } finally {
-    keys.forEach((key, index) => Object.defineProperty(configuration, key, descriptors[index]));
-    downloadRequest.mockRestore();
-    syncBuiltinESMExports();
-    await rm(home, { recursive: true, force: true });
-  }
-}
 
 function discover(entryPoint: 'catalog' | 'backend' | 'session', home: string, env: NodeJS.ProcessEnv) {
   return entryPoint === 'catalog'

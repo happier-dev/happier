@@ -10,7 +10,8 @@ describe('happier agy auth login', () => {
   it('signs in through the agy CLI ACP login', async () => {
     await withTempDir('agy-auth-login-', async dir => {
       const argvPath = join(dir, 'argv.json');
-      const agy = join(dir, 'agy');
+      // `.cjs` makes the launch helper supply the JavaScript runtime on Windows, which ignores shebangs.
+      const agy = join(dir, 'agy.cjs');
       // The vendor CLI owns the Google login; a real child process records how Happier invoked it.
       await writeFile(agy, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)));\n`);
       await chmod(agy, 0o755);
