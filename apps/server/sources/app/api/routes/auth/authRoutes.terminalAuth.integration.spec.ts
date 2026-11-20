@@ -622,7 +622,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         await app.close();
     });
 
-    it("rejects explicit unattended approval with no evidence and leaves the request pending", async () => {
+    it("connects a terminal from a paired device without granting factor evidence", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-terminal-no-evidence-${Date.now()}`, encryptionMode: "plain" },
             select: { id: true },
@@ -632,6 +632,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             authority: "present_user",
         });
         const terminal = createTerminalKeypair();
+        const claimSecret = new Uint8Array(randomBytes(32));
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
@@ -641,7 +642,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             payload: {
                 publicKey: terminal.publicKeyBase64,
                 supportsV2: true,
-                claimSecretHash: sha256Base64Url(new Uint8Array(randomBytes(32))),
+                claimSecretHash: sha256Base64Url(claimSecret),
             },
         });
         const approval = await app.inject({
@@ -655,12 +656,16 @@ describe("authRoutes (terminal auth request) (integration)", () => {
                 authorizeUnattendedTeamAccess: true,
             },
         });
-        expect(approval.statusCode, approval.body).toBe(409);
-        expect(approval.json()).toEqual({ error: "credential_authentication_evidence_unavailable" });
-        expect(await db.terminalAuthRequest.findUnique({
-            where: { publicKey: privacyKit.encodeHex(terminal.publicKeyRaw) },
-            select: { response: true, responseAccountId: true, authenticationEvidence: true, approvalTokenEpoch: true },
-        })).toEqual({ response: null, responseAccountId: null, authenticationEvidence: null, approvalTokenEpoch: null });
+        expect(approval.statusCode, approval.body).toBe(200);
+        const authorized = await app.inject({
+            method: "POST",
+            url: "/v1/auth/request/claim",
+            payload: { publicKey: terminal.publicKeyBase64, claimSecret: encodeBase64Url(claimSecret) },
+        });
+        expect(authorized.statusCode, authorized.body).toBe(200);
+        const successor = await auth.verifyToken(authorized.json<{ token: string }>().token);
+        expect(successor).toMatchObject({ userId: account.id, authTokenKind: "terminal" });
+        expect(successor?.authenticationEvidence ?? []).toEqual([]);
         await app.close();
     });
 

@@ -48,8 +48,12 @@ async function resolveApprovedTerminalEvidenceInTx(
         where: { id: input.accountId },
         select: { tokenEpoch: true },
     });
+    if (account?.tokenEpoch !== input.approvalTokenEpoch) return { status: "unavailable" };
+    // Account devices can connect a terminal without a sign-in factor to pass on.
+    // Team policy qualifies the resulting credential against its own requirements.
+    if (input.snapshotValue === null) return { status: "current", evidence: [] };
     const snapshot = parseAuthenticationEvidenceSnapshot(input.snapshotValue);
-    if (!snapshot || account?.tokenEpoch !== input.approvalTokenEpoch) return { status: "unavailable" };
+    if (!snapshot) return { status: "unavailable" };
     const evidence = await resolveCurrentAuthenticationEvidenceInTx(tx, {
         env: process.env,
         accountId: input.accountId,
@@ -486,9 +490,6 @@ export function registerTerminalAuthRequestRoutes(
                     evidence: request.authTokenAuthenticationEvidence,
                 })
                 : [];
-            if (request.body.authorizeUnattendedTeamAccess === true && evidence.length === 0) {
-                return { status: "evidence_unavailable" } as const;
-            }
             const evidenceSnapshot = evidence.length > 0
                 ? AuthTokenAuthenticationEvidenceSnapshotV1Schema.parse({ v: 1, evidence })
                 : null;
@@ -534,9 +535,6 @@ export function registerTerminalAuthRequestRoutes(
             return reply.code(409).send({ error: "already_completed" });
         }
         if (outcome.status === 'enrollment_unavailable') return reply.code(409).send({ error: 'enrollment_unavailable' });
-        if (outcome.status === "evidence_unavailable") {
-            return reply.code(409).send({ error: "credential_authentication_evidence_unavailable" });
-        }
         const statusCode = outcome.reason === "invalid_provisioning_response" ? 400 : 409;
         return reply.code(statusCode).send({ error: outcome.reason });
     });
