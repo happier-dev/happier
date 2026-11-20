@@ -455,9 +455,11 @@ export function WalkthroughCaptionLane(
           focus?: () => void;
         };
         node.scrollIntoView?.({ block: 'nearest' });
+        // Focus first: the marker's focus opens the callout like a key would, then the choice pins it, so the
+        // focus a closing list hands back to its stop header does not take the caption away.
+        node.focus?.();
         pinned.current = true;
         show(key);
-        node.focus?.();
         return true;
       },
     }),
@@ -478,7 +480,8 @@ export function WalkthroughCaptionLane(
   );
   const onMarkerFocus = React.useCallback(
     (key: string) => {
-      pinned.current = false;
+      // Focus returning to the caption already showing keeps it as it was (pinned by a press or a choice).
+      if (anchorKey.current !== key) pinned.current = false;
       show(key);
     },
     [show],

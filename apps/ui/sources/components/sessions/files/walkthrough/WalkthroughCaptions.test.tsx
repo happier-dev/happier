@@ -313,4 +313,52 @@ describe('Files Explain line captions', () => {
       await screen.unmount();
     }
   });
+
+  it('on a phone, choosing a caption from a stop\u2019s list opens it at its tinted lines after the list hands focus back', async () => {
+    fixture = await createSessionFilesViewFixture();
+    const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+    const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
+    const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+    const { buildWalkthroughReading } = await import('./walkthroughReading');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const reading = buildWalkthroughReading({ comparison: COMPARISON, walkthrough: { state: 'complete', value: WALKTHROUGH },
+      analysis: null, reviewed: null });
+    const files = [CAPTIONED, PLAIN].map((path) => scmFileStatusFromChange({ path, changeKind: 'modified', added: 2, removed: 1 }));
+    const diffs = new Map(COMPARISON.inventory.files.map((file) => [file.path, file.evidence.unifiedDiff ?? null] as const));
+    const screen = await renderMountedCurrentUiContext(
+      <WorkspaceScmReviewBody comparison={{ kind: 'workingTree' }} view="files" scopeLabel="Changes" scopeOptions={[]}
+        onSelectComparison={() => {}} onSelectView={() => {}} reading={reading} explain onExplainChange={() => {}}
+        renderWalkthrough={() => null}
+        renderFiles={(chrome) => <ChangedFilesReview comparisonChrome={{ ...chrome, indexPlacement: 'phone' }}
+          sessionId={fixture!.session.id} workspaceScope={fixture!.scope} theme={createThemeFixture()}
+          snapshot={fileViewSnapshot()} changedFilesViewMode="repository" allRepositoryChangedFiles={files}
+          sessionAttributedFiles={[]} repositoryOnlyFiles={[]} maxFiles={10} maxChangedLines={1000} onFilePress={() => {}}
+          providerDiffByPath={diffs} />} />,
+      // The host layout boundary; a focused node reports its focus the way the platform does.
+      { createNodeMock: (element) => ({
+        focus: () => { (element.props.onFocus as ((event: object) => void) | undefined)?.({ nativeEvent: {} }); },
+        scrollIntoView: () => {},
+        measureLayout: (_relative: unknown, onSuccess: (x: number, y: number, width: number, height: number) => void) => onSuccess(0, 0, 0, 22),
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 22, 22),
+        measure: (callback: (x: number, y: number, width: number, height: number, pageX: number, pageY: number) => void) => callback(0, 0, 22, 22, 0, 0),
+        getBoundingClientRect: () => ({ x: 0, y: 0, left: 0, top: 0, width: 22, height: 22, right: 22, bottom: 22 }),
+      }) },
+    );
+    try {
+      const viewer = () => screen.findAllByType(DiffViewer).find((candidate) => candidate.props.filePath === CAPTIONED);
+      await vi.waitFor(() => expect(screen.findByTestId('walkthrough-stop-captions-1')).not.toBeNull());
+      await screen.pressByTestIdAsync('walkthrough-stop-captions-1');
+      await vi.waitFor(() => expect(screen.findByTestId('walkthrough-stop-captions-sheet')).not.toBeNull());
+      await screen.pressByTestIdAsync('walkthrough-caption-B');
+      // The list closes and returns focus to its stop header: the marker the choice focused loses it.
+      const marker = screen.findHostByTestId('walkthrough-caption-marker-B');
+      expect(marker).not.toBeNull();
+      await act(async () => { (marker!.props.onBlur as ((event: object) => void) | undefined)?.({ nativeEvent: {} }); });
+      await vi.waitFor(() => expect(viewer()!.props.highlightLineIds?.size).toBe(1));
+      expect(screen.findByTestId('walkthrough-stop-captions-sheet')).toBeNull();
+      expect(screen.getTextContent()).toContain('Doubles the wait <b>and caps</b> it at 30 s.');
+    } finally {
+      await screen.unmount();
+    }
+  });
 });
