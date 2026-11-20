@@ -14304,6 +14304,15 @@ their captured base through native `--base-commit`. Other captured scopes retain
 the visible `coderabbit_scope_unsupported` refusal. The adapter runs in the live
 checkout and introduces no captured-checkout lifecycle.
 
+DeepSec's adapter likewise consumes one host SCM snapshot at admission. Captured
+whole working-tree subjects must start at the current HEAD in the same repository;
+committed subjects must end there and require a clean tracked checkout. The
+adapter passes the host-selected paths with `--files-from`, because DeepSec
+2.3.12 reads current file contents even when native diff flags select the names.
+Partial working-tree subjects and other mismatches retain a visible
+`deepsec_execution_failed` refusal. Whole working-tree reviews use live bytes;
+there is no captured-checkout lifecycle or mid-run revalidation.
+
 ### Review source transcript delivery (0.3 development)
 
 A reviewer receives a source Session transcript when its

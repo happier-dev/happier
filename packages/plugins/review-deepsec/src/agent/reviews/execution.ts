@@ -28,6 +28,7 @@ import { createDeepSecTempFiles } from './tempFiles.js';
 import { buildDeepSecLaunchEnvironment, readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, prepareDeepSecClaudeAccount } from '../connectedAccount.js';
+import { preflightDeepSecReviewScope } from './scopePreflight.js';
 
 type NormalizedDeepSecStart = Readonly<{
   mode: DeepSecReviewMode;
@@ -199,21 +200,6 @@ async function resolveSelectedScopePaths(params: Readonly<{
   }
 
   return { status: 'ready', paths: Object.freeze(paths) };
-}
-
-function assertSupportedScmReviewScope(start: NormalizedDeepSecStart): void {
-  const scope = start.scmScope ?? null;
-  if (scope?.comparison || scope?.revisionRange) {
-    throw new Error('DeepSec cannot review this captured comparison or exact revision range. Choose a reviewer that supports this subject.');
-  }
-  if (start.mode === 'repository_security_audit') return;
-  if (!scope) throw new Error('DeepSec review requires host-resolved SCM scope facts.');
-  if (scope.status !== 'supported') {
-    throw new Error(scope.diagnostics[0]?.message || 'DeepSec review requires a source-control repository in the current session scope.');
-  }
-  if (scope.scmMode !== '.git') {
-    throw new Error('DeepSec review requires a git worktree in the current session scope.');
-  }
 }
 
 function createOutput(params: Readonly<{
@@ -432,8 +418,9 @@ function createRuntime(
         fallbackInstructions: request.input.text,
         profileId: `${request.profile.pluginId}/${request.profile.localId}`,
       });
-      assertSupportedScmReviewScope(startInput);
-      const selectedScope = startInput.mode === 'selected_files' || startInput.mode === 'current_diff'
+      const mode = await preflightDeepSecReviewScope({ cwd: request.cwd, mode: startInput.mode,
+        scope: startInput.scmScope, actions: context.services.actions, signal });
+      const selectedScope = mode === 'selected_files' || mode === 'current_diff'
         ? await resolveSelectedScopePaths({
           context,
           cwd: request.cwd,
@@ -465,7 +452,7 @@ function createRuntime(
       });
       const runResult = await runDeepSecReview({
         cwd: request.cwd,
-        mode: startInput.mode,
+        mode,
         selectedFiles: selectedScope?.paths,
         confirmedCostWarning: startInput.confirmedCostWarning,
         preferredExecutablePath: startInput.preferredExecutablePath,

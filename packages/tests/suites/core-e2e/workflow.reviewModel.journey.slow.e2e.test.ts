@@ -171,8 +171,11 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 if (args.includes('--version')) console.log('2.3.12');
 else {
-  fs.appendFileSync(${JSON.stringify(deepSecAuditPath)}, JSON.stringify({ args, dataRoot: process.env.DEEPSEC_DATA_ROOT }) + '\\n');
+  const files = args.includes('--files-from') ? fs.readFileSync(args[args.indexOf('--files-from') + 1], 'utf8').trim().split('\\n') : undefined;
+  fs.appendFileSync(${JSON.stringify(deepSecAuditPath)}, JSON.stringify({ args, dataRoot: process.env.DEEPSEC_DATA_ROOT,
+    files: files?.map(file => ({ path: file, contents: fs.readFileSync(file, 'utf8') })) }) + '\\n');
   if (args[0] === 'scan' && fs.existsSync(${JSON.stringify(nativeHoldPath)})) setInterval(() => {}, 1000);
+  else if (args[0] === 'process' && args.includes('--comment-out')) fs.writeFileSync(args[args.indexOf('--comment-out') + 1], '');
   else if (args[0] === 'process') process.exitCode = 2;
   else if (args[0] === 'export') fs.writeFileSync(args[args.indexOf('--out') + 1], JSON.stringify([{
     title: 'Validate redirects', description: 'Reject an external redirect before returning.', severity: 'CRITICAL',
@@ -505,6 +508,37 @@ else {
       expect(commands[start]?.dataRoot).toBeTruthy();
     }
     await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan', true);
+  });
+  it('D1 DeepSec admits live captured files and refuses dirty committed or moved HEAD subjects through public Actions', async () => {
+    const reviewer = { roleId: await createWriteEnabledReviewRole(),
+      options: { confirmedCostWarning: true, preferredExecutablePath: deepSecExecutablePath } };
+    const working = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'workingTree', area: 'both' },
+    }));
+    if (!working.success) throw new Error(working.errorCode);
+    expect(await startNativeReview('deepsec', { comparisonId: working.comparison.id }, reviewer))
+      .toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'complete', findings: [] } });
+    const commands = (await readFile(deepSecAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as {
+      args: string[]; files?: { path: string; contents: string }[];
+    });
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.args).toEqual(expect.arrayContaining(['--files-from', '--no-ignore']));
+    expect(commands[0]?.files).toEqual([{ path: 'README.md', contents: 'Review fixture with a change\n' }]);
+
+    execGit(machine.workspaceDir, ['add', 'README.md']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: DeepSec captured review head']);
+    const committed = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'commit', commit: 'HEAD' },
+    }));
+    if (!committed.success) throw new Error(committed.errorCode);
+    await writeFile(join(machine.workspaceDir, 'README.md'), 'Uncaptured tracked checkout edit\n');
+    expect(await startNativeReview('deepsec', { comparisonId: committed.comparison.id }, reviewer))
+      .toMatchObject({ run: { status: 'failed', error: { code: 'deepsec_execution_failed', message: expect.stringMatching(/clean tracked checkout/) } } });
+    execGit(machine.workspaceDir, ['add', 'README.md']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: advance beyond DeepSec captured head']);
+    expect(await startNativeReview('deepsec', { comparisonId: committed.comparison.id }, reviewer))
+      .toMatchObject({ run: { status: 'failed', error: { code: 'deepsec_execution_failed', message: expect.stringMatching(/captured comparison.*live checkout/) } } });
+    expect((await readFile(deepSecAuditPath, 'utf8')).trim().split('\n')).toHaveLength(1);
   });
   it('F2 CodeRabbit preserves findings through public Actions, New round and Stop and refuses a different captured head', async () => {
     // CodeRabbit's native uncommitted mode covers the whole working tree;

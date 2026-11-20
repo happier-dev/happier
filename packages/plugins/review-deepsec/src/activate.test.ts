@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginExecSpawnRequest,
   PluginProcessResult,
@@ -24,6 +25,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 import { DEEPSEC_PROVIDER_ENV_KEYS } from './agent/providerBinding.js';
 import { buildGitSnapshot } from '../../scm-git/src/statusSnapshot.js';
 import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
+import type { DeepSecReviewMode } from './agent/reviews/command.js';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -43,6 +45,7 @@ function processResult(exitCode = 0): PluginProcessResult {
 }
 
 function createRuntimeContext(params?: Readonly<{
+  scmSnapshot?: (options?: { signal?: AbortSignal }) => Promise<PluginActionResultById['scm.status.snapshot']>;
   resolvedTool?: PluginResolvedSystemTool;
   run?: (request: PluginExecSpawnRequest & { timeoutMs?: number }, options?: { signal?: AbortSignal }) => Promise<PluginProcessResult>;
   stat?: (path: Readonly<{ root: 'workspace'; relativePath: string }>, options?: { signal?: AbortSignal }) => Promise<Readonly<{
@@ -65,6 +68,7 @@ function createRuntimeContext(params?: Readonly<{
   run: ReturnType<typeof vi.fn>;
   stat: ReturnType<typeof vi.fn>;
   checkReadiness: ReturnType<typeof vi.fn>;
+  scm: ReturnType<typeof vi.fn>;
 }> {
   const resolvedTool = params?.resolvedTool ?? {
     executable: { kind: 'systemTool', id: 'deepsec-cli' },
@@ -88,8 +92,11 @@ function createRuntimeContext(params?: Readonly<{
   const checkReadiness = vi.fn(params?.checkReadiness ?? (async () => ({
     launchable: [{ agentId: 'claude' }],
   })));
+  // SCM Actions cross the host transport boundary; scope decisions stay in the real adapter.
+  const scm = vi.fn(async (_action: string, _input: unknown, options?: { signal?: AbortSignal }) =>
+    params?.scmSnapshot ? params.scmSnapshot(options) : liveCheckoutSnapshot());
   const services = {
-    availability: (id: string) => id === 'exec' || id === 'fs'
+    availability: (id: string) => id === 'exec' || id === 'fs' || id === 'actions'
       ? { status: 'available' as const }
       : { status: 'unavailable' as const },
     connectedAccounts: params?.connectedAccounts ?? { getBinding: async () => null,
@@ -100,6 +107,7 @@ function createRuntimeContext(params?: Readonly<{
       run,
     },
     fs: { stat },
+    actions: { execute: scm },
   } as unknown as PluginServices;
   const unavailable = async (): Promise<never> => {
     throw new Error('unavailable');
@@ -130,7 +138,17 @@ function createRuntimeContext(params?: Readonly<{
     run,
     stat,
     checkReadiness,
+    scm,
   };
+}
+
+const liveHead = 'b'.repeat(40);
+const capturedBase = 'a'.repeat(40);
+function liveCheckoutSnapshot(status = '', rootPath = '/repo'): PluginActionResultById['scm.status.snapshot'] {
+  return { success: true, snapshot: buildGitSnapshot({ projectKey: `machine:${rootPath}`, fetchedAt: 1, rootPath,
+    statusOutput: `# branch.oid ${liveHead}\0# branch.head feature\0${status}`,
+    includedNumStatOutput: '', pendingNumStatOutput: '',
+  }) };
 }
 
 async function createNativeDeepSecRuntime() {
@@ -181,7 +199,7 @@ function createSupportedScmReviewScope(
 
 function createOpenRequest(params?: Readonly<{
   runId?: string;
-  mode?: 'current_diff' | 'selected_files';
+  mode?: DeepSecReviewMode;
   includeExplicitMode?: boolean;
   confirmedCostWarning?: boolean;
   profileLocalId?: string;
@@ -1040,10 +1058,126 @@ describe('activate', () => {
     expect(fixture.run.mock.calls[0]?.[0].args).toEqual(expect.arrayContaining(['--thinking-level', 'xhigh']));
   });
 
+  it.each(['ordinary', 'working-tree', 'committed', 'revision-range'] as const)(
+    'reviews captured live checkout files without broadening the native selection (%s)', async subject => {
+      const nativeFiles: string[] = [];
+      const fixture = createRuntimeContext({
+        // Unrelated untracked files do not change a committed capture's selected tracked bytes.
+        scmSnapshot: async () => liveCheckoutSnapshot('? unrelated.ts\0'),
+        async run(request) {
+          const listIndex = request.args?.indexOf('--files-from') ?? -1;
+          if (listIndex < 0 || !request.args?.[listIndex + 1]) throw new Error('Expected host-selected native file list');
+          nativeFiles.push(await readFile(request.args[listIndex + 1]!, 'utf8'));
+          return processResult();
+        },
+      });
+      const captured = subject === 'ordinary' ? {} : subject === 'working-tree'
+        ? { comparison: { id: 'captured-live', source: { kind: 'workingTree', area: 'both' },
+          endpoints: { before: liveHead, after: 'captured-worktree-tree' } } }
+        : subject === 'committed' ? { comparison: { id: 'captured-live', source: { kind: 'branch', base: 'main', head: 'feature' },
+          endpoints: { before: capturedBase, after: liveHead } } }
+        : { revisionRange: { kind: 'revisionRange', baseOid: capturedBase, headOid: liveHead } };
+      const { runtime } = await createNativeDeepSecRuntime();
+      const opened = await runtime.executionRuns?.open(createOpenRequest({
+        ...(subject === 'committed' ? { mode: 'staged' } : {}),
+        scmReviewScope: ReviewScmScopeV1Schema.parse({ ...createSupportedScmReviewScope(), ...captured }),
+      }), fixture.context);
+      if (!opened) throw new Error('Expected DeepSec execution');
+      const events = await watchToTerminal(opened);
+      await opened.dispose();
+      expect(events.at(-1)).toMatchObject({ kind: 'run-complete' });
+      expect(nativeFiles).toEqual(['src/auth.ts\n']);
+      expect(fixture.run.mock.calls[0]?.[0].args).toContain('--no-ignore');
+      expect(fixture.scm).toHaveBeenCalledTimes(subject === 'ordinary' ? 0 : 1);
+      if (subject !== 'ordinary') expect(fixture.scm).toHaveBeenCalledWith('scm.status.snapshot',
+        { cwd: '/repo', ...(subject === 'working-tree' ? { detail: 'facts' } : {}), includeWorktreeStatus: false },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    },
+  );
+
+  it.each([
+    { source: { kind: 'workingTree', area: 'both' }, endpoints: { before: 'old-head', after: 'tree' } },
+    { source: { kind: 'workingTree', area: 'included' }, endpoints: { before: liveHead, after: 'index' } },
+    { source: { kind: 'workingTree', area: 'pending' }, endpoints: { before: 'index', after: 'tree' } },
+    { source: { kind: 'branch', base: 'main', head: 'feature' }, endpoints: { before: capturedBase, after: 'old-head' } },
+    { source: { kind: 'branch', base: 'main', head: 'feature' }, endpoints: { after: liveHead } },
+    { source: { kind: 'session', sessionId: 'source-session' }, endpoints: { before: capturedBase, after: liveHead } },
+  ])('refuses a captured subject outside the live checkout scope before native launch (%#)', async comparison => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ scmReviewScope: ReviewScmScopeV1Schema.parse({
+      ...createSupportedScmReviewScope(), comparison: { id: 'unsupported-capture', ...comparison },
+    }) }), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_execution_failed',
+      message: expect.stringMatching(/captured.*checkout|checkout.*captured/),
+    } });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it.each(['different-root', 'unavailable'] as const)('refuses captured checkout facts that are %s', async state => {
+    const fixture = createRuntimeContext({ scmSnapshot: async () => state === 'unavailable'
+      ? { success: false } : liveCheckoutSnapshot('', '/different-repository') });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ scmReviewScope: ReviewScmScopeV1Schema.parse({
+      ...createSupportedScmReviewScope(), comparison: { id: 'captured-live', source: { kind: 'workingTree' },
+        endpoints: { before: liveHead, after: 'captured-worktree-tree' } },
+    }) }), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_execution_failed',
+      message: expect.stringMatching(/checkout|SCM/),
+    } });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it.each(['pending', 'included'] as const)('refuses tracked %s edits for a captured committed head before native launch', async area => {
+    const fixture = createRuntimeContext({ scmSnapshot: async () => liveCheckoutSnapshot(
+      `1 ${area === 'pending' ? '.M' : 'M.'} N... 100644 100644 100644 aaaaaaa bbbbbbb src/auth.ts\0`),
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ scmReviewScope: ReviewScmScopeV1Schema.parse({
+      ...createSupportedScmReviewScope(), comparison: { id: 'captured-live',
+        source: { kind: 'branch', base: 'main', head: 'feature' }, endpoints: { before: capturedBase, after: liveHead } },
+    }) }), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: {
+      code: 'deepsec_execution_failed', message: expect.stringMatching(/tracked|clean/),
+    } });
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it.each(['reject', 'result'] as const)('cancels while captured checkout facts settle (%s)', async settlement => {
+    const fixture = createRuntimeContext({ scmSnapshot: options => new Promise((resolve, reject) => {
+      const aborted = () => settlement === 'reject' ? reject(options?.signal?.reason) : resolve({ success: false });
+      if (options?.signal?.aborted) aborted();
+      else options?.signal?.addEventListener('abort', aborted, { once: true });
+    }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ scmReviewScope: ReviewScmScopeV1Schema.parse({
+      ...createSupportedScmReviewScope(), comparison: { id: 'captured-live', source: { kind: 'workingTree' },
+        endpoints: { before: liveHead, after: 'captured-worktree-tree' } },
+    }) }), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const terminal = watchToTerminal(opened);
+    try {
+      await vi.waitFor(() => expect(fixture.scm).toHaveBeenCalledOnce());
+      await opened.stop();
+      expect((await terminal).at(-1)).toMatchObject({ kind: 'run-cancelled' });
+      expect(fixture.run).not.toHaveBeenCalled();
+    } finally { await opened.dispose(); }
+  });
+
   it.each([
     { comparison: { id: 'captured-review', source: { kind: 'branch', base: 'base', head: 'head' },
       endpoints: { before: 'captured-before', after: 'captured-after' } } },
-    { revisionRange: { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } },
+    { revisionRange: { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'c'.repeat(40) } },
   ])('refuses captured subjects it cannot honor before invoking an ambient review (%#)', async captured => {
     const fixture = createRuntimeContext();
     const { runtime } = await createNativeDeepSecRuntime();

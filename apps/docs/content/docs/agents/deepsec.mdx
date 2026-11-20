@@ -98,6 +98,19 @@ file. Embedded spaces and Unicode filenames remain supported.
 On Linux and macOS, filenames containing a literal backslash are also refused:
 the native tool treats that character as a directory separator.
 
+In unreleased 0.3 development source, captured comparisons run only when DeepSec
+can read their selected files from the live checkout. A whole working-tree
+comparison must belong to the same repository and start at its current HEAD.
+A committed comparison must end at current HEAD and have no tracked checkout
+changes; unrelated untracked files are allowed. Happier passes the captured
+file selection to DeepSec. Partial working-tree comparisons, other captured
+checkpoints, mismatched checkouts and dirty committed comparisons fail visibly;
+choose another reviewer for those subjects. Repository audits require a
+repository subject rather than a captured comparison.
+
+DeepSec 2.3.12's native `--diff` selects filenames and then reads current root
+files, so that flag alone cannot review arbitrary captured endpoint bytes.
+
 ## What Happier can drive
 
 - **Provider model selection** is available for development review Runs under the restrictions above, not as a general DeepSec Session model picker.
