@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import * as React from 'react';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
@@ -102,9 +103,14 @@ afterEach(async () => {
 
 // Collect the real route graph before the test deadline, without weakening it.
 const RootLayout = (await import('@/app/(app)/_layout')).default;
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const Home = (await import('@/app/(app)/index')).Home;
+function RootAndHome() {
+    return React.createElement(AppPaneProvider, null, React.createElement(RootLayout), React.createElement(Home));
+}
 
 async function renderRootLayout() {
-    await renderRootLayoutRoute(RootLayout);
+    await renderRootLayoutRoute(RootAndHome, connection?.credentials);
     await flushHookEffects();
 }
 
@@ -130,6 +136,6 @@ describe('App RootLayout server override', () => {
         await renderRootLayout();
 
         expect(getActiveServerSnapshot().serverUrl).toBe('http://localhost:53288');
-        await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288'));
+        await vi.waitFor(() => expect(routerReplaceSpy.mock.calls).toEqual([['/terminal/connect']]));
     });
 });

@@ -14,7 +14,6 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storage';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingTerminalConnect, getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -201,15 +200,7 @@ afterEach(async () => {
 });
 
 describe('App RootLayout notifications', () => {
-    it('routes to pending terminal connect after authentication', async () => {
-        await arrangeHomes();
-        setPendingTerminalConnect({ publicKeyB64Url: 'abc123', serverUrl: activeUrl, serverIdentityId: 'srv_server_1' });
-        expect(getPendingTerminalConnect()).toEqual({ publicKeyB64Url: 'abc123', serverUrl: activeUrl, serverIdentityId: 'srv_server_1' });
-        await renderRootLayoutRoute(RootLayout, credentials);
-        expect(getActiveServerAccountScope()).toEqual({ serverId: 'srv_server_1', accountId: 'account-1' });
-        await vi.waitFor(() => expect(routerBoundary.replace).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fapi.happier.dev'));
-    });
-    it('keeps a saved pending terminal key private until its Home Account is active, then resumes without reloading', async () => {
+    it('keeps a saved pending terminal key private while another Home Account is active', async () => {
         await arrangeHomes([profile('srv_server_1', activeUrl), profile('srv_server_2', 'https://company.example.test')]);
         // The real reminder clock reads every authenticated saved Home, even offscreen.
         // Capture that read-only baseline before admitting any pending terminal intent.
@@ -245,9 +236,6 @@ describe('App RootLayout notifications', () => {
         expect(credentialDelete.mock.calls.filter(([key]) => key.includes('auth_credentials'))).toEqual([]);
         expect(await TokenStorage.getCredentialsForServerUrl('https://company.example.test', { serverId: 'srv_server_2' })).toEqual(credentials);
         expect(getPendingTerminalConnect()).toBeNull();
-        await setActiveServerAndSwitch({ serverId: 'srv_server_2', scope: 'device', refreshAuth: async () => {} });
-        await vi.waitFor(() => expect(routerBoundary.replace).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=https%3A%2F%2Fcompany.example.test'));
-        expect(getDeviceDefaultServerId()).toBe('srv_server_2');
     });
     it('navigates to the session when a notification contains sessionId', async () => {
         await arrangeHomes();

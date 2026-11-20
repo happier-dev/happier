@@ -34,9 +34,6 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', async () => (
 ));
 
 vi.mock('@/hooks/ui/useWebInitialRouteReconcile', () => ({ useWebInitialRouteReconcile: () => {} }));
-vi.mock('@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation', () => ({
-    consumeLegacySessionDeepLinkFromWebLocation: () => false,
-}));
 vi.mock('@/activity/notifications/runtime/useNotificationResponseRouting', () => ({
     useNotificationResponseRouting: () => {},
 }));
@@ -78,7 +75,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-it('resumes a real pre-auth capture when the authenticated account scope hydrates', async () => {
+it('leaves pre-auth terminal custody for the focused auth route after scope hydration', async () => {
     vi.stubGlobal('localStorage', createStorage());
     vi.stubGlobal('sessionStorage', createStorage());
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
@@ -120,7 +117,7 @@ it('resumes a real pre-auth capture when the authenticated account scope hydrate
     expect(scope).not.toBeNull();
     await act(async () => storage.getState().activateProfileScope(scope!));
 
-    expect(replaceSpy.mock.calls).toEqual([['/terminal/connect']]);
+    expect(replaceSpy).not.toHaveBeenCalled();
     expect(runtimeFetchSpy).not.toHaveBeenCalled();
 });
 

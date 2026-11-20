@@ -1,4 +1,6 @@
 import React from 'react';
+import { Pressable, View } from 'react-native';
+import type { Href } from 'expo-router';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -72,8 +74,9 @@ function setDesktop(enabled: boolean) {
 }
 
 let AuthProvider: typeof import('@/auth/context/AuthContext')['AuthProvider'];
+let useAuth: typeof import('@/auth/context/AuthContext')['useAuth'];
+let RootLayoutRouteContexts: typeof import('./rootLayoutRouteContexts')['RootLayoutRouteContexts'];
 let MainView: typeof import('@/components/navigation/shell/MainView')['MainView'];
-let MainAppTabStateProvider: typeof import('@/components/navigation/mobile/chrome/MainAppTabStateProvider')['MainAppTabStateProvider'];
 let AppPaneProvider: typeof import('@/components/appShell/panes/AppPaneProvider')['AppPaneProvider'];
 let BaseModal: typeof import('@/modal/components/BaseModal')['BaseModal'];
 let PreAuthOnboardingWizardEntry: typeof import('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry')['PreAuthOnboardingWizardEntry'];
@@ -91,11 +94,34 @@ function seedSetupIntent(value: PendingSetupIntent | null) {
 
 function RouteProviders(props: React.PropsWithChildren) {
     return <AuthProvider initialCredentials={isAuthenticated ? connection!.credentials : null}>
-        <MainAppTabStateProvider><AppPaneProvider>{props.children}</AppPaneProvider></MainAppTabStateProvider>
+        <RootLayoutRouteContexts><AppPaneProvider>{props.children}</AppPaneProvider></RootLayoutRouteContexts>
     </AuthProvider>;
 }
 
 const renderRoute: typeof renderScreen = (element, options) => renderScreen(element, { ...options, wrapper: RouteProviders });
+
+/** The navigator boundary mounts what the real Home route requests. */
+function LandingRouter({ Screen, children, destinations }: React.PropsWithChildren<{
+    Screen: React.ComponentType;
+    destinations?: Readonly<Record<string, React.ComponentType>>;
+}>) {
+    const [destination, replace] = React.useState<Href>('/');
+    expoRouterMock.spies.replace.mockImplementation(replace);
+    const pathname = typeof destination === 'string' ? destination : destination.pathname;
+    const [route = pathname, query] = pathname.split('?');
+    const Destination = destinations?.[route];
+    if (Destination && query) routeParamsState.value = Object.fromEntries(new URLSearchParams(query));
+    return <>
+        {children}
+        {pathname === '/' ? <Screen /> : Destination ? <Destination /> : <View testID={pathname} />}
+    </>;
+}
+
+function SignInAtCredentialBoundary() {
+    const { isAuthenticated: signedIn, loginWithCredentials } = useAuth();
+    if (signedIn) return null;
+    return <Pressable testID="complete-interactive-sign-in" onPress={() => loginWithCredentials(connection!.credentials)} />;
+}
 
 async function restoreHome(serverUrl: string, serverIdentityId?: string) {
     await connection?.dispose();
@@ -117,9 +143,9 @@ profileStorage = browser.storage;
 afterAll(() => { browser?.restore(); browser = null; });
 // Cold source transformation is setup work, not part of Account restoration's hook deadline.
 await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
-({ AuthProvider } = await import('@/auth/context/AuthContext'));
+({ AuthProvider, useAuth } = await import('@/auth/context/AuthContext'));
+({ RootLayoutRouteContexts } = await import('./rootLayoutRouteContexts'));
 ({ MainView } = await import('@/components/navigation/shell/MainView'));
-({ MainAppTabStateProvider } = await import('@/components/navigation/mobile/chrome/MainAppTabStateProvider'));
 ({ AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider'));
 ({ BaseModal } = await import('@/modal/components/BaseModal'));
 ({ PreAuthOnboardingWizardEntry } = await import('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry'));
@@ -140,7 +166,7 @@ describe('/ (welcome) setup continuation', () => {
             async invoke(command, args) {
                 if (command.startsWith('desktop_secure_storage_')) return secureStorage.invoke(command, args);
                 if (command === 'plugin:event|listen') return ++callbackId;
-                if (command === 'plugin:event|unlisten' || command === 'cancel_system_task') return undefined;
+                if (command === 'plugin:event|unlisten' || command === 'cancel_system_task' || command === 'desktop_set_window_mode') return undefined;
                 if (command === 'start_system_task') {
                     const spec = SystemTaskSpecSchema.parse(JSON.parse(String(args?.specJson)));
                     const taskId = `setup-route-task-${++nextNativeTaskId}`;
@@ -199,17 +225,36 @@ describe('/ (welcome) setup continuation', () => {
         ['thisComputer', 'awaiting_auth', 'thisComputer'],
         ['remoteMachine', 'post_auth', 'ssh'],
     ] as const)('routes an explicit %s intent once to the draft', async (branch, phase, path) => {
+        isAuthenticated = false;
         seedSetupIntent(branch === 'remoteMachine'
             ? { branch, phase, relayUrl: 'https://relay.example.test', machineId: null, remoteSetupIntent: 'remoteMachine' }
             : { branch, phase, relayUrl: 'https://relay.example.test' });
         const Screen = (await import('@/app/(app)/index')).Home;
-        const screen = await renderRoute(<React.StrictMode><Screen /></React.StrictMode>);
-        await flushHookEffects({ cycles: 1, turns: 2 });
-        expect(expoRouterMock.spies.replace.mock.calls.filter(([href]) => href === `/settings/machines/add?path=${path}`)).toHaveLength(1);
+        const { WorkspaceRouteBody: MachineAddDraft } = await import('@/app/(app)/settings/machines/add');
+        const screen = await renderRoute(
+            <React.StrictMode><LandingRouter Screen={Screen} destinations={{ '/settings/machines/add': MachineAddDraft }}>
+                <SignInAtCredentialBoundary />
+            </LandingRouter></React.StrictMode>,
+        );
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('complete-interactive-sign-in');
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machines.draft.form')).not.toBeNull());
+        expect(expoRouterMock.spies.replace.mock.calls).toEqual([[`/settings/machines/add?path=${path}`]]);
         expect(clearPendingSetupIntentMock).toHaveBeenCalled();
         expect(pendingSetup.getPendingSetupIntent()).toBeNull();
-        expect(screen.findAllByType(MainView)).toHaveLength(1);
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
         expect(screen.findAllByType(BaseModal)).toHaveLength(0);
+    });
+
+    it('reveals Home once after interactive sign-in with no continuation', async () => {
+        isAuthenticated = false;
+        seedSetupIntent(null);
+        const { Home } = await import('@/app/(app)/index');
+        const screen = await renderRoute(<><SignInAtCredentialBoundary /><Home /></>);
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
+        await screen.pressByTestIdAsync('complete-interactive-sign-in');
+        await vi.waitFor(() => expect(screen.findAllByType(MainView)).toHaveLength(1));
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
     });
 
     it.each(['pre_auth', 'dismissed'] as const)('leaves a %s intent alone', async (phase) => {
@@ -224,6 +269,7 @@ describe('/ (welcome) setup continuation', () => {
 
     it.each([true, false])('does not seed automatic setup on desktop=%s', async (desktop) => {
         setDesktop(desktop);
+        if (!desktop) await restoreHome(HOME_A_URL);
         seedSetupIntent(null);
         const Screen = (await import('@/app/(app)/index')).Home;
         const screen = await renderRoute(<Screen />);
@@ -237,9 +283,11 @@ describe('/ (welcome) setup continuation', () => {
     it('gives a session deep link precedence without consuming setup', async () => {
         routeParamsState.value = { id: 'session-1' };
         const Screen = (await import('@/app/(app)/index')).Home;
-        await renderRoute(<Screen />);
+        const screen = await renderRoute(<LandingRouter Screen={Screen} />);
         await flushHookEffects({ cycles: 1, turns: 2 });
-        expect(expoRouterMock.spies.replace).not.toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
+        expect(expoRouterMock.spies.replace.mock.calls).toEqual([['/session/session-1']]);
+        expect(screen.findByTestId('/session/session-1')).not.toBeNull();
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
         expect(clearPendingSetupIntentMock).not.toHaveBeenCalled();
     });
 
@@ -253,7 +301,7 @@ describe('/ (welcome) setup continuation', () => {
         };
 
         const Screen = (await import('@/app/(app)/index')).Home;
-        await renderRoute(React.createElement(Screen));
+        const screen = await renderRoute(<LandingRouter Screen={Screen} />);
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(expoRouterMock.spies.replace).toHaveBeenCalledWith({
@@ -263,6 +311,9 @@ describe('/ (welcome) setup continuation', () => {
                 draftId: 'draft-1',
             }),
         });
+        expect(expoRouterMock.spies.replace).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('/new')).not.toBeNull();
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
     });
 
     it('does not resume an explicit Home continuation against a different active Home', async () => {
@@ -393,12 +444,13 @@ describe('/ (welcome) setup continuation', () => {
         }
     });
 
-    it('keeps Home and post-auth setup behind the pending terminal approval', async () => {
+    it('mounts terminal approval once when a terminal receipt, session link, and setup are present', async () => {
+        isAuthenticated = false;
         const Screen = (await import('@/app/(app)/index')).Home;
-        const initial = await renderRoute(<Screen />);
-        expect(initial.findAllByType(MainView)).toHaveLength(1);
-        await initial.unmount();
+        const { RootLayoutNavigationEffects } = await import('@/components/navigation/root/RootLayoutNavigationEffects');
+        const { default: TerminalConnect } = await import('@/app/(app)/terminal/connect');
         seedSetupIntent({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: HOME_A_URL });
+        expect(pendingSetup.getPendingSetupIntent()?.phase).toBe('awaiting_auth');
         expoRouterMock.spies.replace.mockClear();
         pendingTerminal.setPendingTerminalConnect({
             publicKeyB64Url: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
@@ -406,11 +458,20 @@ describe('/ (welcome) setup continuation', () => {
             serverIdentityId: HOME_A_ID,
         });
         expect(pendingTerminal.getPendingTerminalConnect()).not.toBeNull();
-        const screen = await renderRoute(React.createElement(Screen));
-        await flushHookEffects({ cycles: 1, turns: 3 });
+        routeParamsState.value = { id: 'session-1' };
+        const screen = await renderRoute(
+            <LandingRouter Screen={Screen} destinations={{ '/terminal/connect': TerminalConnect }}>
+                <SignInAtCredentialBoundary />
+                <RootLayoutNavigationEffects />
+            </LandingRouter>,
+        );
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('complete-interactive-sign-in');
+        await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-approve')).not.toBeNull());
 
         expect(screen.findAllByType(MainView)).toHaveLength(0);
-        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
+        expect(expoRouterMock.spies.replace.mock.calls).toEqual([['/terminal/connect']]);
+        expect(pendingSetup.getPendingSetupIntent()?.phase).toBe('awaiting_auth');
         expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
     });
 });
