@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Button,
   CodeBlock,
@@ -15,6 +16,8 @@ import {
 } from './format.js';
 import type { StatementView } from './statements.js';
 import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
+import { workbenchTargetKey } from '../../../targetIdentity.js';
+import { FindingBrief } from './FindingBrief.js';
 
 /**
  * One statement: its shape, what it costs, what changed since your last look, and where to go next. The same body
@@ -23,6 +26,7 @@ import { projectDatabaseStatementMetrics } from '../../../insights/presentation.
 export function StatementDetail(
   props: Readonly<{
     view: StatementView;
+    target: DatabaseTargetV1;
     /** Opens the shape in the Console beside its tables; absent where the Console isn't reachable. */
     onOpenConsole?: (sql: string) => void;
   }>,
@@ -138,6 +142,7 @@ export function StatementDetail(
           />
         </Row>
       ) : null}
+      <FindingBrief key={JSON.stringify([workbenchTargetKey(props.target), row.key])} target={props.target} recordKey={row.key} />
     </Stack>
   );
 }

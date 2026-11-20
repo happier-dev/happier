@@ -3,6 +3,9 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+    DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -13,6 +16,7 @@ import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protoco
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
@@ -21,6 +25,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface as renderPage } from '../WorkbenchPage.js';
 import { renderSurface as renderRail } from '../DatabaseRailTab.js';
+import { WORKBENCH_PAGE_VIEW_ID } from '../views.js';
+import { statementByKey } from './statements.js';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -314,6 +320,87 @@ describe('Database Insights surfaces', () => {
         request: { group: 'statements', selection: { statementKey: 'q-slow' } },
       });
       expect(await details.queryByText('99.2%')).toBeTruthy();
+    } finally {
+      await details.dispose();
+    }
+  });
+
+  it('prepares the selected finding once before handing its editable brief to the Session Composer', async () => {
+    const readId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1);
+    const buildId = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);
+    const baseline = {
+      v: 1,
+      sourceRef: { pluginId: 'happier.database', localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1) },
+      sourceScope: { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId },
+      evidenceIdentity: 'statement-evidence',
+      kind: 'statements',
+      observedWindow: { fromMs: 1, toMs: 1 },
+      coverage: { status: 'complete' },
+      summary: { records: 1, calls: '18420' },
+    };
+    const nativeRead = daemon(statements);
+    const executeAction = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
+      if (call.action === readId) {
+        return projectNativeJsonValueForTransport({ ok: true, finding: {
+          ...baseline, target: descriptor.target, normalizedShape: SLOW,
+          verification: { read: statementByKey('q-slow'), basis },
+        } });
+      }
+      if (call.action === buildId) {
+        return projectNativeJsonValueForTransport({ ok: true, brief: {
+          text: 'Investigate the selected statement',
+          evidence: { v: 1, items: [{ source: { kind: 'databaseFinding', label: 'Statement' }, author: { kind: 'process' }, text: JSON.stringify(baseline) }] },
+        } });
+      }
+      return nativeRead(call);
+    });
+    const handoff = vi.fn(async () => ({ ok: true as const, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } } }));
+    const actionControl = createPluginUiActionControlTestHost(handoff);
+    const openSurface = vi.fn(async () => {});
+    const details = await createPluginUiTestkit({
+      identity: { instanceId: 'finding', mountNonce: 'finding' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'statement/q-slow',
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'insights-session-details' }, container: 'detailsPane' },
+        target: { kind: 'session', sessionId: 'session-1' },
+      }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...resourceHandlers(), executeAction, actionControl: actionControl.handler, openSurface },
+    });
+    function findingCalls() {
+      return executeAction.mock.calls.map(([call]) => call).filter(call => call.action === readId || call.action === buildId);
+    }
+    try {
+      await settle();
+      expect(findingCalls()).toHaveLength(0);
+      await act(async () => { await details.press(await details.getByRole('button', { name: 'Prepare brief' })); });
+      await settle();
+      expect(findingCalls()).toMatchObject([
+        { action: readId, input: { target: descriptor.target, recordKey: 'q-slow' } },
+        { action: buildId, input: { target: descriptor.target, recordKey: 'q-slow', baseline: { ...baseline, basis } } },
+      ]);
+      expect(await details.getByText('Investigate the selected statement')).toBeTruthy();
+      expect(handoff).not.toHaveBeenCalled();
+      await act(async () => { await actionControl.press('Send brief'); });
+      expect(handoff).toHaveBeenCalledOnce();
+      expect(handoff).toHaveBeenLastCalledWith(expect.objectContaining({
+        action: 'session.input.handoff',
+        input: expect.objectContaining({ delivery: 'compose', sessionChoice: expect.objectContaining({ kind: 'existing' }) }),
+      }));
+      await act(async () => { await actionControl.press('Ask for investigation'); });
+      expect(handoff).toHaveBeenCalledTimes(2);
+      expect(handoff).toHaveBeenLastCalledWith(expect.objectContaining({
+        action: 'session.input.handoff',
+        input: expect.objectContaining({ delivery: 'compose', sessionChoice: { kind: 'new' },
+          input: expect.objectContaining({ text: 'Investigate the selected statement', forgeEvidence: expect.any(Object) }) }),
+      }));
+      await act(async () => { await details.press(await details.getByRole('button', { name: 'Open in Console' })); });
+      expect(openSurface).toHaveBeenCalledWith(expect.objectContaining({
+        view: expect.objectContaining({ localId: WORKBENCH_PAGE_VIEW_ID }), subPath: expect.stringContaining('console'),
+      }));
     } finally {
       await details.dispose();
     }

@@ -8,6 +8,14 @@ import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACES_LIST_ACTI
     DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import type { SessionInputDeliveryPlanV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 
+export function databaseFindingBaseline(finding: DatabaseFindingV1): DatabaseFindingBaselineV1 {
+    return {
+        v: finding.v, evidenceIdentity: finding.evidenceIdentity, sourceRef: finding.sourceRef,
+        sourceScope: finding.sourceScope, kind: finding.kind, observedWindow: finding.observedWindow,
+        coverage: finding.coverage, summary: finding.summary, basis: finding.verification.basis,
+    };
+}
+
 /** The shared Session delivery host consumes the same plan as Triage. */
 export function planDatabaseFindingSessionInputV1(finding: DatabaseFindingV1 | DatabaseTaskEvidenceV1, baseline?: DatabaseFindingBaselineV1): SessionInputDeliveryPlanV1 {
     const brief = buildDatabaseFindingBriefV1(finding, baseline);
@@ -55,17 +63,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
                 author: { kind: 'process' }, text: JSON.stringify({ task: finding, ...(finding.kind === 'add_telemetry' ? { browserSetup: browserExceptionSetupReferenceV1 } : {}) }) }] },
         };
     }
-    const before: DatabaseFindingBaselineV1 = baseline ?? {
-        v: finding.v,
-        evidenceIdentity: finding.evidenceIdentity,
-        sourceRef: finding.sourceRef,
-        sourceScope: finding.sourceScope,
-        kind: finding.kind,
-        observedWindow: finding.observedWindow,
-        coverage: finding.coverage,
-        summary: finding.summary,
-        basis: finding.verification.basis,
-    };
+    const before = baseline ?? databaseFindingBaseline(finding);
     const detail = {
         evidenceIdentity: finding.evidenceIdentity,
         sourceRef: finding.sourceRef,

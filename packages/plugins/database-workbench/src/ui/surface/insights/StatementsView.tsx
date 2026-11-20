@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import {
   CapacityBar,
   Collection,
@@ -179,6 +180,7 @@ export function StatementsView(
     views: readonly StatementView[];
     complete: boolean;
     loading: boolean;
+    target: DatabaseTargetV1;
     onOpenConsole?: (sql: string) => void;
   }>,
 ) {
@@ -274,6 +276,7 @@ export function StatementsView(
           open ? (
             <StatementDetail
               view={open}
+              target={props.target}
               {...(props.onOpenConsole
                 ? { onOpenConsole: props.onOpenConsole }
                 : {})}

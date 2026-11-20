@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseDescriptorV1, DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   ErrorState,
   FreshnessLine,
@@ -127,9 +127,9 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const [tab, setTab] = React.useState<InsightsTab>('statements');
   const statements = useInsightsStatements(props.targetKey);
   const openConsole = React.useCallback(
-    (sql: string) => {
-      instance.console(props.targetKey).setText(sql);
-      void location.navigate({ mode: 'console' });
+    async (sql: string) => {
+      await instance.console(props.targetKey).setText(sql);
+      await location.navigate({ mode: 'console' });
     },
     [instance, location, props.targetKey],
   );
@@ -187,6 +187,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
             : {})}
         >
           <StatementsPanel
+            descriptor={descriptor}
             statements={statements}
             onOpenConsole={openConsole}
           />
@@ -217,6 +218,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
 function StatementsPanel(
   props: Readonly<{
     statements: ReturnType<typeof useInsightsStatements>;
+    descriptor: DatabaseDescriptorV1;
     onOpenConsole: (sql: string) => void;
   }>,
 ) {
@@ -249,6 +251,7 @@ function StatementsPanel(
       ) : null}
       <StatementsView
         views={views}
+        target={props.descriptor.target}
         complete={available?.completeness.complete === true}
         loading={stats.status === 'loading'}
         onOpenConsole={props.onOpenConsole}

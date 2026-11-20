@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { useDatabaseInsights, useWorkbenchInstance } from '../../hooks.js';
 import type { WorkbenchLaunchInput } from '../mount.js';
+import { openWorkbenchPage } from '../openWorkbench.js';
 import { formatPercent } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
 import { InsightsPane, statementsFacts, useInsightsStatements } from './InsightsPane.js';
@@ -179,6 +180,8 @@ export function InsightsDetailsTab(props: Readonly<{ context: RenderContext; tar
 
 function StatementDetailsTab(props: Readonly<{ context: RenderContext; targetKey: string; statementKey: string }>) {
   const translate = usePluginTranslation();
+  const instance = useWorkbenchInstance();
+  const descriptor = instance.target(props.targetKey);
   const statementKey = props.statementKey;
   const stats = useDatabaseInsights(
     props.targetKey,
@@ -230,5 +233,8 @@ function StatementDetailsTab(props: Readonly<{ context: RenderContext; targetKey
       />
     );
   }
-  return <StatementDetail view={view} />;
+  return <StatementDetail view={view} target={descriptor.target} onOpenConsole={async sql => {
+    await instance.console(props.targetKey).setText(sql);
+    await openWorkbenchPage(props.context.hostApi, descriptor, { mode: 'console' });
+  }} />;
 }
