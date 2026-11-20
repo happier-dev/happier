@@ -126,7 +126,6 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                             invalid={error !== null}
                             autoFocus={!policy.disabled && props.currentEndpoint == null}
                             autoCapitalize="none"
-                            autoCorrect={false}
                             keyboardType="url"
                             returnKeyType="go"
                         />
