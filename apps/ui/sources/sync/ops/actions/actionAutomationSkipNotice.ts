@@ -8,8 +8,9 @@ import { t } from '@/text';
 export function presentActionAutomationSkipNotice(result: Pick<ActionExecuteResult, 'automationNotices'>): void {
     const skipped = result.automationNotices?.filter(notice => notice.code === 'action_automation_skipped');
     if (!skipped?.length) return;
-    const message = skipped.map(notice => formatAutomaticCheckSkipNotice({
+    // Every skip names "a check", so checks skipped for the same reason read as one line, said once.
+    const message = [...new Set(skipped.map(notice => formatAutomaticCheckSkipNotice({
         reason: readActionAutomationSkipReasonV1(notice), workflow: t('workflows.triggers.checks.aCheck'),
-    })).join('\n');
+    })))].join('\n');
     Modal.alert(t('workflows.triggers.section.title'), message, [{ text: t('common.ok'), style: 'cancel' }]);
 }
