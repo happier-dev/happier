@@ -60,7 +60,7 @@ export const projectCreateAction: AccountAction = {
     let response: HttpResponse;
     try {
       response = await vercelRequest({ http, signal: context.signal, now: Date.now },
-        vercelEndpoint('/v11/projects', input.providerAccountId), 'POST',
+        vercelEndpoint('/v11/projects', input.providerAccountId), ['write', 'POST'],
         { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ name: input.resourceName,
           ...(input.sourceMethod === 'gitIntegration' ? { gitRepository: { type: input.repository!.kind, repo: input.repository!.repository } } : {}) })) }, 'link', input.repository?.kind);
     } catch (error) { if (isPluginError(error)) throw error; return unknownOutcome(); }
@@ -86,7 +86,7 @@ export const projectCreateAction: AccountAction = {
         // The project is already acknowledged. Branch failure must never discard that identity or repeat Create.
         try {
           const branch = await vercelRequest({ http, signal: context.signal, now: Date.now },
-            vercelEndpoint(`/v9/projects/${encodeURIComponent(body.id)}/branch`, input.providerAccountId), 'PATCH',
+            vercelEndpoint(`/v9/projects/${encodeURIComponent(body.id)}/branch`, input.providerAccountId), ['write', 'PATCH'],
             { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ branch: requestedBranch })) }, 'branch');
           if (branch.status < 200 || branch.status >= 300) throw new PluginError({ code: 'provider_request_failed',
             failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: null, httpStatus: branch.status } });

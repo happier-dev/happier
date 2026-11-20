@@ -387,6 +387,7 @@
 | `.` | `parseJsonLine` | value | any |
 | `.` | `parseQualifiedPluginContributionKey` | value | any |
 | `.` | `parseTimestampMs` | value | any |
+| `.` | `projectDeploymentTargetHttpFailureV1` | value | any |
 | `.` | `projectPluginFailureText` | value | any |
 | `.` | `readPluginErrorRequestIdV1` | value | any |
 | `.` | `readString` | value | any |

@@ -6,7 +6,7 @@ import type {
     DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
     DatabaseTargetsListResultV1,
 } from './database/index.js';
-import { PluginError } from './errors.js';
+import { isPluginError, PluginError, projectActionFailureCauseV1 } from './errors.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { DeploymentDataParentBranchRefV1ProtocolSchema as canonicalParentBranch,
@@ -39,6 +39,13 @@ export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protoc
 export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
     type DeploymentDomainTunnelOwnershipV1, type DeploymentDomainTunnelDispositionV1 }
     from '@happier-dev/protocol/deployments/deploymentDomainV1';
+
+/** Response limits are detected after sending the request. A write may already have taken effect. */
+export function projectDeploymentTargetHttpFailureV1(error: unknown, intent: 'read' | 'write', phase: string): unknown {
+    if (intent !== 'write' || !isPluginError(error) || error.code !== 'plugin_fetch_response_too_large') return error;
+    return new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
+        failureCause: projectActionFailureCauseV1(error, `deployment.provider.${phase}`) });
+}
 
 /** A Domain removal settles from the provider's absence fact, including a lost DELETE response. */
 export async function settleDeploymentTargetDomainRemovalV1(input: Readonly<{

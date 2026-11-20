@@ -143,7 +143,7 @@ export async function deployWorker(input: Pick<DeploymentTargetDeployInputV1, 's
   if (input.sourceIntent.kind !== 'repository') return failure('unsupported_action', 'source');
   if (worker.repositoryAccess.status !== 'ready') return failure('needsGitAccess', 'source');
   const reply = await request(context, worker.providerIdentity.providerAccountId,
-    `/builds/triggers/${encodeURIComponent(worker.triggerUuid)}/builds`, 'send', 'POST', { commit_hash: input.sourceIntent.sha });
+    `/builds/triggers/${encodeURIComponent(worker.triggerUuid)}/builds`, 'send', ['write', 'POST'], { commit_hash: input.sourceIntent.sha });
   return 'code' in reply ? reply : observation(reply.value, worker, context, 'send');
 }
 
@@ -155,7 +155,7 @@ export async function cancelWorker(input: WorkerObservation, context: WorkerCont
   if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'cancel');
   const reply = await request(context, input.providerIdentity.providerAccountId,
-    `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', 'PUT');
+    `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', ['write', 'PUT']);
   if ('code' in reply) return reply;
   return observation(reply.value, input, context, 'cancel', input.providerDeploymentId);
 }

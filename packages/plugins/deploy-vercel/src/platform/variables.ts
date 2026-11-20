@@ -49,7 +49,7 @@ function metadata(row: unknown, input: Read): DeploymentTargetObservedVariableV1
 }
 async function readSnapshot(input: Read, ctx: PluginAccountActionContext) {
   const url = vercelEndpoint(`/v10/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}/env`, input.providerIdentity.providerAccountId);
-  const response = await vercelRequest(io(ctx), url, 'GET');
+  const response = await vercelRequest(io(ctx), url, ['read', 'GET']);
   if (response.status < 200 || response.status >= 300) throw new PluginError({ code: 'provider_request_failed' });
   const body = parsed(response);
   const rows = record(body) && Array.isArray(body.envs) ? body.envs : Array.isArray(body) ? body : null;
@@ -83,7 +83,7 @@ async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<Deplo
           ...(environment.kind === 'preview' && environment.gitBranch !== undefined ? { gitBranch: environment.gitBranch } : {}) }) };
       const url = new URL(vercelEndpoint(`/v10/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}/env`, input.providerIdentity.providerAccountId));
       url.searchParams.set('upsert', 'true');
-      const response = await vercelRequest(io(ctx), url.href, 'POST', { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(content)) });
+      const response = await vercelRequest(io(ctx), url.href, ['write', 'POST'], { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(content)) });
       if (response.status < 200 || response.status >= 300) { planned.fail(key, 'provider_request_failed'); continue; }
       const body = parsed(response);
       const created = record(body) ? metadata(body.created, input) : null;
@@ -104,9 +104,9 @@ async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<Deplo
       // PATCH's optional value keeps other environments' existing secret material.
       // Only a row belonging solely to this selected scope can be deleted whole.
       const response = target.length || customEnvironmentIds.length
-        ? await vercelRequest(io(ctx), url.href, 'PATCH', { headers: { 'content-type': 'application/json' },
+        ? await vercelRequest(io(ctx), url.href, ['write', 'PATCH'], { headers: { 'content-type': 'application/json' },
             body: new TextEncoder().encode(JSON.stringify({ target, customEnvironmentIds })) })
-        : await vercelRequest(io(ctx), url.href, 'DELETE');
+        : await vercelRequest(io(ctx), url.href, ['write', 'DELETE']);
       if (response.status < 200 || response.status >= 300) { planned.fail(key, 'provider_request_failed'); continue; }
       planned.acknowledgeRemove(key);
     } catch (error) {

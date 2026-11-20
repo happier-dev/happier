@@ -37,7 +37,7 @@ async function records(input: DeploymentDomainDnsRecordInputV1, context: PluginA
   const missing = input.values.filter(value => !configured.has(value));
   if (!write) return { kind: missing.length === 0 ? 'configured' : 'pending' };
   for (const content of missing) {
-    const reply = await requestZone(io, input.zoneId, '/dns_records', 'POST', {
+    const reply = await requestZone(io, input.zoneId, '/dns_records', ['write', 'POST'], {
       name, type: input.type, content, ttl: input.ttl, proxied: false,
     });
     if ('code' in reply) {

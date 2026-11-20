@@ -37,7 +37,7 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   const http = context.services.http;
   if (!http) throw new PluginError({ code: 'client_required' });
   const reply = await request({ http, signal: context.signal, now: Date.now }, input.providerAccountId,
-    product === 'pages' ? '/pages/projects' : '/workers/workers', 'link', 'POST',
+    product === 'pages' ? '/pages/projects' : '/workers/workers', 'link', ['write', 'POST'],
     { name: input.resourceName, ...(product === 'pages' ? { production_branch: input.productionBranch,
       ...(source ? { source } : {}) } : {}) });
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }), { phase: `deployment.cloudflare.${reply.phase}`,

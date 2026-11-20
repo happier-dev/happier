@@ -31,7 +31,7 @@ export const buildLogsAction = {
     // Vercel documents -1 as all available logs; do not silently accept its default limit.
     url.searchParams.set('limit', '-1');
     if (input.ref) url.searchParams.set('name', input.ref);
-    const response = await vercelRequest({ http: context.services.http, signal: context.signal, now: Date.now }, url.href, 'GET');
+    const response = await vercelRequest({ http: context.services.http, signal: context.signal, now: Date.now }, url.href, ['read', 'GET']);
     if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403
       ? 'deployment_access_denied' : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed');
     let events: unknown;

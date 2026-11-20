@@ -54,7 +54,7 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   }
   if (prepared.assets) {
     const manifest = Object.fromEntries(prepared.assets.files.map(asset => [asset.url, { hash: asset.hash, size: asset.size }]));
-    const session = await request(io, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/assets-upload-session`, 'send', 'POST', { manifest });
+    const session = await request(io, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/assets-upload-session`, 'send', ['write', 'POST'], { manifest });
     if ('code' in session) throw withActionFailureDiagnostic(new PluginError({ code: session.code, retryable: session.retryable, details: { phase: session.phase },
       failureCause: projectActionFailureCauseV1(session, `deployment.cloudflare.${session.phase}`) }),
       { phase: `deployment.cloudflare.${session.phase}`, causeKind: 'native_failure', error: session });
@@ -103,7 +103,7 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   }
   const reply = await request(io, accountId,
     previewRoot ? `${previewRoot}/deployments` : `/workers/scripts/${encodeURIComponent(scriptName)}?excludeScript=true&bindings_inherit=strict`,
-    'send', previewRoot ? 'POST' : 'PUT', encoded.body, encoded.contentType);
+    'send', ['write', previewRoot ? 'POST' : 'PUT'], encoded.body, encoded.contentType);
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
     failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
     { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });

@@ -353,7 +353,7 @@ export { readTrimmedString } from './sessions/fileStores/records.js';
 export { redactBugReportSensitiveText } from './diagnostics.js';
 export { resolveUsageCalendarInstant } from './usage.js';
 export { selectCurrentTargetedContribution } from './services/targetedContributions.js';
-export { settleDeploymentTargetDomainRemovalV1 } from './deploymentTargets.js';
+export { projectDeploymentTargetHttpFailureV1, settleDeploymentTargetDomainRemovalV1 } from './deploymentTargets.js';
 export { summarizeUsageRunLengthObservations } from './usage.js';
 export { tailscaleMembershipPrograms } from './machineSetup.js';
 export { trimBugReportTextToMaxBytes } from './diagnostics.js';

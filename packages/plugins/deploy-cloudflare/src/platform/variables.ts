@@ -133,7 +133,7 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
       contentType = encoded.headers.get('content-type')!;
       payload = new Uint8Array(await encoded.arrayBuffer());
     }
-    const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path, 'send', method, payload, contentType)
+    const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path, 'send', ['write', method], payload, contentType)
       .catch((error: unknown) => {
         // A dispatched write outcome must not discard earlier successful ownership.
         // Host admission/custody errors retain their invocation-level semantics.

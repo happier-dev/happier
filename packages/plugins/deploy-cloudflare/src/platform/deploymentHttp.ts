@@ -1,11 +1,12 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
-import { isPluginError, PluginError, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, projectDeploymentTargetHttpFailureV1, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpRequest, HttpService } from '@happier-dev/plugin-sdk/http';
 import { isObject } from '../connectedAccounts/probe.js';
 
 export type DeploymentContext = Readonly<{ http: Pick<HttpService, 'request'>; signal: AbortSignal; now(): number }>;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 type Reply = Readonly<{ value: unknown; resultInfo?: unknown }> | DeploymentTargetRoleFailureV1;
+type Operation = readonly [intent: 'read' | 'write', method: HttpMethod];
 const origin = 'https://api.cloudflare.com';
 
 export function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase,
@@ -19,58 +20,57 @@ function accountRoot(accountId: string) { return `${origin}/client/v4/accounts/$
 
 /** The existing HTTP owner owns custody/redirects. No raw credentials or retries. */
 export async function request(context: DeploymentContext, accountId: string, path: string, phase: Phase,
-  method: HttpMethod = 'GET', payload?: unknown, contentType = 'application/json'): Promise<Reply> {
+  operation: Operation = ['read', 'GET'], payload?: unknown, contentType = 'application/json'): Promise<Reply> {
+  const [intent, method] = operation;
   return send(context, { url: `${accountRoot(accountId)}${path}`, method, redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method, headerNames: ['authorization'] },
     ...(payload === undefined ? {} : { headers: { 'content-type': contentType },
       body: payload instanceof Uint8Array ? payload : new TextEncoder().encode(JSON.stringify(payload)) }),
-  }, phase, method === 'DELETE');
+  }, intent, phase, method === 'DELETE');
 }
 
 /** Account choices use the same credential binding and response owner as account-scoped reads. */
 export async function requestAccounts(context: DeploymentContext, query: string): Promise<Reply> {
   return send(context, { url: `${origin}/client/v4/accounts${query}`, method: 'GET', redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method: 'GET', headerNames: ['authorization'] },
-  }, 'link');
+  }, 'read', 'link');
 }
 
 /** Zone-scoped DNS uses the same Account purpose and provider response owner. */
 export async function requestZone(context: DeploymentContext, zoneId: string, path: string,
-  method: HttpMethod = 'GET', payload?: unknown): Promise<Reply> {
+  operation: Operation = ['read', 'GET'], payload?: unknown): Promise<Reply> {
+  const [intent, method] = operation;
   return send(context, { url: `${origin}/client/v4/zones/${encodeURIComponent(zoneId)}${path}`, method, redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method, headerNames: ['authorization'] },
     ...(payload === undefined ? {} : { headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify(payload)) }),
-  }, method === 'GET' ? 'observe' : 'send');
+  }, intent, intent === 'read' ? 'observe' : 'send');
 }
 
 /** Project-issued upload JWTs use their own header, never the Account token binding. */
 export async function requestPagesAssets(context: DeploymentContext, path: 'check-missing' | 'upload' | 'upsert-hashes', jwt: string, payload: unknown): Promise<Reply> {
+  const intent = path === 'check-missing' ? 'read' : 'write';
   return send(context, { url: `${origin}/client/v4/pages/assets/${path}`, method: 'POST', redirect: 'error',
     headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
-    body: new TextEncoder().encode(JSON.stringify(payload)) }, 'send', path !== 'check-missing');
+    body: new TextEncoder().encode(JSON.stringify(payload)) }, intent, 'send', intent === 'write');
 }
 
 /** Worker asset sessions issue a separate upload JWT; never substitute the Account credential. */
 export async function requestWorkerAssets(context: DeploymentContext, accountId: string, jwt: string,
   body: Uint8Array, contentType: string): Promise<Reply> {
   return send(context, { url: `${accountRoot(accountId)}/workers/assets/upload?base64=true`, method: 'POST', redirect: 'error',
-    headers: { authorization: `Bearer ${jwt}`, 'content-type': contentType }, body }, 'send');
+    headers: { authorization: `Bearer ${jwt}`, 'content-type': contentType }, body }, 'write', 'send');
 }
 
-async function send(context: DeploymentContext, input: HttpRequest, phase: Phase, acknowledgementOnly = false): Promise<Reply> {
+async function send(context: DeploymentContext, input: HttpRequest, intent: Operation[0], phase: Phase, acknowledgementOnly = false): Promise<Reply> {
   context.signal.throwIfAborted();
-  const mutation = input.method !== 'GET';
+  const mutation = intent === 'write';
   let response;
   try {
     response = await context.http.request(input, { signal: context.signal });
   } catch (error) {
-    // The body limit is raised after a response arrives, so it cannot prove a write failed.
-    if (mutation && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
-      throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
-        failureCause: projectActionFailureCauseV1(error, `deployment.provider.${phase}`) });
-    }
-    if (isPluginError(error)) throw error;
+    const settledError = projectDeploymentTargetHttpFailureV1(error, intent, phase);
+    if (isPluginError(settledError)) throw settledError;
     if (phase === 'teardown') throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
       failureCause: projectActionFailureCauseV1(error, 'deployment.provider.teardown') });
     // A locally stopped request cannot prove that a sent build/cancel did not run.

@@ -37,7 +37,7 @@ function continuation(url: URL, cursor?: string) {
 }
 async function read(url: URL, context: PluginAccountActionContext): Promise<unknown> {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
-  const response = await vercelRequest({ http: context.services.http, signal: context.signal, now: Date.now }, url.href, 'GET');
+  const response = await vercelRequest({ http: context.services.http, signal: context.signal, now: Date.now }, url.href, ['read', 'GET']);
   if (response.status < 200 || response.status >= 300) throw withActionFailureDiagnostic(new PluginError({ code: response.status === 401 || response.status === 403
     ? 'deployment_access_denied' : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed',
     failureCause: projectActionFailureCauseV1(response, 'deployment.vercel.options') }), { phase: 'deployment.vercel.options', causeKind: response.status === 404 ? 'not_found'

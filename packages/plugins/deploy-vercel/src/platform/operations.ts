@@ -1,6 +1,6 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
-import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { projectDeploymentTargetHttpFailureV1, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import type {
   DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
   DeploymentTargetProviderEnvironmentV1, DeploymentTargetRepositoryAccessV1,
@@ -35,6 +35,7 @@ export type VercelProjectPreparation = Readonly<{
   gitSource?: VercelGitSource;
 }>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
+type VercelRequestOperation = readonly [intent: 'read' | 'write', method: HttpMethod];
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 
 function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase,
@@ -122,9 +123,10 @@ function endpoint(path: string, accountId: string) {
   return url.href;
 }
 
-async function send(context: VercelPlatformContext, url: string, method: HttpMethod,
+async function send(context: VercelPlatformContext, url: string, operation: VercelRequestOperation,
   content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase | 'branch', repositoryKind: Repository['kind'] = 'github') {
   context.signal.throwIfAborted();
+  const [intent, method] = operation;
   let response: HttpResponse;
   try {
     response = await context.http.request({ url, method, redirect: 'error',
@@ -133,13 +135,7 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
       ...content,
     }, { signal: context.signal });
   } catch (error) {
-    // The host raises this after receiving the provider response, so a mutation's effect is unknown.
-    if (method !== 'GET' && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
-      const operationPhase = phase ?? 'send';
-      throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: operationPhase },
-        failureCause: projectActionFailureCauseV1(error, `deployment.provider.${operationPhase}`) });
-    }
-    throw error;
+    throw projectDeploymentTargetHttpFailureV1(error, intent, phase ?? 'send');
   }
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
@@ -162,7 +158,7 @@ export { endpoint as vercelEndpoint, send as vercelRequest };
 export async function sendVercelDeploymentMutation(context: VercelPlatformContext, url: string,
   content?: Parameters<typeof send>[3], repositoryKind?: Repository['kind']): Promise<HttpResponse | DeploymentTargetRoleFailureV1> {
   let response: HttpResponse;
-  try { response = await send(context, url, 'POST', content, 'send', repositoryKind); }
+  try { response = await send(context, url, ['write', 'POST'], content, 'send', repositoryKind); }
   catch (error) {
     if (isPluginError(error)) throw error;
     return failure('outcome_unknown', 'send', { error });
@@ -171,7 +167,7 @@ export async function sendVercelDeploymentMutation(context: VercelPlatformContex
 }
 
 export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id: string, context: VercelPlatformContext) {
-  return send(context, endpoint(`/v13/deployments/${encodeURIComponent(id)}`, providerIdentity.providerAccountId), 'GET');
+  return send(context, endpoint(`/v13/deployments/${encodeURIComponent(id)}`, providerIdentity.providerAccountId), ['read', 'GET']);
 }
 function rejected(response: HttpResponse, phase: Phase): DeploymentTargetRoleFailureV1 | null {
   if (response.status >= 200 && response.status < 300) return null;
@@ -203,7 +199,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   }
   let response: HttpResponse;
   try { response = await send(context, endpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`,
-    input.providerIdentity.providerAccountId), 'GET', undefined, 'link', input.repository.kind); }
+    input.providerIdentity.providerAccountId), ['read', 'GET'], undefined, 'link', input.repository.kind); }
   catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
@@ -238,7 +234,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     url.searchParams.set('target', 'production');
     url.searchParams.set('limit', '1');
     let production: HttpResponse;
-    try { production = await send(context, url.href, 'GET'); }
+    try { production = await send(context, url.href, ['read', 'GET']); }
     catch (error) {
       if (isPluginError(error)) throw error;
       context.signal.throwIfAborted();
@@ -272,7 +268,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     // Qualify the identity using the namespace and repository id below.
     url.searchParams.set('query', linked.repo);
     let access: HttpResponse;
-    try { access = await send(context, url.href, 'GET', undefined, 'link', input.repository.kind); }
+    try { access = await send(context, url.href, ['read', 'GET'], undefined, 'link', input.repository.kind); }
     catch (error) {
       if (isPluginError(error)) throw error;
       context.signal.throwIfAborted();
@@ -373,7 +369,7 @@ type UploadSelection = Pick<VercelProjectPreparation, 'providerIdentity' | 'prov
 export async function uploadVercelSourceFile(bytes: Uint8Array, sha: string,
   accountId: string, context: VercelPlatformContext): Promise<DeploymentTargetRoleFailureV1 | null> {
   try {
-    return rejected(await send(context, endpoint('/v2/files', accountId), 'POST', {
+    return rejected(await send(context, endpoint('/v2/files', accountId), ['write', 'POST'], {
       headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength), 'x-vercel-digest': sha },
       body: bytes,
     }), 'source');
@@ -425,7 +421,7 @@ export async function cancelVercelDeployment(input: ObservationInput, context: V
   let response: HttpResponse;
   try {
     response = await send(context, endpoint(`/v12/deployments/${encodeURIComponent(input.providerDeploymentId)}/cancel`,
-      input.providerIdentity.providerAccountId), 'PATCH');
+      input.providerIdentity.providerAccountId), ['write', 'PATCH']);
   } catch (error) {
     if (isPluginError(error)) {
       // Vercel's documented terminal-400 is reconciled by the existing exact read.

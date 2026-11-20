@@ -38,7 +38,7 @@ async function readTrafficResponse(read: () => Promise<HttpResponse>, context: V
 export async function observeVercelTraffic(input: Selection, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   if (!input.providerDeploymentId) return fail('outcome_unknown');
   const url = vercelEndpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`, input.providerIdentity.providerAccountId);
-  const response = await readTrafficResponse(() => vercelRequest(context, url, 'GET'), context, 'observe');
+  const response = await readTrafficResponse(() => vercelRequest(context, url, ['read', 'GET']), context, 'observe');
   let project: unknown;
   try { project = JSON.parse(new TextDecoder().decode(response.body)); } catch { return fail('provider_response_invalid'); }
   if (!object(project) || project.id !== input.providerIdentity.providerResourceId || project.accountId !== input.providerIdentity.providerAccountId) return fail('provider_response_invalid');

@@ -37,7 +37,7 @@ async function changeTraffic(input: DeploymentTargetRollbackInputV1, context: De
   }
   const providerDeploymentId = uploadedWorkerReference(versionId);
   // Do not force past Cloudflare's changed-secret/binding refusal.
-  const reply = await request(context, accountId, `${scriptRoot}/deployments`, 'send', 'POST',
+  const reply = await request(context, accountId, `${scriptRoot}/deployments`, 'send', ['write', 'POST'],
     { strategy: 'percentage', versions: [{ version_id: versionId, percentage: 100 }] });
   if ('code' in reply) return reply;
   const value = reply.value;

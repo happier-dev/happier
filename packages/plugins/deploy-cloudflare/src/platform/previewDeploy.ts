@@ -86,7 +86,7 @@ export async function deployPreview(input: Pick<DeploymentTargetDeployInputV1, '
   if (preview.repositoryAccess.status !== 'ready') return failure('needsGitAccess', 'source');
   const reply = await request(context, preview.accountId,
     `/builds/workers/${encodeURIComponent(preview.workerTag)}/previews/${encodeURIComponent(preview.previewId)}/builds`,
-    'send', 'POST', { commit_hash: input.sourceIntent.sha, branch: preview.gitBranch });
+    'send', ['write', 'POST'], { commit_hash: input.sourceIntent.sha, branch: preview.gitBranch });
   return 'code' in reply ? reply : observation(reply.value, preview, context, 'send');
 }
 
@@ -95,7 +95,7 @@ export async function cancelPreview(input: Observation, preview: PreviewDeployme
   context.signal.throwIfAborted();
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'cancel');
   const reply = await request(context, preview.accountId,
-    `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', 'PUT');
+    `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', ['write', 'PUT']);
   if ('code' in reply) return reply;
   return observation(reply.value, preview, context, 'cancel', input.providerDeploymentId);
 }

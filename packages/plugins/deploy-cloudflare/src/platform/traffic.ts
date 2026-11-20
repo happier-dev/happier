@@ -20,7 +20,7 @@ export const pagesTrafficActions = {
       if (!input.preparedNative) return pagesResult(failure('deployment_content_unavailable', 'send'));
       const io = pagesIo(context), providerDeploymentId = input.priorDeployment.providerDeploymentId;
       const reply = await request(io, input.providerIdentity.providerAccountId,
-        `/pages/projects/${encodeURIComponent(input.preparedNative.projectName)}/deployments/${encodeURIComponent(providerDeploymentId)}/rollback`, 'send', 'POST');
+        `/pages/projects/${encodeURIComponent(input.preparedNative.projectName)}/deployments/${encodeURIComponent(providerDeploymentId)}/rollback`, 'send', ['write', 'POST']);
       if ('code' in reply) return pagesResult(reply);
       const result = pagesDeploymentResult(reply.value, { ...input, providerDeploymentId }, io, 'send');
       return pagesResult('code' in result ? failure('outcome_unknown', 'send') : result);

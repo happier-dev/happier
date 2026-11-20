@@ -186,7 +186,8 @@ it('offers an optional production branch only in the Git Create form', () => {
   expect(upload.some(field => field.path === 'productionBranch')).toBe(false);
 });
 
-it('deploys the reviewed commit to a project it created with Git, as the live first deploy requires', async () => {
+it.each(['acknowledged', 'oversized'] as const)('settles the reviewed first Git deploy with a %s reply', async reply => {
+  const { PluginError } = await import('@happier-dev/plugin-sdk');
   // Live shapes: COR4B-VERCEL-1115 create-git-input.json (Create) → deploy-agent-1.json refused
   // deployment_content_unavailable; the first native deploy then needs Vercel's documented auto-detection opt-in.
   const liveRepository = { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' };
@@ -200,6 +201,7 @@ it('deploys the reviewed commit to a project it created with Git, as the live fi
         accountId: 'team_exact', name: 'cor4b-git-1115', link: liveCreatedProjectGitLink });
       if (request.method === 'PATCH') return json(200, { id: 'prj_created' });
       if (request.method === 'POST' && url.pathname === '/v13/deployments') {
+        if (reply === 'oversized') throw new PluginError({ code: 'plugin_fetch_response_too_large', message: 'private response contents' });
         return url.searchParams.get('skipAutoDetectionConfirmation') === '1'
           ? json(200, { id: 'dpl_first', projectId: 'prj_created', readyState: 'QUEUED' })
           : json(400, liveMissingProjectSettingsRefusal);
@@ -214,13 +216,17 @@ it('deploys the reviewed commit to a project it created with Git, as the live fi
       preparedNative: { gitSource: { type: 'github', repoId: '1424792902' } } });
     const { sourceMethod: _method, ...content } = created as Record<string, unknown>;
     const sha = 'a'.repeat(40);
-    expect(await kit.invokeAction('deploy', { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 2,
+    const deploymentResult = kit.invokeAction('deploy', { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 2,
       credentialRef, ...content, targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'deployment',
       expectedDeploymentRevision: 1, actionOperationId: 'operation', sourceMethod: 'gitIntegration',
       sourceIntent: { kind: 'repository', sha, projectSourceId: 'source', sourceRevision: 1,
-        compose: { path: 'compose.yaml', profiles: [], services: [] } } })).toMatchObject({ state: 'queued',
-      providerDeploymentId: 'dpl_first' });
-    const deployment = requests.find(request => new URL(request.url).pathname === '/v13/deployments')!;
+        compose: { path: 'compose.yaml', profiles: [], services: [] } } });
+    if (reply === 'oversized') await expect(deploymentResult).rejects.toMatchObject({ code: 'outcome_unknown', retryable: false,
+      data: { failureCause: { errorCode: 'plugin_fetch_response_too_large' } } });
+    else await expect(deploymentResult).resolves.toMatchObject({ state: 'queued', providerDeploymentId: 'dpl_first' });
+    const deployments = requests.filter(request => new URL(request.url).pathname === '/v13/deployments');
+    expect(deployments).toHaveLength(1);
+    const deployment = deployments[0]!;
     expect(JSON.parse(new TextDecoder().decode(deployment.body))).toMatchObject({ project: 'prj_created',
       gitSource: { type: 'github', repoId: '1424792902', ref: sha, sha } });
   } finally { await kit.dispose(); }

@@ -23,9 +23,9 @@ function resourcePath(input: Selection): string {
   return `${root}/previews/${encodeURIComponent(previewId)}`;
 }
 
-async function absentAfterRequest(input: Selection, context: DeploymentContext, path: string, method: 'GET' | 'DELETE'): Promise<boolean> {
+async function absentAfterRequest(input: Selection, context: DeploymentContext, path: string, operation: readonly ['read', 'GET'] | readonly ['write', 'DELETE']): Promise<boolean> {
   try {
-    const reply = await request(context, input.providerIdentity.providerAccountId, path, 'teardown', method);
+    const reply = await request(context, input.providerIdentity.providerAccountId, path, 'teardown', operation);
     if ('code' in reply) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' },
       failureCause: projectActionFailureCauseV1(reply, 'deployment.cloudflare.teardown') });
     return false;
@@ -41,8 +41,8 @@ async function absentAfterRequest(input: Selection, context: DeploymentContext, 
 export async function teardownWorker(input: Selection, context: DeploymentContext, observeOnly = false): Promise<DeploymentTargetRoleResultV1> {
   const path = resourcePath(input);
   let absent = false;
-  if (!observeOnly) absent = await absentAfterRequest(input, context, path, 'DELETE');
-  if (!absent) absent = await absentAfterRequest(input, context, path, 'GET');
+  if (!observeOnly) absent = await absentAfterRequest(input, context, path, ['write', 'DELETE']);
+  if (!absent) absent = await absentAfterRequest(input, context, path, ['read', 'GET']);
   if (!absent) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' } });
   return { v: 1, state: 'succeeded', providerResourceAbsent: true, observedAtMs: context.now() };
 }

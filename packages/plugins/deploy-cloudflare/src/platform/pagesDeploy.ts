@@ -38,7 +38,7 @@ export async function createPagesDeployment(input: DeploymentTargetDeployInputV1
   }
   const encoded = new Response(form);
   const reply = await request(context, input.providerIdentity.providerAccountId,
-    `/pages/projects/${encodeURIComponent(input.preparedNative!.projectName)}/deployments`, 'send', 'POST',
+    `/pages/projects/${encodeURIComponent(input.preparedNative!.projectName)}/deployments`, 'send', ['write', 'POST'],
     new Uint8Array(await encoded.arrayBuffer()), encoded.headers.get('content-type')!);
   if ('code' in reply) return reply;
   if (!isObject(reply.value) || typeof reply.value.id !== 'string') return failure('outcome_unknown', 'send');

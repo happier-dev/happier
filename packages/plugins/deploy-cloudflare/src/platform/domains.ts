@@ -15,9 +15,9 @@ function refuse(code: string): never {
   throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.cloudflare.domain', causeKind: 'not_found' }) : error;
 }
 async function native(context: PluginAccountActionContext, input: DeploymentTargetDomainInputV1,
-  path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown) {
+  path: string, operation: NonNullable<Parameters<typeof request>[4]> = ['read', 'GET'], body?: unknown) {
   const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path,
-    method === 'GET' ? 'observe' : 'send', method, body);
+    operation[0] === 'read' ? 'observe' : 'send', operation, body);
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
     failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
     { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
@@ -43,7 +43,7 @@ async function pages(input: DeploymentTargetDomainInputV1, context: PluginAccoun
   const path = `${root}/domains/${encodeURIComponent(input.domain.hostname)}`;
   if (operation === 'remove') {
     await settleDeploymentTargetDomainRemovalV1({
-      remove: () => native(context, input, path, 'DELETE'),
+      remove: () => native(context, input, path, ['write', 'DELETE']),
       observeAbsent: async () => {
         try { await native(context, input, path); return false; }
         catch (error) { if (isAbsent(error)) return true; throw error; }
@@ -52,7 +52,7 @@ async function pages(input: DeploymentTargetDomainInputV1, context: PluginAccoun
     return removed(input);
   }
   const value = operation === 'add'
-    ? await native(context, input, `${root}/domains`, 'POST', { name: input.domain.hostname })
+    ? await native(context, input, `${root}/domains`, ['write', 'POST'], { name: input.domain.hostname })
     : await native(context, input, path);
   if (!isObject(value) || value.name !== input.domain.hostname || typeof value.status !== 'string') refuse('provider_response_invalid');
   const dns: DeploymentTargetDomainResultV1['dns'] = [{ type: 'CNAME', name: input.domain.hostname, value: project.subdomain }];
@@ -92,14 +92,14 @@ async function workers(input: DeploymentTargetDomainInputV1, context: PluginAcco
   };
   let row = await read();
   if (operation === 'add' && row === null) {
-    row = parseRow(await native(context, input, root, 'PUT', { hostname: input.domain.hostname, service: environment.scriptName,
+    row = parseRow(await native(context, input, root, ['write', 'PUT'], { hostname: input.domain.hostname, service: environment.scriptName,
       enabled: true, zone_id: zone.zoneId, zone_name: zone.name }));
   }
   if (operation === 'remove') {
     if (row === null) return removed(input);
     const id = row.id;
     await settleDeploymentTargetDomainRemovalV1({
-      remove: () => native(context, input, `${root}/${encodeURIComponent(id)}`, 'DELETE'),
+      remove: () => native(context, input, `${root}/${encodeURIComponent(id)}`, ['write', 'DELETE']),
       observeAbsent: async () => await read() === null,
     });
     return removed(input);

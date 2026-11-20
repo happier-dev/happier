@@ -25,13 +25,13 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   const account = input.providerIdentity.providerAccountId;
   const io = { http: ctx.services.http, signal: ctx.signal, now: () => Date.now() };
   const endpoint = vercelEndpoint(`/v9/projects/${encodeURIComponent(project)}/domains/${encodeURIComponent(hostname)}`, account);
-  async function request(url: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown) {
-    try { return await vercelRequest(io, url, method, body === undefined ? undefined
+  async function request(url: string, requestOperation: readonly ['read', 'GET'] | readonly ['write', 'POST' | 'DELETE'], body?: unknown) {
+    try { return await vercelRequest(io, url, requestOperation, body === undefined ? undefined
       : { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) }); }
     catch (error) {
       ctx.signal.throwIfAborted();
       if (isPluginError(error)) throw error;
-      return fail(method === 'GET' || operation === 'verify' ? 'provider_request_failed' : 'outcome_unknown');
+      return fail(requestOperation[0] === 'read' || operation === 'verify' ? 'provider_request_failed' : 'outcome_unknown');
     }
   }
   function check(response: Awaited<ReturnType<typeof request>>, mutation: boolean) {
@@ -49,17 +49,17 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   let response;
   let verificationFailure: PluginError | undefined;
   if (operation === 'add') {
-    response = await request(vercelEndpoint(`/v10/projects/${encodeURIComponent(project)}/domains`, account), 'POST', {
+    response = await request(vercelEndpoint(`/v10/projects/${encodeURIComponent(project)}/domains`, account), ['write', 'POST'], {
       name: hostname, ...(environment.kind === 'preview' && environment.gitBranch ? { gitBranch: environment.gitBranch } : {}),
       ...(environment.kind === 'custom' ? { customEnvironmentId: environment.id } : {}) });
     // Repeating the person's Add can recover a prior acknowledged/ambiguous creation without moving the Domain.
-    if (response.status === 400) response = await request(endpoint, 'GET');
+    if (response.status === 400) response = await request(endpoint, ['read', 'GET']);
   } else if (operation === 'verify') {
     async function verifyDomain() {
       const verifyUrl = new URL(endpoint);
       verifyUrl.pathname += '/verify';
       try {
-        const verified = await request(verifyUrl.href, 'POST');
+        const verified = await request(verifyUrl.href, ['write', 'POST']);
         if (verified.status !== 400 && verified.status !== 403) return verified;
         verificationFailure = new PluginError({ code: verified.status === 403 ? 'deployment_access_denied' : 'provider_request_failed',
           failureCause: { phase: 'deployment.vercel.domain.verify', errorClass: 'Error', errorCode: null, httpStatus: verified.status } });
@@ -69,13 +69,13 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
         verificationFailure = error;
       }
       // Missing ownership TXT is an ordinary pending Domain. Read its existing challenge without adding it again.
-      return request(endpoint, 'GET');
+      return request(endpoint, ['read', 'GET']);
     }
     response = await verifyDomain();
   } else if (operation === 'remove') {
     const readCurrent = async () => {
       try {
-        const current = await request(endpoint, 'GET');
+        const current = await request(endpoint, ['read', 'GET']);
         if (current.status === 404) return null;
         const domain = check(current, false);
         selected(domain);
@@ -88,13 +88,13 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
     if (await readCurrent() === null) return { v: 1, hostname, state: 'removed', dns: [] };
     await settleDeploymentTargetDomainRemovalV1({
       remove: async () => {
-        const removed = await request(endpoint, 'DELETE');
+        const removed = await request(endpoint, ['write', 'DELETE']);
         if (removed.status !== 404 && (removed.status < 200 || removed.status >= 300)) check(removed, true);
       },
       observeAbsent: async () => await readCurrent() === null,
     });
     return { v: 1, hostname, state: 'removed', dns: [] };
-  } else response = await request(endpoint, 'GET');
+  } else response = await request(endpoint, ['read', 'GET']);
   const domain = check(response, operation === 'add');
   selected(domain);
   if (verificationFailure && domain.verified) throw verificationFailure;
@@ -105,7 +105,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   }
   const configUrl = new URL(vercelEndpoint(`/v6/domains/${encodeURIComponent(hostname)}/config`, account));
   configUrl.searchParams.set('projectIdOrName', project);
-  const config = check(await request(configUrl.href, 'GET'), false);
+  const config = check(await request(configUrl.href, ['read', 'GET']), false);
   if (!record(config) || typeof config.misconfigured !== 'boolean') return fail('provider_response_invalid');
   if (config.misconfigured) {
     // Vercel ranks alternatives; A and CNAME cannot coexist on the same name.

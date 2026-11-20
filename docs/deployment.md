@@ -610,6 +610,12 @@ responses still require `result`. An explicit provider rejection remains
 from failure diagnostics. This decoder behavior follows the
 [Pages Assets API](https://developers.cloudflare.com/api/resources/pages/subresources/assets/).
 
+The deployment target SDK settles an oversized provider response using the
+operation's declared read or write intent. Cloudflare Pages `check-missing`
+uses POST and reports a read failure if its response exceeds the host limit.
+A write with an oversized reply retains `outcome_unknown` and the sanitized
+cause. Recovery uses the existing receipt observation.
+
 In 0.3 development, public terminal deployment settlements and failed, cancelled
 or unknown receipt-list rows use the shared failure-recovery projector. List
 recovery names the unavailable deployment result and a state-specific remedy
