@@ -72,6 +72,30 @@ describe("Team Groups (SQLite integration)", () => {
         return result.value;
     }
 
+    it("publishes only a changed Group label after authorizing each save", async () => {
+        const { team, ownerAccountId } = await teamWithOwner("Quiet Group edits");
+        const group = await createGroup(team.id, ownerAccountId, "Original");
+        const outsider = await account();
+        const readSequence = async () => (await db.account.findUniqueOrThrow({
+            where: { id: ownerAccountId }, select: { seq: true },
+        })).seq;
+        const input = {
+            teamId: team.id, actorAccountId: ownerAccountId, groupId: group.id,
+            name: plainPrivateLabel("Renamed"),
+        };
+        const before = await readSequence();
+        const update = () => inTx(tx => updateTeamGroupForActorInTx(tx, input));
+        const changed = await update();
+        expect(changed).toMatchObject({ ok: true, value: { id: group.id } });
+        expect(await readSequence() - before).toBe(1);
+        await expect(update()).resolves.toEqual(changed);
+        await expect(update()).resolves.toEqual(changed);
+        await expect(inTx(tx => updateTeamGroupForActorInTx(tx, {
+            ...input, actorAccountId: outsider.id,
+        }))).resolves.toEqual({ ok: false, error: "team_not_found" });
+        expect(await readSequence() - before).toBe(1);
+    });
+
     it("avoids a second consecutive publication-audience read when changing Group and Team membership", async () => {
         const { team, ownerAccountId } = await teamWithOwner("Membership publication cost");
         const member = await memberOf(team.id);

@@ -525,15 +525,18 @@ export async function updateTeamGroupForActorInTx(
     });
     if (labels.kind !== 'ready') return denied('invalid_team_input');
 
-    // Group labels have no server-side text uniqueness. The immutable Group ID
-    // remains the update target, so no label-collision recovery branch is needed.
-    const updated = await tx.teamGroup.update({
-        where: { id: row.id },
-        data: labels.serialized,
-        select: TEAM_GROUP_ROW_SELECT,
-    });
-
-    await publishTeamChangedInTx(tx, { teamId: input.teamId });
+    const { name, description } = labels.serialized;
+    const changed = (name !== undefined && name !== row.name)
+        || (description !== undefined && description !== row.description);
+    let updated = row;
+    if (changed) {
+        updated = await tx.teamGroup.update({
+            where: { id: row.id },
+            data: labels.serialized,
+            select: TEAM_GROUP_ROW_SELECT,
+        });
+        await publishTeamChangedInTx(tx, { teamId: input.teamId });
+    }
     return { ok: true, value: await projectGroupInTx(tx, { context, row: updated }) };
 }
 
