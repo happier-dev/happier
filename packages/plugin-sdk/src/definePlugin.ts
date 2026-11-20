@@ -940,6 +940,10 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>[number], 'id'>
         >>;
+        themes?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['themes']>[number], 'id'>
+        >>;
         registrySources?: Readonly<Record<
             PluginContributionLocalId,
             NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>[number] extends infer TSource
@@ -2376,6 +2380,7 @@ const ROLES_ADAPTER = descriptorFamilyAdapter('roles');
 const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
 const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
+const THEMES_ADAPTER = descriptorFamilyAdapter('themes');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
 const BACKUP_DESTINATIONS_ADAPTER = descriptorFamilyAdapter('backupDestinations');
 const DEPLOYMENT_TARGETS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
@@ -2611,6 +2616,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     subjectKinds: { classification: 'descriptor-only', authorKey: 'subjectKinds', inputShape: 'descriptor', adapter: SUBJECT_KINDS_ADAPTER },
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
+    themes: { classification: 'descriptor-only', authorKey: 'themes', inputShape: 'descriptor', adapter: THEMES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
     backupDestinations: { classification: 'descriptor-only', authorKey: 'backupDestinations', inputShape: 'descriptor', adapter: BACKUP_DESTINATIONS_ADAPTER },
     deploymentTargets: { classification: 'adapter', authorKey: 'deploymentTargets', inputShape: 'structured', adapter: DEPLOYMENT_TARGETS_ADAPTER },
