@@ -193,6 +193,8 @@ describe('SessionModelRunsThrough', () => {
       const value = screen.findByTestId('model-picker-runs-through:value-press');
       expect(value?.props.accessibilityLabel).toBe(button.props.accessibilityLabel);
       expect(typeof value?.props.onPress).toBe('function');
+      // On a phone the menu floats from its button rather than replacing the picker (owner 11-18 decision 2).
+      expect(screen.root.findByType(DropdownMenu).props.popoverPhonePresentation).toBe('anchored');
     } finally {
       await screen.unmount();
     }

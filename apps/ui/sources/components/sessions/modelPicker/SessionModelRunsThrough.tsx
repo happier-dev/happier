@@ -142,6 +142,8 @@ export function SessionModelRunsThrough(
         placement="bottom"
         // The trigger is an icon: the menu takes the menu width, not the button's.
         matchTriggerWidth={false}
+        // On a phone the menu floats from its button over the picker rather than replacing it (owner 11-18, decision 2).
+        popoverPhonePresentation="anchored"
         // Inside the engine popover a screen-local host would paint the menu under it (as the field select does).
         popoverPortalWebTarget="body"
         trigger={({ toggle }) => (

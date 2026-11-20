@@ -261,9 +261,10 @@ export type DropdownMenuProps = Readonly<{
     /**
      * See `Popover.phonePresentation`: `sheet` makes a form-like menu (its own footer) the shared bottom sheet
      * on a phone, named by `popoverAccessibilityLabel`; otherwise every menu is the phone `panel`, and its
-     * submenus push inside it.
+     * submenus push inside it. `anchored` keeps a short menu floating from its trigger on a phone, even inside
+     * another panel, instead of replacing that panel's content (the model picker's source menu, owner 2026-11-18).
      */
-    popoverPhonePresentation?: 'sheet' | 'panel';
+    popoverPhonePresentation?: 'sheet' | 'panel' | 'anchored';
     popoverAccessibilityLabel?: string;
     /** The phone sheet's line under its title. */
     popoverSheetSubtitle?: string;
@@ -425,7 +426,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
     // On a phone every menu is the anchored panel (owner R2): above or below its trigger, spanning the screen
     // less its gutters, with submenus pushing inside it. A desktop width or a side placement left a plain menu
     // narrow, or at the top of the screen beside a trigger near the bottom (NATIVE-SWEEP L10).
-    const phonePresentation = props.popoverPhonePresentation ?? 'panel';
+    // `anchored` is the plain anchored popover path, which leaves `Popover` without a phone presentation.
+    const requestedPhonePresentation = props.popoverPhonePresentation ?? 'panel';
+    const phonePresentation = requestedPhonePresentation === 'anchored' ? undefined : requestedPhonePresentation;
     const findMenuItem = React.useCallback((id: string) => {
         if (!props.itemSource) return menuItems.find((item) => item.id === id);
         const index = props.itemSource.indexById.get(id);

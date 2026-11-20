@@ -1260,6 +1260,26 @@ describe('DropdownMenu', () => {
     });
 });
 
+describe('DropdownMenu phone presentation', () => {
+    it('is the R2 panel on a phone by default, and the anchored floating menu when a menu asks for it', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const render = async (popoverPhonePresentation?: 'anchored') => renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: () => {},
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            ...(popoverPhonePresentation ? { popoverPhonePresentation } : {}),
+        }));
+        const panel = await render();
+        expect(panel.findByType('Popover' as any)?.props?.phonePresentation).toBe('panel');
+        // No phone presentation is the anchored popover path: it floats from its trigger and, opened inside a
+        // phone panel, never pushes into it (the Runs-through source menu, owner decision 2026-11-18).
+        const anchored = await render('anchored');
+        expect(anchored.findByType('Popover' as any)?.props?.phonePresentation).toBeUndefined();
+    });
+});
+
 describe('untitleSheetCategories', () => {
     it('drops a leading heading that repeats the sheet title', async () => {
         const { untitleSheetCategories } = await import('./DropdownMenu');
