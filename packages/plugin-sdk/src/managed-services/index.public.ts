@@ -4,6 +4,7 @@ export type { ManagedDependencyDescriptor } from './contract.js';
 export { ManagedDependencyDescriptorSchema } from './contract.js';
 export type { ManagedDependencyReady } from './contract.js';
 export type { ManagedDependencyStatus } from './contract.js';
+export { projectUnavailableManagedDependency, readManagedDependencyExecutable } from './dependencyExecutable.js';
 export type { ManagedExecutableRef } from './contract.js';
 export type { ManagedServiceAttachClientAccess } from './contract.js';
 export type { ManagedServiceClientAccess } from './contract.js';

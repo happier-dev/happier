@@ -17,6 +17,16 @@ function failure(code: 'credential_unavailable' | 'provider_unavailable' | 'inva
   return Object.assign(new Error(code), { code });
 }
 
+/** A refusal from the provider's API, after presenting the selected credential. */
+export function readMachineProvisionerCredentialRefusal(status: number | undefined): 'credential_unavailable' | undefined {
+  return status === 401 || status === 403 ? 'credential_unavailable' : undefined;
+}
+
+/** A create timeout leaves allocation unresolved. Providers may name additional ambiguous statuses. */
+export function isMachineProvisionerCreateRefusal(status: number | undefined, ambiguousStatuses: readonly number[] = []): boolean {
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && !ambiguousStatuses.includes(status);
+}
+
 async function send(
   context: HttpContext,
   request: Request,

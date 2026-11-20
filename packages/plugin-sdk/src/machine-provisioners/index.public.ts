@@ -53,8 +53,9 @@ export type {
 } from '../machineProvisioners.js';
 export type { MachineProvisionerNativeReadOutcomeV1 } from './nativeReadObservation.js';
 export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './allocationPresentation.js';
-export { observeMachineProvisionerNativeRead } from './nativeReadObservation.js';
+export { observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback } from './nativeReadObservation.js';
 export { projectMachineProvisionerActionFailure } from './actionFailure.js';
+export { createMachineProvisionerCheckPresenter } from './checkPresentation.js';
 export {
   MACHINE_PROVISIONER_DIMENSIONS_V1,
   MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1,
@@ -97,5 +98,8 @@ export {
   prepareMachineProvisionerStoredSchemas,
 } from '../machineProvisioners.js';
 
-export { createMachineProvisionerFetch, createMachineProvisionerMaterializedFetch } from './http.js';
-export { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, buildMachineProvisionerDaemonStartScript } from './guestShell.js';
+export { createMachineProvisionerFetch, createMachineProvisionerMaterializedFetch, isMachineProvisionerCreateRefusal, readMachineProvisionerCredentialRefusal } from './http.js';
+export {
+  assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, buildMachineProvisionerDaemonStartScript,
+  buildMachineProvisionerPreparationInstallScript, projectMachineProvisionerGuestCommandFailure, quoteMachineProvisionerShellArgument,
+} from './guestShell.js';

@@ -1,8 +1,42 @@
 /** @moduleRealm any */
-import { redactBugReportSensitiveText } from '../diagnostics.js';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
+import { projectPluginFailureText } from '../diagnostics.js';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type ManagedGuestCliBuildInputV1, type MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
 
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+export const quoteMachineProvisionerShellArgument = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";
+const quote = quoteMachineProvisionerShellArgument;
+
+type NativeCommandFailure = Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>;
+
+/** Pass stderr only for operations whose output is safe to excerpt. */
+export function projectMachineProvisionerGuestCommandFailure(
+  input: Readonly<{ command: NativeCommandFailure['command']; exitCode: number | null; stderr?: string | Uint8Array; stderrTruncated?: boolean }>,
+): NativeCommandFailure {
+  const stderr = (typeof input.stderr === 'string' ? input.stderr : new TextDecoder().decode(input.stderr)).trim();
+  // Project the complete retained text before bounding the excerpt.
+  const projected = stderr ? projectPluginFailureText(new Error(stderr)) : '';
+  return {
+    localCause: 'native_command_failed', command: input.command, exitCode: input.exitCode,
+    ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+    ...(input.stderrTruncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+  };
+}
+
+/** Run the supplier from the staged context and confirm its binary before setup. */
+export function buildMachineProvisionerPreparationInstallScript(input: Readonly<{
+  cli: Pick<ManagedGuestCliBuildInputV1, 'installScript' | 'binaryPath'>;
+  stageDirectory?: string;
+  readableRoot?: string;
+  setupScript?: string;
+}>): string {
+  return [
+    'set -e',
+    ...(input.stageDirectory === undefined ? [] : ['cd -- ' + quote(input.stageDirectory)]),
+    'sh -ec ' + quote(input.cli.installScript),
+    'test -x ' + quote(input.cli.binaryPath),
+    ...(input.readableRoot === undefined ? [] : ['chmod -R a+rX ' + quote(input.readableRoot)]),
+    ...(input.setupScript === undefined ? [] : ['sh -ec ' + quote(input.setupScript)]),
+  ].join('\n') + '\n';
+}
 
 /** A completed guest prerequisite can fail without making its native response malformed. */
 export function assertMachineProvisionerGuestCommandSucceeded(
@@ -11,15 +45,10 @@ export function assertMachineProvisionerGuestCommandSucceeded(
     nativeCause: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> }>) => Error,
 ): void {
   if (result.exitCode === 0 && !result.truncated) return;
-  const stderr = typeof result.stderr === 'string' ? result.stderr : new TextDecoder().decode(result.stderr);
-  // Project the complete retained text before bounding, so a credential cannot straddle the tail boundary.
-  const projected = redactBugReportSensitiveText(stderr).trim();
   throw failure({ exitCode: result.exitCode,
     ...(result.truncated === undefined ? {} : { truncated: result.truncated }),
-    nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: result.exitCode,
-      ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-      ...(result.truncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-    },
+    nativeCause: projectMachineProvisionerGuestCommandFailure({ command: 'run', exitCode: result.exitCode,
+      stderr: result.stderr, stderrTruncated: result.truncated }),
   });
 }
 

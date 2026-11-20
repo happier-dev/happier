@@ -16,3 +16,11 @@ export function observeMachineProvisionerNativeRead(
   const { kind, ...facts } = outcome;
   return { observedAt, ...facts, availability: kind === 'unknown' ? 'unavailable' : kind };
 }
+
+/** Settle delete custody only when the native readback proved absence. */
+export function projectMachineProvisionerDeleteReadback(
+  observation: Pick<MachineProvisionerObservationV1, 'availability'>,
+  unconfirmedCode: string,
+): { kind: 'confirmed' } | { kind: 'unknown'; code: string } {
+  return observation.availability === 'absent' ? { kind: 'confirmed' } : { kind: 'unknown', code: unconfirmedCode };
+}
