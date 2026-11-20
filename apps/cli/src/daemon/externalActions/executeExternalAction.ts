@@ -955,8 +955,10 @@ async function executeExternalActionRequest(input: Readonly<{
     ...(input.operationOwnerUpdate ? { operationOwnerUpdate: input.operationOwnerUpdate } : {}),
     ...(!admittedAuthorization && !input.machineAdmission && !accountPrincipal && !apiTokenPrincipal
       && !pluginCaller
-      && target.kind === 'machine' && target.machineId === input.currentMachineId
-      && input.authenticatedLocalRootCustody?.machineId === target.machineId
+      // Session placement has already proved locality through resolveTarget.
+      // It consumes the same authenticated private root as Machine placement.
+      && (target.kind === 'session' || target.machineId === input.currentMachineId)
+      && input.authenticatedLocalRootCustody?.machineId === input.currentMachineId
       && input.authenticatedLocalRootCustody.accountId === input.currentAccountId
       ? { authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({

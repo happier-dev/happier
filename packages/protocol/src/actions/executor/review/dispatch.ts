@@ -405,7 +405,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: globalThis.crypto.randomUUID(), source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
-            } },
+            } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });
           if (!started.ok) {

@@ -471,6 +471,11 @@ export function createCliWorkflowFamily(
         ...(workflowTriggers ? { triggers: workflowTriggers } : {}),
         runs: (() => {
           const owner = createWorkflowRunActionOwner({
+          ...(host.nativeAccount ? { nativeAccount: host.nativeAccount } : {}),
+          ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+          ...(params.runtimeActionMachineId && params.externalActionMachineInstallationId ? { hostExecutionTarget: {
+            machineId: params.runtimeActionMachineId, installationId: params.externalActionMachineInstallationId,
+          } } : {}),
           ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
           resolveServerProfileScopeId: identifier => isSameActionHomeId(identifier) ? actionHomeId : null,
           resolveDiscussionOrigin: async ({ origin, context }) => {

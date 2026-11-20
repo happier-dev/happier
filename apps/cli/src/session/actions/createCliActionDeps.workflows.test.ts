@@ -1225,7 +1225,7 @@ describe('createCliActionDeps workflow boundary', () => {
     });
   });
 
-  it('admits a bound Workflow into its mapped Machine workspace without an explicit target', async () => {
+  it.each([false, true])('retains the private local person through the real CLI Workflow family and mapped workspace (private root: %s)', async privateRoot => runWithServerHttpBaseUrl('https://workflow-local.test', async () => {
     const lease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }),
     });
@@ -1247,27 +1247,63 @@ describe('createCliActionDeps workflow boundary', () => {
       }) } };
       return get(url);
     });
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: resolveAccountSettingsScopeKeyForToken(workflowAccountPersonToken),
+      promptLibraryCatalog: { status: 'ready', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ revision: 1,
+        record: PromptLibraryRecordV1Schema.parse(emptyPromptLibraryRecordV1(key)) })), tombstones: [], diagnostics: [] },
+    });
+    const { getActiveAccountSettingsSnapshotLifetimeToken } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+    const lifetimeBefore = getActiveAccountSettingsSnapshotLifetimeToken();
+    const credentialCurrent = vi.fn(async () => true);
     const deps = createCliActionDeps({ token: workflowAccountPersonToken,
       credentials: { token: workflowAccountPersonToken, encryption: null, credentialProvenance: 'stored_session' },
+      serverId: 'profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://workflow-local.test', runtimeActionMachineId: 'machine-1',
+      externalActionMachineInstallationId: 'installation', isCredentialCurrent: credentialCurrent,
       sessionId, rawSession: { machineId: metadata.machineId, path: metadata.path },
       getCurrentSessionMetadata: () => metadata,
       resolveServerFeaturesSnapshot: () => enabledFeatures, mode: 'plain', ctx: null });
     const runId = '77777777-7777-4777-8777-777777777778';
-    const result = await deps.workflowAction!({ actionId: 'workflow.run.start', input: {
-      runId, source: { kind: 'inline', definition: { version: 1, blocks: [
-        { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
-      ] } },
-    }, context: { surface: 'cli', authority: 'present_user', defaultSessionId: sessionId } });
-    expect(result, JSON.stringify(result)).toMatchObject({ admission: 'created' });
+    const input = { runId, source: { kind: 'inline' as const, definition: { version: 1 as const, blocks: [
+      { kind: 'wait' as const, id: 'review', document: { text: 'Review', references: [], attachments: [] } },
+    ] } } };
+    const app = createDaemonControlApp({ machineId: 'machine-1', controlToken: 'private-token', getChildren: () => [],
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, externalActionApi: {
+        currentServerId: 'profile', currentAccountId: 'account-1', verifyPat: async () => null,
+        resolveTarget: async ({ target }) => target ?? { kind: 'machine', machineId: 'machine-1' },
+        resolvePluginExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: 'machine-1' }),
+        resolveInstallationId: () => 'installation', executor: {
+          execute: async (actionId, input, context) => createActionExecutor(deps).execute(actionId, input, { ...context,
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['cli'] } }),
+          }),
+        },
+      } });
+    onTestFinished(() => app.close());
+    if (privateRoot) {
+    const response = await app.inject({ method: 'POST', url: '/actions/root/execute',
+      headers: { 'x-happier-daemon-token': 'private-token' }, payload: {
+      actionId: 'workflow.run.start', actionRequestId: 'private-local-workflow', input,
+      target: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } } } });
+    expect(response.json(), response.body).toMatchObject({ ok: true, result: { admission: 'created' } });
+    }
+    else {
+      const result = await deps.workflowAction!({ actionId: 'workflow.run.start', input,
+        context: { surface: 'cli', authority: 'present_user', defaultSessionId: sessionId } });
+      expect(result, JSON.stringify(result)).toMatchObject({ admission: 'created' });
+    }
     const admitted = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];
     expect(admitted).toBeDefined();
     const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
       envelope: parseWorkflowStoredContentEnvelopeV1(admitted.acceptedEnvelope) });
-    expect(accepted).toMatchObject({ kind: 'available', content: { workspaceTarget: {
+    expect(accepted, JSON.stringify({ nativeCurrentnessReads: credentialCurrent.mock.calls.length,
+      heldAccountLifetimeCurrent: lifetimeBefore === getActiveAccountSettingsSnapshotLifetimeToken() })).toMatchObject({ kind: 'available', content: {
+      ...(privateRoot ? { origin: { authenticatedStarterV1: { requestRef: 'private-local-workflow', requester: { serverId: 'home', accountId: 'account-1' } } } } : {}),
+      workspaceTarget: {
       project: { machineId: 'machine-1', directory: tmpdir() },
     } } });
-  });
+  }));
 
   it('reaches Workflow storage through the public Session-bound CLI without fetching features twice', async () => {
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});

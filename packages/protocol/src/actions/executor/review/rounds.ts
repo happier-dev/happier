@@ -12,6 +12,7 @@ import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArti
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import { RpcError } from '../../../rpc/errors.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
+import type { JsonObject } from '../../../json/strictJsonValue.js';
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
@@ -107,7 +108,8 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     };
     return await invokeHostReviewedChildV1({
       parent: { actionId: inv.actionId, input }, context: inv.ctx,
-      child: { action: 'workflow.run.start', role: 'workflow.run.start', input: workflowInput },
+      // Prepared Workflow values are JSON; the existing issuer owns normalization.
+      child: { action: 'workflow.run.start', role: 'workflow.run.start', input: workflowInput as JsonObject },
       execute: (childInput, context, childId) => inv.executeHostChild(childId, childInput, context),
     });
   }

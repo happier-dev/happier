@@ -509,6 +509,9 @@ function translateStorageError(error: unknown, options: Readonly<{ unconfirmedWr
 }
 
 export type WorkflowAccountRunActionDeps = Readonly<{
+  /** Private authenticated local ingress; never derived from Action input or Run ownership. */
+  resolveLocalAuthenticatedStarter?: (context: ActionExecutorContext) => Promise<NonNullable<
+    NonNullable<WorkflowAcceptedSnapshotV1['origin']>['authenticatedStarterV1']> | undefined>;
   /** Private host custody, settled before admission; never part of Action input or stored Run content. */
   workflowRequesterCustody?: Readonly<{
     retain: (input: Readonly<{ scopeId: string; machineId: string; automationId?: string }>) => Promise<void>;
@@ -1474,10 +1477,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         && !args.context.causalPermissionAuthority && !args.context.rpcSessionAuthorization;
     // Only the receiving host's privately admitted Account custody can stamp a
     // direct person. The worker bearer, Run owner and public inputs cannot.
-    const authenticatedStarter = !args.context.actionRequestAttributionV1
+    const directPerson = !args.context.actionRequestAttributionV1
       && directPersonSurface
-      && args.context.actionCaller?.kind === 'host'
-      && callerBinding?.actionId === (combined?.parent.actionId
+      && args.context.actionCaller?.kind === 'host';
+    const authenticatedStarter = directPerson
+      ? callerBinding?.actionId === (combined?.parent.actionId
         ?? readHostReviewedChildRootV1(args.context, args.actionId, input)?.actionId ?? 'workflow.run.start')
       && 'authentication' in callerBinding
       && requesterAccountId
@@ -1486,6 +1490,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       && await requesterAccount.isCurrent()
       ? { requestRef: callerBinding.requestId,
         requester: { serverId: callerBinding.serverIdentityId, accountId: requesterAccountId } }
+      : !callerAuthorization ? await deps.resolveLocalAuthenticatedStarter?.(args.context) : undefined
       : undefined;
     let replaySnapshot = replaySource?.accepted;
     if (replaySnapshot) {
