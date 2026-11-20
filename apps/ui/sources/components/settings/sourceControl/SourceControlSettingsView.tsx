@@ -8,7 +8,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { createScmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyScmBackendIdentity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createScmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
@@ -221,7 +221,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
     const [scmGitRepoPreferredBackendQualifiedId] = useSettingMutable('scmGitRepoPreferredBackendQualifiedId');
     const { setSetting } = useSettingActionFeedback();
-    const [reviewQualityAggregation, setReviewQualityAggregation] = useSettingMutable('reviewQualityAggregation');
+    const reviewQualityAggregation = useSetting('reviewQualityAggregation');
     const [explainChanges, setExplainChanges] = useSettingMutable('scm.diffSummary.enabled');
     const [prepareAfterTurn] = useSettingMutable('scm.diffSummary.prefetch');
     const [investigateSurroundingFiles] = useSettingMutable('scm.diffSummary.investigateSurroundingFiles');
@@ -470,7 +470,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                 { id: 'median', label: t('walkthroughSettings.qualityScoreMedian') },
                             ]}
                             value={reviewQualityAggregation}
-                            onChange={setReviewQualityAggregation}
+                            onChange={value => { void setSetting(SOURCE_CONTROL_SETTINGS.settings.reviewQualityAggregation, value); }}
                         />
                     </SettingAnchor>
                 </ItemGroup>

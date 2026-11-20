@@ -159,6 +159,27 @@ describe('SourceControlSettingsView', () => {
         ]) } });
     });
 
+    it('shows why changing the Review quality preference is refused when the Settings Action is off', async () => {
+        const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+        await account.restore({ currentAccount: true, serverIdentityId: HOME_IDENTITY, machines: [machine], settings: {
+            ...viewSettings(), reviewQualityAggregation: 'lowest', actionsSettingsV1: ActionsSettingsV1Schema.parse({
+                v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+            }),
+        } });
+        accountRestored = true;
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert');
+        const screen = await renderView(<SourceControlSettingsView />);
+        try {
+            await screen.pressByTestIdAsync('settings.sourceControl.reviewQualityAggregation:median');
+            await vi.waitFor(() => expect(alert).toHaveBeenCalled());
+            expect(storage.getState().settings.reviewQualityAggregation).toBe('lowest');
+        } finally {
+            await screen.unmount();
+            alert.mockRestore();
+        }
+    });
+
     it('changes the open Review Host from the lowest score to the median through the mounted Settings control', async () => {
         const [{ ReviewDetailHost }, { ReviewDetailView }] = await Promise.all([
             import('@/components/reviews/detail/ReviewDetailHost'),
