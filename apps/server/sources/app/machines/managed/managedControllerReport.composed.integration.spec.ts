@@ -89,9 +89,12 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         const requestId = randomUUID();
         const { createProtocolStoredReadSchema } = await vi.importActual<typeof import('@happier-dev/protocol/plugins/actions/protocol-composable-schema')>('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
         const { LimaLaunchSchema } = await vi.importActual<typeof import('../../../../../../packages/plugins/machine-lima/src/machine/schemas')>('../../../../../../packages/plugins/machine-lima/src/machine/schemas');
-        // QB56 is a preserved historical capture. The current producer owns
-        // its nameless launch projection and allocation-derived native name.
-        const choices = createProtocolStoredReadSchema(LimaLaunchSchema).parse(managedQb56Input.selection.launch.choices);
+        // Keep the historical QB56 capture intact. This test makes a new
+        // allocation through the current Lima provider at its 4 GiB default.
+        const choices = createProtocolStoredReadSchema(LimaLaunchSchema).parse({
+            ...managedQb56Input.selection.launch.choices,
+            memoryGiB: 4,
+        });
         const launch = { ...managedQb56Input.selection.launch, name: 'happier-qb79-defaults',
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
@@ -142,7 +145,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             let present = false;
             let nativeName = '';
             const native = () => ({ name: nativeName, dir: `${launch.choices.store}/${nativeName}`, status: 'Running',
-                vmType: 'qemu', arch: 'x86_64', cpus: 1, memory: 1_073_741_824, disk: 4_294_967_296,
+                vmType: 'qemu', arch: 'x86_64', cpus: 1, memory: launch.choices.memoryGiB * 2 ** 30, disk: 4_294_967_296,
                 config: { images: [{ location: launch.choices.image, arch: 'x86_64' }], mounts: [],
                     ssh: { forwardAgent: false }, containerd: { user: false, system: false } } });
             const capture: LimaExecutor['capture'] = async (_command, args) => ({ exitCode: 0, err: '',
@@ -358,19 +361,23 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                     signedPost({ ...controlReport, controller: { ...controller, installationId: randomUUID() } }),
                     signedPost({ ...controlReport, expectedIntentRevision: correlation.expectedIntentRevision + 1 }),
                     signedPost(controlReport, reportPath, tweetnacl.sign.keyPair().secretKey),
-                    signedPost(correlation, '/v1/machines/managed/controller/submit-intent'),
                 ]);
                 expect(probes.map(response => response.statusCode), JSON.stringify(probes.map(response => {
                     const body = response.json();
-                    return { code: body.code, error: body.error, submitted: body.submitted };
-                }))).toEqual(withdrawal === 'machine-grant' ? [409, 401, 409, 409, 401, 200] : [401, 401, 401, 401, 401, 401]);
+                    return { code: body.code, error: body.error };
+                }))).toEqual(withdrawal === 'machine-grant' ? [409, 401, 409, 409, 401] : [401, 401, 401, 401, 401]);
                 if (withdrawal === 'machine-grant') {
-                    // The Account credential remains valid: mismatched retained
-                    // jobs conflict, while resubmitting this admitted job is inert.
                     for (const index of [0, 2, 3]) expect(probes[index]!.json()).toEqual({ code: 'request_conflict' });
-                    expect(probes[5]!.json()).toMatchObject({ submitted: false, machine: {
-                        id: controlled.id, submittedNativeEffect: { requestId: controlRequestId },
-                    } });
+                }
+                const replay = await signedPost(correlation, '/v1/machines/managed/controller/submit-intent');
+                // Home preserves exact power continuations. Submitting Delete still needs a current principal.
+                if (intent === 'delete' && withdrawal !== 'machine-grant') {
+                    expect(replay.statusCode, replay.body).toBe(401);
+                } else {
+                    expect(replay.statusCode, replay.body).toBe(200);
+                    expect(ManagedControllerSubmitOutputV1Schema.parse(replay.json())).toMatchObject({
+                        submitted: false, machine: { id: controlled.id, submittedNativeEffect: { requestId: controlRequestId } },
+                    });
                 }
                 // An independent Inspect can settle custody before the original
                 // native command reports its newer outcome. Both are facts of
