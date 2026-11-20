@@ -930,7 +930,7 @@ export function planetMomentFrame(moment, t, T = null) {
       appear: (p) => sstep(-0.35 + p.d * 0.2, -0.05 + p.d * 0.2, t),
     } };
   }
-  const fast = T != null && T <= L4.GRACE; const after = T != null ? t - T : -1;
+  const fast = T != null && T < L4.GRACE; const after = T != null ? t - T : -1;
   const cover = T == null || after < 0 ? 1 : 1 - sstep(0, L4.FADE, after);
   if (fast) return { assembly: false, fast, cover, rest: after >= 0, travel: 1 };
   if (t < L4.GRACE) return { assembly: false, fast, cover, rest: false, travel: 0 };

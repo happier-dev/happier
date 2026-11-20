@@ -19,7 +19,7 @@ type Prepared = {
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, warmWhenHidden,
+    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
@@ -78,7 +78,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         const canvas = webgl.current;
         const staticCanvas = still.current;
         if (!state || !canvas || !staticCanvas || pixelWidth <= 0 || pixelHeight <= 0) return;
-        const layers = typeof scene === 'function' ? scene(seconds) : scene;
+        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined) : scene;
         const start = performance.now();
         const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
         const target = state.painter.ready ? canvas : staticCanvas;
@@ -95,6 +95,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         }
         onPaint?.();
     }, [cellH, cellW, dpr, height, onPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
+    React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
     useGlyphClock(motion, readiness, paint, warmWhenHidden);
 
     return <View pointerEvents="none" testID={testID} style={[style, { width, height }]}>

@@ -65,6 +65,10 @@ describe('Loading planet timeline', () => {
     ).toBe(true);
   });
 
+  it.each([false, true])('resolves the visible cloud when readiness lands at grace, reducedMotion=%s', (reducedMotion) => {
+    expect(loadingPlanetPhase(L4.GRACE, L4.GRACE, { reducedMotion, toPlanet: true }).kind).toBe('assembly');
+  });
+
   it('resolves on ready and hands off to Home exactly at its placement on a critically damped spring', () => {
     const ready = 2;
     const frames = play(ready, { reducedMotion: false, toPlanet: true });

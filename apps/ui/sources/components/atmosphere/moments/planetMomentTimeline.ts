@@ -97,8 +97,8 @@ export function loadingPlanetPhase(
   ready: number | null,
   options: Readonly<{ reducedMotion: boolean; toPlanet: boolean }>,
 ): LoadingPlanetPhase {
-  if (ready !== null && ready <= L4.GRACE)
-    return { kind: 'landed', fast: true };
+  const frame = planetMomentFrame('loading', t, ready);
+  if (frame.fast) return { kind: 'landed', fast: true };
   if (t < L4.GRACE) return { kind: 'none' };
   const after = ready === null ? -1 : t - ready;
   if (options.reducedMotion) {
@@ -112,7 +112,6 @@ export function loadingPlanetPhase(
       cover: opacity,
     };
   }
-  const frame = planetMomentFrame('loading', t, ready);
   if (frame.assembly)
     return {
       kind: 'assembly',

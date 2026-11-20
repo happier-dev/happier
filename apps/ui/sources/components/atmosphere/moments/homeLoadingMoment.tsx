@@ -1,19 +1,20 @@
 import * as React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet';
-import type { PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { measureInWindow } from '@/components/ui/popover/measure';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { GlyphSurface } from '../glyph/GlyphSurface';
 import type { HomePane } from '../homePlanetPlacement';
 import {
   loadingPlanetLayer,
   loadingPlanetOrigin,
   loadingPlanetPhase,
+  type LoadingPlanetPhase,
   type PlanetMomentOrigin,
   type PlanetMomentTarget,
 } from './planetMomentTimeline';
-import { useMomentClock } from './useMomentClock';
+import type { GlyphSurfaceReadiness } from '../glyph/glyphSurfaceTypes';
+import { useGlyphClock } from './useMomentClock';
 
 type LoadingPlanetStage = 'grace' | 'waiting' | 'resolving' | 'landed';
 
@@ -97,17 +98,17 @@ export function useHomeLoadingMoment(
   const home: HomeMomentReport = input.home ??
     reported ?? { waiting: false, target: { kind: 'none' }, drawn: false };
   const [stage, setStage] = React.useState<
-    Readonly<{ stage: LoadingPlanetStage; fast: boolean }>
-  >({ stage: 'grace', fast: false });
+    Readonly<{ stage: LoadingPlanetStage; fast: boolean; still: boolean }>
+  >({ stage: 'grace', fast: false, still: input.reducedMotion });
   const [shown, setShown] = React.useState(false);
   const [instant, setInstant] = React.useState(false);
   const toPlanet = home.target?.kind === 'planet';
   const onStage = React.useCallback(
-    (next: LoadingPlanetStage, fast: boolean) => {
+    (next: LoadingPlanetStage, fast: boolean, still: boolean) => {
       setStage((current) =>
-        current.stage === next && current.fast === fast
+        current.stage === next && current.fast === fast && current.still === still
           ? current
-          : { stage: next, fast },
+          : { stage: next, fast, still },
       );
       if (next === 'waiting') setShown(true);
     },
@@ -116,11 +117,11 @@ export function useHomeLoadingMoment(
   if (
     status === 'playing' &&
     stage.stage === 'landed' &&
-    (stage.fast || !toPlanet || input.reducedMotion || home.drawn)
+    (stage.fast || !toPlanet || stage.still || home.drawn)
   ) {
     setStatus('done');
     // Home's planet replaces the landed one in the same frame: the two are the same pixels.
-    if (!stage.fast && toPlanet && !input.reducedMotion) setInstant(true);
+    if (!stage.fast && toPlanet && !stage.still) setInstant(true);
   }
   // The hand-over's instant arrival applies to that one arrival only.
   React.useEffect(() => {
@@ -167,7 +168,7 @@ export function useHomeLoadingMoment(
   const hold = delegated
     ? outer.hold
     : playing
-      ? input.reducedMotion &&
+      ? stage.still &&
         stage.stage !== 'grace' &&
         stage.stage !== 'waiting'
         ? FREE
@@ -219,46 +220,80 @@ function HomeLoadingGlyph(props: Readonly<{
   reducedMotion: boolean;
   theme: 'light' | 'dark';
   cover: React.ReactNode;
-  onStage: (stage: LoadingPlanetStage, fast: boolean) => void;
+  onStage: (stage: LoadingPlanetStage, fast: boolean, still: boolean) => void;
 }>) {
-  const { pane, reducedMotion, onStage } = props;
+  const { pane, onStage } = props;
   const { GRACE, RESOLVE } = PLANET_MOMENT_TIMINGS.L4;
-  const viewed = useHostActivelyViewed();
   const ready = props.ready && props.target !== null;
   const target = props.target?.kind === 'planet' ? props.target : null;
-  const [landed, setLanded] = React.useState(false);
-  const [painted, setPainted] = React.useState<PlanetGlyphLayer | null>(null);
-  const holdAfter = ready ? undefined : GRACE + (reducedMotion ? 0 : RESOLVE);
-  const t = useMomentClock(!landed, props.paused || !viewed, holdAfter);
+  const [backend, setBackend] = React.useState<GlyphSurfaceReadiness | null>(null);
+  const still = props.reducedMotion || backend === 'still';
+  const [kind, setKind] = React.useState<LoadingPlanetPhase['kind']>('none');
+  const elapsed = React.useRef(0);
+  const phase = React.useRef<LoadingPlanetPhase>({ kind: 'none' });
+  const drawAtRef = React.useRef<((seconds: number) => void) | null>(null);
   const readyAt = React.useRef<number | null>(null);
-  if (ready && readyAt.current === null) readyAt.current = t;
-  const phase = loadingPlanetPhase(t, readyAt.current, { reducedMotion, toPlanet: target !== null });
-  const clockLanded = phase.kind === 'landed';
-  const fast = clockLanded && phase.fast;
-  const awaitingPaint = clockLanded && !fast && !reducedMotion && target !== null && painted !== target.layer;
-  const stage = clockLanded && !awaitingPaint ? 'landed' : ready ? 'resolving' : phase.kind === 'none' ? 'grace' : 'waiting';
+  if (ready && readyAt.current === null) readyAt.current = elapsed.current;
+
+  const coverOpacity = useSharedValue(0);
+  const planetOpacity = useSharedValue(1);
+  const coverStyle = useAnimatedStyle(() => ({ opacity: coverOpacity.value }));
+  const planetStyle = useAnimatedStyle(() => ({ opacity: planetOpacity.value }));
+  const sample = React.useCallback((seconds: number) => {
+    elapsed.current = seconds;
+    const next = loadingPlanetPhase(seconds, readyAt.current, { reducedMotion: still, toPlanet: target !== null });
+    const previous = phase.current;
+    phase.current = next;
+    const previousCover = previous.kind === 'assembly' || previous.kind === 'travel' ? previous.cover : 0;
+    const nextCover = next.kind === 'assembly' || next.kind === 'travel' ? next.cover : 0;
+    if (previousCover !== nextCover) coverOpacity.value = nextCover;
+    const previousOpacity = previous.kind === 'assembly' ? previous.opacity : 1;
+    const nextOpacity = next.kind === 'assembly' ? next.opacity : 1;
+    if (previousOpacity !== nextOpacity) planetOpacity.value = nextOpacity;
+
+    if (previous.kind !== next.kind) {
+      setKind(next.kind);
+      if (next.kind === 'assembly' && !ready) onStage('waiting', false, still);
+    }
+    if (next.kind === 'landed') {
+      if (next.fast || still || !target) onStage('landed', next.fast, still);
+      return;
+    }
+    if (!still && previous.kind === next.kind) drawAtRef.current?.(seconds);
+  }, [coverOpacity, onStage, planetOpacity, ready, still, target]);
+  const durationS = ready ? Infinity : GRACE + (still ? 0 : RESOLVE);
+  const paused = props.paused || kind === 'landed';
+  const motion = React.useMemo(() => ({ kind: 'elapsed' as const, durationS, paused }), [durationS, paused]);
+  useGlyphClock(motion, 'ready', sample);
+
   React.useEffect(() => {
-    if (clockLanded) setLanded(true);
-    onStage(stage, fast);
-  }, [clockLanded, fast, onStage, stage]);
-  const finalLayer = target?.layer;
-  const onFinalPaint = React.useCallback(() => {
-    if (finalLayer) setPainted(finalLayer);
-  }, [finalLayer]);
-  const layer = loadingPlanetLayer(phase, pane, props.origin ?? loadingPlanetOrigin(pane), target);
-  const scene = React.useMemo(() => layer ? [layer] : [], [layer]);
-  const travel = phase.kind === 'travel' || (clockLanded && !fast && !reducedMotion);
+    if (ready && phase.current.kind !== 'landed') onStage('resolving', false, still);
+  }, [onStage, ready, still]);
+  const scene = React.useCallback((_seconds: number, readiness?: GlyphSurfaceReadiness) => {
+    const visualPhase = readiness === 'still'
+      ? loadingPlanetPhase(GRACE, null, { reducedMotion: true, toPlanet: target !== null })
+      : phase.current;
+    const layer = loadingPlanetLayer(visualPhase, pane, props.origin ?? loadingPlanetOrigin(pane), target);
+    return layer ? [layer] : [];
+  }, [GRACE, pane, props.origin, target]);
+  const onFinalPaint = React.useCallback(() => { onStage('landed', false, still); }, [onStage, still]);
+  const travel = kind === 'travel' || kind === 'landed';
   const size = travel && target ? target.pane : pane;
-  const cover = phase.kind === 'assembly' || phase.kind === 'travel' ? phase.cover : 0;
+  const hasPlanet = kind === 'assembly' || kind === 'travel'
+    || (phase.current.kind === 'landed' && !phase.current.fast && target !== null && !still);
   return <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
     style={StyleSheet.absoluteFill} testID="loading-planet">
-    {props.cover && cover > 0 ? <View style={[StyleSheet.absoluteFill, { opacity: cover }]}>{props.cover}</View> : null}
-    {layer && size.width > 0 && size.height > 0 ? <GlyphSurface
-      width={size.width} height={size.height} theme={props.theme} scene={scene}
-      style={[StyleSheet.absoluteFill, { opacity: phase.kind === 'assembly' ? phase.opacity : 1 }]}
-      onPaint={awaitingPaint ? onFinalPaint : undefined}
-      testID={travel ? 'loading-planet.travel' : 'loading-planet.assembly'}
-    /> : null}
+    {props.cover && kind !== 'none' && kind !== 'landed'
+      ? <Animated.View style={[StyleSheet.absoluteFill, coverStyle]}>{props.cover}</Animated.View>
+      : null}
+    {hasPlanet && size.width > 0 && size.height > 0 ? <Animated.View style={[StyleSheet.absoluteFill, planetStyle]}>
+      <GlyphSurface
+        width={size.width} height={size.height} theme={props.theme} scene={scene}
+        style={StyleSheet.absoluteFill} drawAtRef={drawAtRef} onReady={setBackend}
+        onPaint={kind === 'landed' ? onFinalPaint : undefined}
+        testID={travel ? 'loading-planet.travel' : 'loading-planet.assembly'}
+      />
+    </Animated.View> : null}
   </View>;
 }
 
