@@ -36,7 +36,7 @@ describe('Home settings lifetime', () => {
         expect(getHomeSettingsSnapshot(scope)).toMatchObject({ loading: false, stale: false });
 
         let reads = 0;
-        const stop = subscribeHomeSettingsSnapshots(() => {
+        const stop = subscribeHomeSettingsSnapshots(scope, () => {
             if (getHomeSettingsSnapshot(scope)?.loading) reads += 1;
         });
         try {

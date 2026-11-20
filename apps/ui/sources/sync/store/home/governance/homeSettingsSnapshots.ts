@@ -13,22 +13,22 @@ export type HomeSettingsSnapshot = Readonly<{
 }>;
 
 const snapshots = new Map<string, HomeSettingsSnapshot>();
-const listeners = new Set<() => void>();
+const listeners = new Map<string, Set<() => void>>();
 const adoptionListeners = new Map<string, Set<() => void>>();
 
 export function getHomeSettingsSnapshot(scope: ServerAccountScope): HomeSettingsSnapshot | null {
     return snapshots.get(serverAccountScopeKeySuffix(scope)) ?? null;
 }
 
-export function subscribeHomeSettingsSnapshots(listener: () => void): () => void {
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
+export function subscribeHomeSettingsSnapshots(scope: ServerAccountScope, listener: () => void): () => void {
+    return subscribeScoped(listeners, scope, listener);
 }
 
 function publish(snapshot: HomeSettingsSnapshot): HomeSettingsSnapshot {
     Object.freeze(snapshot);
-    snapshots.set(serverAccountScopeKeySuffix(snapshot.scope), snapshot);
-    for (const listener of [...listeners]) listener();
+    const key = serverAccountScopeKeySuffix(snapshot.scope);
+    snapshots.set(key, snapshot);
+    for (const listener of [...listeners.get(key) ?? []]) listener();
     return snapshot;
 }
 
@@ -48,20 +48,29 @@ export function adoptHomeSettingsProjection(scope: ServerAccountScope, settings:
 }
 
 export function subscribeHomeSettingsAdoptions(scope: ServerAccountScope, listener: () => void): () => void {
+    return subscribeScoped(adoptionListeners, scope, listener);
+}
+
+function subscribeScoped(
+    listenersByScope: Map<string, Set<() => void>>,
+    scope: ServerAccountScope,
+    listener: () => void,
+): () => void {
     const key = serverAccountScopeKeySuffix(scope);
-    const scoped = adoptionListeners.get(key) ?? new Set<() => void>();
-    adoptionListeners.set(key, scoped);
+    const scoped = listenersByScope.get(key) ?? new Set<() => void>();
+    listenersByScope.set(key, scoped);
     scoped.add(listener);
     return () => {
         scoped.delete(listener);
-        if (scoped.size === 0) adoptionListeners.delete(key);
+        if (scoped.size === 0 && listenersByScope.get(key) === scoped) listenersByScope.delete(key);
     };
 }
 
 /** Credentials no longer admit the old projection, including an in-flight reader's publication. */
 export function retireHomeSettingsSnapshot(scope: ServerAccountScope): void {
-    if (!snapshots.delete(serverAccountScopeKeySuffix(scope))) return;
-    for (const listener of [...listeners]) listener();
+    const key = serverAccountScopeKeySuffix(scope);
+    if (!snapshots.delete(key)) return;
+    for (const listener of [...listeners.get(key) ?? []]) listener();
 }
 
 export function applyHomeSettingsFailure(scope: ServerAccountScope, failure: HomeActionFailure): void {

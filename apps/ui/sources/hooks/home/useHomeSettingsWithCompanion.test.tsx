@@ -134,7 +134,7 @@ describe('useHomeSettingsWithCompanion', () => {
         await act(async () => { reload = hook.getCurrent().reload(); });
         await waitForHomeGovernance(() => expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(2));
         const observations: ReturnType<typeof getHomeSettingsSnapshot>[] = [];
-        const stop = subscribeHomeSettingsSnapshots(() => observations.push(getHomeSettingsSnapshot(scope)));
+        const stop = subscribeHomeSettingsSnapshots(scope, () => observations.push(getHomeSettingsSnapshot(scope)));
         harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 5 }), respondAfter: currentRead.promise });
         await act(async () => { publishHomeAccountChange(serverId); });
         await act(async () => { oldRead.resolve(); });

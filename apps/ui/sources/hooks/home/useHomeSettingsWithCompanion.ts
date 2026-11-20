@@ -53,7 +53,10 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     const scopeKey = capturedScope ? serverAccountScopeKeySuffix(capturedScope) : '';
     const retain = useHomeSettingsLifetime();
     const readSettings = React.useCallback(() => capturedScope ? getHomeSettingsSnapshot(capturedScope) : null, [capturedScope]);
-    const settings = React.useSyncExternalStore(subscribeHomeSettingsSnapshots, readSettings, readSettings);
+    const subscribeSettings = React.useCallback((listener: () => void) => (
+        enabled && capturedScope ? subscribeHomeSettingsSnapshots(capturedScope, listener) : () => {}
+    ), [enabled, capturedScope]);
+    const settings = React.useSyncExternalStore(subscribeSettings, readSettings, readSettings);
     const [state, setState] = React.useState<State<TCompanion>>(() => ({ scopeKey, companion: null, companionLoading: readCompanion !== null, companionFailure: null }));
     const generation = React.useRef(0);
     const currentScopeKey = React.useRef(scopeKey);
