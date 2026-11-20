@@ -490,7 +490,7 @@ export function githubChangedFile(input: Readonly<{
   deletions?: number;
   previousFilename?: string;
   withPatch?: boolean;
-}>): JsonRecord {
+}>) {
   const additions = input.additions ?? 3;
   const deletions = input.deletions ?? 1;
   return Object.freeze({

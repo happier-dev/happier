@@ -1185,7 +1185,7 @@ describe('the mounted GitHub write controls', () => {
     withPropertyChoices();
     nextResult = kind === 'uncertain' ? { kind }
       : { kind: 'failed', failure: { class: 'transient', code: 'github_write_failed' } };
-    if (kind === 'rejected') nextActionError = new PluginError('denied', 'This change was not approved.');
+    if (kind === 'rejected') nextActionError = new PluginError({ code: 'denied', message: 'This change was not approved.' });
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
     await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Assignees, octocat' })); });
     const choice = (await detail.getAllByRole('menuitemcheckbox')).find(item => item.name?.includes('hubot'))!;

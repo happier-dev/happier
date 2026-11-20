@@ -255,7 +255,7 @@ async function mountHeaderWhileReading() {
       identity: { instanceId: 'alert-reading', mountNonce: 'alert-reading-mount' },
       authorPlugin: { id: 'happier.scm.forge.github', version: '0.0.0' },
       surface: defineUiSurface(() => (
-        <TriageDetailInstance instance={input.instance}>
+        <TriageDetailInstance scrollOwner={input.panelScrollOwner}>
           <TriageDetailPanelNavigationProvider navigation={{ panels: ['overview', 'actions'], select: () => {} }}>
             <TriageEvidenceDisclosureProvider disclosure={{
               available: false, disclose: async () => ({ kind: 'inert' }),

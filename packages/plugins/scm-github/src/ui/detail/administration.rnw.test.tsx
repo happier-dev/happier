@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginTestkit, createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture,
   type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema, TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { activate, activateAccount } from '../../activate.js';
@@ -93,9 +94,9 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
           ] } } }),
         ...(kind === 'pull-request' ? { reviewRevision: { headSha: OBSERVED_HEAD, baseSha: 'a'.repeat(40), nativeRevision: OBSERVED_HEAD } } : {}) },
       viewer: { involvement: [] } }, linkedSessions: [] });
-  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
-    if (typeof action === 'string') throw new Error('Expected registered GitHub Action');
-    const invocation = plugin.invokeAction(action.localId, input, { surface: 'ui' });
+  const controls = createPluginUiActionControlTestHost(async ({ action, input, signal }) => {
+    if (typeof action === 'string' || input === undefined) throw new Error('Expected a GitHub Action with input');
+    const invocation = plugin.invokeAction(action.localId, input, { surface: 'ui', signal });
     pending.push(invocation);
     try { return { ok: true, result: await invocation }; }
     finally { settleMutation(); }
@@ -105,7 +106,7 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
   let textCount = async (_content: string) => 0;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'admin-detail', mountNonce: 'admin-detail-mount' },
-      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' }, surface: context => renderSurface({ ...context, launchInput: launch }), launchInput: launch,
+      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' }, surface: defineUiSurface(context => renderSurface({ ...context, launchInput: launch })), launchInput: launch,
       surfaceContext: createSurfaceContextFixture(), adapter: { mount: async options => {
         const surface = await adapter.mount(options);
         textCount = async content => (await surface.snapshot()).texts?.filter(text => text.content === content).length ?? 0;

@@ -27,6 +27,7 @@ import { GITHUB_TRIAGE_ACTION_IDS_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, GITHUB
 import {
   GithubChangedFilesInputV1Schema,
   GithubChangedFilesResultV1Schema,
+  GithubOverviewInputV1Schema,
   GithubOverviewResultV1Schema,
   GithubIssueOpeningDetailV1Schema,
   GithubFeedbackInputV1Schema,
@@ -230,7 +231,7 @@ async function mountRegisteredFiles(
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
-          if (localId.startsWith('ui/') && input !== undefined) return await invokeSourcePanelFixtureAction(scope, localId, input, detail.context, signal);
+          if (localId.startsWith('ui/')) return await invokeSourcePanelFixtureAction(scope, localId, input, detail.context, signal);
           if (
             typeof action === 'string' ||
             action.pluginId !== GITHUB_PLUGIN_ID
@@ -353,8 +354,9 @@ describe('registered GitHub detail read dispatch', () => {
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
         handlers: { executeAction: async ({ action, input: actionInput, requestId, signal }) => {
           const localId = typeof action === 'string' ? action : action.localId;
-          if (localId.startsWith('ui/') && actionInput !== undefined)
+          if (localId.startsWith('ui/'))
             return await invokeSourcePanelFixtureAction(scope, localId, actionInput, detail.context, signal);
+          if (actionInput === undefined) throw new Error('Expected a GitHub read Action with input');
           const result = await plugin.invokeAction(localId, actionInput, { surface: 'ui', requestId, signal });
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback
             && GithubFeedbackInputV1Schema.parse(actionInput).connection === 'threadReplies') replies.push({ result, requestId });
@@ -517,14 +519,18 @@ describe('registered GitHub detail read dispatch', () => {
         surfaceContext: createSurfaceContextFixture(),
         adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
         handlers: { executeAction: async request => {
-          if (typeof request.action !== 'string') return plugin.invokeAction(request.action.localId, request.input!, { surface: 'ui', signal: request.signal });
+          if (typeof request.action !== 'string') {
+            if (request.input === undefined) throw new Error('Expected a GitHub read Action with input');
+            return plugin.invokeAction(request.action.localId, request.input, { surface: 'ui', signal: request.signal });
+          }
           if (request.action !== TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) throw new Error(`Unexpected Action ${request.action}`);
           nativeReads++;
           const input = TriageReobserveEntryInputV1Schema.parse(request.input);
           const result = await reobserveTriageEntry({ ...input, lastKnownLocator: opening.observation.locator }, {
             readConfiguredInstance: async () => instance, readSourceSnapshot: async () => ({ contributions: admitted }),
-            executeGet: async (_operation, getInput, options) => plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, getInput,
-              { surface: 'ui', signal: options?.signal }), nowMs: () => Date.now(), signal: request.signal,
+            executeGet: async (_operation, getInput, options) => TriageGetResultV1Schema.parse(
+              await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, getInput, { surface: 'ui', signal: options?.signal })),
+            nowMs: () => Date.now(), signal: request.signal,
           });
           if (result.kind !== 'observed') throw new Error(result.kind);
           const { entryRef, ...observation } = result.observation;
@@ -807,7 +813,7 @@ describe('registered GitHub detail read dispatch', () => {
     plugins.push(plugin);
     const exact = async () => GithubOverviewResultV1Schema.parse(await plugin.invokeAction(
       GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
-      { v: 1, instance: input.instance, localRef, routingToken: input.observation.locator.routingToken },
+      GithubOverviewInputV1Schema.parse({ v: 1, instance: input.instance, localRef, routingToken: input.observation.locator.routingToken }),
       { surface: 'ui' },
     ));
     let initialOverview = await exact();

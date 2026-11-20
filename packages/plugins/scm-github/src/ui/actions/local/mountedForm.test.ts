@@ -27,8 +27,7 @@ describe('local form safe mounted intent', () => {
     const cause = { repository, workflowPath: '.github/workflows/test.yml', sourceHeadSha: 'a'.repeat(40) };
     const expectedSeed = { ...seed, workflowPath: cause.workflowPath, sourceHeadSha: cause.sourceHeadSha };
     const host = { version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }), notify: async () => undefined,
-      presentActionFailure: async () => undefined,
-      executeAction: (async () => { throw new Error('Opening must not execute'); }) as PluginUiHostApi['executeAction'] };
+      executeAction: async () => { throw new Error('Opening must not execute'); } };
     const controller = createLocalRunControllerV1({ accountId: 'account', host, seed: expectedSeed });
     let unbind = () => {};
     try {

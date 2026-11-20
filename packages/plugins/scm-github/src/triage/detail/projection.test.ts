@@ -40,6 +40,7 @@ describe('GitHub detail timeline projection', () => {
         title: 'Keep the reference target', html_url: 'https://github.com/octo-org/other/pull/42' } } },
     ], BOUNDS);
     const result = GithubTimelineResultV1Schema.parse({ kind: 'timeline', ...projected });
+    if (result.kind !== 'timeline') throw new Error('Expected a timeline result');
     expect(result.rows).toMatchObject([
       { kind: 'referenced', summary: commit, webUrl: `https://github.com/octo-org/example-app/commit/${commit}` },
       { kind: 'crossReferenced', summary: '#42 · Keep the reference target', webUrl: 'https://github.com/octo-org/other/pull/42' },

@@ -1,5 +1,5 @@
 import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationContext, PluginReference } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
@@ -174,7 +174,7 @@ export function createStubGithubTransport(input: Readonly<{
   /** Generic custody boundary override; native credentials never enter the listed-account path. */
   nativeMaterialization?: ConnectedAccountMaterialization | (() => never);
   /** Optional host Action boundary used by operations that coordinate through a canonical host owner. */
-  executeAction?: (actionId: string, actionInput: unknown) => unknown | Promise<unknown>;
+  executeAction?: (action: PluginReference, actionInput: unknown) => unknown | Promise<unknown>;
 }>): StubGithubTransport {
   const requests: RecordedGithubRequest[] = [];
   const materializations: RecordedMaterialization[] = [];
@@ -305,11 +305,12 @@ export function createStubGithubTransport(input: Readonly<{
       connectedAccounts,
       http: createPluginHttpFixture({ request: http.request }),
       actions: {
-        execute: async (actionId: string, actionInput: unknown) => {
+        execute: async (action: PluginReference, actionInput: unknown) => {
           if (input.executeAction === undefined) {
-            throw new Error(`No stubbed host Action for ${actionId}`);
+            const id = typeof action === 'string' ? action : `${action.pluginId}/${action.localId}`;
+            throw new Error(`No stubbed host Action for ${id}`);
           }
-          return await input.executeAction(actionId, actionInput);
+          return await input.executeAction(action, actionInput);
         },
       },
     } as unknown as PluginInvocationContext['services'],

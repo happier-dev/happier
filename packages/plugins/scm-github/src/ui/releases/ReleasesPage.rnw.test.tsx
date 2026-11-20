@@ -169,7 +169,7 @@ async function mountReleases(
             failure: { class: 'transient', code: 'not-under-test' },
           } as JsonValue;
         };
-  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+  const controls = createPluginUiActionControlTestHost(async ({ action, input, signal }) => {
     if (typeof action !== 'object') throw new Error('Expected a declared GitHub release Action');
     switch (action.localId) {
       case GITHUB_RELEASE_ACTION_IDS_V1.createReleaseDraft: ForgeReleaseActionInputSchemasV1.createReleaseDraft.parse(input); break;
@@ -177,7 +177,7 @@ async function mountReleases(
       case GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft: ForgeReleaseActionInputSchemasV1.publishReleaseDraft.parse(input); break;
       default: throw new Error('Unexpected release write');
     }
-    return { ok: true, result: await dispatch({ requestId: 'host-release-write', action, input }) };
+    return { ok: true, result: await dispatch({ requestId: 'host-release-write', action, input, signal }) };
   });
   await act(async () => {
     fixture = await createPluginUiTestkit({

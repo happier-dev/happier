@@ -1,6 +1,6 @@
 import { readGithubPreview } from './previewRead.js';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationContext, PluginReference } from '@happier-dev/plugin-sdk';
 import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
@@ -1226,7 +1226,7 @@ describe('GitHub feedback plane', () => {
     }] } }] });
     expect(stub.requests).toHaveLength(1);
   });
-  it.each([
+  it.each<StubHttpResponse & { failure: Extract<ReturnType<typeof GithubFeedbackResultV1Schema.parse>, { kind: 'unavailable' }>['failure'] }>([
     { status: 403, headers: { 'X-Accepted-GitHub-Permissions': 'pull_requests=read' }, body: {},
       failure: { class: 'permission', code: 'insufficient_scope', detail: 'pull_requests=read', requiredPermissions: 'pull_requests=read' } },
     { status: 403, headers: {}, body: {}, failure: { class: 'permission', code: 'github_forbidden' } },
@@ -2435,12 +2435,12 @@ describe('GitHub pull-request status operation', () => {
 
 // Coordination's 2026-11-12 compile-closure ruling: no head means no preview operand.
 it('refuses preview discovery before reading deployments when the observed PR has no head revision', async () => {
-  const downstreamActions: string[] = [];
+  const downstreamActions: PluginReference[] = [];
   const stub = createStubGithubTransport({
     respond: request => new URL(request.url).pathname.endsWith('/pulls/1284')
       ? { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, head: { ...GITHUB_PULL_REQUEST_RESPONSE.head, sha: null } } }
       : undefined,
-    executeAction: actionId => { downstreamActions.push(actionId); return { ok: true, items: [], coverage: 'complete' }; },
+    executeAction: action => { downstreamActions.push(action); return { ok: true, items: [], coverage: 'complete' }; },
   });
   expect(await readGithubPreview({ v: 1, serverId: 'server-under-test', instance: configuredInstance(),
     localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY }, stub.context)).toMatchObject({

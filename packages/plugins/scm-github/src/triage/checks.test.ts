@@ -10,7 +10,6 @@ import {
   createStubGithubTransport,
   createTestGithubApiClient,
   fixedClock,
-  type RecordedGithubRequest,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
 import { readGithubPullRequestChecks } from './checks.js';
@@ -19,7 +18,7 @@ const ROUTE = Object.freeze({ owner: 'octo-org', name: 'example-app' });
 const HEAD_SHA = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
 
 async function readChecks(
-  respond: (request: RecordedGithubRequest) => StubHttpResponse | undefined,
+  respond: Parameters<typeof createStubGithubTransport>[0]['respond'],
 ) {
   const transport = createStubGithubTransport({ respond });
   const client = await createTestGithubApiClient(transport);

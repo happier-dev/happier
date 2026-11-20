@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import type { PluginUiTestkitExecuteActionInput } from '@happier-dev/plugin-sdk/testing';
+import type { PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import { TriageEvidenceDisclosureProvider, type TriageEvidenceDisclosureV1 } from '@happier-dev/triage-sources/ui';
@@ -26,7 +27,7 @@ export function SourcePanelActionsFixture(props: Readonly<{
 }
 
 export async function invokeSourcePanelFixtureAction(scope: PluginEphemeralSharedScope, localId: string,
-  input: JsonValue, context: RenderContext, signal: AbortSignal,
+  input: PluginUiTestkitExecuteActionInput['input'], context: RenderContext, signal: AbortSignal,
   confirm?: (input: Readonly<{ message: string; title?: string }>) => boolean | Promise<boolean>) {
   const action = PLUGIN_MANIFEST.contributes.actions?.find((candidate) => candidate.id === localId);
   const confirmation = PluginActionConfirmationV2Schema.safeParse(action?.confirmation);

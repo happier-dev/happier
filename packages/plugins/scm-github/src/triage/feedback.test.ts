@@ -10,7 +10,7 @@ import { readGithubFeedbackConnection } from './feedback.js';
 
 const ROUTE = Object.freeze({ owner: 'octo-org', name: 'example-app' });
 
-function graphqlDataFor(document: string) {
+function graphqlDataFor(document: string, withEditability = false) {
   if (document.includes('GithubFeedbackComments')) {
     return {
       repository: {
@@ -18,8 +18,8 @@ function graphqlDataFor(document: string) {
         pullRequest: {
           comments: {
             nodes: [
-              { id: 'IC_2', author: { login: 'later' }, body: 'later', createdAt: '2026-08-12T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-2' },
-              { id: 'IC_1', author: { login: 'earlier' }, body: 'earlier', createdAt: '2026-08-11T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-1' },
+              { id: 'IC_2', author: { login: 'later' }, body: 'later', createdAt: '2026-08-12T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-2', ...(withEditability ? { viewerCanUpdate: true } : {}) },
+              { id: 'IC_1', author: { login: 'earlier' }, body: 'earlier', createdAt: '2026-08-11T12:00:00Z', url: 'https://github.com/o/r/pull/1#issuecomment-1', ...(withEditability ? { viewerCanUpdate: false } : {}) },
             ],
             pageInfo: { hasPreviousPage: true, startCursor: 'comments-before' },
           },
@@ -44,7 +44,7 @@ function graphqlDataFor(document: string) {
               },
               comments: {
                 nodes: [
-                  { id: 'PRRC_2', author: { login: 'later' }, body: 'later reply', createdAt: '2026-08-12T13:00:00Z', url: 'https://github.com/o/r/pull/1#discussion_r2' },
+                  { id: 'PRRC_2', author: { login: 'later' }, body: 'later reply', createdAt: '2026-08-12T13:00:00Z', url: 'https://github.com/o/r/pull/1#discussion_r2', ...(withEditability ? { viewerCanUpdate: true } : {}) },
                   { id: 'PRRC_1', author: { login: 'earlier' }, body: 'earlier reply', createdAt: '2026-08-11T13:00:00Z', url: 'https://github.com/o/r/pull/1#discussion_r1' },
                 ],
                 pageInfo: { hasPreviousPage: true, startCursor: 'thread-1-before' },
@@ -63,7 +63,7 @@ function graphqlDataFor(document: string) {
         pullRequest: {
           reviewDecision: 'CHANGES_REQUESTED',
           reviews: {
-            nodes: [{ id: 'PRR_1', author: { login: 'reviewer' }, body: 'Please split this.', state: 'CHANGES_REQUESTED', commit: { oid: 'a'.repeat(40) }, submittedAt: '2026-08-12T14:00:00Z', url: 'https://github.com/o/r/pull/1#pullrequestreview-1' }],
+            nodes: [{ id: 'PRR_1', author: { login: 'reviewer' }, body: 'Please split this.', state: 'CHANGES_REQUESTED', commit: { oid: 'a'.repeat(40) }, submittedAt: '2026-08-12T14:00:00Z', url: 'https://github.com/o/r/pull/1#pullrequestreview-1', ...(withEditability ? { viewerCanUpdate: true } : {}) }],
             pageInfo: { hasPreviousPage: true, startCursor: 'reviews-before' },
           },
         },
@@ -172,18 +172,7 @@ describe('the GitHub feedback fetcher', () => {
     const stub = createStubGithubTransport({ respond: (request) => {
       const { query } = readRecordedJsonBody(request) as { query: string };
       queries.push(query);
-      const data = graphqlDataFor(query) as { repository: { pullRequest: Record<string, { nodes: Record<string, unknown>[] }> } };
-      const pullRequest = data.repository.pullRequest;
-      if (pullRequest.comments) {
-        pullRequest.comments.nodes[0]!.viewerCanUpdate = true;
-        pullRequest.comments.nodes[1]!.viewerCanUpdate = false;
-      }
-      if (pullRequest.reviews) pullRequest.reviews.nodes[0]!.viewerCanUpdate = true;
-      if (pullRequest.reviewThreads) {
-        const thread = pullRequest.reviewThreads.nodes[0] as { comments: { nodes: Record<string, unknown>[] } };
-        thread.comments.nodes[0]!.viewerCanUpdate = true;
-      }
-      return { status: 200, body: { data } };
+      return { status: 200, body: { data: graphqlDataFor(query, true) } };
     } });
     const client = await createTestGithubApiClient(stub);
     const read = async (connection: 'comments' | 'threads' | 'reviews') => await readGithubFeedbackConnection(

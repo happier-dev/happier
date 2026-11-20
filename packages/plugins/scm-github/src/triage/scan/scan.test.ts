@@ -296,8 +296,11 @@ describe('GitHub triage scan', () => {
     const transport = createStubGithubTransport({ respond: request => {
       const url = new URL(request.url);
       const page = Number(url.searchParams.get('page'));
-      return { status: 200, body: githubSearchResponse({ items: [], totalCount: CONTRACT_LIMIT * 2 }),
-        headers: page === 1 ? { link: githubSearchLinkHeader({ laneQuery: url.searchParams.get('q')!, perPage: CONTRACT_LIMIT, nextPage: 2 }) } : {} };
+      const laneQuery = url.searchParams.get('q');
+      if (laneQuery === null) throw new Error('Expected a GitHub search query');
+      const headers: StubHttpResponse['headers'] = page === 1
+        ? { link: githubSearchLinkHeader({ laneQuery, perPage: CONTRACT_LIMIT, nextPage: 2 }) } : {};
+      return { status: 200, body: githubSearchResponse({ items: [], totalCount: CONTRACT_LIMIT * 2 }), headers };
     } });
     const input = { page: { kind: 'initial' as const, limit: CONTRACT_LIMIT }, repositoryKeys: [REPOSITORY_KEY], query: 'needle' };
     const result = await runGithubTriageScan(input, { client: await createTestGithubApiClient(transport),

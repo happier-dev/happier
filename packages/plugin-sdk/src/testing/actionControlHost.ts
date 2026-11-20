@@ -13,7 +13,7 @@ type Binding = { action: Bind['action']; presentation: Bind['presentation']; pub
 /** Installed host gesture/executor boundary; the SDK transport and author controller remain real. */
 export function createPluginUiActionControlTestHost(execute: (request: Readonly<{
   action: Bind['action']; input: NonNullable<Extract<HostInput['request'], { kind: 'prepared' }>['preparation']>['input'];
-  signal?: AbortSignal;
+  signal: AbortSignal;
 }>) => Promise<PluginUiActionControlExecution>) {
   const bindings = new Map<string, Binding>();
   const listeners = new Set<() => void>();
@@ -30,7 +30,7 @@ export function createPluginUiActionControlTestHost(execute: (request: Readonly<
       execute: (action, preparation, signal) => execute({ action, input: preparation.input, signal }),
     });
   let gestures = 0;
-  const handler: Handler = async ({ request, publish }) => {
+  const handler: Handler = async ({ request, publish, signal }) => {
     if (request.kind === 'bind') {
       bindings.set(request.subscriptionId, { action: request.action, presentation: Object.freeze({ ...request.presentation }), publish });
       publishSnapshot();
@@ -47,7 +47,7 @@ export function createPluginUiActionControlTestHost(execute: (request: Readonly<
     }
     try {
       const execution = request.preparation
-        ? await execute({ input: request.preparation.input, action: binding.action }) : undefined;
+        ? await execute({ input: request.preparation.input, action: binding.action, signal }) : undefined;
       if (execution) publish({ kind: 'settled', requestId: request.requestId, execution });
       binding.resolve?.();
       return execution;

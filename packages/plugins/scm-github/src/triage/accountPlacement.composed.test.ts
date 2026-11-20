@@ -146,12 +146,13 @@ describe('GitHub Account placement through contributed Action dispatch with zero
       // adapter re-enters its real contributed dispatcher; it never fabricates
       // a placement failure or replaces the native handler/admission logic.
       async executeAction(target, input) {
+        if (typeof target === 'string') throw new Error('Expected a contributed GitHub Action target');
         expect(target.pluginId).toBe(GITHUB_PLUGIN_ID);
         if (target.localId === githubNativeReadActionId(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances)) {
-          return relay.invokeAction('native-discover', input);
+          return relay.invokeAction('native-discover', TriageSourceCredentialInputsV1.listInstances.parse(input));
         }
         if (target.localId === githubNativeReadActionId(GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks)) {
-          return relay.invokeAction('native-links', input);
+          return relay.invokeAction('native-links', TriageSourceCredentialInputsV1.readSessionLinks.parse(input));
         }
         expect(target.localId).toBe(githubNativeReadActionId(GITHUB_TRIAGE_ACTION_IDS_V1.scan));
         return relay.invokeAction('native-scan', TriageSourceCredentialInputsV1.scan.parse(input));

@@ -19,6 +19,7 @@ import {
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
 } from '../../triage/contribution.js';
 
+import type { GithubFeedbackResultV1 } from '../../triage/detail/contracts.js';
 import { renderSurface } from '../renderSurface.js';
 import { sendGithubGraphqlRequest } from '../../triage/mutations/graphql.js';
 
@@ -662,7 +663,8 @@ describe('the mounted GitHub Feedback plane', () => {
     }
   });
 
-  it.each([
+  it.each<Partial<Pick<Extract<GithubFeedbackResultV1, { kind: 'reviews' }>,
+    'previousCursor' | 'incomplete' | 'omittedRowCount'>>>([
     { previousCursor: 'earlier-reviews' },
     { incomplete: 'continuationUnavailable' },
     { omittedRowCount: 1 },
