@@ -1,10 +1,15 @@
 import * as React from 'react';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
+import type { TeamSectionContext } from '../teamSectionContext';
+import { teamSetupPath } from '../teamsRoutes';
 import { TeamMemberDefaultsSection } from '../defaults/TeamMemberDefaultsSection';
 import { memberDefaultsAccess } from '../defaults/memberDefaults';
+import { TeamNewMembersKeys } from './TeamNewMembersKeys';
 import { TeamNewMembersSources } from './TeamNewMembersSources';
 
 const TEAM_DEFAULTS_SCOPE = Object.freeze({ kind: 'team' as const });
@@ -24,6 +29,7 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
             teamId={props.teamId}
             title={t('teams.newMembers.title')}
             description={t('teams.newMembers.description')}
+            renderHeaderActions={(context) => context.archived ? null : <PreviewAsMemberAction context={context} />}
         >
             {(context) => context.archived ? null : (
                 <>
@@ -34,9 +40,22 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
                         access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
                         writable={context.canMutate}
                     />
-                    <TeamNewMembersSources context={context} />
+                    <TeamNewMembersSources context={context} keys={<TeamNewMembersKeys context={context} />} />
                 </>
             )}
         </TeamSection>
+    );
+});
+
+/** Opens the member's own setup page in preview: the same reads a member makes, with nothing to run. */
+const PreviewAsMemberAction = React.memo(function PreviewAsMemberAction(props: Readonly<{ context: TeamSectionContext }>) {
+    const router = useRouter();
+    return (
+        <SectionActionButton
+            testID="team-new-members-preview"
+            icon="eye"
+            title={t('teams.newMembers.preview')}
+            onPress={() => router.push(teamSetupPath(props.context.address, { preview: true }) as never)}
+        />
     );
 });

@@ -8,6 +8,9 @@ import {
   renderScreen,
   standardCleanup,
   teamCapabilitiesFixture,
+  teamCredentialDisplayNameFixture,
+  teamCredentialResourceFixture,
+  teamCredentialViewerFixture,
   teamPolicyFixture,
   teamSummaryFixture,
 } from '@/dev/testkit';
@@ -36,8 +39,14 @@ vi.mock('@react-navigation/native', async () =>
     await import('@/dev/testkit/mocks/reactNavigation')
   ).createReactNavigationNativeMock(),
 );
+const router = vi.hoisted(() => ({ push: null as null | ((...args: unknown[]) => unknown) }));
 installSettingsViewCommonModuleMocks({
   storage: 'real',
+  router: async () => {
+    const mock = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
+    router.push = mock.spies.push;
+    return mock.module;
+  },
   text: () => vi.importActual('@/text'),
   modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
@@ -112,6 +121,7 @@ afterEach(async () => {
 async function renderNewMembers(
   sources: readonly unknown[],
   manageSettings: boolean,
+  credentials?: readonly unknown[],
 ) {
   const { serverId } = await account.restore({
     accountId: 'admin',
@@ -125,7 +135,9 @@ async function renderNewMembers(
       }),
     ],
     features: createRootLayoutFeaturesResponse({
-      features: { teams: { enabled: true } },
+      features: { teams: credentials
+        ? { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } }
+        : { enabled: true } },
     }),
   });
   const team = teamSummaryFixture({
@@ -142,6 +154,11 @@ async function renderNewMembers(
   account.home.answer(serverId, '/v1/projects/sources', {
     body: { ok: true, sources, coverage: { complete: true, nextCursor: null } },
   });
+  if (credentials) {
+    account.home.answer(serverId, '/v1/teams/credential-resources/list', {
+      body: { resources: credentials, viewer: teamCredentialViewerFixture({}) },
+    });
+  }
   const screen = await renderScreen(
     <ModalProvider>
       <TeamNewMembersScreen serverId={serverId} teamId="team-1" />
@@ -253,4 +270,77 @@ it('keeps hydrated empty sections visible while the Sources refetch after a Team
     expect(screen.findByTestId('team-new-members-first-task-empty')).not.toBeNull();
     expect(screen.findByTestId('team-new-members-repositories-loading')).toBeNull();
   } finally { await act(async () => { release(); await pending; }); }
+});
+
+it('opens each repository in its Source editor, where its sharing is changed', async () => {
+  const { screen } = await renderNewMembers([web], false);
+  const row = 'team-new-members-repository:source-web';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(row)).not.toBeNull());
+  await screen.pressByTestIdAsync(row);
+  expect(router.push).toHaveBeenCalledWith('/projects/sources?source=source-web');
+});
+
+it('offers sharing another Source with the Team to people who manage it only', async () => {
+  const managed = await renderNewMembers([web], true);
+  const share = 'team-new-members-repositories-share';
+  await waitForHomeGovernance(() => expect(managed.screen.findByTestId(share)).not.toBeNull());
+  await managed.screen.pressByTestIdAsync(share);
+  expect(router.push).toHaveBeenCalledWith('/projects/sources');
+  await managed.screen.unmount();
+  const member = await renderNewMembers([web], false);
+  await waitForHomeGovernance(() =>
+    expect(member.screen.findByTestId('team-new-members-repository:source-web')).not.toBeNull());
+  expect(member.screen.findByTestId(share)).toBeNull();
+});
+
+it('previews the page a member reads, on the Team\'s own Home', async () => {
+  const { screen, serverId } = await renderNewMembers([web], true);
+  await waitForHomeGovernance(() => expect(screen.findByTestId('team-new-members-preview')).not.toBeNull());
+  await screen.pressByTestIdAsync('team-new-members-preview');
+  expect(router.push).toHaveBeenCalledWith(
+    `/teams/team-1/setup?serverId=${encodeURIComponent(serverId)}&preview=1`);
+});
+
+it('removes the suggested first task through the Source owner', async () => {
+  const { screen, serverId } = await renderNewMembers([web], true);
+  const patches: unknown[] = [];
+  account.home.answer(serverId, 'PATCH /v1/projects/sources/source-web', { select: (input) => {
+    patches.push(input);
+    return { body: { ok: true, source: { ...web, revision: 3, attachments: [] }, canManage: true } };
+  } });
+  const remove = 'team-new-members-first-task:source-web.remove';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(remove)).not.toBeNull());
+  await screen.pressByTestIdAsync(remove);
+  await waitForHomeGovernance(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toMatchObject({ sourceId: 'source-web', patch: { attachment: {
+    kind: 'detach', purpose: 'onboarding_task', ref: { kind: 'doc', artifactId: 'first-task' },
+  } } });
+});
+
+it('lets managers choose a first task for a repository without one, and never offers it to members', async () => {
+  const managed = await renderNewMembers([web, infra], true);
+  const choose = 'team-new-members-first-task-choose';
+  await waitForHomeGovernance(() => expect(managed.screen.findByTestId(choose)).not.toBeNull());
+  await managed.screen.unmount();
+  const member = await renderNewMembers([web, infra], false);
+  await waitForHomeGovernance(() =>
+    expect(member.screen.findByTestId('team-new-members-first-task:source-web')).not.toBeNull());
+  expect(member.screen.findByTestId(choose)).toBeNull();
+  expect(member.screen.findByTestId('team-new-members-first-task:source-web.remove')).toBeNull();
+});
+
+it('lists the keys the Team shares, each opening its own page', async () => {
+  const key = teamCredentialResourceFixture({
+    id: 'key-1', teamId: 'team-1', displayName: teamCredentialDisplayNameFixture('Acme OpenAI key'),
+  });
+  const { screen, serverId } = await renderNewMembers([web], true, [key]);
+  const row = 'team-new-members-keys';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(row), screen.getTextContent()).not.toBeNull());
+  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Acme OpenAI key'));
+  const keys = screen.findByTestId(row);
+  const pressable = keys?.findAll((node) => typeof node.props.onPress === 'function' && node.props.accessibilityLabel)[0];
+  expect(pressable).toBeDefined();
+  await act(async () => { pressable!.props.onPress(); });
+  expect(router.push).toHaveBeenCalledWith(
+    `/settings/teams/${encodeURIComponent(serverId)}/team-1/credentials/key-1`);
 });

@@ -5,7 +5,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { ContextMemorySection } from '@/components/settings/prompts/context/ContextMemorySection';
 import { PromptStackDocumentMenu } from '@/components/settings/prompts/stacks/PromptStackDocumentMenu';
 import { PromptStackEntryRow } from '@/components/settings/prompts/stacks/PromptStackEntryRow';
@@ -14,8 +13,7 @@ import {
   promptStackEntryTitle,
   usePromptStackEntryPresentations,
 } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
-import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
-import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
+import { usePrivateAttachedDocumentShareOffer } from '@/components/sharing/documents/usePrivateAttachedDocumentShareOffer';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import {
   PageHeader,
@@ -30,11 +28,6 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { readArtifactAudience } from '@/sync/domains/artifacts/artifactAudience';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { getStorage } from '@/sync/domains/state/storage';
-import { subscribeHomeAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -49,11 +42,6 @@ import {
 } from './useProjectContext';
 
 type Layer = 'shared' | 'personal';
-type ShareOffer = Readonly<{
-  artifactId: string;
-  kind: string | null;
-  title: string;
-}>;
 
 /**
  * Project → Context (plan 65 §2, lab `c-ctx` P/R): what sessions and workers in this Project read
@@ -78,29 +66,18 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   const entries = React.useMemo(() => [...shared.entries, ...personal.entries], [shared.entries, personal.entries]);
   const presentations = usePromptStackEntryPresentations(entries, projectRef.serverId);
   const projectName = resolveWorkspaceRefDisplayName(props.workspaceRef);
-  const [shareOffer, setShareOffer] = React.useState<(ShareOffer & Readonly<{
-    projectRef: typeof projectRef;
-    isCurrent: () => boolean;
-  }>) | null>(null);
+  const shareOffers = usePrivateAttachedDocumentShareOffer({
+    serverId: projectRef.serverId,
+    hostKey: JSON.stringify([projectRef.serverId, projectRef.projectKey]),
+    sheetSubtitle: t('contextPages.project.attachedTo', { project: projectName }),
+  });
+  const shareOffer = shareOffers.offer;
   const [picking, setPicking] = React.useState<Layer | null>(null);
   // A change that did not land says so on the page until the next attempt (never a dialog).
   const [refusal, setRefusal] = React.useState<'conflict' | 'refused' | null>(null);
   const sharedAddRef = React.useRef<View>(null);
   const personalAddRef = React.useRef<View>(null);
 
-  React.useEffect(() => {
-    if (!shareOffer) return;
-    const stopAccount = subscribeHomeAccountChange(event => {
-      if (!areServerProfileIdentifiersEquivalent(event.serverId, shareOffer.projectRef.serverId)) return;
-      if (event.changeKinds && !event.changeKinds.includes('artifact')) return;
-      if (event.entityIds && !event.entityIds.includes(shareOffer.artifactId)) return;
-      setShareOffer(null);
-    });
-    const stopCredential = subscribeHomeCredentialChange(event => {
-      if (areServerProfileIdentifiersEquivalent(event.serverId, shareOffer.projectRef.serverId)) setShareOffer(null);
-    });
-    return () => { stopAccount(); stopCredential(); };
-  }, [shareOffer]);
 
   const hasSource = shared.status !== 'none';
   const { entry: memory, layer: memoryLayer, resolved: memoryResolved,
@@ -147,62 +124,23 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         return;
       }
       setRefusal(null);
-      setShareOffer(null);
-      const lifetime = captureActiveServerAccountScopeLifetime();
-      const client = lifetime?.isCurrent()
-        && areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, projectRef.serverId)
-        && areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, ref.serverId ?? projectRef.serverId)
-        ? createArtifactActionsClient(lifetime.scope) : null;
+      // Captured before the writer, so the "only yours" check reads the same Account's audience.
+      const pending = shareOffers.beginAttach(ref);
       fireAndForget(
         shared
           .update({ kind: 'attach', attachment: { purpose: 'context', entry } })
           .then(async (outcome) => {
             if (outcome === 'conflict' || outcome === 'refused') setRefusal(outcome);
-            if (outcome !== 'applied' || !teamName || !client || !lifetime?.isCurrent()) return;
-            const artifact = getStorage().getState().artifacts[ref.artifactId];
-            if (!artifact?.isDecrypted || artifact.access !== 'owner' || artifact.ownerAccountId !== lifetime.scope.accountId) return;
-            const audience = await readArtifactAudience({
-              current: { artifactId: artifact.id, header: artifact.header ?? {}, access: artifact.access,
-                ownerAccountId: artifact.ownerAccountId, publicAudience: artifact.publicAudience },
-              readGrants: async () => {
-                const outcome = await client.listAccessGrants(artifact.id);
-                if (!outcome.ok) throw new Error(outcome.failure.code);
-                return outcome.value;
-              },
-            });
-            const isCurrent = () => lifetime.isCurrent()
-              && getStorage().getState().artifacts[artifact.id] === artifact;
-            // Attachment grants nothing; only the admitted audience can establish that this Doc is private.
-            if (isCurrent() && audience?.shared === false) {
-              setShareOffer({
-                artifactId: ref.artifactId,
-                kind: presentations(entry).headerKind,
-                title,
-                projectRef,
-                isCurrent,
-              });
-            }
+            if (outcome !== 'applied' || !teamName || !pending) return;
+            await pending.afterApplied({ title, kind: presentations(entry).headerKind });
           }),
         { tag: 'ProjectContext.attachShared' },
       );
     },
-    [presentations, personal, projectRef, settle, shared, teamName],
+    [presentations, personal, settle, shareOffers.beginAttach, shared, teamName],
   );
 
-  const openShare = React.useCallback(
-    (offer: ShareOffer, anchor?: ShareSheetAnchor) => {
-      showDocumentShareSheet({
-        ...(anchor ? { anchor } : {}),
-        artifactId: offer.artifactId,
-        kind: offer.kind,
-        name: offer.title,
-        subtitle: t('contextPages.project.attachedTo', {
-          project: projectName,
-        }),
-      });
-    },
-    [projectName],
-  );
+  const openShare = shareOffers.open;
 
   const remove = React.useCallback(
     (layer: Layer, entry: PromptStackEntryV1, title: string) => {
@@ -217,8 +155,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
             },
           );
           if (!confirmed) return;
-          if (shareOffer?.artifactId === entry.ref.artifactId)
-            setShareOffer(null);
+          shareOffers.clear(entry.ref.artifactId);
           settle(
             layer === 'shared'
               ? shared.update({
@@ -233,7 +170,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         { tag: 'ProjectContext.remove' },
       );
     },
-    [personal, settle, shareOffer?.artifactId, shared],
+    [personal, settle, shareOffers.clear, shared],
   );
 
   const move = React.useCallback(
@@ -515,9 +452,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           ) : null}
         </ItemGroup>
       ) : null}
-      {shareOffer && teamName && shareOffer.isCurrent()
-        && shareOffer.projectRef.serverId === projectRef.serverId
-        && shareOffer.projectRef.projectKey === projectRef.projectKey ? (
+      {shareOffer && teamName ? (
         <AttentionBanner
           testID={`${testID}.shareOffer`}
           tone="neutral"
@@ -530,7 +465,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
             label: t('contextPages.project.shareWith', { team: teamName }),
             onPress: (event?: unknown) => openShare(shareOffer, resolvePressTriggerAnchor(event)),
           }}
-          onDismiss={() => setShareOffer(null)}
+          onDismiss={shareOffers.dismiss}
         />
       ) : null}
       {/* "Only yours" is a teammate's own layer beside the team's (lab `c-ctx R`). Whoever manages the

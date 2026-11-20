@@ -37,7 +37,7 @@ import { useTeamCredentialsProjection } from './useTeamCredentialsProjection';
  * no source identifier, endpoint, fingerprint or revision — none of which is the
  * administrator's task and all of which would be a disclosure.
  */
-const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
+export const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
     address: TeamAddress;
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1;
     displayName: string | null;
@@ -71,7 +71,7 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
  * Offering your own source is the Home's separate decision from administering the Team's resources:
  * it appears only once the Home has said this viewer may, never present-then-gone.
  */
-function mayOfferCredential(
+export function mayOfferCredential(
     viewer: ReturnType<typeof useTeamCredentialsProjection>['projection']['viewer'],
     context: TeamSectionContext,
 ): boolean {

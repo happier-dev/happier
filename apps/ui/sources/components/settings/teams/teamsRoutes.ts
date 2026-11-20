@@ -149,9 +149,16 @@ export function teamSettingsPath(address: TeamAddress): `/settings/teams/${strin
     return `${teamDetailPath(address)}/settings`;
 }
 
-/** Set up for a Team (plan D, L2): the member's setup page, on the exact Home that holds the Team. */
-export function teamSetupPath(address: TeamAddress): `/teams/${string}/setup?serverId=${string}` {
-    return `/teams/${encodeURIComponent(address.teamId)}/setup?serverId=${encodeURIComponent(address.serverId)}`;
+/**
+ * Set up for a Team (plan D, L2): the member's setup page, on the exact Home that holds the Team. `preview` opens the
+ * same page for someone choosing what new members get: the same reads, with nothing to run.
+ */
+export function teamSetupPath(
+    address: TeamAddress,
+    options?: Readonly<{ preview?: boolean }>,
+): `/teams/${string}/setup?serverId=${string}` {
+    const path = `/teams/${encodeURIComponent(address.teamId)}/setup?serverId=${encodeURIComponent(address.serverId)}` as const;
+    return options?.preview ? `${path}&preview=1` : path;
 }
 
 /** What new members get: the Team's member defaults and, as they land, the rest of a new member's setup. */
