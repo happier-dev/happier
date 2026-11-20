@@ -11,7 +11,9 @@ import { WorkspaceScmReviewBody, type ScmReviewComparisonChrome, type ScmReviewV
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
 import { resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
 import { useCapturedScmComparison } from '@/components/sessions/files/comparison/useCapturedScmComparison';
-import { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
+import type { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
+import { useSessionScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useSessionScmDiffSummaryBinding';
+import { useWorkspaceScmDiffSummaryBinding } from '@/components/projects/scm/useWorkspaceScmDiffSummaryBinding';
 import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
 import { ScmWalkthroughView } from '@/components/sessions/files/walkthrough/ScmWalkthroughView';
 import type { SessionScmReviewComparison, SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -63,7 +65,6 @@ export type ReviewChangesHostProps = Readonly<{
 
 const ignore = () => {};
 const NO_SCOPE_OPTIONS = [] as const;
-const NO_GENERATION = { canLaunchExecutionRuns: false } as const;
 
 function reportCommentError(error: string) {
     Modal.alert(t('common.error'), error);
@@ -205,7 +206,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
             scopeLabel={scopeLabel} serverId={serverId} machine={machine} onOpenFile={openFile} />} />;
 }
 
-function ReviewChangesWalkthrough(props: Readonly<{
+type ReviewChangesWalkthroughProps = Readonly<{
     context: ScmReviewViewContext;
     capture: ReviewRoundComparisonCaptureV1;
     comparison: SessionScmReviewComparison;
@@ -213,11 +214,27 @@ function ReviewChangesWalkthrough(props: Readonly<{
     serverId: string;
     machine: Readonly<{ machineId: string; basePath: string }>;
     onOpenFile: (path: string) => void;
-}>) {
+}>;
+
+function ReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps) {
     const sessionId = props.capture.input.sessionId;
-    const host: ScmDiffSummaryHost = sessionId ? { sessionId } : { machineId: props.machine.machineId };
-    const bound = useScmDiffSummaryBinding({ host, comparison: props.comparison, serverId: props.serverId, machine: props.machine,
-        machineReachable: true, canControl: false, canSend: false, launch: NO_GENERATION, output: 'walkthrough' });
-    return <ScmWalkthroughView {...props.context} bound={bound} comparison={props.comparison} scopeLabel={props.scopeLabel}
-        sessionId={sessionId} displayMachineId={props.machine.machineId} serverId={props.serverId} onOpenFile={props.onOpenFile} />;
+    return sessionId ? <SessionReviewChangesWalkthrough {...props} sessionId={sessionId} />
+        : <WorkspaceReviewChangesWalkthrough {...props} />;
+}
+
+function SessionReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps & Readonly<{ sessionId: string }>) {
+    const bound = useSessionScmDiffSummaryBinding({ sessionId: props.sessionId, serverId: props.serverId,
+        comparison: props.comparison, output: 'walkthrough' });
+    return <ReviewChangesWalkthroughView {...props} bound={bound} />;
+}
+
+function WorkspaceReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps) {
+    const bound = useWorkspaceScmDiffSummaryBinding({ machineId: props.machine.machineId, rootPath: props.machine.basePath,
+        serverId: props.serverId, comparison: props.comparison, output: 'walkthrough' });
+    return <ReviewChangesWalkthroughView {...props} bound={bound} />;
+}
+
+function ReviewChangesWalkthroughView(props: ReviewChangesWalkthroughProps & Readonly<{ bound: ReturnType<typeof useScmDiffSummaryBinding> }>) {
+    return <ScmWalkthroughView {...props.context} bound={props.bound} comparison={props.comparison} scopeLabel={props.scopeLabel}
+        sessionId={props.capture.input.sessionId} displayMachineId={props.machine.machineId} serverId={props.serverId} onOpenFile={props.onOpenFile} />;
 }

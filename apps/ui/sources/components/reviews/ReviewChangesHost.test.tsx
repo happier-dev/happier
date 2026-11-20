@@ -19,6 +19,68 @@ await prepareSessionFilesViewTestkit();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
+it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison in its captured host %s', async sessionId => {
+    const comparisonId = 'c'.repeat(64);
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', sessionId,
+        featureOverrides: { features: { execution: { runs: { enabled: true } } } },
+        rpc: request => {
+            if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return { protocolVersion: 1,
+                capabilities: [{ id: 'tool.executionRuns', kind: 'tool', protocol: { version: 2, available: true,
+                    features: { detachedScope: true, startAndWait: true, exactInputResults: true,
+                        runScopedAgentBindings: true, secretReferenceOverlay: true } } }], checklists: {} };
+            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+                'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: {
+                    backends: { codex: { available: true, intents: ['scm_diff_summary'] } } } },
+            } };
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) return {
+                success: true, results: [], count: 0, bytes: 0,
+                sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 },
+            };
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE) return {
+                success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Retained comparison unavailable',
+            };
+            return undefined;
+        } });
+    const { ReviewChangesHost } = await import('./ReviewChangesHost');
+    const { getScmDiffSummaryState } = await import('@/sync/ops/scmDiffSummary/generate');
+    const capture = { target: { kind: 'machine', machineId: 'm1' }, input: {
+        cwd: '/repo', comparisonId, source: { kind: 'workingTree' }, ...(sessionId ? { sessionId } : {}),
+    } } satisfies ReviewRoundComparisonCaptureV1;
+    // A real SCM destination on this same Home/Machine must reach generation before the Review host is tested.
+    const { SessionWalkthroughView } = await import('@/components/sessions/files/walkthrough/SessionWalkthroughView');
+    const { ScmWalkthroughView } = await import('@/components/sessions/files/walkthrough/ScmWalkthroughView');
+    const { useWorkspaceScmDiffSummaryBinding } = await import('@/components/projects/scm/useWorkspaceScmDiffSummaryBinding');
+    const controlProps = { serverId: fixture.scope.serverId, comparison: { kind: 'workingTree', comparisonId: 'd'.repeat(64) },
+        scopeLabel: 'Control comparison', layout: 'wide', renderBar: () => null,
+        onShowFiles() {}, onOpenFile() {}, onOpenComposer() {} } as const;
+    function WorkspaceControl() {
+        const bound = useWorkspaceScmDiffSummaryBinding({ machineId: 'm1', rootPath: '/repo', serverId: fixture.scope.serverId,
+            comparison: controlProps.comparison, output: 'walkthrough' });
+        return <ScmWalkthroughView {...controlProps} bound={bound} displayMachineId="m1" />;
+    }
+    const control = await fixture.render(sessionId ? <SessionWalkthroughView {...controlProps} sessionId={sessionId} /> : <WorkspaceControl />);
+    await vi.waitFor(() => expect(control.findByTestId('walkthrough-start')?.props.disabled, control.getTextContent()).toBe(false));
+    await control.pressByTestIdAsync('walkthrough-start');
+    await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)).toHaveLength(1));
+    await control.unmount();
+    const screen = await fixture.render(<ReviewChangesHost reviewId="walkthrough-review" roundOrdinal={1}
+        scope={{ serverId: fixture.scope.serverId, accountId: 'alice' }} capture={capture} comments={[]}
+        view="walkthrough" onSelectView={() => {}} onOpenComment={() => {}} />);
+    await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled, screen.getTextContent()).toBe(false));
+    await screen.pressByTestIdAsync('walkthrough-start');
+    await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)).toHaveLength(2));
+    const generated = fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)[1]!;
+    expect(generated.targetId).toBe('m1');
+    expect(generated.payload).toMatchObject({ cwd: '/repo', comparisonId, source: { kind: 'workingTree' }, outputs: ['walkthrough'] });
+    if (sessionId) expect(generated.payload).toMatchObject({ sessionId });
+    else expect(generated.payload).not.toHaveProperty('sessionId');
+    await vi.waitFor(() => expect(Object.values(getScmDiffSummaryState().entriesByKey)
+        .find(entry => entry.input.comparisonId === comparisonId))
+        .toMatchObject({ status: 'failed', error: { code: 'DIFF_UNAVAILABLE' } }));
+    await screen.unmount();
+});
+
+
 it('reads only the opened pinned comparison, preserves its failure, and does no hidden Machine work', async () => {
     fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
         ? { success: false, error: 'Captured comparison no longer available', errorCode: 'DIFF_UNAVAILABLE' } satisfies ScmComparisonCaptureOutput : undefined });
