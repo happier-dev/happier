@@ -1,3 +1,43 @@
+# Shared eligibility for dispatch and pre-dispatch clients that need a worker
+# before they ship a payload to it. The native projection owns the command pool.
+execution_target_is_automatic() {
+  eval '[ "${target_'"$1"'_automatic-1}" = 1 ]'
+}
+
+execution_target_is_excluded() {
+  case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+value_for_target() {
+  eval "printf '%s' \"\${target_${2}_${1}-}\""
+}
+
+execution_target_ssh_config() {
+  if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
+    printf '%s' "$projection_mutagen_ssh_path/config"
+  else
+    value_for_target ssh_config "$1"
+  fi
+}
+
+print_execution_worker_connections() (
+  [ "${command_mode-}" != local ] || return 0
+  worker_number=1
+  while [ "$worker_number" -le "${target_count-0}" ]; do
+    if execution_target_is_automatic "$worker_number"; then
+      worker_name=$(value_for_target name "$worker_number")
+      if ! execution_target_is_excluded "$worker_name"; then
+        printf '%s\0%s\0%s\0' "$worker_name" "$(value_for_target ssh "$worker_number")" \
+          "$(execution_target_ssh_config "$worker_number")"
+      fi
+    fi
+    worker_number=$((worker_number + 1))
+  done
+)
+
 # Serialize the host-local decision with publication of its existing active
 # record. Probing, synchronization, worker admission and payloads stay outside.
 acquire_placement_decision() {

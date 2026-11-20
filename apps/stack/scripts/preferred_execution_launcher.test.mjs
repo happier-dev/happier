@@ -2112,6 +2112,21 @@ test('automatic placement excludes mac-host unless it is in the configured comma
   assert.doesNotMatch(configured.stderr, /^HSTACK_PLACEMENT_EXCLUDED /m);
 });
 
+test('the worker connection query applies the dispatch pool and exclusions before SSH', async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const env = { ...fixture.invocation.env, HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS: 'starved' };
+  const result = spawnSync('/bin/sh', [launcher, '--execution-workers'], { ...fixture.invocation, env });
+  assert.equal(result.status, 0, result.stderr);
+  const fields = result.stdout.split('\0');
+  assert.equal(fields.length, 4);
+  assert.equal(fields[0], 'roomy');
+  assert.equal(fields[1], 'roomy-host');
+  assert.equal(await readFile(env.FIXTURE_TRACE, 'utf8').catch(error => {
+    if (error.code !== 'ENOENT') throw error;
+    return '';
+  }), '');
+});
+
 test('AUTO emits one typed exclusion per dropped candidate for fresh and retained probe failures', async t => {
   for (const [failure, expectedReason] of [
     ['dispatch-ssh', 'unreachable'], ['dispatch-sync', 'prerequisite'], ['admission', 'admission'],

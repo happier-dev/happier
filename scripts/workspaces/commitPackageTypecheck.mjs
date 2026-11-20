@@ -545,8 +545,6 @@ export const commitPackageTypecheckRefuses = result => !result.skipped && (resul
 /** The commit gate's worker lane: its own warm worktree beside the rolling one (sharing its bare repository), so a gate
  * never waits behind a rolling app compile (up to hours) for the worktree, and its own admission identity. */
 const GATE_LANE = 'gate';
-/** nl1 first: the rolling owner takes nl3 first, and nl3's sync hung every gate request on 2026-11-18 ~21:00Z. */
-const GATE_WORKERS = ['nl1', 'nl3'];
 /** The gate's admitted entry: the broker ranks admissions by script, and this one takes the top rank. */
 export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypecheck.mjs';
 
@@ -557,8 +555,7 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
  * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages,
-  workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || GATE_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) {
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers }) {
   const plan = packages ? { blocking: packages, detached: [] } : commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
@@ -649,9 +646,6 @@ async function takeQueuedCommit(state) {
   }, { lockPath: `${queue}.lock`, timeoutMs: null });
 }
 
-/** Report-mode consumers: one per worker (nl1 first, then nl3), all taking from the one queue. */
-export const COMMIT_GATE_REPORT_WORKERS = Object.freeze(['nl1', 'nl3']);
-
 /**
  * One report-mode consumer: takes queued commits one at a time, oldest first, and checks each on `worker` (falling back
  * to the other report workers when it returns no rows), then returns the SHAs it checked. One consumer per worker and
@@ -659,11 +653,14 @@ export const COMMIT_GATE_REPORT_WORKERS = Object.freeze(['nl1', 'nl3']);
  * ~30 commits/h and ~50 package commits/h arrived at 21:00Z on 2026-11-18. The holder re-reads the queue before it
  * lets go (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
  */
-export async function drainCommitGateReports({ repo, env = process.env, worker = COMMIT_GATE_REPORT_WORKERS[0], ...options }) {
+export async function drainCommitGateReports({ repo, env = process.env, worker, workerCandidates, ...options }) {
+  const eligible = workerCandidates ? filterExecutionWorkers(workerCandidates, env) : [...typecheckWorkerConnections(repo, env).keys()];
+  worker ??= eligible[0];
+  if (!eligible.includes(worker)) return [];
   const state = commitPackageTypecheckStateDir(repo, env);
   mkdirSync(state, { recursive: true });
   const queue = gateReportQueuePath(state);
-  const workers = [worker, ...COMMIT_GATE_REPORT_WORKERS.filter(other => other !== worker)];
+  const workers = [worker, ...eligible.filter(other => other !== worker)];
   const drained = [];
   for (;;) try {
     await withWorkspaceBundleLock(async () => {
@@ -843,36 +840,33 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   return result;
 }
 
-/** Workers the rolling owner compiles on, in order: the first reachable keeps the warm worktree. Typechecks never run
- * on mac-host (owner ruling 2026-11-17) or on the controller; nl3/nl1 have the memory for a ~16 GiB compile. */
-const ROLLING_WORKERS = ['nl3', 'nl1'];
 const WORKER_STATE = '.happier-stack/cache/commit-typecheck-worker';
 const WORKER_ROWS = 'HAPPIER_ROLLING_ROWS ';
 
-/** The worker's SSH alias and config from this checkout's native execution projection (the file hstack-exec loads). */
-function workerSsh(repo, name, env) {
-  const storage = (env.HAPPIER_STACK_STORAGE_DIR || join(homedir(), '.happier', 'stacks')).replace(/^~(?=$|\/)/u, homedir());
-  let stacks = [];
-  try { stacks = execFileSync('sh', ['-c', 'for p in "$1"/repo-*/dev-target-exec-v1.sh; do [ -r "$p" ] && printf "%s\\n" "$p"; done', 'sh', storage], { encoding: 'utf8' }).split('\n').filter(Boolean); } catch {}
-  for (const projection of stacks) {
-    const result = spawnSync('sh', ['-c', `. "$1" || exit 3
-[ "$projection_repo_root" = "$2" ] || exit 3
-i=1
-while [ "$i" -le "$target_count" ]; do
-  eval "n=\\$target_\${i}_name; s=\\$target_\${i}_ssh; c=\\$target_\${i}_ssh_config"
-  if [ "$n" = "$3" ]; then
-    [ -n "\${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ] && c="$projection_mutagen_ssh_path/config"
-    printf '%s\\n%s\\n' "$s" "$c"; exit 0
-  fi
-  i=$((i + 1))
-done
-exit 4`, 'sh', projection, repo, name], { encoding: 'utf8' });
-    if (result.status === 0) {
-      const [alias, config] = result.stdout.split('\n');
-      if (alias && config) return { alias, config };
-    }
+// The executor owns the command pool, exclusions and connection addresses.
+function typecheckWorkerConnections(repo, env) {
+  const launcher = join(repo, 'apps/stack/bin/hstack-exec');
+  if (!existsSync(launcher) || process.platform === 'win32') return new Map();
+  const output = execFileSync(launcher, ['--execution-workers'], { cwd: repo, env, encoding: 'utf8' });
+  const fields = output.split('\0');
+  const connections = new Map();
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    const [name, alias, config] = fields.slice(i, i + 3);
+    if (name && alias && config) connections.set(name, { alias, config });
   }
-  return null;
+  // An explicit typecheck preference narrows and orders the executor's pool.
+  const override = env.HAPPIER_COMMIT_TYPECHECK_WORKERS;
+  if (!override) return connections;
+  return new Map(override.split(/\s+/u).filter(name => connections.has(name)).map(name => [name, connections.get(name)]));
+}
+
+// Injected worker candidates still obey the executor's exclusion predicate.
+function filterExecutionWorkers(workers, env) {
+  if (!env.HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS) return workers;
+  const placement = fileURLToPath(new URL('../../apps/stack/scripts/utils/dev_targets/native_placement.sh', import.meta.url));
+  const output = execFileSync('sh', ['-c', '. "$1"; shift; for worker do if ! execution_target_is_excluded "$worker"; then printf "%s\\n" "$worker"; fi; done',
+    'sh', placement, ...workers], { env, encoding: 'utf8' });
+  return output.split('\n').filter(Boolean);
 }
 
 /**
@@ -882,14 +876,12 @@ exit 4`, 'sh', projection, repo, name], { encoding: 'utf8' });
  * Unreachable or failed: every package is null (INCOMPLETE in verdicts.log); never a controller compile.
  */
 export function workerTreeRows({ repo, state, env = process.env, log = message => process.stderr.write(`${message}\n`), scope = 'packages',
-  workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || ROLLING_WORKERS.join(' ')).split(/\s+/u).filter(Boolean),
-  lane = '', entry = 'scripts/workspaces/commitPackageTypecheck.mjs', transport }) {
+  workers, lane = '', entry = 'scripts/workspaces/commitPackageTypecheck.mjs', transport }) {
   const slug = basename(state);
   const remoteRepo = `${WORKER_STATE}/${slug}/repo.git`;
   // The SSH/process boundary: the worker's SSH target, its refs, the tree push and the routed worker command.
   const sshCommandOf = ssh => `ssh -F '${ssh.config.replaceAll("'", "'\\''")}' -o BatchMode=yes -o ConnectTimeout=20`;
   const io = transport ?? {
-    ssh: worker => workerSsh(repo, worker, env),
     listRefs: (ssh, refs) => {
       const listed = spawnSync('git', ['ls-remote', `${ssh.alias}:${remoteRepo}`, ...refs], { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommandOf(ssh) } });
       return listed.status === 0 ? listed.stdout : '';
@@ -918,9 +910,12 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
     const label = sides.join('+');
     const unjudged = () => new Map(dirs.map(dir => [dir, undefined]));
     const none = many ? new Map(treeIds.map(id => [id, unjudged()])) : unjudged();
-    for (const worker of workers) {
-      const ssh = io.ssh(worker);
-      if (!ssh) { log(`[rolling-head-typecheck] worker ${worker}: no SSH target in this checkout's execution projection`); continue; }
+    const connections = transport ? undefined : typecheckWorkerConnections(repo, env);
+    const candidates = transport ? filterExecutionWorkers(workers ?? [], env)
+      : workers ? workers.filter(worker => connections.has(worker)) : [...connections.keys()];
+    for (const worker of candidates) {
+      const ssh = transport ? io.ssh(worker) : connections.get(worker);
+      if (!ssh) continue;
       // Each tree is pushed as a child of the last commit this worker accepted on the ref. A parentless commit made
       // the push enumerate and send the whole tree (71,501 objects, 155-300 s per tree on 2026-11-18); a child of a
       // commit the worker has sends only the changed objects (14 objects, 3.5 KB, under a second, for 5f6edbb072d).
@@ -1035,7 +1030,7 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
     queueCommitGateReport({ repo, env, commit });
     const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
     try {
-      for (const worker of COMMIT_GATE_REPORT_WORKERS) {
+      for (const worker of typecheckWorkerConnections(repo, env).keys()) {
         spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue', `--worker=${worker}`],
           { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
       }

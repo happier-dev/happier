@@ -53,6 +53,12 @@ if [ -n "$command_repo_root" ]; then
   }
   if [ "$command_repo_root" = "$repo_root" ]; then command_repo_root=; fi
 fi
+list_execution_workers=0
+if [ "${1-}" = --execution-workers ]; then
+  [ "$#" -eq 1 ] || exit 64
+  list_execution_workers=1
+fi
+
 # The named command checkout supplies the default cwd: its root unless the
 # caller already stands inside it (--cwd still selects a subdirectory).
 if [ -n "$command_repo_root" ]; then
@@ -625,6 +631,7 @@ run_local_without_target_config() {
     printf '%s\n' '[preferred-execution] no target configuration is available for exact-target execution' >&2
     exit 1
   fi
+  [ "$list_execution_workers" = 0 ] || exit 0
   run_local "$@"
 }
 
@@ -957,16 +964,18 @@ if [ "${1-}" = --local ]; then
   fi
   run_selected_local "$@"
 fi
-validate_launcher_payload "$@"
+if [ "$list_execution_workers" = 0 ]; then
+  validate_launcher_payload "$@"
 
-# An already-placed child or explicitly local publisher may operate on a
-# temporary repository. Only outbound routing needs a synchronized cwd.
-if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ "${HAPPIER_HSTACK_EXECUTION-}" = 1 ]; then
-  if [ -n "$explicit_target" ]; then
-    printf '%s\n' '[preferred-execution] nested exact-target execution is not allowed' >&2
-    exit 1
+  # An already-placed child or explicitly local publisher may operate on a
+  # temporary repository. Only outbound routing needs a synchronized cwd.
+  if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ "${HAPPIER_HSTACK_EXECUTION-}" = 1 ]; then
+    if [ -n "$explicit_target" ]; then
+      printf '%s\n' '[preferred-execution] nested exact-target execution is not allowed' >&2
+      exit 1
+    fi
+    run_local "$@"
   fi
-  run_local "$@"
 fi
 # Validate an explicit execution policy before delegation can change cwd or
 # default discovery can choose another Stack. Even a warm projection cannot
@@ -980,7 +989,7 @@ fi
 # this wrapper makes a second placement decision or reserves local capacity.
 # Explicit target/local requests retain their established placement semantics.
 if [ "${1-}" = -- ]; then shift; fi
-if [ -z "$explicit_target" ] && [ "$explicit_relative_cwd_set" != 1 ]; then
+if [ "$list_execution_workers" = 0 ] && [ -z "$explicit_target" ] && [ "$explicit_relative_cwd_set" != 1 ]; then
   try_run_self_dispatching_package_command "$@"
 fi
 command_cwd_root=${command_repo_root:-$repo_root}
@@ -1155,6 +1164,11 @@ if [ -n "$command_repo_root" ]; then
   repo_root=$command_repo_root
   unset configured_target_names
   . "$projection_path" || exit 1
+fi
+
+if [ "$list_execution_workers" = 1 ]; then
+  print_execution_worker_connections
+  exit $?
 fi
 
 if { [ -n "${CI-}" ] || [ "${command_mode-}" = local ]; } && [ -z "$explicit_target" ]; then
@@ -1390,12 +1404,6 @@ reclaim_retired_controller_temporaries() {
   done
 }
 
-value_for_target() {
-  field=$1
-  number=$2
-  eval "printf '%s' \"\${target_${number}_${field}-}\""
-}
-
 sync_name_for_target() {
   target_name=$1
   target_number=$2
@@ -1467,10 +1475,7 @@ flush_selected_sync() {
 remote_load_probe() {
   number=$1
   ssh_target=$(value_for_target ssh "$number")
-  ssh_config=$(value_for_target ssh_config "$number")
-  if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
-    ssh_config="$projection_mutagen_ssh_path/config"
-  fi
+  ssh_config=$(execution_target_ssh_config "$number")
   remote_repo=$(value_for_target repo_dir "$number")
   remote_executor_repo=$(value_for_target executor_repo_dir "$number")
   [ -n "$remote_executor_repo" ] || remote_executor_repo=$remote_repo
@@ -1660,27 +1665,25 @@ probe_target() {
   number=$1
   name=$(value_for_target name "$number")
   probe_available=1
-  case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
-    *" $name "*)
-      case " ${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} " in
-        *" $name "*) printf '%s %s 0 - 1 disk\n' "$number" "$name"; return ;;
+  if execution_target_is_excluded "$name"; then
+    case " ${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} " in
+      *" $name "*) printf '%s %s 0 - 1 disk\n' "$number" "$name"; return ;;
+    esac
+    case " ${HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS-} " in
+      *" $name "*) printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"; return ;;
+    esac
+    excluded_reason=unreachable
+    for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
+      case "$refusal" in
+        "$name="*)
+          excluded_reason=${refusal#*=}
+          case "$excluded_reason" in dependencies|sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
+          break ;;
       esac
-      case " ${HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS-} " in
-        *" $name "*) printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"; return ;;
-      esac
-      excluded_reason=unreachable
-      for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
-        case "$refusal" in
-          "$name="*)
-            excluded_reason=${refusal#*=}
-            case "$excluded_reason" in dependencies|sync) excluded_reason=prerequisite ;; ssh) excluded_reason=unreachable ;; esac
-            break ;;
-        esac
-      done
-      printf '%s %s 0 - 1 %s\n' "$number" "$name" "$excluded_reason"
-      return
-      ;;
-  esac
+    done
+    printf '%s %s 0 - 1 %s\n' "$number" "$name" "$excluded_reason"
+    return
+  fi
   command_key=$(printf '%s\n' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" "$required_bun_version" "$relative_cwd" | cksum | awk '{print $1}')
   if [ -n "$heavyweight_placement_class" ]; then
     command_key="$command_key:$heavyweight_placement_class"
@@ -1837,9 +1840,8 @@ trap 'cancel_probe_phase 130' INT TERM
 trap 'cancel_probe_phase 129' HUP
 number=1
 while [ "$number" -le "$target_count" ]; do
-  eval "automatic_target=\${target_${number}_automatic-1}"
   if { [ -n "$explicit_target_number" ] && [ "$number" -eq "$explicit_target_number" ]; } || \
-     { [ -z "$explicit_target_number" ] && [ "$automatic_target" = 1 ]; }; then
+     { [ -z "$explicit_target_number" ] && execution_target_is_automatic "$number"; }; then
     (probe_target "$number" > "$probe_tmp/$number") &
     probe_pid=$!
     probe_birth=$(heavyweight_process_token "$probe_pid")
@@ -2382,10 +2384,7 @@ printf '[preferred-execution] selected %s (load=%s, active=%s, effective=%s, %s)
   "$selected_name" "$selected_base_score" "$selected_active" "$selected_score" "$selected_cache" >&2
 
 ssh_target=$(value_for_target ssh "$selected_number")
-ssh_config=$(value_for_target ssh_config "$selected_number")
-if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
-  ssh_config="$projection_mutagen_ssh_path/config"
-fi
+ssh_config=$(execution_target_ssh_config "$selected_number")
 remote_repo=$(value_for_target repo_dir "$selected_number")
 remote_executor_repo=$(value_for_target executor_repo_dir "$selected_number")
 [ -n "$remote_executor_repo" ] || remote_executor_repo=$remote_repo

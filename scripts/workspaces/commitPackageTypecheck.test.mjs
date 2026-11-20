@@ -519,7 +519,7 @@ test('report mode skips queued work only when a rolling verdict completed all it
   assert.equal(requests, 1, 'older or unavailable rolling results do not count');
   await appendFile(log, verdict(head, '-'));
   queueCommitGateReport({ repo, env, commit: head });
-  await drainCommitGateReports(options);
+  await drainCommitGateReports({ ...options, workerCandidates: ['nl1'] });
   assert.equal(requests, 1);
   assert.match(readFileSync(log, 'utf8').trim().split('\n').at(-1), /GATE-REPORT-superseded .*packages=packages\/leaf/u);
 });
@@ -589,10 +589,11 @@ test('queued report-mode commits are drained in landing order by one drainer, ea
     shas.push(await commit('packages/plugins/codex/src/index.ts', `export const value = ${value};\n`));
     queueCommitGateReport({ repo, env, commit: shas.at(-1) });
   }
-  const drained = await drainCommitGateReports({ repo, env, remote, post: () => {}, boardPaths: [], log: () => {} });
+  const workerCandidates = ['nl1', 'nl3'];
+  const drained = await drainCommitGateReports({ repo, env, workerCandidates, remote, post: () => {}, boardPaths: [], log: () => {} });
   assert.deepEqual(drained, shas, 'landing order, each once');
   assert.equal(fetched.length, 4, 'parent + 3 commits: every tree once');
-  assert.deepEqual(await drainCommitGateReports({ repo, env, remote, post: () => {}, boardPaths: [], log: () => {} }), [], 'the queue is empty');
+  assert.deepEqual(await drainCommitGateReports({ repo, env, workerCandidates, remote, post: () => {}, boardPaths: [], log: () => {} }), [], 'the queue is empty');
   assert.equal(readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok/gu).length, 3);
 });
 
@@ -611,7 +612,7 @@ test('two report consumers split one queue: every commit is checked exactly once
   }
   const checkedBy = new Map();
   // The worker boundary: each consumer's remote answers after a tick, so the two drain concurrently.
-  const consumer = worker => async () => drainCommitGateReports({ repo, env, worker, post: () => {}, boardPaths: [], log: () => {},
+  const consumer = worker => async () => drainCommitGateReports({ repo, env, worker, workerCandidates: ['nl1', 'nl3'], post: () => {}, boardPaths: [], log: () => {},
     remote: (treeIds, dirs) => {
       for (const treeId of treeIds) checkedBy.set(treeId, [...(checkedBy.get(treeId) ?? []), worker]);
       return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))]));
@@ -658,7 +659,6 @@ test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK us
     HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TREE_GATE: 'off',
     HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
   await commit('packages/plugin-sdk/package.json', JSON.stringify({ name: '@x/plugin-sdk', scripts: { typecheck: 'tsc' } }));
-  await commit('packages/plugin-sdk/tsconfig.json', '{}');
   await commit('packages/plugin-sdk/src/index.ts', 'export function api(): number { return 0; }\n');
   const judge = (base, tree, options) => runCommitGate({ repo, base, tree, env, label: 'commit-partial', ...options });
   // Seed the existing worker-result boundary, keeping the Git comparison and gate real.
@@ -669,6 +669,7 @@ test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK us
     await writeFile(join(results, `${dir.replaceAll('/', '__')}.prepared-declarations.json`), JSON.stringify({ rows }));
   };
   for (const dir of ['packages/protocol', 'packages/plugin-sdk']) {
+    await commit(`${dir}/tsconfig.json`, JSON.stringify({ compilerOptions: { declaration: true, isolatedDeclarations: true } }));
     const file = `${dir}/src/index.ts`;
     const clean = await commit(file, 'export function api(): number { return 1; }\n');
     const broken = await commit(file, 'export function api() { return 1; }\n');
@@ -692,4 +693,24 @@ test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK us
   const verdict = await judge(`${other}^`, other);
   assert.equal(verdict.verdict, 'pass');
   assert.ok(verdict.notes.every(note => !note.includes('package typecheck')));
+});
+
+test('an excluded fallback worker is never contacted for Git preparation', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const state = join(repo, '.git/typecheck-state');
+  await mkdir(state);
+  const sha = await commit('packages/protocol/src/index.ts', 'export const value = 19;\n');
+  const treeId = execFileSync('git', ['rev-parse', `${sha}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const preparation = [];
+  const transport = {
+    ssh: worker => ({ alias: worker, config: '/dev/null' }),
+    listRefs: ssh => { preparation.push(ssh.alias); return ''; },
+    push: () => ({ status: 0, stderr: '' }),
+    dispatch: () => ({ status: 255, stdout: '' }),
+  };
+  const env = { ...process.env, HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS: 'nl3' };
+  const rows = workerTreeRows({ repo, state, env, workers: ['nl1', 'nl3'], lane: 'gate', transport, log: () => {} })(
+    treeId, ['packages/protocol'], 'head');
+  assert.deepEqual(preparation, ['nl1']);
+  assert.equal(rows.get('packages/protocol'), undefined);
 });
