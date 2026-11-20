@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -93,15 +93,15 @@ function observedRowsResponseCount(): number {
 }
 
 describe('plugin daemon database owner', () => {
-    it('prepares Machine allocation above Preview, projects it and rolls back growth at the quota', async () => {
+    it('prepares an empty database below the disk alert percentage and enforces growth at the byte budget', async () => {
         const { createMachinePluginDaemonDatabaseLimitsPolicy } = await import('./daemonDatabaseLimitsPolicy');
         const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
         const home = await makeHappyHome();
         let reads = 0;
         let freeBytes = 144 * 1024 * 1024;
         const policy = createMachinePluginDaemonDatabaseLimitsPolicy({
-            readPolicy: () => ({ status: 'ready', revision: 1, source: 'stored', policy: MachineResourcesPolicyV1Schema.parse({ v: 1, alerts: { disk: { threshold: { freeBytes: 0 } } } }) }),
-            readCapacity: async path => { reads++; return { status: 'known', path, freeBytes, observedAt: 0 }; },
+            readPolicy: () => ({ status: 'ready', revision: 1, source: 'default', policy: MachineResourcesPolicyV1Schema.parse({ v: 1 }) }),
+            readCapacity: async path => { reads++; return { status: 'known', path, freeBytes, totalBytes: 1_887_000_000_000, observedAt: 0 }; },
         });
         const paths = resolvePluginStorePaths({ happyHomeDir: home });
         const definition = { migrations: [{ version: 1, id: 'create', up: async (tx: import('@happier-dev/plugin-sdk/storage').DatabaseTransaction) => { await tx.execute('CREATE TABLE events (at INTEGER, body BLOB)'); } }], incumbentQueryFixture: { id: 'events', run: async (tx: import('@happier-dev/plugin-sdk/storage').DatabaseTransaction) => { await tx.query('SELECT at FROM events LIMIT 1'); } } };
@@ -109,6 +109,9 @@ describe('plugin daemon database owner', () => {
             declarations: [{ id: 'main', migrations: [{ version: 1, id: 'create' }], incumbentQueryFixtureId: 'events', retention: [{ table: 'events', timeColumn: 'at' }] }], runtime: { main: definition } };
         let host = createStablePluginDaemonDatabaseHost({ paths, daemonDatabaseLimits: policy });
         try {
+            const directory = join(paths.storageDir, input.pluginId, 'databases');
+            await mkdir(directory, { recursive: true });
+            await writeFile(join(directory, 'main.sqlite'), '');
             await host.prepare(input);
             expect(host.readCapability(input.pluginId)).toMatchObject({ status: 'available', protocolMaximumDatabaseBytes: freeBytes, limits: { maximumDatabaseBytes: freeBytes } });
             const database = await host.bind(input).database('main', definition);

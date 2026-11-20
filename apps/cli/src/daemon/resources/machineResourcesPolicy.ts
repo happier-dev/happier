@@ -94,7 +94,7 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
   };
 }
 
-/** One preparation-time allocation, using the Machine's existing low-disk headroom. */
+/** One preparation-time allocation from the database filesystem's available bytes. */
 export async function resolveMachineDatabaseAllocation(input: Readonly<{
   readPolicy: () => MachineResourcesPolicyGetResultV1;
   readCapacity: (path: string) => ReturnType<typeof import('../../storage/pathCapacity').readStoragePathCapacity>;
@@ -106,8 +106,9 @@ export async function resolveMachineDatabaseAllocation(input: Readonly<{
   const capacity = await input.readCapacity(input.directory);
   if (capacity.status !== 'known') return null;
   const threshold = snapshot.policy.alerts.disk.threshold;
-  if ('freeFraction' in threshold && capacity.totalBytes === undefined) return null;
-  const headroom = 'freeBytes' in threshold ? threshold.freeBytes : threshold.freeFraction * capacity.totalBytes!;
-  const allocation = input.retainedBytes + Math.floor(Math.max(0, capacity.freeBytes - headroom));
+  // Percentage thresholds describe disk pressure for alerts. An explicit
+  // byte threshold can reserve a fixed amount of space on the database volume.
+  const reservedBytes = 'freeBytes' in threshold ? threshold.freeBytes : 0;
+  const allocation = input.retainedBytes + Math.max(0, capacity.freeBytes - reservedBytes);
   return Number.isSafeInteger(allocation) ? allocation : null;
 }

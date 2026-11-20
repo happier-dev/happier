@@ -34,18 +34,19 @@ describe('default plugin daemon database limits policy', () => {
 
 // Policy metadata and filesystem capacity are the external boundaries.
 describe('Machine retained database allocation', () => {
-    it.each([30, null])('uses exact filesystem headroom with retention %s and preserves statement bounds', async (days) => {
+    it.each([30, null])('preserves the fixed byte floor with retention %s and preserves statement bounds', async (days) => {
         const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
         let freeBytes = 512 * 1024 * 1024;
+        const floorBytes = 128 * 1024 * 1024;
         let reads = 0;
         const policy = createMachinePluginDaemonDatabaseLimitsPolicy({
-            readPolicy: () => ({ status: 'ready', revision: 1, source: 'stored', policy: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { logRetentionDays: days }, alerts: { disk: { threshold: { freeFraction: 0.1 } } } }) }),
+            readPolicy: () => ({ status: 'ready', revision: 1, source: 'stored', policy: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { logRetentionDays: days }, alerts: { disk: { threshold: { freeBytes: floorBytes } } } }) }),
             readCapacity: async (path) => { reads++; expect(path).toBe('/exact/database'); return { status: 'known', path, observedAt: 1, freeBytes, totalBytes: 1024 * 1024 * 1024 }; },
         });
         const context = { directory: '/exact/database', retainedBytes: 8192, declarations: [{ id: 'capture', migrations: [], incumbentQueryFixtureId: 'events', retention: [{ table: 'events', timeColumn: 'at' }] }] };
         const first = await policy.resolvePluginLimits('acme.capture', context);
-        expect(first).toMatchObject({ ...PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1, maximumDatabaseBytes: 8192 + Math.floor(freeBytes - 0.1 * 1024 * 1024 * 1024) });
-        freeBytes = 0.1 * 1024 * 1024 * 1024;
+        expect(first).toMatchObject({ ...PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1, maximumDatabaseBytes: 8192 + freeBytes - floorBytes });
+        freeBytes = floorBytes;
         expect(await policy.resolvePluginLimits('acme.capture', context)).toMatchObject({ maximumDatabaseBytes: 8192 });
         expect(reads).toBe(2);
         expect(await policy.resolvePluginLimits('acme.capture')).toEqual(PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1);

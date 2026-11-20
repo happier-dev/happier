@@ -509,6 +509,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             dependencies.readPluginCatalog ?? (async () => await readCurrentDaemonPluginCatalog({
                 happyHomeDir: configuration.happyHomeDir,
                 reloadController: pluginReloadController,
+                recoverAccountCensus: false,
             })),
         ),
         ghDepCapability,
@@ -655,7 +656,9 @@ export function registerCapabilitiesHandlers(
     });
 
     rpcHandlerManager.registerHandler<CapabilitiesDetectRequest, CapabilitiesDetectResponse>(RPC_METHODS.CAPABILITIES_DETECT, async (data, ingress) => {
-        const service = await getCurrentService();
+        // Detection reads the serving generation. Account census recovery can
+        // prepare plugin databases, so it belongs to the explicit recovery paths.
+        const service = await getService();
         try {
             const response = await service.detect(data, { accountId: ingress?.machineAdmission?.actorAccountId,
                 executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_DETECT, data, ingress) });

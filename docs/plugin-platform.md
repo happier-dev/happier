@@ -3237,15 +3237,18 @@ Ingest and Resource publication do not request maintenance or arm a timer; the
 existing policy, volume and idle edges discover newly retained data. Stopping a
 recording does not remove its declared database from retention. The native log
 byte budget applies only to native logs. Retention-declared plugin databases opt
-into a Machine allocation resolved once at preparation: retained plugin database
-bytes plus the nonnegative difference between measured free bytes on that exact
-database filesystem and the Machine's existing low-disk alert threshold. A
-percentage threshold uses that filesystem's total capacity. At or below the
-threshold the store cannot grow and reports `daemon_database_quota_exceeded`;
-reads and non-growth deletion remain available. Unknown policy or capacity yields
+into a Machine allocation resolved once at preparation. The owner adds retained
+plugin database bytes to the measured free bytes on that exact filesystem,
+subtracting any explicit fixed-byte disk threshold from the free bytes and
+clamping the resulting growth allowance to zero. Percentage thresholds govern
+disk alerts. At or below the fixed floor, attempts to grow the database report
+`daemon_database_quota_exceeded`. Prepared stores still serve reads and
+non-growth deletion. Unknown policy or capacity yields
 `daemon_database_policy_unavailable`. The next preparation re-resolves allocation;
 there is no per-statement filesystem probe or new timer. `logRetentionDays` governs
 occupancy through the existing pruner, without a predictive bytes-per-day estimate.
+Machine capability detection reads the serving plugin registry and leaves
+Account census recovery and database preparation to their existing owners.
 The allocation remains shared across all databases and Environments of the plugin;
 the prepared capability reports the same byte ceiling the host enforces.
 Unretained plugins retain the Preview allocation and existing statement bounds.
