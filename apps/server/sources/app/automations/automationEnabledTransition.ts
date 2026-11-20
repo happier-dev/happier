@@ -11,8 +11,8 @@ export async function ensureAutomationEventCatalogStateTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     projectionChanged: boolean;
-}>): Promise<void> {
-    await params.tx.automationEventCatalogState.upsert({
+}>): Promise<{ eventSourceDefinitionsRevision: bigint }> {
+    return params.tx.automationEventCatalogState.upsert({
         where: { accountId: params.accountId },
         create: {
             accountId: params.accountId,

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
     AutomationRunExecutionRecipeV1Schema,
@@ -14,6 +14,8 @@ import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { logger } from "@/utils/logging/log";
+import { withWebLatencyTrace } from "@/utils/webLatencyTrace";
 import { ensureAutomationEventCatalogStateTx } from "./automationCrudService";
 import { transitionDeploymentInTx } from '@/app/deployments/deploymentService';
 import { computeDeploymentTransitionRequestDigestV1, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
@@ -223,7 +225,7 @@ describe("Automation Event stored-definition projection", () => {
             tempDirPrefix: "happier-automation-stored-definitions-",
             initAuth: false,
             initEncrypt: true,
-            env: { HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID },
+            env: { HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID, HAPPIER_WEB_LATENCY_TRACE: "1" },
         });
     }, 120_000);
 
@@ -545,7 +547,26 @@ describe("Automation Event stored-definition projection", () => {
             caller,
             input: { transport: { kind: "checkpointedPull" }, ...(knownRevision === undefined ? {} : { knownRevision }) },
         });
-        await expect(read()).resolves.toMatchObject({ kind: "page", revision: "0", definitions: [], nextCursor: null });
+        const previousLogLevel = logger.level;
+        logger.level = "trace";
+        const catalogOperations: string[] = [];
+        const trace = vi.spyOn(logger, "trace").mockImplementation((record: unknown) => {
+            if (typeof record === "object" && record !== null && "phase" in record
+                && typeof record.phase === "string" && record.phase.startsWith("db.AutomationEventCatalogState.")) {
+                catalogOperations.push(record.phase);
+            }
+        });
+        try {
+            await expect(withWebLatencyTrace("req-initialeventcatalog", () => read()))
+                .resolves.toMatchObject({ kind: "page", revision: "0", definitions: [], nextCursor: null });
+            expect(catalogOperations).toEqual([
+                "db.AutomationEventCatalogState.findUnique",
+                "db.AutomationEventCatalogState.upsert",
+            ]);
+        } finally {
+            trace.mockRestore();
+            logger.level = previousLogLevel;
+        }
         await expect(read("0")).resolves.toMatchObject({ kind: "unchanged", revision: "0" });
         expect(await db.automationEventCatalogState.findUnique({ where: { accountId: ACCOUNT_ID } }))
             .toMatchObject({ eventSourceDefinitionsRevision: 0n });

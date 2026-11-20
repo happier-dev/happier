@@ -38,7 +38,6 @@ export class AutomationEventStoredDefinitionsReadError extends Error {
         | "caller_materialization_not_current"
         | "event_contribution_not_current"
         | "account_content_unavailable"
-        | "catalog_state_unavailable"
         | "definition_content_unavailable"
         | "durable_push_endpoint_context_unavailable";
 
@@ -391,19 +390,12 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId, "content");
         if (accountFence.status !== "ready") fail("account_content_unavailable");
 
-        const readCatalog = () => tx.automationEventCatalogState.findUnique({
+        // An admitted Account with no Automation writes still has a valid
+        // initial catalog. Its revision owner returns the initialized row.
+        const catalog = await tx.automationEventCatalogState.findUnique({
             where: { accountId: params.accountId },
             select: { eventSourceDefinitionsRevision: true },
-        });
-        let catalog = await readCatalog();
-        if (!catalog) {
-            // An Account with no Automation writes still has a valid initial
-            // Event catalog. Use its existing revision owner, after admission,
-            // so observers can adopt the empty set and await invalidation.
-            await ensureAutomationEventCatalogStateTx({ tx, accountId: params.accountId, projectionChanged: false });
-            catalog = await readCatalog();
-        }
-        if (!catalog) fail("catalog_state_unavailable");
+        }) ?? await ensureAutomationEventCatalogStateTx({ tx, accountId: params.accountId, projectionChanged: false });
         const revision = catalog.eventSourceDefinitionsRevision.toString();
         const scope = scopeFingerprint({
             accountId: params.accountId,
