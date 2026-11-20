@@ -88,8 +88,6 @@ export type ActionAutomationSelectArgsV1 = Readonly<{
   actionId: string;
   input: unknown;
   context: ActionExecutorContext;
-  /** ActionSpec placement is the canonical owner of whether this Action has a Machine. */
-  executionPlacement?: 'machine' | 'session' | 'account' | 'client';
   approvalScope?: ActionApprovalPolicyScopeV1;
   /** Additional facts from the admitted operand's owner, never guessed from arbitrary input ids. */
   subjects?: readonly AutomationSubjectContextV1[];
@@ -319,8 +317,7 @@ export function createActionAutomationPortV1(options: Readonly<{
         signal?.throwIfAborted();
       }
       const subjects = projectActionAutomationSubjectsV1({ ...args, subjects: [...(args.subjects ?? []), ...additionalSubjects] });
-      const machineId = args.executionPlacement === undefined || args.executionPlacement === 'machine' || args.executionPlacement === 'session'
-        ? readActionAutomationExecutionMachineV1(args.context) : undefined;
+      const machineId = readActionAutomationExecutionMachineV1(args.context);
       const sharedRequester = isSharedRequesterActionV1(args.context);
       for (const row of candidates) {
         if (row.phase === 'after' && args.includeAfter === false) continue;

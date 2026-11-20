@@ -14,15 +14,16 @@ import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/a
 import { restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
-it('visibly skips own Action checks without an invoking Machine', async () => {
+it('uses the invoking Machine for Account Action checks and visibly skips when it is absent', async () => {
   const rows = (['before', 'after'] as const).map(phase => ({ automationId: 'own', triggerId: phase,
     triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'actor',
     actionIds: ['notifications.notify_me'], phase, ...(phase === 'before' ? { mode: 'wait' as const } : {}) }));
   const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows }),
     settle: async () => {} });
-  const args = { actionId: 'notifications.notify_me', input: { message: 'Account effect' }, executionPlacement: 'account' as const,
+  const args = { actionId: 'notifications.notify_me', input: { message: 'Account effect' },
     context: { defaultSessionMachineId: 'configured-machine' } };
-  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [], after: [], notices: rows.map(row => ({
+  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [rows[0]], after: [rows[1]], notices: [] });
+  expect(await port.select({ ...args, context: {} })).toMatchObject({ status: 'ready', before: [], after: [], notices: rows.map(row => ({
     code: 'action_automation_skipped', reason: 'machineRequired', automationId: row.automationId,
     triggerId: row.triggerId, workflowId: row.workflowId,
   })) });
@@ -34,7 +35,7 @@ it('marks an automatic before wait check unavailable when its Machine is missing
     ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
   }] }), settle: async () => {} });
   const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf bypass' },
-    executionPlacement: 'machine', context: { authority: 'account_automation', serverIdentityId: 'home' } });
+    context: { authority: 'account_automation', serverIdentityId: 'home' } });
   expect(selection).toMatchObject({ status: 'unavailable', before: [], after: [], notices: [{
     code: 'action_automations_not_checked', reason: 'machineRequired',
   }] });
@@ -48,7 +49,7 @@ it('matches a Machine subject from the admitted external target', async () => {
     subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
   }] }), settle: async () => {} });
   const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf matched' },
-    executionPlacement: 'machine', context: { authority: 'account_automation', serverIdentityId: subject.serverId,
+    context: { authority: 'account_automation', serverIdentityId: subject.serverId,
       externalActionTarget: subject } });
   expect(selection.before.map(row => row.automationId)).toEqual(['own']);
 });
@@ -117,7 +118,7 @@ describe('Approval profile subject admission', () => {
       workflowRevision: 1, ownerAccountId: 'actor', actionIds: ['actions.policy.set'], phase: 'before', mode: 'wait',
       subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
     }] }), settle: async () => {} });
-    const args = { actionId: 'actions.policy.set', input: {}, executionPlacement: 'machine' as const, context: {
+    const args = { actionId: 'actions.policy.set', input: {}, context: {
       serverIdentityId: 'home', approvalProfileId: 'profile', defaultSessionMachineId: 'machine',
     } };
     // A stored id survives revocation and cannot establish current profile availability.
@@ -189,11 +190,11 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
     return { results: [] };
   } });
   const context = { actionRequestId: 'original-request', defaultSessionMachineId: 'machine' };
-  const empty = await http.select({ actionId: 'account.name.set', input: {}, executionPlacement: 'machine', context, prepareMatching: checks.prepareMatching });
+  const empty = await http.select({ actionId: 'account.name.set', input: {}, context, prepareMatching: checks.prepareMatching });
   await createActionAutomationInvocationV1({ actionId: 'account.name.set', context, selection: empty, port: http }).settle({ ok: true });
   expect(definitionReads).toBe(0);
   expect(sent).toEqual([]);
-  const selection = await http.select({ actionId, input: {}, executionPlacement: 'machine', context, prepareMatching: checks.prepareMatching });
+  const selection = await http.select({ actionId, input: {}, context, prepareMatching: checks.prepareMatching });
   expect(workflowReads).toBe(0);
   const invocation = createActionAutomationInvocationV1({ actionId, context, selection, port: http });
   await http.start!({ actionId, input: {}, selected: selection.before,
@@ -205,7 +206,7 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   expect(sent).toEqual([]);
   expect(definitionReads).toBe(1);
   const failedContext = { actionRequestId: 'failed-request', defaultSessionMachineId: 'machine' };
-  const failedSelection = await http.select({ actionId, input: {}, executionPlacement: 'machine', context: failedContext, prepareMatching: checks.prepareMatching });
+  const failedSelection = await http.select({ actionId, input: {}, context: failedContext, prepareMatching: checks.prepareMatching });
   const failed = createActionAutomationInvocationV1({ actionId, context: failedContext, selection: failedSelection, port: http });
   await failed.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
   expect(sent).toEqual([expect.objectContaining({ evidence: expect.objectContaining({ outcome: 'failed' }),
@@ -222,7 +223,7 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
     triggerDefinitionEnvelope: 'unavailable unrelated private content' }] };
   http.apply({ automationId: 'own', rows: [selection.after[0]!] });
   const afterContext = { actionRequestId: 'after-only-request', defaultSessionMachineId: 'machine' };
-  const afterOnly = await http.select({ actionId, input: {}, executionPlacement: 'machine', context: afterContext, prepareMatching: checks.prepareMatching });
+  const afterOnly = await http.select({ actionId, input: {}, context: afterContext, prepareMatching: checks.prepareMatching });
   expect(afterOnly.before).toEqual([]);
   // A later removal cannot rewrite the already admitted private matching snapshot.
   retainedRow = { ...stored, triggers: [] };

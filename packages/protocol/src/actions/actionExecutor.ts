@@ -3557,7 +3557,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const prepareOrigin = ctx.prepareAdmittedExecutionOrigin;
         let selection: import('./executor/actionAutomationAdmission.js').ActionAutomationSelectionV1;
         try { selection = await deps.actionAutomations.select({ actionId, input: admittedInput, context: ctx,
-          executionPlacement: resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller, ctx.surface ?? 'ui'),
           ...(prepareOrigin ? { loadSubjectFacts: async () => {
             const { automationSubjects, ...originContext } = await prepareOrigin();
             // The same admitted host facts serve matching, consent and Run placement.
