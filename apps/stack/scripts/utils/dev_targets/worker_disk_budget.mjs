@@ -133,8 +133,8 @@ export async function admitWorkerDiskBudget({ repoDir, cacheBaseDir, commandClas
       ['runtime-build', () => reapRuntimeBuildStaging(cacheBaseDir, scratchRoot, procRoot, ownerUid)],
       ['scratch', () => {
         const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null };
-        // Custody's tmpdir is command-private; historical jobs are its siblings
-        // beneath the configured CLI home, even with an explicit TMPDIR.
+        // Keep sweeping the former CLI-home scratch parent alongside the
+        // persistent system temp root, even with an explicit TMPDIR.
         for (const parent of new Set([scratchRoot, join(dirname(cacheBaseDir), 'tmp'), ...additionalScratchRoots])) {
           if (!directory(parent)) continue;
           const sweep = reapHistoricalTempRoots(parent, procRoot, { ownerUid });
@@ -161,8 +161,8 @@ export async function runWorkerDiskBudgetCommand(args = process.argv.slice(2)) {
     const options = { repoDir: value('repo') ?? process.cwd(), cacheBaseDir: value('cache') ?? process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR,
       commandClass: value('class') ?? 'runtime-build',
       requiredAdditionalBytes: Number(value('required-additional-bytes') ?? 0),
-      // Historical source-runtime jobs also used the persistent system temp
-      // root. Its age/UID/inode/live-use policy remains the same reaper's.
+      // Linux command scratch and historical source-runtime jobs use this
+      // persistent system temp root under the same custody policy.
       additionalScratchRoots: process.platform === 'linux' ? ['/var/tmp'] : [],
       ...(value('owner-uid') ? { ownerUid: Number(value('owner-uid')) } : {}) };
     if (!options.cacheBaseDir) throw new Error('configured worker cache owner unavailable');

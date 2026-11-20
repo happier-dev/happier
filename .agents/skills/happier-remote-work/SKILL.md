@@ -164,8 +164,8 @@ Status exposes free bytes. Future install/build writes and quotas are not guaran
 
 Lane scripts use a unique `happier-*`, `hstack-*` or `docs-check-*` scratch directory beneath the
 worker's temporary directory, for example `mktemp -d "$TMPDIR/happier-lane-disk-budget.XXXXXX"`.
-Routed POSIX commands default `TMPDIR` to `tmp` beneath the configured worker CLI home,
-on its disk-backed filesystem rather than RAM-backed `/tmp`. Explicit `TMPDIR` is preserved.
+Routed Linux commands default `TMPDIR` to a private disk-backed `/var/tmp/hstack-*` directory.
+Other POSIX targets default to `tmp` beneath the configured worker CLI home. Explicit `TMPDIR` is preserved.
 Keep scratch outside the source mirror. The existing historical custody reaper covers these names;
 24 hours since the newest descendant change and a successful same-UID cwd/fd/mapping check are
 required before reclamation. A failed holder query is unknown, never "no holder". If a worker's

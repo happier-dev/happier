@@ -301,20 +301,20 @@ if [ "$mode" = cancel ]; then
   cancel_record "${1:-custody_cancel}"
   exit $?
 fi
-# The existing execution record lives beneath the configured worker CLI home.
-# Use that disk-backed owner for default scratch, not RAM-backed /tmp quotas.
+# Linux uses the disk-backed root already swept by worker disk maintenance.
 # Explicit TMPDIR remains caller-owned; never relocate an active scratch tree.
 command_temp=
 command_temp_parent=
 command_temp_token=
 command_temp_group=
 if [ -z "${TMPDIR-}" ]; then
-  TMPDIR="${pid_file%/remote-exec/*}/tmp"
-  mkdir -p -m 700 -- "$TMPDIR" || exit 1
   if [ -d /proc/self ]; then
-    command_temp_parent=$TMPDIR
+    command_temp_parent=/var/tmp
+  else
+    TMPDIR="${pid_file%/remote-exec/*}/tmp"
+    mkdir -p -m 700 -- "$TMPDIR" || exit 1
+    export TMPDIR
   fi
-  export TMPDIR
 fi
 # Shared historical/test scratch is explicit maintenance, not launch work.
 
@@ -426,11 +426,12 @@ cancel() { trap '' HUP INT TERM PIPE; termination_reason=signal; terminate_comma
 trap cleanup EXIT
 trap cancel HUP INT TERM
 if [ -n "$command_temp_parent" ]; then
-  # Acquire scratch only after its teardown traps are installed. Keep the name
-  # short for consumers with Unix socket paths beneath TMPDIR.
+  # Acquire scratch after installing the teardown traps. The 45-byte Chromium
+  # socket suffix leaves 62 bytes of the 107-byte Linux limit for TMPDIR.
+  # /var/tmp/hstack-XXXXXX is 22 bytes, independent of the target name.
   command_temp=$(mktemp -d "$command_temp_parent/hstack-XXXXXX") || exit 1
   command_temp_token=$(heavyweight_process_token "$$")
-  TMPDIR=$command_temp
+  export TMPDIR="$command_temp"
 fi
 set -m
 if [ "$lifetime_stdin" = 1 ]; then

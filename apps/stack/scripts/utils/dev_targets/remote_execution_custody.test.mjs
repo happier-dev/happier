@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import { mkdir, readFile, writeFile, access, chmod, readdir, copyFile, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, chmod, readdir, copyFile, unlink, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
@@ -153,7 +153,7 @@ exec /bin/ps "$@"
   return { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}` };
 }
 
-test('routed scratch defaults beneath the disk-backed worker home and preserves an explicit TMPDIR', async t => {
+test('routed Linux scratch uses private disk-backed roots and preserves an explicit TMPDIR', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-worker-scratch-' });
   const workerHome = join(root, 'worker-home');
   const env = await processCensusEnv(root, [process.pid]);
@@ -178,7 +178,7 @@ test('routed scratch defaults beneath the disk-backed worker home and preserves 
     const scratchParent = dirname(result.stdout.trim());
     if (tmpdir || process.platform !== 'linux') assert.equal(scratchParent, tmpdir || join(workerHome, 'tmp'));
     else {
-      assert.equal(dirname(scratchParent), join(workerHome, 'tmp'));
+      assert.equal(dirname(scratchParent), '/var/tmp');
       assert.match(scratchParent, /hstack-/);
       await assert.rejects(access(scratchParent), { code: 'ENOENT' }, result.stderr);
     }
@@ -190,7 +190,10 @@ test('completed commands leave no private scratch roots containing read-only Go 
   const { root } = fixture;
   const paths = [];
   t.after(async () => {
-    for (const path of paths) await chmod(join(path, 'go-cache'), 0o700).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    for (const path of paths) {
+      await chmod(join(path, 'go-cache'), 0o700).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      await rm(path, { recursive: true, force: true });
+    }
     await fixture.cleanup();
   });
   const env = await processCensusEnv(root, [process.pid]);
@@ -209,10 +212,11 @@ test('completed commands leave no private scratch roots containing read-only Go 
         writeFileSync(join(cache, 'module'), 'compiler cache');
         chmodSync(cache, 0o500);
       `], { env, encoding: 'utf8' });
-    paths.push(result.stdout.trim());
+    if (result.stdout.trim()) paths.push(result.stdout.trim());
     assert.equal(result.status, 0, 'successful command teardown must remove its read-only cache');
   }
-  assert.equal((await readdir(join(root, 'worker-home/tmp'))).length, 0, 'N completed executions retain zero private roots');
+  assert.equal(new Set(paths).size, 3, 'each command gets its own scratch root');
+  for (const path of paths) await assert.rejects(access(path), { code: 'ENOENT' });
 });
 
 test('command scratch is removed after failure and every trappable cancellation path', { skip: process.platform !== 'linux' }, async t => {
@@ -247,23 +251,28 @@ test('command scratch is removed after failure and every trappable cancellation 
 
 test('default command scratch admits Chromium singleton sockets on the disk-backed worker path', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-socket-', parentDir: '/tmp' });
-  const env = { ...process.env };
+  const env = await processCensusEnv(root, [process.pid]);
   delete env.TMPDIR;
-  const result = spawnSync('/bin/bash', [custody, 'run', join(root, 'worker-home/remote-exec/socket.pid'), 'socket',
+  const workerHome = join(root, '.happier', 'dev-targets', 'worker-with-a-long-target-name');
+  const result = spawnSync('/bin/bash', [custody, 'run', join(workerHome, 'remote-exec/socket.pid'), 'socket',
     process.execPath, '--input-type=module', '-e', `
+      import assert from 'node:assert/strict';
       import { mkdtempSync, accessSync, rmSync } from 'node:fs';
       import { createServer } from 'node:net';
       import { tmpdir } from 'node:os';
       import { join } from 'node:path';
       // Exercise the observed Chromium pathname at the real OS boundary.
       const singleton = mkdtempSync(join(tmpdir(), 'org.chromium.Chromium.'));
+      const socket = join(singleton, 'SingletonSocket');
       const server = createServer();
       try {
+        const socketBytes = Buffer.byteLength(socket);
+        assert.ok(socketBytes <= 107, 'Chromium socket path is ' + socketBytes + ' bytes, maximum is 107: ' + socket);
         await new Promise((resolve, reject) => {
           server.once('error', reject);
-          server.listen(join(singleton, 'SingletonSocket'), resolve);
+          server.listen(socket, resolve);
         });
-        accessSync(join(singleton, 'SingletonSocket'));
+        accessSync(socket);
         await new Promise(resolve => server.close(resolve));
       } finally { rmSync(singleton, { recursive: true, force: true }); }
     `], { env, encoding: 'utf8' });
@@ -279,7 +288,13 @@ test('private scratch cleanup retains an older process that receives its binding
   const older = spawn('/bin/bash', ['-c', 'IFS= read -r directory < "$1"; exec env TMPDIR="$directory" /bin/sleep 300', '-', handoff], {
     detached: true, stdio: 'ignore',
   });
-  t.after(async () => { const closed = once(older, 'close'); older.kill('SIGTERM'); await closed; });
+  let scratch;
+  t.after(async () => {
+    const closed = once(older, 'close');
+    older.kill('SIGTERM');
+    await closed;
+    if (scratch) await rm(scratch, { recursive: true, force: true });
+  });
   const identity = new URL('../proc/native_process_identity.sh', import.meta.url).pathname;
   const olderToken = Number(spawnSync('/bin/bash', ['-c', '. "$1"; heavyweight_process_token "$2"', 'identity', identity, String(older.pid)], { encoding: 'utf8' }).stdout);
   assert.ok(olderToken > 0);
@@ -297,10 +312,11 @@ test('private scratch cleanup retains an older process that receives its binding
     }
     console.log(process.env.TMPDIR);
   `], { env, encoding: 'utf8' });
+  scratch = result.stdout.trim();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(Number(spawnSync('/bin/bash', ['-c', '. "$1"; heavyweight_process_token "$2"', 'identity', identity, String(older.pid)], { encoding: 'utf8' }).stdout), olderToken);
   assert.ok(running(older.pid), 'scratch cleanup must leave the external holder alive');
-  await access(result.stdout.trim());
+  await access(scratch);
 });
 
 test('command exit retains a detached cwd holder without an inherited temporary binding', { skip: process.platform !== 'linux' }, async t => {
@@ -332,7 +348,10 @@ exec /bin/ps "$@"
     `], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   const held = JSON.parse(result.stdout.trim());
-  t.after(() => { try { process.kill(held.pid, 'SIGTERM'); } catch {} });
+  t.after(async () => {
+    try { process.kill(held.pid, 'SIGTERM'); } catch {}
+    await rm(held.directory, { recursive: true, force: true });
+  });
   assert.ok(running(held.pid), 'the detached holder remains live');
   await access(held.directory);
 });
@@ -556,7 +575,10 @@ test('remote cancellation removes roots created by its payload after the group s
   `], { env, encoding: 'utf8' });
   assert.equal(escaped.status, 0, escaped.stderr);
   const inheritor = JSON.parse(escaped.stdout.trim());
-  t.after(() => { try { process.kill(inheritor.pid, 'SIGTERM'); } catch {} });
+  t.after(async () => {
+    try { process.kill(inheritor.pid, 'SIGTERM'); } catch {}
+    await rm(inheritor.root, { recursive: true, force: true });
+  });
   await access(inheritor.root);
   assert.ok(running(inheritor.pid), 'command teardown touched a detached scratch consumer');
 });
