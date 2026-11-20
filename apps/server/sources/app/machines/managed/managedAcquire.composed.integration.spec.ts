@@ -1056,6 +1056,14 @@ describe("managed acquisition durable authority", () => {
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         let enrollingAccountId = custodian.id;
+        const registrationAtIngress = Promise.withResolvers<void>();
+        const releaseRegistration = Promise.withResolvers<void>();
+        app.addHook('onRequest', async incoming => {
+            if (state !== 'canceled' || enrollingAccountId !== requester.id
+                || incoming.method !== 'POST' || incoming.url !== '/v1/machines') return;
+            registrationAtIngress.resolve();
+            await releaseRegistration.promise;
+        });
         // HTTP authentication is the boundary; registration, installation proof and storage stay real.
         app.decorate('authenticate', async (incoming: FastifyRequest) => {
             Object.assign(incoming, createAuthenticatedRouteRequest({ userId: enrollingAccountId,
@@ -1086,10 +1094,18 @@ describe("managed acquisition durable authority", () => {
         expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
         enrollingAccountId = requester.id;
         if (state === 'canceled') {
-            const canceled = await cancelManagedCreation({ actorAccountId: custodian.id,
-                input: { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } });
-            expect(canceled.machine).toMatchObject({ creationState: 'canceled', intentRevision: 1 });
-            const retired = await register();
+            const pendingRegistration = register();
+            try {
+                await Promise.race([registrationAtIngress.promise, pendingRegistration.then(response => {
+                    throw new Error(`Registration returned ${response.statusCode} before its ingress was released`);
+                })]);
+                const canceled = await cancelManagedCreation({ actorAccountId: custodian.id,
+                    input: { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } });
+                expect(canceled.machine).toMatchObject({ creationState: 'canceled', intentRevision: 1 });
+            } finally {
+                releaseRegistration.resolve();
+            }
+            const retired = await pendingRegistration;
             expect(retired.statusCode, retired.body).toBe(409);
             expect(retired.json()).toMatchObject({ reason: 'enrollment_retired' });
             expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
