@@ -124,6 +124,33 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('lets an Agent leave an approval review through its mounted Back command', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://approval-back.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const back = vi.fn();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                        <Publication /><ApprovalDetailScreen artifactId="missing-request" serverId={server.id} onBack={back} />
+                    </CurrentUiContextCommandsProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === t('common.back'));
+        expect(command).toBeDefined();
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id },
+            { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(back).toHaveBeenCalledOnce();
+        await screen.unmount();
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id },
+            { surface: 'agent' })).toMatchObject({ ok: false });
+        expect(back).toHaveBeenCalledOnce();
+    });
     it('opens the selected Event sentence builder through the same UI and Agent command and retires it with the Event', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://workflow-event-command.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

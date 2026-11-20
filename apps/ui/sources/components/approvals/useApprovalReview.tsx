@@ -59,6 +59,7 @@ import { useActionApprovalReview, readApprovalCannotRunReason } from './actionAp
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
 import { useEnvironmentBindingApprovalChoice } from './useEnvironmentBindingApprovalChoice';
 import { openComputerTargetPickerForSession } from '@/components/computer/openComputerTargetPickerForSession';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { readApprovalOriginMachineId, readApprovalSessionEndpointLabels, readApprovalTargetEndpointLabels } from './approvalEndpointLabels';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -112,7 +113,14 @@ export type ApprovalReviewInput = Readonly<{
 export function useApprovalReview(props: ApprovalReviewInput) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const goBack = props.onBack ?? router.back;
+  const presentationCommands = useCurrentUiContextLocalCommands([{
+    key: 'approval.review.back',
+    title: t('common.back'),
+    invoke: props.onBack ?? router.back,
+  }], { unbound: 'local', contextKey: props.artifactId });
+  const goBack = React.useCallback(() => {
+    void presentationCommands.invoke('approval.review.back');
+  }, [presentationCommands]);
   const retargetNavigationFocusReturn = useRetargetNavigationFocusReturnIntent();
   // A route-carried Home is authoritative for background Homes. Without one,
   // retain the incumbent singleton artifact reader; an unrelated active Home
