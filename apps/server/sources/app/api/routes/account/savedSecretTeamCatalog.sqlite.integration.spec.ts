@@ -3,7 +3,7 @@ import { formatSharedSavedSecretRefV1, SharedSavedSecretListOutputV1Schema } fro
 
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { homeDomainActionPathForMethod } from '@/app/api/routes/actions/homeDomainActionRoute';
-import { createSavedSecretResourceInTx, setSavedSecretResourceGrantsInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { createSavedSecretResourceInTx, listSavedSecretResourcePageForAccountInTx, setSavedSecretResourceGrantsInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { hashPasswordMaterial } from '@/app/auth/password/passwordMaterialVerifier';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -122,6 +122,77 @@ describe('Saved Secret selected-Team catalog HTTP (SQLite integration)', () => {
             expect(JSON.stringify(independent)).not.toContain(foreignGroup.id);
             expect(JSON.stringify(independent)).not.toContain('Foreign Group');
         } finally { await app.close(); }
+    });
+
+    // Cost contract (HUNT-COST-OVERBUILD-1120 C2): an ordinary page reads Saved Secret rows in proportion to
+    // its size, not the caller's whole catalog, while the same visibility owner still decides every row.
+    it('pages the ordinary catalog by keyset without reading the whole catalog or admitting an invisible secret', async () => {
+        harness.resetEnv(PASSWORD_HOME);
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: custodian.id, toUserId: viewer.id, status: 'friend' } });
+        const hash = await hashPasswordMaterial(new TextEncoder().encode('fixture-password'));
+        for (const accountId of [custodian.id, viewer.id]) {
+            await db.accountIdentity.create({ data: { accountId, provider: 'email', providerUserId: `${accountId}@example.test`, profile: {} } });
+            await db.accountPasswordCredential.create({ data: { accountId, credential: { v: 1, kind: 'plain_password_hash', hash } } });
+        }
+        const team = await db.team.create({ data: { name: 'Open Team' } });
+        const guestTeam = await db.team.create({ data: { name: 'Guest Team' } });
+        const restricted = await db.team.create({ data: { name: 'Restricted Team',
+            authenticationPolicy: { v: 1, mode: 'restricted', accepted: [EMAIL_PASSWORD] } } });
+        await db.teamMembership.createMany({ data: [
+            { accountId: custodian.id, teamId: team.id, role: 'owner' },
+            { accountId: custodian.id, teamId: guestTeam.id, role: 'owner' },
+            { accountId: custodian.id, teamId: restricted.id, role: 'owner' },
+            { accountId: viewer.id, teamId: guestTeam.id, role: 'guest' },
+            { accountId: viewer.id, teamId: restricted.id, role: 'member' },
+        ] });
+        const viewerMembership = await db.teamMembership.create({ data: { accountId: viewer.id, teamId: team.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Group') } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: viewerMembership.id } });
+        const custodianAuthentication = { env: process.env, authenticationAuthority: 'present_user' as const,
+            authenticationEvidence: [EMAIL_PASSWORD] };
+        await createSecret(custodian.id, 'ss-02-direct', { accountGrants: [viewer.id] });
+        await createSecret(custodian.id, 'ss-03-foreign');
+        await createSecret(custodian.id, 'ss-04-guest-team', { teamGrants: [guestTeam.id] });
+        await createSecret(custodian.id, 'ss-05-restricted', { teamGrants: [restricted.id], authentication: custodianAuthentication });
+        await createSecret(custodian.id, 'ss-06-team', { teamGrants: [team.id] });
+        await createSecret(custodian.id, 'ss-07-group', { groupGrants: [group.id] });
+        const owned = Array.from({ length: 12 }, (_, index) => `ss-1${String(index).padStart(2, '0')}-own`);
+        for (const resourceId of owned) await createSecret(viewer.id, resourceId);
+        const visible = ['ss-02-direct', 'ss-06-team', 'ss-07-group', ...owned].map(formatSharedSavedSecretRefV1).sort();
+        // The viewer holds no password evidence, so the restricted Team arm stays unqualified.
+        const authentication = { env: process.env, authenticationAuthority: 'present_user' as const, authenticationEvidence: [] };
+        const limit = 2;
+        const seen: string[] = [];
+        let cursor: string | undefined;
+        let pages = 0;
+        do {
+            let rowsRead = 0;
+            const page = await inTx(tx => listSavedSecretResourcePageForAccountInTx(new Proxy(tx, { get(target, property) {
+                const value = Reflect.get(target, property, target);
+                if (property !== 'savedSecretResource') return typeof value === 'function' ? value.bind(target) : value;
+                // Persistent-store boundary probe: count Saved Secret rows this page reads.
+                return new Proxy(value, { get(delegate, method) {
+                    const fn = Reflect.get(delegate, method, delegate);
+                    if (method !== 'findMany' || typeof fn !== 'function') return typeof fn === 'function' ? fn.bind(delegate) : fn;
+                    return async (...args: unknown[]) => {
+                        const rows = await fn.apply(delegate, args) as unknown[];
+                        rowsRead += rows.length;
+                        return rows;
+                    };
+                } });
+            } }), { actorAccountId: viewer.id, authentication, limit, ...(cursor ? { cursor } : {}) }));
+            if (!page.ok) throw new Error('Expected an ordinary catalog page');
+            expect(page.value.resources.length).toBeLessThanOrEqual(limit);
+            // limit+1 keyset rows, at most one unqualified row skipped in this fixture, and the page's material rows.
+            expect(rowsRead, `page ${pages}`).toBeLessThanOrEqual(2 * limit + 2);
+            seen.push(...page.value.resources.map(row => 'ref' in row ? row.ref : 'corrupt'));
+            cursor = page.value.nextCursor ?? undefined;
+            pages++;
+        } while (cursor && pages < 20);
+        expect(seen).toEqual(visible);
+        expect(pages).toBe(Math.ceil(visible.length / limit));
     });
 
     it('qualifies the native selected-Team request credential and refuses unqualified or withdrawn membership', async () => {

@@ -993,13 +993,30 @@ export async function listSavedSecretResourcePageForAccountInTx(tx: Tx, input: S
         resourceIds = scope.resourceIds;
         catalogScope = { teamId: input.sharedWithTeamId, shareScopes: scope.shareScopes };
     } else {
+        // Keyset page: read authorized rows after the cursor in id order until one row past the page is
+        // qualified. Team qualification stays the same per-row owner decision, so a batch it thins out
+        // continues after its last read row instead of reading the caller's whole catalog.
         const { accountGrants, teamGrants, groupGrants } = authorizedSavedSecretRowSelect(input.actorAccountId);
-        const rows = await tx.savedSecretResource.findMany({ where: authorizedSavedSecretRowWhere(input.actorAccountId),
-            select: { id: true, ownerAccountId: true, accountGrants, teamGrants, groupGrants }, orderBy: { id: 'asc' } });
-        const admitted = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId: input.actorAccountId, authentication: input.authentication });
-        resourceIds = admitted.rows.map(row => row.id);
+        const wanted = input.limit === undefined ? undefined : input.limit + 1;
+        const qualified: string[] = [];
+        let after = input.cursor;
+        for (;;) {
+            const take = wanted === undefined ? undefined : wanted - qualified.length;
+            const rows = await tx.savedSecretResource.findMany({
+                where: { ...authorizedSavedSecretRowWhere(input.actorAccountId), ...(after === undefined ? {} : { id: { gt: after } }) },
+                select: { id: true, ownerAccountId: true, accountGrants, teamGrants, groupGrants }, orderBy: { id: 'asc' },
+                ...(take === undefined ? {} : { take }),
+            });
+            const admitted = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId: input.actorAccountId, authentication: input.authentication });
+            qualified.push(...admitted.rows.map(row => row.id));
+            // Unbounded, exhausted, or one row past the page is known: stop.
+            if (take === undefined || rows.length < take || qualified.length === wanted) break;
+            after = rows.at(-1)!.id;
+        }
+        resourceIds = qualified;
     }
-    const remaining = input.cursor === undefined ? resourceIds : resourceIds.filter(id => id > input.cursor!);
+    // The ordinary keyset read already starts after the cursor in the store's own order.
+    const remaining = input.cursor === undefined || catalogScope === undefined ? resourceIds : resourceIds.filter(id => id > input.cursor!);
     const selected = input.limit === undefined ? remaining : remaining.slice(0, input.limit);
     const resources: SavedSecretCatalogResultV1[] = [];
     for (const ids of portableQueryChunks({ values: selected, bindingsPerValue: 1, fixedBindings: 5 })) {
