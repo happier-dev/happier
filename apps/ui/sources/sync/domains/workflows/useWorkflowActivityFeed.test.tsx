@@ -130,7 +130,8 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-hosts.test' });
     let reads = 0;
     let unavailable = false;
-    const first = createWorkflowRunSummaryFixture({ id: 'first-run', createdAt: '2026-09-08T10:00:01.000Z' });
+    const first = createWorkflowRunSummaryFixture({ id: 'first-run', createdAt: '2026-09-08T10:00:01.000Z',
+        state: 'succeeded', finishedAt: '2026-09-08T10:00:02.000Z' });
     const second = createWorkflowRunSummaryFixture({ id: 'second-run' });
     const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-host-account',
         fixtureResponse: async (id, input) => {
@@ -170,6 +171,12 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
         await companion.rerender({ active: true });
         await vi.waitFor(() => expect(column.getCurrent().retained).not.toBeNull());
         expect(reads).toBe(1);
+        await act(async () => { (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow(); });
+        const [terminalKey] = column.getCurrent().keys;
+        expect(column.getCurrent().getRow(terminalKey!)).toMatchObject({
+            kind: 'run', event: 'terminal', runId: first.id, state: 'succeeded',
+        });
+        expect(companion.getCurrent().keys).toBe(column.getCurrent().keys);
         expect(column.getCurrent().projection).toBe(companion.getCurrent().projection);
         expect(column.getCurrent().retained).toBe(companion.getCurrent().retained);
         expect(column.getCurrent().listeningSince).not.toBeNull();
@@ -206,7 +213,7 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
             socketApplyFrame.flushNow();
         });
         const keys = column.getCurrent().keys;
-        expect(keys).toHaveLength(1);
+        expect(keys).toHaveLength(2);
         expect(companion.getCurrent().keys).toBe(keys);
         expect(column.getCurrent().projection.getRow(keys[0]!)).toMatchObject({ kind: 'session', sessionId: 'arrived' });
         await column.rerender({ active: false });
@@ -218,7 +225,7 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
             (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow();
         });
         expect(column.getCurrent().keys).toBe(hiddenKeys);
-        expect(companion.getCurrent().keys).toHaveLength(2);
+        expect(companion.getCurrent().keys).toHaveLength(3);
         const observedProjection = companion.getCurrent().projection;
         const observedKeys = observedProjection.getKeys();
         await companion.rerender({ active: false });

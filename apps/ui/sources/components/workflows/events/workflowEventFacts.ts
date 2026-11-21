@@ -71,10 +71,10 @@ export function readWorkflowEventTrigger(
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
 }
 
-/** What a Machine fact says happened ("A Machine came online"): the feed's title, and a seeded trigger's name. */
-export function formatWorkflowMachineEventTitle(fact: Readonly<{ event: 'online' | 'offline' }>): string {
+/** The event sentence shared by rows and seeded triggers. */
+export function formatWorkflowMachineEventTitle(fact: Readonly<{ event: 'online' | 'offline' }>, machineName?: string | null): string {
   return t(fact.event === 'online' ? 'workflows.events.machineOnline' : 'workflows.events.machineOffline',
-    { machine: t('workflows.events.someMachine') });
+    { machine: machineName ?? t('workflows.events.someMachine') });
 }
 
 /**

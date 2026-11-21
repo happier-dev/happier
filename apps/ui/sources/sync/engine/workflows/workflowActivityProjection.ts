@@ -1,5 +1,5 @@
 import { retainIfEqual, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
-import { workflowActivityRunEventKey, type WorkflowActivityLiveBatch, type WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import { projectWorkflowActivityRunFact, workflowActivityRunEventKey, type WorkflowActivityLiveBatch, type WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { socketApplyFrame, type SocketApplyFrameScheduler } from '../sessions/socketApplyFrame';
 
@@ -83,7 +83,9 @@ export function createWorkflowActivityProjection(
         if (disposed) return;
         for (const incoming of batch) {
             // Retained evidence never replaces an actual observation of this exact source occurrence.
-            if (incoming.coverage === 'retained_cause' && (pending.get(incoming.key) ?? rows.get(incoming.key)) !== undefined) continue;
+            const current = pending.get(incoming.key) ?? rows.get(incoming.key);
+            if (incoming.coverage === 'retained_cause' && current !== undefined
+                || incoming.coverage === 'retained' && current?.coverage === 'live') continue;
             const committed = rows.get(incoming.key);
             const row = retainIfEqual(committed, incoming);
             if (row === committed) pending.delete(incoming.key);
@@ -102,6 +104,10 @@ export function createWorkflowActivityProjection(
         applyRetained(runs) {
             const facts: WorkflowActivityFact[] = [];
             for (const run of runs) {
+                // The summary records when a Run finished. A general update timestamp
+                // cannot identify when a retained Run first asked for attention.
+                const terminal = projectWorkflowActivityRunFact(run, 'terminal', 'retained');
+                if (terminal) facts.push(terminal);
                 const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
                 if (cause?.kind !== 'trigger' || cause.triggerKind !== 'runLifecycle') continue;
                 const evidence = { v: 1, kind: 'runLifecycle', ...cause.evidence, occurredAt: cause.occurredAt } as const;

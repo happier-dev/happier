@@ -307,7 +307,6 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
     const scope = getActiveServerAccountScope()!;
     const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: 20 });
-    await publishMachineInventoryForTest(scope, [machine]);
     const access = await import('@/sync/api/machines/machineAccessApi');
     vi.spyOn(access, 'executeMachineAccessHttpAction').mockResolvedValue({ kind: 'present', machineId: machine.id,
         transitions: { v: 1, revision: 4, offline: { revision: 3, occurredAt: 10 }, online: { revision: 4, occurredAt: 20 } } });
@@ -320,7 +319,12 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     const first: WorkflowActivityLiveFact[] = [];
     const release = source.acquire({ onLive: rows => first.push(...rows), onRetained() {} });
     releases.push(release);
+    // Direct navigation can open Events before the Account inventory arrives.
+    expect(access.executeMachineAccessHttpAction).not.toHaveBeenCalled();
+    await publishMachineInventoryForTest(scope, [machine]);
     await vi.waitFor(() => expect(first.filter(row => row.kind === 'machine')).toHaveLength(2));
+    await publishMachineInventoryForTest(scope, [{ ...machine, activeAt: 21 }]);
+    expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(1);
     const listeningSince = source.listeningSince();
     expect(listeningSince).not.toBeNull();
     expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(1);

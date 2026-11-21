@@ -27,6 +27,7 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 export type WorkflowEventFactLine = Readonly<{
   key: string;
@@ -178,15 +179,13 @@ export function useWorkflowEventPresentation(
       }
       case 'machine': {
         const machine = machineName ?? t('workflows.events.someMachine');
-        // Like a Session event, the title says what happened and the line under it which Machine: a long,
-        // disambiguated Machine name ("NLDW3-5-36-33 · e8ba") must never truncate the "came online" away.
         return {
           fact,
           runsStarted,
           glyph: 'desktop',
           needsYou: false,
-          subtitle: machineName,
-          title: formatWorkflowMachineEventTitle(fact),
+          subtitle: formatAsOfTime(fact.occurredAt),
+          title: formatWorkflowMachineEventTitle(fact, machineName),
           lines: [
             {
               key: 'machine',
@@ -199,7 +198,7 @@ export function useWorkflowEventPresentation(
       }
       case 'run': {
         const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : executionTitle!;
-        const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
+        const result = fact.coverage === 'retained_cause' ? null : formatWorkflowRunStateLabel(fact.state);
         // The row is named by its workflow (lab events-A, "Nightly dependency check"); the line under it says how it
         // ended, or that it needs you, and where a retained native cause ran. A long name truncates; the outcome never does (F3).
         const outcome = result ?? t(fact.event === 'needs_attention' ? 'workflows.events.needsYouLine' : 'workflows.events.finishedLine');

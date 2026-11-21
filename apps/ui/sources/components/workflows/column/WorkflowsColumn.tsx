@@ -321,7 +321,6 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         ? workflowSections.assignmentFor(row.definition.definitionId) ?? null : null, [workflowSections]);
     const visibleLibraryRows = React.useMemo(() => props.libraryView.visibleLibraryRows.filter(row => sectionOf(row) === null),
         [props.libraryView.visibleLibraryRows, sectionOf]);
-    const { visibleAccountRows } = props.libraryView;
     // One Library (Q7): saved workflows and the Account's step-holding triggers, in the owner's one
     // order and count. An Account Workflow opens its settings popover where it stands.
     const accountEditor = useAccountWorkflowEditor({ read: accountWorkflows });
@@ -341,9 +340,9 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     const empty = visibleLibraryRows.length === 0 && sectioned.length === 0;
     // Group by Project reads the page's one project axis over the rows the shipped groups would list (scene 8 D3).
     const projectGroups = React.useMemo(() => props.groupBy !== 'project' ? null
-        : groupWorkflowRowsByProject<WorkflowLibraryItem>([...visibleLibraryRows, ...visibleAccountRows, ...split.sharedWithYou, ...split.fromPlugins],
+        : groupWorkflowRowsByProject<WorkflowLibraryItem>([...visibleLibraryRows, ...split.sharedWithYou, ...split.fromPlugins],
             props.libraryView.projectsByWorkflow),
-    [props.groupBy, props.libraryView.projectsByWorkflow, split, visibleAccountRows, visibleLibraryRows]);
+    [props.groupBy, props.libraryView.projectsByWorkflow, split, visibleLibraryRows]);
     const firstLoad = empty && (library.status === 'loading' || accountWorkflows.status === 'loading');
     const libraryFailed = empty && !firstLoad && library.status === 'failed' && !homeUnavailable;
     // The Account half failed while saved workflows show: said once, under the rows, so they never move.
@@ -415,16 +414,6 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             )}
         </ColumnRowWindow></CollectionRowOrder>)}
         <WorkflowLibraryFreshness library={library} hasRows={!empty} />
-        {visibleAccountRows.length > 0 ? <>
-            <CollectionListGroupLabel testID="workflows-column:group:account" title={t('settings.account')} count={visibleAccountRows.length} />
-            {visibleAccountRows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < visibleAccountRows.length - 1}
-                precedesSelected={libraryRowSelected(visibleAccountRows[index + 1], selectedDefinitionId, params.trigger)}>
-                <ColumnRowWindow id={row.key} index={visibleLibraryRows.length + index}
-                    pinned={params.trigger === row.accountTrigger.automationId}>
-                    <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
-                </ColumnRowWindow>
-            </CollectionRowOrder>)}
-        </> : null}
         {accountFailed ? <View style={styles.stale}>
             <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
                 reason={t('workflows.triggers.section.accountLoadFailed')}

@@ -1,5 +1,4 @@
 import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -17,7 +16,7 @@ import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction'
 import { executeMachineAccessHttpAction } from '@/sync/api/machines/machineAccessApi';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
-import { workflowActivityRunEventKey, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
+import { projectWorkflowActivityRunFact, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
 const sources = new WeakMap<ServerAccountScopeLifetime, WorkflowActivitySource>();
 
@@ -100,6 +99,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         }
         const listeningSince = since;
         controller = new AbortController();
+        const signal = controller.signal;
         const snapshot = storage.getState();
         const machines = new Map<string, boolean>(Object.entries(snapshot.machineRecordsByServerId[serverId] ?? {})
             .filter(([, machine]) => readMachinePresenceAnswer(machine))
@@ -136,16 +136,47 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             }
             publish(batch);
         }));
+        const readMachineHistory = async (machineId: string) => {
+            try {
+                const result = MachinePresenceReadResultV1Schema.parse(await executeMachineAccessHttpAction({
+                    scope: lifetime.scope, actionId: 'machines.presence.read',
+                    input: { serverId: lifetime.scope.serverId, machineId },
+                    isCurrent: () => lifetime.isCurrent() && !signal.aborted, signal,
+                }));
+                if (result.kind !== 'present' || !result.transitions || signal.aborted) return;
+                const batch: WorkflowActivityLiveFact[] = [];
+                for (const event of ['offline', 'online'] as const) {
+                    const occurrence = result.transitions[event];
+                    if (!occurrence) continue;
+                    batch.push({ kind: 'machine', machineId, event, sourceRevision: occurrence.revision,
+                        occurredAt: occurrence.occurredAt, coverage: 'retained',
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'machine', machineId, event, String(occurrence.revision)) });
+                }
+                publish(batch);
+            } catch {
+                // Presence history is additive. A refused or unavailable Machine must not withdraw
+                // the live subscription or turn a working Events feed into a listening failure.
+            }
+        };
         detach.push(subscribeMachineUpdates((home, ids) => {
             if (resolveServerProfileScopeIdForIdentifier(home) !== serverId) return;
             const batch: WorkflowActivityLiveFact[] = [];
+            const records = storage.getState().machineRecordsByServerId[serverId];
             for (const id of ids) {
-                const machine = storage.getState().machineRecordsByServerId[serverId]?.[id];
-                if (!machine || !readMachinePresenceAnswer(machine)) continue;
+                const machine = records?.[id];
+                if (!machine) {
+                    machines.delete(id);
+                    continue;
+                }
+                if (!readMachinePresenceAnswer(machine)) continue;
                 const activity = readMachineActivity(machine);
                 const previous = machines.get(id);
                 machines.set(id, activity.active);
-                if (previous === undefined || previous === activity.active) continue;
+                if (previous === undefined) {
+                    void readMachineHistory(id);
+                    continue;
+                }
+                if (previous === activity.active) continue;
                 const event = activity.active ? 'online' : 'offline';
                 const sourceRevision = activity.activeAt ?? machine.activeAt;
                 batch.push({ kind: 'machine', machineId: id, event, sourceRevision,
@@ -180,22 +211,18 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 }
                 const previous = runs.get(id);
                 runs.set(id, { state: row.state, attentionRequired: row.attentionRequired });
-                const terminalAt = row.finishedAt ? Date.parse(row.finishedAt) : null;
-                const updatedAt = Date.parse(row.updatedAt);
-                if (isTerminalAutomationRunStateV3(row.state) && previous?.state !== row.state
-                    && terminalAt !== null && terminalAt >= listeningSince) batch.push({ kind: 'run', runId: id,
-                    event: 'terminal', state: row.state, sourceRevision: row.revision, occurredAt: terminalAt,
-                    coverage: 'live', key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: id }, 'terminal', row.revision) });
-                if (row.attentionRequired && !previous?.attentionRequired && updatedAt >= listeningSince) batch.push({ kind: 'run', runId: id,
-                    event: 'needs_attention', state: row.state, sourceRevision: row.revision, occurredAt: updatedAt,
-                    coverage: 'live', key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: id }, 'needs_attention', row.revision) });
+                const terminal = previous?.state !== row.state
+                    ? projectWorkflowActivityRunFact(row, 'terminal', 'live') : null;
+                if (terminal && terminal.occurredAt >= listeningSince) batch.push(terminal);
+                const attention = !previous?.attentionRequired
+                    ? projectWorkflowActivityRunFact(row, 'needs_attention', 'live') : null;
+                if (attention && attention.occurredAt >= listeningSince) batch.push(attention);
             }
             if (page && membershipChanged) {
                 publishPage({ ...page, runs: [...retainedRuns.values()].sort(compareRuns) });
             }
             publish(batch);
         }, { serverIds: [serverId] }));
-        const signal = controller.signal;
         const reportError = (error: unknown) => {
             if (signal.aborted) return;
             failed = true;
@@ -206,28 +233,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             if (signal.aborted) return;
             publishPage(mergePage(retained), true);
         }, { onError: reportError, onRetryFailure: reportError });
-        void Promise.all([...machines.keys()].map(async machineId => {
-            try {
-                const result = MachinePresenceReadResultV1Schema.parse(await executeMachineAccessHttpAction({
-                    scope: lifetime.scope, actionId: 'machines.presence.read',
-                    input: { serverId: lifetime.scope.serverId, machineId },
-                    isCurrent: () => lifetime.isCurrent() && !signal.aborted, signal,
-                }));
-                if (result.kind !== 'present' || !result.transitions || signal.aborted) return;
-                const batch: WorkflowActivityLiveFact[] = [];
-                for (const event of ['offline', 'online'] as const) {
-                    const occurrence = result.transitions[event];
-                    if (!occurrence) continue;
-                    batch.push({ kind: 'machine', machineId, event, sourceRevision: occurrence.revision,
-                        occurredAt: occurrence.occurredAt, coverage: 'retained',
-                        key: serverAccountScopedResourceKey(lifetime.scope, 'machine', machineId, event, String(occurrence.revision)) });
-                }
-                publish(batch);
-            } catch {
-                // Presence history is additive. A refused or unavailable Machine must not withdraw
-                // the live subscription or turn a working Events feed into a listening failure.
-            }
-        }));
+        for (const id of machines.keys()) void readMachineHistory(id);
     };
     // Requested membership follows the Account across view handoffs; live listeners follow demand.
     lifetime.onRetire(() => { close(); page = undefined; retainedRuns.clear(); observers.clear(); });

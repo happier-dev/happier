@@ -28,7 +28,7 @@ export type WorkflowLibraryRecordRow = LibraryRecordFacts & (Readonly<{
     /** Undefined means unread; a present summary with lastRun:null means no run. */
     lastRunSummary: WorkflowLibraryRunSummary | undefined;
 }> | Readonly<{
-    group: 'library' | 'account'; accountTrigger: WorkflowTriggerSetV1;
+    group: 'library'; accountTrigger: WorkflowTriggerSetV1;
     openTarget: AccountWorkflowOpenTarget;
     lastRunSummary: WorkflowAutomationRunSummary | undefined;
     /** All existing settings editors remain reachable when a Workflow has several triggers. */
@@ -70,21 +70,26 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         ...input.definitions.library.map(definition => projectDefinition(definition, 'library')),
         ...input.definitions.sharedWithYou.map(definition => projectDefinition(definition, 'sharedWithYou')),
     ];
-    const triggers = input.accountTriggers.map((set): WorkflowLibraryRecordRow => {
+    const representedDefinitions = new Set(definitions.map(row => row.key));
+    const triggers = input.accountTriggers.flatMap((set): WorkflowLibraryRecordRow[] => {
+        if (set.scopeSessionId) return [];
+        const definitionRef = set.target?.kind === 'workflow' ? set.target.ref : null;
+        if (definitionRef !== null && (representedDefinitions.has(definitionRef)
+            || (input.savedLibraryIncomplete && !isWorkflowTriggerSourceGone(set)))) return [];
         const lastRunSummary = input.automationSummaries?.get(set.automationId);
         const { name, sourceGone, triggerSummary } = describeAccountWorkflowLibraryRecord(set, lastRunSummary);
         // Nothing of a gone source is editable, so its row is one press: remove the retained set.
         const triggerOpenTargets = (set.triggers.length && !sourceGone ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
             kind: 'accountTrigger' as const, automationId: set.automationId, triggerId,
         }));
-        return {
-            key: `account-trigger:${set.automationId}`, group: input.savedLibraryIncomplete ? 'account' : 'library', accountTrigger: set,
+        return [{
+            key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
             name,
             triggerSummary,
             updatedAt: set.updatedAt ?? 0,
             lastRunSummary,
             openTarget: triggerOpenTargets[0]!, triggerOpenTargets,
-        };
+        }];
     });
     // The existing Library is updated_desc with descending identity as its tie-breaker.
     const previousByKey = new Map(input.previous?.map(row => [row.key, row]));

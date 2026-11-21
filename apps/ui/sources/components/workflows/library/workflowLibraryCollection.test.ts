@@ -57,13 +57,29 @@ describe('retained triggers whose Workflow is gone', () => {
         expect(project([trigger, trigger])).toHaveLength(1);
     });
 
-    it('keeps readable Account workflows out of the saved Library count before it settles', () => {
+    it('keeps a named standalone Workflow in the Library through the saved definitions load', () => {
         const input = { definitions: { library: [], sharedWithYou: [] },
             accountTriggers: [set('digest', { name: 'Morning digest' })], summaries: null, automationSummaries: null };
         expect(projectWorkflowLibraryRecords({ ...input, savedLibraryIncomplete: true }))
-            .toMatchObject([{ key: 'account-trigger:digest', group: 'account' }]);
+            .toMatchObject([{ key: 'account-trigger:digest', group: 'library', name: 'Morning digest' }]);
         expect(projectWorkflowLibraryRecords(input))
             .toMatchObject([{ key: 'account-trigger:digest', group: 'library' }]);
+    });
+
+    it('reserves the linked Workflow row until its definition supplies the name', () => {
+        const definitionId = '11111111-1111-4111-8111-111111111111';
+        const input = { definitions: { library: [], sharedWithYou: [] },
+            accountTriggers: Array.from({ length: 63 }, (_, index) => set(`linked-${index}`, {
+                target: { kind: 'workflow', ref: definitionId },
+            })), summaries: null, automationSummaries: null };
+        expect(projectWorkflowLibraryRecords({ ...input, savedLibraryIncomplete: true })).toEqual([]);
+        const { definitions } = WorkflowDefinitionListResultV1Schema.parse({ definitions: [{
+            kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+            metadata: { title: 'Deploy verification' }, triggers: [], nextRunAt: null,
+            contentStatus: 'available', stepCount: 1,
+        }] });
+        expect(projectWorkflowLibraryRecords({ ...input, definitions: { library: definitions, sharedWithYou: [] } }))
+            .toMatchObject([{ key: definitionId, group: 'library', name: 'Deploy verification' }]);
     });
 
     it('labels an unreadable legacy record by its state rather than its stored identity', () => {

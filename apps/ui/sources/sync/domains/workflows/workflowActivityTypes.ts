@@ -1,9 +1,10 @@
-import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import type { WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowActivityListRequestV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
-/** Live observations plus server-retained Machine transitions; never a client event journal. */
+/** Live observations, retained Machine transitions, and retained Run finishes. */
 export type WorkflowActivityLiveFact = Readonly<{
     key: string;
     occurredAt: number;
@@ -37,6 +38,21 @@ export function workflowActivityRunEventKey(
     sourceRevision: number,
 ): string {
     return createCanonicalJsonSigningInput(['runLifecycle', source, condition, sourceRevision]);
+}
+
+/** Both pushed changes and retained membership describe the same Run occurrence. */
+export function projectWorkflowActivityRunFact(
+    run: WorkflowRunSummaryV1,
+    event: 'terminal' | 'needs_attention',
+    coverage: 'live' | 'retained',
+): WorkflowActivityLiveFact | null {
+    const at = event === 'terminal'
+        ? isTerminalAutomationRunStateV3(run.state) ? run.finishedAt : null
+        : run.attentionRequired ? run.updatedAt : null;
+    if (!at) return null;
+    return { kind: 'run', runId: run.id, event, state: run.state, sourceRevision: run.revision,
+        occurredAt: Date.parse(at), coverage,
+        key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: run.id }, event, run.revision) };
 }
 
 /** Public membership selectors, derived from the existing Run list contract. */

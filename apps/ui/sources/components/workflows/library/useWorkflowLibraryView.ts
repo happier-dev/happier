@@ -58,8 +58,7 @@ function resolveLibraryViews(rows: readonly WorkflowLibraryRow[], summaries: Rea
     return ['all', ...(triggered ? ['triggered' as const] : []), ...(running ? ['running' as const] : [])] satisfies WorkflowLibraryView[];
 }
 
-const ACCOUNT_INLINE = { scope: 'account_inline' } as const;
-const ACCOUNT_CLEANUP = { scope: 'account_source_unavailable' } as const;
+const ACCOUNT_ALL = { scope: 'account_all' } as const;
 const DEMANDED = { demanded: true } as const;
 const UNDEMANDED = { demanded: false } as const;
 
@@ -77,13 +76,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     // returns shows them as they stood rather than rebuilding every row (P03-TAB-CONTENT-2 W6).
     const demand = focused ? DEMANDED : UNDEMANDED;
     const library = useWorkflowDefinitionLibrary(demand);
-    const accountInline = useWorkflowTriggerSets(ACCOUNT_INLINE, undefined, demand);
-    // Its failure leaves these additive cleanup rows absent, never the Library partial.
-    const accountCleanup = useWorkflowTriggerSets(ACCOUNT_CLEANUP, undefined, demand);
-    const accountWorkflows = React.useMemo(() => {
-        return { ...accountInline, sets: accountCleanup.sets.length ? [...accountInline.sets, ...accountCleanup.sets] : accountInline.sets,
-            retry: () => { accountInline.retry(); accountCleanup.retry(); } };
-    }, [accountInline.sets, accountInline.status, accountInline.retry, accountInline.acknowledge, accountCleanup.sets, accountCleanup.retry]);
+    const accountWorkflows = useWorkflowTriggerSets(ACCOUNT_ALL, undefined, demand);
     const split = React.useMemo(() => splitLibraryDefinitions(library.definitions, library.pluginWorkflows), [library.definitions, library.pluginWorkflows]);
     // The same per-definition summary read for every reader (one request owner, shared demand).
     const summaryIds = React.useMemo(() => [...split.library, ...split.sharedWithYou].map((definition) => definition.definitionId),
@@ -91,7 +84,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const { summaries } = useWorkflowLibrarySummaries(summaryIds, demand);
     const automationIds = React.useMemo(() => accountWorkflows.sets.map(set => set.automationId), [accountWorkflows.sets]);
     const automationSummaries = useWorkflowAutomationSummaries(automationIds, demand);
-    const savedLibraryIncomplete = library.status !== 'loaded';
+    const savedLibraryIncomplete = library.status === 'loading';
     const previousRecords = React.useRef<readonly WorkflowLibraryRecordRow[]>([]);
     const records = React.useMemo(() => {
         const next = projectWorkflowLibraryRecords({ definitions: split, accountTriggers: accountWorkflows.sets,
@@ -158,9 +151,6 @@ export function useWorkflowLibraryView(focused: boolean) {
     const filter = React.useCallback((row: WorkflowLibraryRow) => visibleKeySet.has(row.key), [visibleKeySet]);
     const isVisible = React.useCallback((key: string) => visibleKeySet.has(key), [visibleKeySet]);
     const visibleLibraryRows = React.useMemo(() => libraryRows.filter(row => visibleKeySet.has(row.key)), [libraryRows, visibleKeySet]);
-    const visibleAccountRows = React.useMemo(() => records.filter((row): row is Extract<WorkflowLibraryRecordRow, { accountTrigger: unknown }> => 'accountTrigger' in row
-        && row.group === 'account' && visibleKeySet.has(row.key)),
-        [records, visibleKeySet]);
     const update = React.useCallback((patch: Readonly<{ filters?: Partial<WorkflowListFilterV1>; searchQuery?: string }>): boolean => {
         const nextFilters = patch.filters ? WorkflowListFilterPatchV1Schema.safeParse(patch.filters) : null;
         if (nextFilters && (!nextFilters.success || getUnsupportedEntityFilterFieldsV1(workflowListFilterFieldsV1, { ...DEFAULT_WORKFLOW_LIST_FILTER_V1, ...nextFilters.data }, 'list').length > 0)) return false;
@@ -173,7 +163,7 @@ export function useWorkflowLibraryView(focused: boolean) {
         activeSpace: binding.activeSpace, spacesEnabled: binding.spacesEnabled,
         spacesReady: binding.spacesReady, spaceSettingsScope: binding.spaceSettingsScope,
         view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, setFilters: binding.setFilters, reset, setView, setSearchQuery,
-        library, split, rows, projectsByWorkflow, workflowSections, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows, visibleAccountRows,
+        library, split, rows, projectsByWorkflow, workflowSections, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows,
         libraryCoverage: sourceCoverage, libraryIsEmpty };
     const latest = React.useRef(controller);
     React.useLayoutEffect(() => { latest.current = controller; });
