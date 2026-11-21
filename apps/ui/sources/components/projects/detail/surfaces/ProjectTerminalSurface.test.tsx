@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { observeMachinePresenceForTest, publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
-import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installRealActionExecutorModuleLoader, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { storage } from '@/sync/domains/state/storage';
@@ -14,6 +15,7 @@ import { invokeSessionTerminalAction } from '@/components/sessions/terminal/sess
 import { buildProjectPaneScopeId } from '../projectPaneScope';
 import { ProjectTerminalSurface } from './ProjectTerminalSurface';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState, replaceTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import { buildProjectTerminalKey } from '../projectTerminalScope';
@@ -30,6 +32,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { EMPTY_TERMINAL_WORKSPACE } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { SessionTerminalWorkspaceView } from '@/components/sessions/terminal/strip/SessionTerminalWorkspaceView';
@@ -38,6 +41,7 @@ import { useProjectRouteSurfaceSync } from '../useProjectRouteSurfaceSync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { useSessionEmbeddedTerminalPty } from '@/components/sessions/terminal/useSessionEmbeddedTerminalPty';
 
 // Machine RPC is the external boundary; operation validation, Actions, pane admission and rendering stay real.
 const outputRpc = vi.hoisted(() => vi.fn());
@@ -48,7 +52,18 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
     spies: { confirm: async () => true },
 }).module);
 
-afterEach(() => { standardCleanup(); vi.useRealTimers(); outputRpc.mockReset(); viewport.width = 1440; });
+let disposeActionModuleLoader: (() => void) | undefined;
+beforeEach(async () => {
+    disposeActionModuleLoader = await installRealActionExecutorModuleLoader();
+});
+afterEach(() => {
+    disposeActionModuleLoader?.();
+    disposeActionModuleLoader = undefined;
+    standardCleanup();
+    vi.useRealTimers();
+    outputRpc.mockReset();
+    viewport.width = 1440;
+});
 
 async function invoke(input: Parameters<typeof invokeSessionTerminalAction>[0]) {
     const outcome: { result?: Awaited<ReturnType<typeof invokeSessionTerminalAction>> } = {};
@@ -79,17 +94,41 @@ function ActiveProjectPane(props: React.PropsWithChildren<{ scopeId: string }>) 
     return <>{props.children}</>;
 }
 
-function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[], machine?: ReturnType<typeof createMachineFixture>) {
-    return serveActionHomes({ homes: [{ key: 'project', serverUrl: `https://${serverId}.test`, accountId: 'bob', serverIdentityId: serverId,
-        settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'session.terminals.open': ['ui'] } } } }],
-        route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
-            ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: refs }))
-            : request.path === '/v1/machines'
-            ? Response.json([createPlainMachineRowFixture({ id: 'machine', accountId: 'bob', machine })])
-            : request.path === '/v1/machines/read-batch' && request.method === 'POST'
-            ? createMachineReadBatchResponseFixture(request.body, id => id === 'machine'
-                ? createPlainMachineRowFixture({ id, accountId: 'bob', machine }) : null)
-            : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[], machine?: ReturnType<typeof createMachineFixture>) {
+    const serverUrl = `https://${serverId}.test`;
+    const accountId = 'bob';
+    const machineRow = { ...createPlainMachineRowFixture({ id: 'machine', accountId, machine }),
+        installationPublicKey: await servedMachineActionRelayInstallationPublicKey() };
+    let relay: Awaited<ReturnType<typeof createServedTerminalActionRelay>> | null = null;
+    const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl, accountId, serverIdentityId: serverId, currentAccount: true,
+        settings: {
+            featureToggles: { 'terminal.embeddedPty': true },
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'session.terminals.open': ['ui'] } },
+        } }],
+        route: async request => {
+            const relayed = await relay?.handle(request);
+            if (relayed) return relayed;
+            if (request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: refs }));
+            }
+            if (request.path === '/v1/machines') return Response.json([machineRow]);
+            if (request.path === '/v1/machines/read-batch' && request.method === 'POST') {
+                return createMachineReadBatchResponseFixture(request.body, id => id === machineRow.id ? machineRow : null);
+            }
+            if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') {
+                return Response.json(createRootLayoutFeaturesResponse({ features: { terminal: {
+                    embeddedPty: { enabled: true }, transport: { byteStream: { enabled: true } },
+                } } }));
+            }
+            return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+        } });
+    relay = await createServedTerminalActionRelay({
+        homes: [{ serverId: home.homes.project!.id, serverUrl, serverIdentityId: serverId, accountId }],
+        machineIds: [machineRow.id],
+        machineRpc: request => outputRpc(request),
+    });
+    await getServerFeaturesSnapshot({ serverId: home.homes.project!.id, force: true });
+    return home;
 }
 
 function RoutedProjectTerminal(props: Readonly<{ scopeId: string; workspace: WorkspaceAddressV1; workspaceRef: WorkspaceRefV1; phone: boolean }>) {
@@ -490,6 +529,64 @@ describe('Project terminal through the incumbent pane workspace', () => {
             expect(screen.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
             await screen.unmount();
         } finally { vi.useRealTimers(); storage.setState(previous); await home.dispose(); }
+    });
+
+    it('sends Ctrl-C only to an interactive service attachment and hides both attachment modes without closing the process', async () => {
+        const serverId = 'srv_project_service_input';
+        const ref = { id: 'accepted', serverId, machineId: 'machine', rootPath: '/accepted', projectKey: 'project', createdAtMs: 1 };
+        const home = await serveCensusHome(serverId, [ref]);
+        try {
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs: [ref] }));
+            const workspace = { serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath };
+            const scopeId = buildProjectPaneScopeId(ref.id, serverId);
+            const heldRead = createDeferred<unknown>();
+            outputRpc.mockImplementation(async request => {
+                if (request.method === RPC_METHODS.DAEMON_TERMINAL_LIST) return { ok: true, terminals: [], machineShell: { ok: true, cwd: ref.rootPath } };
+                if (request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) return heldRead.promise;
+                if (request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT) return { ok: true };
+                throw new Error(`Unexpected attachment RPC ${request.method}`);
+            });
+            const screen = await renderScreen(<AppPaneProvider><ProjectTerminalSurface scopeId={scopeId}
+                workspaceRefId={ref.id} machineId={ref.machineId} rootPath={ref.rootPath} serverId={serverId} workspace={workspace} /></AppPaneProvider>);
+            await vi.waitFor(() => expect(screen.findByTestId('project-terminal-workspace-root')).not.toBeNull());
+            // Captured terminalView shape: TS-WAVE-AGENT-B/composed-b-snapshot-resume1708.json.
+            // Only identities/paths are substituted for this served Home; interactive is supervisor-produced.
+            const target = { kind: 'terminal_view' as const, machineId: ref.machineId, terminalId: 'service-pty',
+                terminalKey: 'project-service:9fded4d7dbc39da35b54b3936971b46be90628dec0acc8eecaee5d96b064b4bb',
+                cwd: ref.rootPath, workspace, interactive: true as const };
+            for (const interactive of [true, false]) {
+                const { interactive: _interactive, ...outputTarget } = target;
+                expect(await invoke({ actionId: 'session.terminals.open', input: { scopeId,
+                    target: interactive ? target : { ...outputTarget, terminalId: 'log-pty' }, title: interactive ? 'Web' : 'Logs' } })).toMatchObject({ ok: true });
+                const pane = () => screen.findByType(EmbeddedTerminalPane).props.controller;
+                await vi.waitFor(() => expect(pane().status).toBe('connected'));
+                expect(pane().readOnly).toBe(!interactive);
+                outputRpc.mockClear();
+                await act(async () => { pane().onInput('\u0003'); });
+                if (interactive) {
+                    await vi.waitFor(() => expect(outputRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)
+                        .map(([request]) => request.payload)).toContainEqual(expect.objectContaining({ terminalId: 'service-pty', event: { t: 'text', text: '\u0003' } })));
+                } else {
+                    expect(await pane().onPaste('ignored')).toMatchObject({ kind: 'ignore', reason: 'read_only' });
+                }
+                const member = readSessionTerminalWorkspaceForScope(scopeId)!.tabs[0]!.terminals[0]!;
+                expect(await invoke({ actionId: 'session.terminals.close', input: { scopeId, terminalId: member.id } })).toMatchObject({ ok: true });
+                expect(outputRpc.mock.calls.every(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT
+                    || request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES || request.method === RPC_METHODS.DAEMON_TERMINAL_LIST)).toBe(true);
+                if (!interactive) expect(outputRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)).toBe(false);
+            }
+            const terminalRef = { current: null };
+            const sessionAttachment = await renderHook(() => useSessionEmbeddedTerminalPty({ sessionId: 'service-session', serverId,
+                terminalMode: 'workspace_shell', terminalTarget: target, terminalKey: 'service-session-input', terminalRef }));
+            await vi.waitFor(() => expect(sessionAttachment.getCurrent().status).toBe('connected'));
+            expect(sessionAttachment.getCurrent().readOnly).toBe(false);
+            outputRpc.mockClear();
+            act(() => { sessionAttachment.getCurrent().onInput('\u0003'); });
+            await vi.waitFor(() => expect(outputRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT)).toBe(true));
+            await sessionAttachment.unmount();
+            await screen.unmount();
+        } finally { await home.dispose(); }
     });
 
     it('opens an admitted shell without a Session, then preserves labels, split identity and borrowed-view close', async () => {

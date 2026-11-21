@@ -2,6 +2,7 @@ import type { SessionTerminalMemberV1, SessionTerminalTabV1 } from '@happier-dev
 
 import { t } from '@/text';
 import type { TerminalSurfaceSummary } from '../terminalSurfaceSummary';
+import { isTerminalTargetReadOnly } from '../terminalAttachment';
 
 /** What the strip, the list view and Jump say about one terminal (terminal lab B1/B3/B4, A1). */
 export type SessionTerminalStatus = 'running' | 'attention' | 'connection-lost' | 'exited' | 'failed';
@@ -99,7 +100,8 @@ function resolvePlace(member: SessionTerminalMemberV1, context: SessionTerminalD
     if (target.kind === 'machine_shell' && target.machineId !== context.sessionMachineId) {
         return t('terminalWorkspace.placeOnMachine', { cwd: target.cwd, machine: context.machineName(target.machineId) ?? target.machineId });
     }
-    if (target.kind === 'terminal_view') return t('terminalWorkspace.readOnlyPlace', { cwd: target.cwd });
+    if (target.kind === 'terminal_view') return isTerminalTargetReadOnly(target)
+        ? t('terminalWorkspace.readOnlyPlace', { cwd: target.cwd }) : target.cwd;
     return null;
 }
 

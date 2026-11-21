@@ -19,6 +19,7 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     serverId: string;
     terminalInstanceId?: string;
     attachedTerminalId?: string | null;
+    readOnly?: boolean;
     operationStopPending?: boolean;
     toolbarActionsStart?: React.ReactNode;
     closeOnUnmount?: boolean;
@@ -45,7 +46,8 @@ const WorkspaceEmbeddedTerminalPaneContent = React.memo(function WorkspaceEmbedd
     const controller = useMachineTerminalSession({
         machineId: props.machineId,
         serverId: props.serverId,
-        ...(props.attachedTerminalId === undefined ? {} : { attachedTerminalId: props.attachedTerminalId, readOnly: true }),
+        ...(props.attachedTerminalId === undefined ? {} : { attachedTerminalId: props.attachedTerminalId,
+            readOnly: props.readOnly ?? true }),
         cwd: props.rootPath,
         machineReachable,
         machineRpcTargetAvailable: true,

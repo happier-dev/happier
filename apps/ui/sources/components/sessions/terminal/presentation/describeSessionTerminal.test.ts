@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { renderHook, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import { useSessionTerminalDescribeContext } from './useSessionTerminalPresentation';
+import { t } from '@/text';
 
 import type { SessionTerminalTabV1 } from '@happier-dev/protocol/terminal/workspace';
 
@@ -31,6 +32,14 @@ const summary = (overrides: Partial<TerminalSurfaceSummary> & { connectionLost?:
 };
 
 describe('describeSessionTerminal (terminal lab B1/A1/ST)', () => {
+    it('describes interactive service input truthfully while retaining view-only close semantics', () => {
+        const target = { kind: 'terminal_view' as const, machineId: 'mbp', terminalId: 'service', terminalKey: 'service', cwd: '/repo' };
+        expect(describeSessionTerminal({ id: 'service', target: { ...target, interactive: true } }, null, context()))
+            .toMatchObject({ place: '/repo', borrowed: true });
+        expect(describeSessionTerminal({ id: 'logs', target }, null, context()))
+            .toMatchObject({ place: t('terminalWorkspace.readOnlyPlace', { cwd: '/repo' }), borrowed: true });
+    });
+
     it.each(['codex', 'acme.agent', null])('uses public Session Agent %s for the attached terminal mark', async agentId => {
         const initial = getStorage().getState();
         const session = createSessionFixture({ id: 'terminal-agent', serverId: 'home', metadataLayoutVersion: 1,

@@ -36,6 +36,7 @@ import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { initializeSessionTerminalWorkspaceForScope } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { describeMachineShareTrust } from '@/components/sharing/machines/machineShareTrust';
+import { isTerminalTargetReadOnly } from '@/components/sessions/terminal/terminalAttachment';
 
 /** Project host of the same terminal workspace; the accepted checkout, not a Session, is its target. */
 export const ProjectTerminalSurface = React.memo((props: Readonly<{
@@ -157,7 +158,8 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
             machineId={member.target.kind === 'terminal_view' ? member.target.machineId : captured.machineId}
             rootPath={member.target.kind === 'terminal_view' ? member.target.cwd : captured.rootPath} serverId={captured.serverId}
             workspace={captured} terminalInstanceId={member.id} terminalKey={buildProjectTerminalKey(authority.scope, captured, member.id)}
-            {...(member.target.kind === 'terminal_view' ? { attachedTerminalId: member.target.terminalId } : {})}
+            {...(member.target.kind === 'terminal_view' ? { attachedTerminalId: member.target.terminalId,
+                readOnly: isTerminalTargetReadOnly(member.target) } : {})}
             title={state.descriptor?.title} focused={state.focused} chrome="none" />;
     }, [authority, props.scopeId, tabMenu.presentationId]);
     const terminalMachine = context.sessionMachineName ?? props.machineId;

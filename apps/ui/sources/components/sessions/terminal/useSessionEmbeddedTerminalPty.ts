@@ -7,6 +7,7 @@ import { useSessionMachineDisplayTarget, useSessionMachineTarget } from '@/compo
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
 import type { SessionTerminalMode } from './sessionTerminalMode';
+import { isTerminalTargetReadOnly } from './terminalAttachment';
 
 export function useSessionEmbeddedTerminalPty(params: Readonly<{
     sessionId: string;
@@ -40,7 +41,7 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
         cwd: target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.cwd : kind === 'workspace_shell' ? sessionTarget?.basePath ?? null : null,
         launch,
         attachedTerminalId: target?.kind === 'terminal_view' ? target.terminalId : undefined,
-        readOnly: target?.kind === 'terminal_view',
+        readOnly: isTerminalTargetReadOnly(target),
         workspace: target?.kind === 'terminal_view' ? target.workspace : undefined,
         sessionId: params.sessionId,
         machineReachable: explicitMachineId
