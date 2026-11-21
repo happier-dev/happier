@@ -404,7 +404,7 @@ describe('AE.P02.F8-shared-consent', () => {
     };
     const settleActorCommand = async (artifactId: string) => {
       const receipt = await readApproval(artifactId);
-      const checks = receipt.automaticChecks;
+      const checks = 'automaticChecks' in receipt ? receipt.automaticChecks : undefined;
       expect(checks?.consents.filter(consent => consent.decision === 'pending') ?? []).toEqual([]);
       if (receipt.status === 'open' && checks?.humanApprovalRequired && !checks.humanDecision) {
         const decided = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
