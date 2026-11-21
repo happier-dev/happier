@@ -2,7 +2,7 @@ import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredConten
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { projectManagedMachineReadForActorInTx, requireManagedCreationAccessInTx } from './managedRead';
-import { isManagedMetadataControlActionIdV1, isManagedResizeActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedMetadataControlActionIdV1, isManagedResizeActionIdV1, MANAGED_POWER_SET_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -221,6 +221,8 @@ export async function admitManagedControl(params: Readonly<{
     actorAccountId: string; custodianAccountId: string; authentication?: TeamOperationAuthenticationContext;
     /** Internal verified Home admission, never a controller request body field. */
     admittedCreationRecovery?: true;
+    /** The verified exec root's exact reviewed wake child. */
+    admittedExecWake?: true;
     input: ManagedControlAdmissionInputV1;
 }>) {
     const request = ManagedControlAdmissionInputV1Schema.parse(params.input);
@@ -232,7 +234,12 @@ export async function admitManagedControl(params: Readonly<{
             managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId });
         const controller = readManagedController(row);
         if (row.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');
-        if (request.action === 'machines.managed.delete') {
+        if (params.admittedExecWake) {
+            if (request.action !== MANAGED_POWER_SET_ACTION_ID_V1 || request.input.when !== 'now'
+                || (request.input.intent !== 'start' && request.input.intent !== 'resume')) {
+                throw new ManagedMachineError('permission_denied');
+            }
+        } else if (request.action === 'machines.managed.delete') {
             if (!params.admittedCreationRecovery) await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
         } else {
             const role = await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId);

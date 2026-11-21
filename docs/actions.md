@@ -11878,6 +11878,17 @@ wake, the existing revision check still refuses stale input before native work.
 Cancelling a follower stops its observation; explicit cancellation of the shared
 operation still stops that operation. Different Machines remain independent.
 
+**Run a finite command on a retained Machine.** `machines.managed.exec` accepts literal argv and optional guest cwd and environment
+values. Home admits the retained Machine's custodian or a requester with guest
+Manage. The signed controller starts an auto-stopped guest through the shared
+wake owner and executes as the guest identity recorded at enrollment. The guest
+can have its Happier daemon offline. The invocation has no command timeout.
+
+Diagnostics **Run** is direct confirmation. An Ask is recorded in the requester's
+Account. Exit status and bounded stdout and stderr belong to that requester's
+operation. `action.operations.cancel` signals the provider invocation. A provider
+that confirms only transport closure reports an unknown command outcome.
+
 Existing-Session composer Send retains the Session input owner's mode, interrupt
 and draft handling, then delegates delivery to the same Home Action transport.
 Its authored message metadata uses the canonical Session metadata schema;

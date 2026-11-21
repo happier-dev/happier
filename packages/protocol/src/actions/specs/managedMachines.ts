@@ -23,7 +23,7 @@ import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
 import { managedAcquireApprovalPresentation } from './managedAcquireApproval.js';
-import { isManagedResizeActionIdV1 } from '../../machines/managed/actionIdsV1.js';
+import { isManagedResizeActionIdV1, MANAGED_EXEC_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.provisioners.list': 'List machine provisioners',
@@ -36,6 +36,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.birth.get': 'Read managed machine creation source',
   'machines.managed.references.get': 'Review managed machine dependencies',
   'machines.managed.inspect': 'Check managed machine now',
+  [MANAGED_EXEC_ACTION_ID_V1]: 'Run command on managed machine',
   'machines.managed.bootstrap.retry': 'Retry Happier installation',
   'machines.managed.setup.skip': 'Continue without setup',
   'machines.setup.plan': 'Review machine setup',
@@ -71,6 +72,29 @@ function machineSetupCompletion(actionId: typeof MACHINE_SETUP_APPLY_ACTION_ID_V
 
 function createManagedMachineActionSpecs() {
   return MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
+  if (actionId === MANAGED_EXEC_ACTION_ID_V1) return {
+    id: actionId,
+    title: titles[actionId],
+    description: 'Run a finite command as the retained guest Machine user and return its output.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'machine',
+    approval: { result: 'required' },
+    approvalPolicy: { agentDefault: 'authority', uiConfirmation: 'direct' },
+    originalExecution: { terminalRoot: 'allowed', daemonIngressSurfaces: ['ui', 'cli'] },
+    machineRuntimeDemandForInput: (value) => {
+      const parsed = ManagedMachineActionInputSchemasV1[MANAGED_EXEC_ACTION_ID_V1].safeParse(value);
+      if (!parsed.success) return null;
+      const { homeId, managedId } = parsed.data;
+      return { target: { kind: 'managed-machine', homeId, managedId } };
+    },
+    placements: [],
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'machines_managed_exec' },
+    cli: { acceptsServerId: true, commands: [{ path: ['machines', 'managed', 'exec'], visibility: 'canonical' }] },
+    inputHints: { title: titles[actionId], fields: MANAGED_MACHINE_INPUT_FIELDS[actionId] },
+    inputSchema: ManagedMachineActionInputSchemasV1[actionId],
+    outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
+    operation: { version: 1, visibility: 'activity', progress: 'indeterminate', cancellation: 'supported', presentation: { onStart: 'current' } },
+  };
   const effect = actionId === 'machines.managed.acquire'
     || actionId === 'machines.managed.credentials.install'
     || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 || actionId === 'machines.managed.setup.skip'

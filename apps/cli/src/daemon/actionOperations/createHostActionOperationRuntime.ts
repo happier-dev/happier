@@ -3,7 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
-import { isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import { buildActionExecutorContextForRpc, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readActionWorkflowOriginRunIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -13,6 +13,7 @@ import { createActionOperationRpcHandlers, resolveActionOperationScope, type Act
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore, type DeploymentBackupOperationTarget } from './actionOperationStore';
 import { readManagedCreationContinuationResultPort, type ManagedCreationContinuationResultPort } from '@/machines/managed/creationContinuation';
+import { isReviewedManagedExecWake } from '@/machines/managed/managedExecWake';
 import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
 import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate, HostActionOperationExecute } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -84,7 +85,8 @@ function readInitialDomainRef(
     return parsed.success && parsed.data.source.kind === 'source'
       ? { kind: 'projectOpen', sourceId: parsed.data.source.id } : undefined;
   }
-  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild') {
+  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
+    || actionId === MANAGED_EXEC_ACTION_ID_V1) {
     // The Home-scoped operation concerns this guest even when controller admission
     // fails before the native owner can publish its admitted/enriched reference.
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
@@ -410,6 +412,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || isProjectCheckoutRemovalActionIdV1(request.actionId)
         || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
         || request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.delete'
+        || request.actionId === MANAGED_EXEC_ACTION_ID_V1
         || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'
         || request.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
         || (isOrdinaryMachineSetupNativeActionIdV1(request.actionId) && request.actionId !== MACHINE_SETUP_PLAN_ACTION_ID_V1)
@@ -680,10 +683,12 @@ export async function runHostActionOperation(
     || Boolean(context.externalActionExecutionAuthorization?.binding.workflowActionOrigin);
   const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
   const creationContinuationResult = readManagedCreationContinuationResultPort(context);
+  const observesExecWake = isReviewedManagedExecWake(request.actionId, request.input, context);
   return observeExecution({ actionId: request.actionId, input: request.input, semanticInput: request.semanticInput,
     rpcContext: rpcContext ?? context, actionContext: context,
     ...(creationContinuationResult ? { creationContinuationResult } : {}),
-    ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
+    ...(observesExecWake ? { response: 'terminal' as const }
+      : (context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
       // Setup completion retains this host receipt before observing terminal
       // output. Other Workflow Actions retain their own declared result shape.
       && (!workflowCaller || workflowOperationReceipt)

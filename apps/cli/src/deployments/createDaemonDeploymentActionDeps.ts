@@ -151,7 +151,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { prepareServiceAdoptionForHost } from './serviceAdoptionForHost';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { preparePendingDeploymentForHost, waitForPendingDeploymentForHost, validatePendingDeploymentInputForHost,
+import { cancelPendingDeploymentForHost, preparePendingDeploymentForHost, waitForPendingDeploymentForHost, validatePendingDeploymentInputForHost,
 } from './pendingDeploy';
 import { readPendingDeploymentRecoveryOperation, readCompactPendingDeploymentRecovery } from './pendingDeploymentRecovery';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
@@ -2071,6 +2071,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     async cancel(fresh) {
                         await fresh.assertCurrent();
                         const authorization = fresh.callerInputAuthorization;
+                        if (authorization?.binding.requesterOperationRead && authorization.requesterHttpProjection) {
+                            await cancelPendingDeploymentForHost({ context: fresh, operationId: prepared.intent.actionOperationId,
+                                scope: { accountId: authorization.binding.accountId, machineId: host.machineId },
+                                custody: { serverId: host.serverId, installationId: authorization.binding.installationId } });
+                            return;
+                        }
                         // Never substitute the accepted Deploy root or the
                         // machine custodian's bearer for this fresh requester.
                         if (!authorization?.requesterAccountProjection || !authorization.requesterHttpProjection) return refuse('action_forbidden');

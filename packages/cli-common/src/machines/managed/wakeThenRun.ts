@@ -1,6 +1,7 @@
-import type { ManagedMachineFullV1, ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineV1, ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ActionAdmittedExecutionV1, ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, ActionMachineRuntimeDemandV1, ActionPreparedMachineTargetV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { resolveMachineWakeNativeIntentV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { prepareManagedPowerProvisionerAdmissionV1, type ManagedProvisionerSelectionRead } from './provisioners.js';
@@ -15,23 +16,24 @@ export type ManagedWakePreparationReads = Readonly<{
     readSessionMachineId(target: Extract<ActionMachineRuntimeDemandV1['target'], { kind: 'session' }>,
         context: ActionExecutorContext): Promise<string | null | ActionExecuteFailure>;
     readManagedMachine(input: ManagedMachineRefV1,
-        context: ActionExecutorContext): Promise<ManagedMachineFullV1 | null | ActionExecuteFailure>;
+        context: ActionExecutorContext, runtime?: 'native'): Promise<ManagedMachineV1 | null | ActionExecuteFailure>;
     readSelectedProvisioners?: ManagedProvisionerSelectionRead;
 }>;
 
-type ManagedWakePowerInput = Extract<ManagedMachineActionInputV1<'machines.managed.power.set'>, { when: 'now' }>;
+type ManagedWakePowerInput = Extract<ManagedMachineActionInputV1<typeof MANAGED_POWER_SET_ACTION_ID_V1>, { when: 'now' }>;
+type ManagedWakeTarget = ManagedMachineRefV1 & Readonly<{ powerInput?: ManagedWakePowerInput }>;
 
 /** Invocation-private placement and reviewed power choice, captured only by preparation's closure. */
-export type ManagedMachinePreparedRuntime = ActionPreparedMachineTargetV1 & Readonly<{
-    managed?: Readonly<{ homeId: string; managedId: string; powerInput?: ManagedWakePowerInput }>;
-}>;
+export type ManagedMachinePreparedRuntime =
+    | (ActionPreparedMachineTargetV1 & Readonly<{ managed?: ManagedWakeTarget }>)
+    | Readonly<{ native: ManagedWakeTarget }>;
 
 export type ManagedMachineRuntimeDemandExecution = ActionAdmittedExecutionV1 & Readonly<{
     machineRuntime: ManagedMachinePreparedRuntime;
 }>;
 
 /** The same concrete operand is reviewed at preparation and invoked by execution. */
-export function managedMachineWakePowerInput(machine: ManagedMachineFullV1): Extract<ManagedMachineActionInputV1<'machines.managed.power.set'>, { when: 'now' }> {
+export function managedMachineWakePowerInput(machine: ManagedMachineV1): ManagedWakePowerInput {
     const intent = resolveMachineWakeNativeIntentV1(machine.observation?.power,
         machine.reviewedFacts?.retentionCapabilities.supportedIntents ?? ['start']);
     if (!intent) throw new ManagedMachineControllerError('provider_unavailable');
@@ -47,6 +49,20 @@ export async function prepareManagedMachineWakeChildren(
 ): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
     const demand = request.machineRuntimeDemand;
     if (!demand) return null;
+    if (demand.target.kind === 'managed-machine') {
+        const { homeId, managedId } = demand.target;
+        const target = { homeId, managedId };
+        const machine = await reads.readManagedMachine(target, request.context, 'native');
+        if (machine && 'ok' in machine) return machine;
+        if (!machine) return { ok: false, errorCode: 'managed_not_found', error: 'managed_not_found' };
+        const runtime = resolveManagedMachineRuntimeV1(machine, null);
+        if (runtime.ready) return { children: [] };
+        if (!runtime.available || !runtime.wakeState)
+            return { ok: false, errorCode: 'native_resource_unavailable', error: 'native_resource_unavailable' };
+        return prepareManagedWakePlan(reads, machine,
+            runtime.inspectionRequired ? managedMachineWakePowerInput(machine) : undefined,
+            managed => ({ native: managed }), executePrepared);
+    }
     const machineId = demand.target.kind === 'machine' ? demand.target.machineId
         : await reads.readSessionMachineId(demand.target, request.context);
     if (machineId === null || typeof machineId !== 'string') return machineId;
@@ -63,14 +79,30 @@ export async function prepareManagedMachineWakeChildren(
     };
     const machine = await reads.readManagedMachine(target.managedMachineRef, request.context);
     if (machine && 'ok' in machine) return machine;
-    const powerInput = machine && resolveManagedMachineRuntimeV1(machine, machineId, target.reachable).inspectionRequired
+    if (!machine) return { children: [],
+        ...(executePrepared ? { executeAdmittedAction: (execution: ActionAdmittedExecutionV1) => executePrepared({
+            ...execution, machineRuntime: { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}) } }) } : {}),
+    };
+    const powerInput = resolveManagedMachineRuntimeV1(machine, machineId, target.reachable).inspectionRequired
         ? managedMachineWakePowerInput(machine) : undefined;
-    const providerRoles = machine && powerInput ? await prepareManagedPowerProvisionerAdmissionV1(machine,
+    return prepareManagedWakePlan(reads, machine, powerInput, managed => ({
+        machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}), managed,
+    }), executePrepared);
+}
+
+async function prepareManagedWakePlan(
+    reads: ManagedWakePreparationReads,
+    machine: ManagedMachineV1,
+    powerInput: ManagedWakePowerInput | undefined,
+    prepareTarget: (managed: ManagedWakeTarget) => ManagedMachinePreparedRuntime,
+    executePrepared: ((request: ManagedMachineRuntimeDemandExecution) => Promise<ActionExecuteResult>) | undefined,
+): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure> {
+    const providerRoles = powerInput ? await prepareManagedPowerProvisionerAdmissionV1(machine,
         reads.readSelectedProvisioners ?? (async () => null)) : null;
     if (providerRoles && 'ok' in providerRoles) return providerRoles;
-    const machineRuntime: ManagedMachinePreparedRuntime = { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}),
-        ...(machine ? { managed: { homeId: machine.homeId, managedId: machine.id, ...(powerInput ? { powerInput } : {}) } } : {}) };
-    return { children: powerInput ? [{ action: 'machines.managed.power.set', role: 'managed-wake', input: powerInput },
+    const machineRuntime = prepareTarget({ homeId: machine.homeId, managedId: machine.id,
+        ...(powerInput ? { powerInput } : {}) });
+    return { children: powerInput ? [{ action: MANAGED_POWER_SET_ACTION_ID_V1, role: 'managed-wake', input: powerInput },
         ...(providerRoles?.children ?? [])] : [],
         ...(executePrepared ? { executeAdmittedAction: (execution: ActionAdmittedExecutionV1) => executePrepared({
             ...execution, machineRuntime }) } : {}) };

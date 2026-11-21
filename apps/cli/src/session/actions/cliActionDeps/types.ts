@@ -213,6 +213,8 @@ export type CliActionExactHomeTarget =
   | Readonly<{ serverId: string; serverHttpBaseUrl: string }>;
 export type CliActionDepsParams = Readonly<{
   token: string;
+  /** The requester reviews the wake, and its signed controller owns the effect. */
+  reviewManagedExecForRemoteDispatch?: true;
   /** Host-local read capability for the existing Workflow family. */
   registerWorkflowTriggerList?: (list: import('../workflowFamily').CliWorkflowTriggerList) => void;
   /** Additional canonical owner (API token) of private exact-operation consent. */

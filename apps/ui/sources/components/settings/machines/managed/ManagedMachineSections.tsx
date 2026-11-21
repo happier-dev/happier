@@ -56,6 +56,7 @@ import { t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
 import { ManagedMachineResize } from './ManagedMachineResize';
+import { showManagedMachineCommandSheet } from './ManagedMachineCommandSheet';
 import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSection';
@@ -151,7 +152,10 @@ export function ManagedMachineResizeResult({ output }: Readonly<{ output: Manage
 }
 
 function ManagedMachineFullSections(props: FullSectionProps) {
-    const { machine } = props;
+    const { machine, binding } = props;
+    const canReadGuestLogs = binding?.accountId === machine.custodianAccountId;
+    const canRunGuestCommand = binding !== undefined && machine.archivedAt === undefined
+        && (canReadGuestLogs || machine.guestActivityRole === 'manage');
     const { theme } = useUnistyles();
     const router = useRouter();
     const layout = useHappierCollectionLayout();
@@ -962,12 +966,14 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                         : presence?.label ?? t('common.unknown'), online: presence?.online ?? false, current, reachable };
             })} onMove={moveController} /> : null}
         {/* Diagnostics are rare detail: after what people change here (Keep it, Managed from). */}
-        {props.binding?.accountId === machine.custodianAccountId && machine.resource && !resourceConfirmedAbsent ? <ItemGroup title={t('managedMachines.inspect.diagnosticsTitle')}
-            description={t('managedMachines.inspect.diagnosticsDescription')}
-            // The read is the section's one operation: it sits at the header's end, and a sheet appears only for what it returned.
-            surface={guestDiagnostics ? 'sheet' : 'none'}
-            action={<RoundButton title={t('managedMachines.inspect.readLog')} display="secondary" size="small" testID="managed-machine.logs.read"
-                disabled={!props.current || pending !== null} loading={pending === 'machines.managed.inspect' && inspectPurpose === 'logs'} onPress={readGuestLogs} />}>
+        {(canReadGuestLogs || canRunGuestCommand) && machine.resource && !resourceConfirmedAbsent ? <ItemGroup title={t('managedMachines.inspect.diagnosticsTitle')}
+            description={canReadGuestLogs ? t('managedMachines.inspect.diagnosticsDescription') : undefined}
+            surface={guestDiagnostics || canRunGuestCommand ? 'sheet' : 'none'}
+            action={canReadGuestLogs ? <RoundButton title={t('managedMachines.inspect.readLog')} display="secondary" size="small" testID="managed-machine.logs.read"
+                disabled={!props.current || pending !== null} loading={pending === 'machines.managed.inspect' && inspectPurpose === 'logs'} onPress={readGuestLogs} /> : undefined}>
+            {canRunGuestCommand ? <Item title={t('managedMachines.inspect.runCommand')} testID="managed-machine.command.open"
+                disabled={!props.current} onPress={() => showManagedMachineCommandSheet({ binding, homeId: machine.homeId,
+                    managedId: machine.id, controllerId: machine.controller?.machineId, machineName, executeAction: props.executeAction })} /> : null}
             {guestDiagnostics?.status === 'unavailable' ? <SurfaceStateCard kind="unavailable" size="line"
                 title={t('common.unavailable')} diagnosticCode={guestDiagnostics.code}
                 diagnosticDetail={[guestDiagnostics.phase, guestDiagnostics.requestId, guestDiagnostics.exitCode]

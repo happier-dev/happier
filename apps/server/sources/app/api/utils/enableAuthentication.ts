@@ -287,8 +287,9 @@ export function enableAuthentication(app: Fastify) {
             request.externalActionRootActionId = verified.binding.actionId;
             request.externalActionExecutionTarget = verified.target;
             // A reviewed managed child retains its own operation identity inside the signed parent.
-            request.externalActionExecutionRequestId = verified.deploymentTargetRetentionAdmission?.kind === 'reviewed-child'
-                ? verified.deploymentTargetRetentionAdmission.requestId : verified.binding.requestId;
+            request.externalActionExecutionRequestId = verified.managedExecWakeRequestId
+                ?? (verified.deploymentTargetRetentionAdmission?.kind === 'reviewed-child'
+                    ? verified.deploymentTargetRetentionAdmission.requestId : verified.binding.requestId);
             request.externalActionExecutionRequestEnvelopeDigest = verified.binding.requestEnvelopeDigest;
             request.externalActionExecutionMachineId = verified.binding.machineId;
             request.externalActionExecutionCustodianAccountId = verified.binding.custodianAccountId;

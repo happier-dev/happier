@@ -5,7 +5,7 @@ import { ManagedMachineError, sameManagedInput } from '@/app/machines/managed/ma
 import { resolveManagedCredentialDeliveryMachineAdmissionInTx, type ManagedCredentialConsumerCurrentness } from '@/app/machines/managed/credentialDeliveryAdmission';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import type { Tx } from '@/storage/inTx';
-import { isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedCreationMutationActionIdV1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 export interface ExternalActionManagedAdmissionContext {
     envelope?: ExternalActionRequestEnvelope;
@@ -19,6 +19,7 @@ export interface ExternalActionManagedAdmissionContext {
 
 export function isExternalActionManagedResourceAction(actionId: string): boolean {
     return actionId === 'machines.managed.credentials.install'
+        || actionId === MANAGED_EXEC_ACTION_ID_V1
         || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
         || isManagedCreationMutationActionIdV1(actionId)
         || actionId === 'action.operations.list' || actionId === 'action.operations.get';

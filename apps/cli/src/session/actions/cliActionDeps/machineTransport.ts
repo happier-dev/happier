@@ -3,7 +3,7 @@ import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/a
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -12,7 +12,7 @@ import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocat
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
-import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
@@ -292,17 +292,18 @@ export function createCliMachineActionTransport(
       && managedBinding.workspaceSyncAdmission?.source.machineId === input.machineId
       && managedBinding.workspaceSyncAdmission.source.installationId === params.externalActionMachineInstallationId);
     const originalRequester = input.context?.verifiedExternalActionRequester;
-    // The requester read spends its verified Account scope inside the installed
+    // The exact requester operation spends its verified Account scope inside the installed
     // operation store. Its carrier has no authority on the general RPC route.
-    const admittedRequesterOperationRead = managedBinding?.requesterOperationRead
-      && input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
+    const admittedRequesterOperation = managedBinding?.requesterOperationRead
+      && (input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
+        || input.effectActionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V1.cancel)
       && readRetainedVerifiedExternalActionRequester(executionAuthorization) !== undefined;
     const reviewedChild = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && (managedBinding.actionId === input.effectActionId
         || readSessionAgentReadinessChildActionV1(managedBinding, reviewedChild) === input.effectActionId)
-      && (managedBinding.requesterOperationRead ? admittedRequesterOperationRead
+      && (managedBinding.requesterOperationRead ? admittedRequesterOperation
         : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding, undefined, reviewedChild) === input.effectActionId));
     // This in-process admission was installed only after opening the exact
     // controller codec at Home. Reuse it for the two scoped reads; serializing
@@ -384,7 +385,8 @@ export function createCliMachineActionTransport(
         verifyMachineAdmissionCurrent: host.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? host.authority,
         callerInputAuthorization: host.callerInputAuthorization
-          ?? (admittedLocalDiscovery || admittedMoveStatusRead ? host.externalActionExecutionAuthorization : undefined),
+          ?? (admittedLocalDiscovery || admittedMoveStatusRead || admittedRequesterOperation && input.effectActionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1
+            ? host.externalActionExecutionAuthorization : undefined),
         callerInputConstraints: host.callerInputConstraints,
         sessionActionOrigin: host.sessionActionOrigin,
         originalActionEnvelope: host.originalActionEnvelope,

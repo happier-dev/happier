@@ -22,8 +22,9 @@ import { executeManagedProvisionerDiscovery, qualifyManagedOpaquePresetProvision
     readManagedOpaquePresetProvisionerV1, resolveRetainedMachineProvisioner, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedGetOutputV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1, type ManagedAcceptedV1, type ManagedAcquireInputV1, type ManagedAdmissionOutputV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -47,6 +48,7 @@ import { createManagedNativeInvocation, reconcileManagedMachine, resolveManagedR
 import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
 import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reconcileManagedIntent, prepareManagedRetentionPolicy, type ManagedGuestActivityTransport } from './managedIntentReconciler';
+import { isReviewedManagedExecWake } from './managedExecWake';
 import { logger } from '@/ui/logger';
 import { readManagedGuestHomeWarning } from './homeQualification';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
@@ -56,11 +58,11 @@ import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManage
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { readManagedGuestCliIdentity, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { buildDedicatedDaemonInvocationCommand, readManagedGuestCliIdentity, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalPayloadRoot } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { runBoundSessionSetup } from './boundSessionSetup';
 import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
-import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
 import { prepareManagedSessionSshTrust } from './enrollmentSshTrust';
 import { createManagedSshSessionTransport } from './sessionSshTransport';
@@ -1049,10 +1051,54 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const parsed = ManagedMachineActionInputSchemasV1[action].parse(body);
             const review = 'selection' in parsed ? resolveManagedAcquireReviewV1(ManagedAcquireInputV1Schema.parse(parsed)) : parsed;
             const hydrator = createManagedPresetHydrator(input);
+            if (action === MANAGED_EXEC_ACTION_ID_V1) {
+                const request = ManagedMachineActionInputSchemasV1[action].parse(parsed);
+                const binding = options.context?.externalActionExecutionAuthorization?.binding;
+                const scope = binding?.managedAdmission;
+                if (binding?.actionId !== action || scope?.actionId !== action
+                    || scope.input.homeId !== request.homeId || scope.input.managedId !== request.managedId
+                    || request.homeId !== input.homeId || !input.readPolicyCurrent) {
+                    throw new ManagedMachineControllerError('admission_unavailable');
+                }
+                const signal = options.signal ?? new AbortController().signal;
+                signal.throwIfAborted();
+                // Home admitted this requester before review. Read only the native row's current lifecycle.
+                const current = await input.readPolicyCurrent(request.managedId, signal);
+                if (current?.id !== request.managedId) throw new ManagedMachineControllerError('managed_target_access_unavailable');
+                const machine = await openPolicyMachine(current, options, action, hydrator);
+                if (!machine.resource || !machine.enrollmentIdentity) throw new ManagedMachineControllerError('provider_unavailable');
+                const { invoke } = createManagedNativeInvocation({ input, options, machine, action,
+                    execTarget: { lifetime: signal } }, () => machine);
+                const environment = Object.entries(request.env ?? {}).map(([key, value]) => safeBashSingleQuote(`${key}=${value}`));
+                const argv = request.argv.map(safeBashSingleQuote).join(' ');
+                const command = [
+                    request.cwd === undefined ? '' : `CDPATH= cd -- ${safeBashSingleQuote(request.cwd)} && `,
+                    environment.length ? `exec env -- ${environment.join(' ')} ` : 'exec ',
+                    argv,
+                ].join('');
+                const script = machine.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+                    ? buildDedicatedDaemonInvocationCommand(command) : command;
+                const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
+                    resource: machine.resource.value, argv: ['sh', '-s'], allowWake: false,
+                    inputBase64: Buffer.from(`${script}\n`).toString('base64'),
+                }, { signal, timeoutMs: null }));
+                if ('kind' in result || result.termination.observed.kind === 'failed'
+                    || result.termination.requestedBy.kind !== 'none') {
+                    // A terminated carrier may leave its guest command running.
+                    return projectNativeJsonValueForTransport(projectUnexpectedActionFailureV1(true, options.requestId));
+                }
+                return {
+                    exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : null,
+                    stdout: Buffer.from(result.stdoutBase64, 'base64').toString('utf8'),
+                    stderr: Buffer.from(result.stderrBase64, 'base64').toString('utf8'),
+                    stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated,
+                };
+            }
             const client = createManagedMachineControllerClient(input, options, action, hydrator);
             if (MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === action)) {
                 if (review.homeId !== input.homeId) throw new ManagedMachineControllerError('controller_unavailable');
                 const request = ManagedControlAdmissionInputV1Schema.parse({ action, requestId: options.requestId, input: parsed });
+                const nativeExecWake = isReviewedManagedExecWake(request.action, request.input, options.context);
                 if (isManagedMetadataControlActionIdV1(request.action)) {
                     const admission = await client.post('/v1/machines/managed/controller/admit-control', request, ManagedMetadataControlAdmissionOutputV1Schema);
                     return projectNativeJsonValueForTransport(projectManagedMetadataControlResultV1(admission));
@@ -1128,6 +1174,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 options.context?.operationAcceptance?.accept(accepted);
                 try {
                     await reconcileManagedIntent({ input, options, client, machine: admission.machine, action,
+                        ...(nativeExecWake ? { nativeExecWake: true } : {}),
                         ...(action === 'machines.managed.rebuild' ? { rebuild: ManagedMachineActionInputSchemasV1['machines.managed.rebuild'].parse(parsed) } : {}) });
                 } catch (error) {
                     // The successful admission response proves desired intent committed.

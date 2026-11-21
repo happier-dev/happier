@@ -5,7 +5,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionReque
 import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema, projectExternalActionManagedAdmissionV1,
     type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -13,7 +13,7 @@ import type { ApiTokenSessionPresetAcquisitionV1 } from '@happier-dev/protocol/a
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { resolveMachinePresetForAcquireInTx } from '@/app/machines/managed/machinePresetService';
-import { isManagedMachineCreator, requireManagedCreationAccessInTx } from '@/app/machines/managed/managedRead';
+import { admitsManagedTargetInTx, isManagedMachineCreator, requireManagedCreationAccessInTx } from '@/app/machines/managed/managedRead';
 import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, readManagedAcquisitionIdentity, projectManagedAcquisitionComputeInput, sameManagedInput, resolveManagedMachineRole, resolveManagedMachineRoleInTx, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import type { Tx } from '@/storage/inTx';
 import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/managedRequestAuthority';
@@ -248,6 +248,26 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
     }>): Promise<MachineAdmission & ManagedActionMachineAdmissionFacts> {
     const denied = { kind: 'denied', code: 'access_denied' } as const;
     try {
+        if (input.actionId === MANAGED_EXEC_ACTION_ID_V1) {
+            const binding = input.executionBinding;
+            const projection = input.envelope ? readExternalActionManagedRecoveryAdmission(input.actionId, input.envelope)
+                : binding?.managedAdmission;
+            if (projection?.actionId !== MANAGED_EXEC_ACTION_ID_V1
+                || binding && (binding.actionId !== input.actionId || binding.accountId !== input.actorAccountId
+                    || binding.machineId !== input.machineId || binding.target.kind !== 'machine'
+                    || binding.target.machineId !== input.machineId || binding.serverIdentityId !== projection.input.homeId
+                    || !sameManagedInput(binding.managedAdmission?.input, projection.input))) return denied;
+            const row = await readManagedMachineInTx(reader, projection.input);
+            if (row.controllerMachineId !== input.machineId || !row.controllerInstallationId
+                || !await admitsManagedTargetInTx(reader, row, { requesterAccountId: input.actorAccountId }, 'exec')) return denied;
+            // The requester's guest authority does not grant controller inventory or ordinary RPC.
+            const carrier = await resolveMachineAdmissionInTx(reader, { actorAccountId: row.custodianAccountId,
+                actionId: input.actionId, machineId: input.machineId, requiredRole: 'manage',
+                ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }) });
+            if (carrier.kind !== 'admitted') return carrier;
+            return carrier.installationId === row.controllerInstallationId
+                ? { ...carrier, role: 'use', actorAccountId: input.actorAccountId } : denied;
+        }
         if (input.actionId === 'machines.managed.credentials.install') {
             return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
         }

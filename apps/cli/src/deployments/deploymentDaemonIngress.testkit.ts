@@ -5,7 +5,7 @@ import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     encodeBase64, signMachineInstallationProof, readMachineAdminAccessV1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
@@ -34,6 +34,7 @@ import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
 import { CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1 } from '@/api/apiMachine';
 import { publishMachineOperationProtocolCapabilitiesOnSocket } from '@/api/machine/publishMachineOperationProtocolCapabilities';
+import { createActionOperationSnapshotPublisher, emitActionOperationSnapshotV1 } from '@/api/machine/actionOperationSnapshotPublisher';
 import { readOpenedMachineMetadataSnapshot, publishMachineMetadataOnce } from '@/api/machine/machineMetadataPublication';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { registerDaemonMachineAdminAccessRpcHandlers } from '@/rpc/handlers/daemonMachineAdminAccess';
@@ -105,6 +106,8 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     }>): readonly string[] | Promise<readonly string[]>;
     /** Observe the actual socket frame without replacing admission or dispatch. */
     observeReceivedRequest?(request: SocketRpcRequestPayload): Promise<void>;
+    /** Exercise the installed daemon's owner-scoped Activity publisher. */
+    observeOperationPublication?(content: ActionOperationRevisionEphemeralV1['content']): void;
 }>): Promise<S0DeploymentDaemonIngress> {
     const { home } = input;
     if (home.encryptionMode === 'e2ee' && (!home.machineEncryptionKey || !home.encryption)) {
@@ -116,10 +119,24 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         credentials, accountId: home.accountId, serverId: home.serverId, serverHttpBaseUrl: home.baseUrl });
     const daemonLifetime = new AbortController();
     const managedProviderOperationAuthority = createEnrollmentJourneyProviderAuthority(home.baseDir);
+    const actionOperationPublisher = input.observeOperationPublication ? createActionOperationSnapshotPublisher({
+        resolveAccountId: async () => home.accountId, serverBaseUrl: home.baseUrl,
+        readCredentials: async () => credentials,
+        publishContent: content => {
+            input.observeOperationPublication?.(content);
+            emitActionOperationSnapshotV1({ socket: machineSocket, machineId: home.machineId, content });
+        },
+        publishContentAcknowledged: async content => {
+            input.observeOperationPublication?.(content);
+            return await emitActionOperationSnapshotV1({ socket: machineSocket, machineId: home.machineId, content, acknowledge: true }) === true;
+        },
+    }) : undefined;
     const actionOperations = createHostActionOperationRuntime({
         serverId: home.serverId, machineId: home.machineId,
         custodyBinding: { serverId: home.serverId, installationId: home.installationId },
         resolveAccountId: async () => home.accountId,
+        ...(actionOperationPublisher ? { publishSnapshot: actionOperationPublisher,
+            publishSnapshotAcknowledged: actionOperationPublisher.acknowledge } : {}),
     });
     const invokeContributedAction = createDaemonExternalActionContributedInvoker({
         managedProviderOperationAuthority,

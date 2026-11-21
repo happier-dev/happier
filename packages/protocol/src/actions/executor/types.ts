@@ -1476,7 +1476,8 @@ export type HostReviewedChildPortV1 = Readonly<{
 
 /** An explicit original operation needs this exact target's runtime; never transported or authority. */
 export type ActionMachineRuntimeDemandV1 = Readonly<{
-  target: Extract<ExternalActionTargetV1, { kind: 'machine' | 'session' }>;
+  target: Extract<ExternalActionTargetV1, { kind: 'machine' | 'session' }>
+    | (Readonly<{ kind: 'managed-machine' }> & import('../../machines/managed/managedMachineV1.js').ManagedMachineRefV1);
   serverId?: string;
   /** Accepted Session input owns its activation; other finite work activates before its original effect. */
   activation?: 'accepted-input';

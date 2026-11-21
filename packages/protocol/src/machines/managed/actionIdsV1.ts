@@ -25,7 +25,8 @@ export function isManagedReferenceCensusActionIdV1(actionId: string): boolean {
   return actionId === MANAGED_REFERENCES_GET_ACTION_ID_V1 || actionId === MANAGED_DELETE_ACTION_ID_V1;
 }
 export const MANAGED_RETIRE_ACTION_ID_V1 = 'machines.managed.retire';
-export const MANAGED_CONTROL_ACTION_IDS_V1 = ['machines.managed.power.set', 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
+export const MANAGED_POWER_SET_ACTION_ID_V1 = 'machines.managed.power.set';
+export const MANAGED_CONTROL_ACTION_IDS_V1 = [MANAGED_POWER_SET_ACTION_ID_V1, 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
   'machines.managed.retention.update', MANAGED_DELETE_ACTION_ID_V1, 'machines.managed.controller.update', MANAGED_RETIRE_ACTION_ID_V1] as const;
 export type ManagedControlActionIdV1 = typeof MANAGED_CONTROL_ACTION_IDS_V1[number];
 export function isManagedResizeActionIdV1(actionId: string): actionId is typeof MANAGED_RESIZE_ACTION_ID_V1 {
@@ -110,10 +111,11 @@ export function isMachineSetupOperationActionIdV1(actionId: string): actionId is
 
 export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.retry';
 export const MANAGED_ACQUIRE_ACTION_ID_V1 = 'machines.managed.acquire';
+export const MANAGED_EXEC_ACTION_ID_V1 = 'machines.managed.exec';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
   MANAGED_ACQUIRE_ACTION_ID_V1, 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', MANAGED_REFERENCES_GET_ACTION_ID_V1,
-  'machines.managed.inspect', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
+  'machines.managed.inspect', MANAGED_EXEC_ACTION_ID_V1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
   'machines.managed.credentials.install',
   'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
   'machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.resize', 'machines.managed.retention.update', 'machines.managed.delete',
@@ -197,9 +199,9 @@ export function managedAccountNativeReadEffectActionIdV1(rootActionId: string, r
 
 /** Deferred controls keep the same executor: its reconciler owns the idle wait. Home owns admission. */
 export function isManagedRetainedControlInvocation(actionId: string, _input: unknown): actionId is
-  'machines.managed.inspect' | typeof MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
+  'machines.managed.inspect' | typeof MANAGED_EXEC_ACTION_ID_V1 | typeof MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
   | 'machines.managed.rebuild' | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
-  return actionId === 'machines.managed.inspect' || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
+  return actionId === 'machines.managed.inspect' || actionId === MANAGED_EXEC_ACTION_ID_V1 || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
     || isManagedCreationMutationActionIdV1(actionId)
     || actionId === 'machines.managed.resize' || actionId === 'machines.managed.rebuild'
     || isManagedPowerOrDeleteActionIdV1(actionId);

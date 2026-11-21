@@ -1,7 +1,7 @@
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRequesterActionOperationV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
@@ -53,7 +53,12 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
-import { resolveMachineAccess } from '@/app/machines/machineAccess';
+import { resolveMachineAccess, resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { inTx } from '@/storage/inTx';
 import { archiveMachinePreset, createMachinePreset, readMachinePresetRecipientCensus, restoreMachinePreset, updateMachinePreset } from '@/app/machines/managed/machinePresetService';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { db, initDbPostgres } from '@/storage/db';
@@ -63,6 +68,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { deriveAccountEncryptionCurrentnessFromRow } from '@/app/encryption/accountContentKeyAdmission';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
+import { registerDeploymentRoutes } from '../deployments/deploymentRoutes';
 import { handleActionsCommand } from '../../../../../../cli/src/cli/commands/actions';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutor } from '../../../../../../cli/src/session/actions/createCliActionExecutor';
@@ -365,6 +371,142 @@ describe('composed CLI managed Action origination', () => {
             // Prisma retains overridden delegate keys after a spy deletes the own descriptor.
             delegate.findUnique = findUnique;
             delegate.findFirst = findFirst;
+            await instance.close();
+        }
+    });
+
+    it('lets only the admitted requester stop and observe an exact received operation after the grant ends', async () => {
+        const owner = await fixture(true);
+        const requester = await fixture(true);
+        const { machineId, installationId } = owner.controller;
+        const grant = await db.machineGrant.create({ data: { principalKind: 'account', machineId,
+            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: owner.account.id } });
+        const admission = await resolveMachineAdmission({ machineId, actorAccountId: requester.account.id, requireOnline: true });
+        expect(admission.kind).toBe('admitted');
+        if (admission.kind !== 'admitted') throw new Error('Missing Machine admission');
+        const { kind: _kind, ...machineAdmission } = admission;
+        const pendingOperationId = crypto.randomUUID();
+        const source = await inTx(tx => createProjectSourceInTx(tx, requester.account.id, {
+            serverId: homeId, requestKey: crypto.randomUUID(), name: 'Pending Project', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const detail = createDeploymentEnvironmentDetailV1();
+        const artifact = await createArtifact({ actorUserId: requester.account.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Pending' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) })),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, requester.account.id, {
+            serverId: homeId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId,
+            contentArtifactId: artifact.artifact.id, contentHeaderVersion: artifact.artifact.headerVersion,
+            contentBodyVersion: artifact.artifact.bodyVersion,
+        }));
+        if (!created.ok) throw new Error(created.error);
+        const requestKey = crypto.randomUUID();
+        const pendingDeploy = { t: 'plain', v: { sourceIntent: { kind: 'repository',
+            projectSourceId: source.source.id, sourceRevision: source.source.revision, sha: 'a'.repeat(40),
+            compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'app' } },
+            requestKey, targetLinkId: 'pending-link', actionOperationId: pendingOperationId } };
+        await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { pendingDeployContent: { pendingDeploy,
+            admission: { requesterAccountId: requester.account.id, serverId: homeId, requestKey, actionOperationId: pendingOperationId,
+                controller: { machineId, installationId }, environmentRevision: 2 } }, revision: { increment: 1 } } });
+        const credentials = { token: owner.token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const storedSettings = { actionsSettingsV1: { v: 1, actions: {},
+            approvalWaivedSurfaces: { [ACTION_OPERATION_CANCEL_ACTION_ID_V1]: ['cli'] } } };
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const serverHttpBaseUrl = 'http://requester-operation.test';
+        const operations = createHostActionOperationRuntime({ machineId, custodyBinding: { serverId: homeId, installationId },
+            resolveAccountId: async () => owner.account.id });
+        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, runtimeActionMachineId: machineId,
+            externalActionMachineRequestPrivateKey: owner.keys.secretKey, externalActionMachineInstallationId: installationId,
+            machineActionDirectTargetTransport: { machineId, invoke: async (method, request, options) => {
+                if (method === ACTION_OPERATION_RPC_METHODS_V2.get) return operations.handlers.getV2(request, options?.rpcContext);
+                expect(method).toBe(ACTION_OPERATION_RPC_METHODS_V1.cancel);
+                return operations.handlers.cancel(request, options?.rpcContext);
+            } },
+        });
+        const instance = await app(async request => {
+            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(request.targetUserId).toBe(owner.account.id);
+            const result = await executeExternalAction({ ...admitted, executor: receiver,
+                currentAccountId: owner.account.id, currentMachineId: machineId,
+                currentInstallationId: installationId, currentServerId: homeId,
+                currentServerHttpBaseUrl: serverHttpBaseUrl, externalActionMachineRequestPrivateKey: owner.keys.secretKey,
+                ...(request.machineAdmission ? { machineAdmission: request.machineAdmission } : {}),
+                verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: owner.keys.secretKey, installationId, serverHttpBaseUrl }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                prepareRequesterAccountContext: async () => { throw new Error('Exact operation access cannot acquire requester credentials'); },
+            });
+            if (result.kind !== 'response') throw new Error(`Daemon rejected requester operation ingress: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
+        }, http => {
+            http.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 2 }));
+            registerAutomationActionIndexRoutes(http);
+            registerDeploymentRoutes(http);
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        const started = Promise.withResolvers<void>();
+        const finish = Promise.withResolvers<void>();
+        let cancellations = 0;
+        let operationId: string | undefined;
+        const observed = operations.observeExecution({ actionId: 'machines.managed.acquire', input: owner.input,
+            rpcContext: { machineAdmission },
+            execute: async ({ signal }) => {
+                signal.addEventListener('abort', () => { cancellations++; finish.resolve(); }, { once: true });
+                started.resolve();
+                await finish.promise;
+                return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            },
+            onOperation: operation => { operationId = operation.operationId; },
+        });
+        try {
+            await Promise.race([started.promise, observed]);
+            if (!operationId) throw new Error('Missing accepted operation');
+            const address = { serverId: homeId, machineId, operationId };
+            await db.machineGrant.delete({ where: { id: grant.id } });
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId })).toBeNull();
+            const pairedCli = async (accountId: string) => {
+                const token = await auth.createToken(accountId, undefined, { kind: 'terminal', authority: 'account_automation' });
+                return createCliActionExecutorFromCredentials({ credentials: { token, credentialProvenance: 'stored_session', encryption: null },
+                    serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+                    actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse(storedSettings.actionsSettingsV1),
+                        getAccountSettings: () => accountSettingsParse(storedSettings) },
+                });
+            };
+            const requesterCli = await pairedCli(requester.account.id);
+            const ownerCli = await pairedCli(owner.account.id);
+            const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: homeId, serverIdentityId: homeId } as const;
+            expect(await requesterCli.execute(ACTION_OPERATION_GET_ACTION_ID_V1, address, context)).toMatchObject({
+                ok: true, result: { kind: 'found', operation: { state: 'running', scope: { accountId: requester.account.id, machineId } } },
+            });
+            const otherStop = await ownerCli.execute(ACTION_OPERATION_CANCEL_ACTION_ID_V1, address, context);
+            expect.soft(otherStop, JSON.stringify(otherStop)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+            expect(cancellations).toBe(0);
+            const stopped = await requesterCli.execute(ACTION_OPERATION_CANCEL_ACTION_ID_V1, address, context);
+            expect(stopped, JSON.stringify(stopped)).toMatchObject({ ok: true, result: { kind: 'requested' } });
+            expect(cancellations).toBe(1);
+            expect(await requesterCli.execute(ACTION_OPERATION_GET_ACTION_ID_V1, { ...address, waitForTerminal: true }, context)).toMatchObject({
+                ok: true, result: { kind: 'found', operation: { state: 'cancelled' } },
+            });
+            const retainedAddress = { ...address, operationId: pendingOperationId };
+            expect(await ownerCli.execute(ACTION_OPERATION_CANCEL_ACTION_ID_V1, retainedAddress, context)).toMatchObject({
+                ok: true, result: { kind: 'not_found' },
+            });
+            expect(await requesterCli.execute(ACTION_OPERATION_CANCEL_ACTION_ID_V1, retainedAddress, context)).toMatchObject({
+                ok: true, result: { kind: 'requested' },
+            });
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).pendingDeployContent).toBeNull();
+        } finally {
+            finish.resolve();
+            await observed;
+            restoreHttp();
+            resetActiveAccountSettingsSnapshotForTests();
             await instance.close();
         }
     });

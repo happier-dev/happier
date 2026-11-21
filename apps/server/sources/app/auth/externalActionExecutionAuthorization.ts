@@ -154,9 +154,9 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
-import { ManagedControllerCurrentnessV1Schema, type ManagedControllerCurrentnessV1, ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControlAdmissionInputV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerCurrentnessV1Schema, type ManagedControllerCurrentnessV1, ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
-import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedPresetAcquireInputV1, ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -186,7 +186,6 @@ import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadReques
 import { isRequesterProjectExecutionActionV1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { MACHINE_TERMINAL_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machineTerminal';
-import { PROJECT_SOURCE_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { ExternalActionRequestEnvelopeSchema, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1, readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
@@ -205,11 +204,12 @@ import { PendingResetStartsReadInputV1Schema } from '@happier-dev/protocol/sessi
 import { readExternalActionPendingResetStartPurpose, isExternalActionPendingResetStartReadPurpose } from './externalActionPendingResetStartPurpose';
 import { isExternalActionApprovalReplyPurpose } from './externalActionApprovalReplyPurpose';
 import { isExternalActionApprovalArtifactPurpose } from './externalActionApprovalArtifactPurpose';
-import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { deriveActionChildRequestIdV1, deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1,
     isMachineSetupCombinedActionIdV1, isMachineSetupNativeCodecActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isArtifactSignedInLinkCreateHttpPurpose, readExternalActionArtifactSignedInLinkPurpose } from './externalActionArtifactSignedInLinkPurpose';
 import { isExternalActionDeploymentPendingCancelPurpose } from './externalActionDeploymentPendingCancelPurpose';
+import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
 import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
 import { SessionSystemRecordAddressSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import { projectExternalActionPendingResetStartAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -457,7 +457,7 @@ async function resolveExternalActionExecutionMachineAccessInTx(
     const telemetryRead = input.telemetryCollectorCodec || native?.telemetryCollectorCodec;
     if (requesterOperationRead || telemetryRead) {
         // Select the installed carrier. The deployment Environment or operation
-        // store admits the actual read before any data can be accessed.
+        // owner authorizes access to the exact resource under the original Account.
         const machine = await reader.machine.findUnique({ where: { id: input.machineId }, select: {
             accountId: true, kind: true, installationId: true, revokedAt: true, replacedByMachineId: true,
             installationPublicKey: true, account: { select: { encryptionMode: true } },
@@ -515,6 +515,7 @@ async function resolveExternalActionExecutionMachineAccessInTx(
     }
     // Exact native binding admission is mandatory even for a controller manager.
     if (input.actionId === 'machines.managed.credentials.install') return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
+    if (input.actionId === MANAGED_EXEC_ACTION_ID_V1) return resolveManagedActionMachineAdmissionInTx(reader, input);
     const action = SignedRootActionIdSchema.safeParse(input.actionId);
     const spec = action.success ? getActionSpec(action.data) : null;
     const placements = spec?.executionPlacements ?? [];
@@ -1189,6 +1190,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     /** The setup role consumed only its root's admitted Environment or Link Artifact read purpose. */
     deploymentReviewedSetupRead?: true;
     reviewedChildAdmission?: ReviewedActionChildHttpProofV1;
+    /** Operation identity already proven for the managed exec root's exact wake child. */
+    managedExecWakeRequestId?: string;
     /** Setup catalog target that signed this read; it spends only its paired operands. */
     setupReceiverMachineId?: string;
     /** The bound Machine's own (or custody) key signed this request, not a captured Session or handoff source. */
@@ -1579,6 +1582,56 @@ function isProjectPrepareReviewEffect(rootActionId: string, effectActionId: stri
     return rootActionId === PROJECT_PREPARE_ACTION_ID_V1 && effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1;
 }
 
+/** An installed exec controller can spend one exact reviewed wake before native command IO. */
+function readManagedExecWakePurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string, proof: ExternalActionExecutionRequestProof) {
+    const target = binding.managedAdmission;
+    const child = proof.reviewedChild;
+    if (binding.actionId !== MANAGED_EXEC_ACTION_ID_V1 || target?.actionId !== binding.actionId
+        || effectActionId !== MANAGED_POWER_SET_ACTION_ID_V1 || child?.actionId !== effectActionId
+        || child.role !== 'managed-wake' || proof.method.toUpperCase() !== 'POST') return;
+    const requestId = deriveActionChildRequestIdV1({ parentRequestId: binding.requestId,
+        parentActionId: binding.actionId, childActionId: effectActionId, position: 0 });
+    if (proof.path === '/v1/machines/managed/controller/admit-control') {
+        const admission = ManagedControlAdmissionInputV1Schema.safeParse(proof.body);
+        if (!admission.success || admission.data.action !== effectActionId || admission.data.requestId !== requestId) return;
+        const { input } = admission.data;
+        if (input.homeId !== target.input.homeId || input.managedId !== target.input.managedId || input.when !== 'now'
+            || (input.intent !== 'start' && input.intent !== 'resume')
+            || child.inputDigest !== computeActionInputApprovalDigestV1(effectActionId, input)) return;
+        return { requestId, phase: 'admit' as const };
+    }
+    const report = proof.path === '/v1/machines/managed/controller/report-intent';
+    if (!report && proof.path !== '/v1/machines/managed/controller/current'
+        && proof.path !== '/v1/machines/managed/controller/submit-intent') return;
+    const correlation = (report ? ManagedControllerIntentReportV1Schema
+        : proof.path.endsWith('/current') ? ManagedControllerCurrentInputV1Schema : ManagedControllerCurrentnessV1Schema).safeParse(proof.body);
+    if (!correlation.success) return;
+    const { data } = correlation;
+    if (data.homeId !== target.input.homeId || data.managedId !== target.input.managedId || data.requestId !== requestId
+        || data.controller?.machineId !== binding.machineId || data.controller.installationId !== binding.installationId) return;
+    return { requestId, phase: report ? 'report' as const : 'continue' as const, correlation: data, inputDigest: child.inputDigest };
+}
+
+async function isAdmittedManagedExecWakeInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    wake: Extract<NonNullable<ReturnType<typeof readManagedExecWakePurpose>>, { correlation: unknown }>): Promise<boolean> {
+    try {
+        const row = wake.phase === 'report' ? await readManagedMachineInTx(reader, wake.correlation)
+            : await requireCurrentManagedMachineInTx(reader, wake.correlation, { requestAuthority: 'intent' });
+        if (row.custodianAccountId !== binding.custodianAccountId) return false;
+        if (wake.phase === 'report') {
+            const pending = readManagedIntentReportAuthority(row, wake.correlation);
+            return pending?.intent === 'start' || pending?.intent === 'resume';
+        }
+        const current = readManagedAdmissionState(row.admittedInput).currentAdmission;
+        return current?.kind === 'control' && current.request.action === MANAGED_POWER_SET_ACTION_ID_V1
+            && wake.inputDigest === computeActionInputApprovalDigestV1(current.request.action, current.request.input);
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return false;
+    }
+}
+
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string,
@@ -1668,7 +1721,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
-    const crossesEffectFamily = deploymentReferenceServices || configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
+    const managedExecWake = readManagedExecWakePurpose(binding, effectActionId, proof);
+    const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowStart || machineGrantSetRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
@@ -1676,11 +1730,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
-    const usesRootCredential = deploymentReferenceServices || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
+    const usesRootCredential = managedExecWake !== undefined || deploymentReferenceServices || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowStart || machineGrantSetRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
-    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead,
+    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead, managedExecWake,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
         reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, deploymentReferenceServices, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
@@ -1691,7 +1745,7 @@ type VerifiedSignedChildRequest = VerifiedExternalActionExecutionRequest & Reado
     /** Private request-local result; resource adapters keep consuming the existing public projection. */
     signedChildPurpose: Awaited<ReturnType<typeof readSignedChildPurpose>> & Readonly<{
         preparationRead: Awaited<ReturnType<typeof readDeploymentPreparationHttpReadPurpose>>;
-        requesterOperationRead?: 'machineLookup' | 'verify';
+        requesterOperationRead?: 'machineLookup' | 'verify' | 'pendingDeploymentCancel';
     }>;
 }>;
 
@@ -1830,12 +1884,17 @@ async function verifyCommon(
     if (!binding) return refuseExternalActionExecutionRequest('authorization_token', proof);
     const refuse =(phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
         { rootActionId: binding.actionId, effectActionId: effectActionId.data });
-    const requesterOperationRead = binding.requesterOperationRead && effectActionId.data === binding.actionId
-        ? isExactExecutionMachineLookup(binding.machineId, proof) ? 'machineLookup'
-            : proof.method.toUpperCase() === 'POST'
-                && proof.path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId) ? 'verify' : undefined
-        : undefined;
-    if (binding.requesterOperationRead && !requesterOperationRead) return refuse('verification_purpose');
+    let requesterOperationRead: VerifiedSignedChildRequest['signedChildPurpose']['requesterOperationRead'];
+    if (binding.requesterOperationRead) {
+        if (effectActionId.data !== binding.actionId) return refuse('verification_purpose');
+        if (isExactExecutionMachineLookup(binding.machineId, proof)) requesterOperationRead = 'machineLookup';
+        else if (proof.method.toUpperCase() === 'POST'
+            && proof.path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId)) requesterOperationRead = 'verify';
+        else if (proof.path === DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1
+            && isExternalActionDeploymentPendingCancelPurpose({ ...proof, actionId: binding.actionId,
+                effectActionId: effectActionId.data, serverIdentityId: binding.serverIdentityId })) requesterOperationRead = 'pendingDeploymentCancel';
+        else return refuse('verification_purpose');
+    }
     if (!isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
         resolvedTarget: target,
@@ -1888,7 +1947,9 @@ async function verifyCommon(
         ? ManagedControllerResizeReportV1Schema.safeParse(proof.body) : null;
     const nativeReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report'
         ? ManagedControllerCredentialDeliveryReportV1Schema.safeParse(proof.body) : null;
-    const purpose: ExternalActionVerificationPurpose | undefined = managedPowerContinuation
+    const managedExecWake = childPurpose.managedExecWake;
+    const managedExecWakeContinuation = managedExecWake && 'correlation' in managedExecWake ? managedExecWake : undefined;
+    const purpose: ExternalActionVerificationPurpose | undefined = managedPowerContinuation || managedExecWakeContinuation
         ? { kind: 'admitted-managed-power-continuation' }
         : report?.success
         && await isIssuedAcquireNativeFactReportInTx(db, binding, report.data)
@@ -1943,6 +2004,10 @@ async function verifyCommon(
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
         : verifyBoundMachineKey();
     const boundMachineSigned = signatureCurrent;
+    if (managedExecWake && !boundMachineSigned) return refuse('machine_signature');
+    if (managedExecWakeContinuation && !await isAdmittedManagedExecWakeInTx(db, binding, managedExecWakeContinuation)) {
+        return refuse('managed_control_purpose');
+    }
     if (binding.requesterOperationRead && !boundMachineSigned) return refuse('machine_signature');
     if (managedPowerContinuation) {
         if (!boundMachineSigned) return refuse('machine_signature');
@@ -2138,6 +2203,7 @@ async function verifyCommon(
 
 
     const reviewedAdmission = {
+        ...(managedExecWake ? { managedExecWakeRequestId: managedExecWake.requestId } : {}),
         ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
         ...(actionMaterialAdmission ? { actionMaterialAdmission } : {}),
         ...(actionBrokerAdmission ? { actionBrokerAdmission } : {}),
@@ -3635,7 +3701,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     }
     if (root === 'artifact.get' && verified.effectActionId === root) return isReadOnlyArtifactHttpPurpose(proof)
         || isArtifactRecipientKeyPreparationHttpPurpose(proof);
-    if (root === 'action.operations.cancel') return isExternalActionDeploymentPendingCancelPurpose({
+    if (root === 'action.operations.cancel') return verified.signedChildPurpose.requesterOperationRead === 'pendingDeploymentCancel'
+        || isExternalActionDeploymentPendingCancelPurpose({
         actionId: root, effectActionId: verified.effectActionId, serverIdentityId: verified.binding.serverIdentityId,
         method: proof.method, path: proof.path, body: proof.body, routeInput: proof.routeInput,
     });
@@ -4503,6 +4570,18 @@ export async function verifyExternalActionDomainExecutionRequest(
             || !isAccountEncryptionCurrentnessHttpRead(proof) && !(lookup?.success && lookup.data.matchExternalIdentity === true)) return refuse('verification_purpose');
     } else if (isMachineDeploymentReferenceHttpPurpose(verified, proof)) {
         // The native deployment read route owns requester access to each reference.
+    } else if (verified.binding.actionId === MANAGED_EXEC_ACTION_ID_V1 && verified.effectActionId === MANAGED_EXEC_ACTION_ID_V1) {
+        const admission = verified.binding.managedAdmission;
+        const body = proof.body !== null && typeof proof.body === 'object' ? proof.body : null;
+        if (admission?.actionId !== MANAGED_EXEC_ACTION_ID_V1 || proof.method.toUpperCase() !== 'POST'
+            || proof.path !== '/v1/machines/managed/controller/context'
+                && proof.path !== managedMachineActionEndpointPathV1('machines.managed.get')
+            || !body || !('homeId' in body) || !('managedId' in body)
+            || body.homeId !== admission.input.homeId || body.managedId !== admission.input.managedId) {
+            return refuse('managed_exec_target');
+        }
+    } else if (verified.signedChildPurpose.managedExecWake) {
+        // The signed purpose already pinned the exact power child and HTTP phase.
     } else if (managedRoot.success && !admittedReadRootRequesterGet) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();

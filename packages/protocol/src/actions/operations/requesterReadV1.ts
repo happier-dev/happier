@@ -10,7 +10,8 @@ import {
 import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionExecutionAuthorization.js';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
 import { sealManagedControllerActionCodecV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from './actionIdsV1.js';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from './actionIdsV1.js';
+import { ActionOperationAddressV1Schema } from './addressV1.js';
 import { ActionOperationGetActionInputV1Schema } from '../specs/actionOperations.js';
 
 export function readRequesterOperationAddressV1(actionId: string, input: unknown) {
@@ -19,9 +20,18 @@ export function readRequesterOperationAddressV1(actionId: string, input: unknown
   return parsed.success && !parsed.data.managed && !parsed.data.environmentId ? parsed.data : null;
 }
 
-/** Reuse the signed installed carrier and its one-use codec for requester reads. */
-export async function readRequesterActionOperationV1(params: Readonly<{
-  input: NonNullable<ReturnType<typeof readRequesterOperationAddressV1>>;
+export function readRequesterOperationRequestV1(actionId: string, input: unknown) {
+  if (actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1) {
+    const parsed = ActionOperationAddressV1Schema.safeParse(input);
+    return parsed.success ? { actionId, input: parsed.data } as const : null;
+  }
+  const address = readRequesterOperationAddressV1(actionId, input);
+  return address ? { actionId: ACTION_OPERATION_GET_ACTION_ID_V1, input: address } as const : null;
+}
+
+export type RequesterOperationRequestV1 = NonNullable<ReturnType<typeof readRequesterOperationRequestV1>>;
+
+type RequesterOperationTransport = Readonly<{
   accountId: string;
   serverIdentityId: string;
   tokenEpoch: number;
@@ -29,8 +39,22 @@ export async function readRequesterActionOperationV1(params: Readonly<{
   requestId: string;
   randomBytes(length: number): Uint8Array;
   request(path: string, body: ExternalActionExecutionAuthorizationRequestV1): Promise<Readonly<{ status: number; value: unknown }>>;
+  /**
+   * The reader's own decode of the executor's E2EE Machine content: its pin, null when that content
+   * publishes no key, or undefined when the reader cannot open it (the key then stays Home-vouched).
+   */
+  readExecutorKeyPin?(machineId: string): Promise<InstallationKeyPinV1 | null | undefined>;
+}>;
+
+export function readRequesterActionOperationV1(params: RequesterOperationTransport & Readonly<{
+  input: NonNullable<ReturnType<typeof readRequesterOperationAddressV1>>;
 }>): Promise<ActionExecuteResult | null> {
-  const actionId = ACTION_OPERATION_GET_ACTION_ID_V1;
+  return executeRequesterActionOperationV1({ ...params, actionId: ACTION_OPERATION_GET_ACTION_ID_V1 });
+}
+
+/** Reuse the installed carrier and its one-use codec for exact requester operations. */
+export async function executeRequesterActionOperationV1(params: RequesterOperationTransport & RequesterOperationRequestV1): Promise<ActionExecuteResult | null> {
+  const { actionId } = params;
   const target = { kind: 'machine' as const, machineId: params.input.machineId };
   const authentication = { kind: params.authenticationKind ?? 'account', tokenEpoch: params.tokenEpoch };
   const binding = { actionId, target, accountId: params.accountId, requestId: params.requestId,
@@ -50,7 +74,7 @@ export async function readRequesterActionOperationV1(params: Readonly<{
   const minted = await params.request(bindExternalActionExecutionAuthorizationHttpPathV1(actionId), body);
   if (minted.status !== 200) {
     const failed = refusal(minted.value);
-    // The 0.2 Home has no Action authorization endpoint. Keep its Machine RPC read.
+    // The 0.2 Home has no Action authorization endpoint. Keep its exact Machine RPC.
     return minted.status === 404 && !failed ? null : failed ?? unavailable;
   }
   const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted.value);

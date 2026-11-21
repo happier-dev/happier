@@ -4,7 +4,7 @@ import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1, WOR
 import { ExternalActionRetainedWorkflowRootV1Schema, projectExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
-import { isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -359,6 +359,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ...(request.body.action === 'machines.managed.controller.update' ? { controllerDestination: request.body.input.controller } : {}) });
         if (proof.requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         return admitManagedControl({ actorAccountId: request.userId, custodianAccountId: proof.custodianAccountId,
+            ...(request.externalActionRootActionId === MANAGED_EXEC_ACTION_ID_V1
+                && request.externalActionReviewedChildAdmission?.actionId === MANAGED_POWER_SET_ACTION_ID_V1
+                && request.externalActionReviewedChildAdmission.role === 'managed-wake' ? { admittedExecWake: true } : {}),
             ...(request.externalActionExecutionAuthorizationBinding?.managedAdmission?.actionId === 'machines.managed.delete'
                 && request.externalActionExecutionAuthorizationBinding.managedAdmission.authority === 'creator_recovery'
                 ? { admittedCreationRecovery: true } : {}),
@@ -476,7 +479,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         const proof = boundSession ? { requestAuthority: 'creation' as const }
             : request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
             ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/context', request.body, 'read')
-            : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install'], { retainedContext: true });
+            : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install', MANAGED_EXEC_ACTION_ID_V1], { retainedContext: true });
         return await inTx(async (tx) => {
             const row = await readManagedMachineInTx(tx, request.body);
             // Enrollment recovery seals its child against the retained creation,

@@ -798,7 +798,7 @@ export function registerExternalActionRoutes(
                 || body.data.envelope.pluginInvocation || body.data.envelope.managedCreationCodec)) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
             }
-            // The binding schema owns the requester read's exact Action, target and provenance.
+            // The binding schema owns the requester operation's exact Action, target and provenance.
             // Only ingress operands outside that binding and alternate handoff mint paths stop here.
             if (requesterOperationRead && (body.data.envelope.pluginInvocation
                 || deploymentNativeAdmission || deploymentMetadataEnvironmentId || handoffContinuation || handoffPreflight)) {

@@ -1,4 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import axios from '@/api/client/credentialAxios';
 import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -543,6 +544,43 @@ describe('Session-target authority for managed provider channel roles', () => {
 describe('Session placement on a managed target (driver)', () => {
     const holder = { version: 'v1', resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array([1]), sha256: 'a'.repeat(64) },
         helper: { bytes: new Uint8Array([2]), sha256: 'b'.repeat(64) } }) };
+
+    it.each([
+        { name: 'returns a confirmed guest exit', termination: { observed: { kind: 'exit', exitCode: 7 }, requestedBy: { kind: 'none' } },
+            result: { ok: true, result: { exitCode: 7, stdout: 'guest output', stderr: 'guest error', stdoutTruncated: true, stderrTruncated: false } } },
+        { name: 'keeps a stopped transport uncertain', termination: { observed: { kind: 'signal', signal: 'SIGTERM' }, requestedBy: { kind: 'abort' } },
+            result: { ok: false, errorCode: 'action_outcome_unknown' } },
+    ])('$name through the finite managed command Action executor without starting a guest daemon', async ({ termination, result: expected }) => {
+        const h = harness({ targetExec: async () => ({
+            termination,
+            stdoutBase64: Buffer.from('guest output').toString('base64'),
+            stderrBase64: Buffer.from('guest error').toString('base64'),
+            stdoutTruncated: true, stderrTruncated: false,
+        }) });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            readPolicyCurrent: async () => machine,
+        });
+        const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context, signal }) =>
+            driver.execute(actionId, input, { requestId: 'run-on-retained-target', context, signal }) });
+        const target = { kind: 'machine' as const, machineId: machine.controller!.machineId };
+        const reference = { homeId, managedId: machine.id };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-exec-admission', binding: {
+            accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+            serverIdentityId: homeId, actionId: MANAGED_EXEC_ACTION_ID_V1, requestId: 'run-on-retained-target',
+            machineId: target.machineId, installationId: machine.controller!.installationId, target,
+            managedAdmission: { actionId: MANAGED_EXEC_ACTION_ID_V1, input: reference }, requestEnvelopeDigest: 'a'.repeat(43),
+        } });
+        const result = await executor.execute(MANAGED_EXEC_ACTION_ID_V1, { ...reference, argv: ['printf', '%s', 'literal $HOME'] }, {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'run-on-retained-target',
+            bypassApprovals: true, signal: new AbortController().signal,
+            externalActionExecutionAuthorization: authorization, externalActionTarget: target, externalActionContinuation: true,
+            machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: target.machineId,
+                installationId: authorization.binding.installationId, role: 'use', encryptionMode: 'plain' },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject(expected);
+        expect(h.calls).toEqual(['exec']);
+        expect(h.inputs).toEqual([expect.objectContaining({ resource: own, argv: ['sh', '-s'], allowWake: false, timeoutMs: null })]);
+    });
 
     it.each([
         { name: 'created container', created: true, identity: { kind: 'guestProcess', role: 'sandbox' }, sandbox: '1' },

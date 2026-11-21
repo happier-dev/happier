@@ -2,6 +2,8 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 
+export const DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 = '/v1/deployments/pending/cancel';
+
 /** Server-authenticated correspondence only; never credentials or execution authority. */
 export const DeploymentPendingAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
     requesterAccountId: DeploymentIdentifierV1Schema,

@@ -6,6 +6,8 @@ import { apiTokenEncryptionAccessRequired, retainApiTokenDeploymentContentAccess
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -778,6 +780,9 @@ async function executeExternalActionRequest(input: Readonly<{
   if (admittedAuthorization && input.currentServerHttpBaseUrl) {
     const projectionAuthorization = admittedAuthorization;
     const serverHttpBaseUrl = input.currentServerHttpBaseUrl;
+    // A durable pending Deploy may spend the same opened Cancel through its exact Home owner.
+    const cancelAddress = projectionAuthorization.binding.requesterOperationRead && actionId.data === ACTION_OPERATION_CANCEL_ACTION_ID_V1
+      ? ActionOperationAddressV1Schema.safeParse(decodedInput) : undefined;
     trace('requester_http_projection.begin');
     const projection = await runExternalActionPhase('requester_http_projection', input.currentMachineId, () => projectExternalActionRequesterHttpAuthorization({
       authorization: projectionAuthorization,
@@ -788,6 +793,7 @@ async function executeExternalActionRequest(input: Readonly<{
       installationId: input.currentInstallationId!,
       privateKey: input.externalActionMachineRequestPrivateKey!,
       rootAdmitted: true,
+      ...(cancelAddress?.success ? { requesterOperationCancelAddress: cancelAddress.data } : {}),
       isCurrent: input.isInstallationCurrent
         ? async () => input.isInstallationCurrent!()
         : readRequesterAccountActionContext(projectionAuthorization)?.isCustodyCurrent ?? (() => input.verifyExecutionAuthorization!({
@@ -947,6 +953,10 @@ async function executeExternalActionRequest(input: Readonly<{
     && nativeAdmission?.actionId === actionId.data
     && (nativeAdmission.input.intent === 'start' || nativeAdmission.input.intent === 'stop')
     && sameStrictJsonValue(nativeAdmission.input, decodedInput);
+  // This exact request spends the admitted Account operation's cancellation
+  // scope. The requesting client owns Action policy, confirmation and automation admission.
+  const admittedRequesterOperationCancellation = managedControllerCodec && originalRootCurrentness !== undefined
+    && actionId.data === ACTION_OPERATION_CANCEL_ACTION_ID_V1 && admittedAuthorization?.binding.requesterOperationRead === true;
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
@@ -964,7 +974,8 @@ async function executeExternalActionRequest(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
-    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery || approvedManagedPower
+    ...(admittedRequesterOperationCancellation ? { externalActionContinuation: true } : {}),
+    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery || approvedManagedPower || admittedRequesterOperationCancellation
       ? { bypassApprovals: true } : {}),
     // The exact compute effect is already admitted by Home; reading a source
     // Session profile here would borrow the controller's Account credential.

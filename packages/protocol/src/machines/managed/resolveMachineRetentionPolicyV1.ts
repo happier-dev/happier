@@ -66,7 +66,7 @@ export function resolveManagedMachinePendingPowerIntentV1(machine: Pick<ManagedM
 /** One runtime decision for demand, Pending activation and retained-power presentation.
  * Presence and native observation remain independent inputs; this grants no dispatch authority.
  */
-export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enrolledMachineId: string,
+export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enrolledMachineId: string | null,
   machineReachable = false): Readonly<{
     available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null;
     state: ManagedMachineInputWakeV1 | 'stopping' | null; inspectionRequired: boolean;
@@ -76,9 +76,12 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
     && observation?.availability !== 'absent' && observation?.storage !== 'lost';
   const parked = observation?.power === 'stopped' || observation?.power === 'suspended';
   // A reachable guest proves readiness through failed Inspect, unless native facts report loss or parking.
-  const ready = available && machineReachable && !parked
+  const daemonReady = available && machineReachable && !parked
     && (observation?.availability === 'present' || observation?.availability === 'unavailable');
-  const nativeTarget = available && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
+  // A null enrollment selector requests the allocation's native runtime.
+  const nativeRuntime = enrolledMachineId === null;
+  const nativeTarget = available && machine.archivedAt === undefined
+    && (nativeRuntime || machine.enrolledMachineId === enrolledMachineId)
     && machine.allocation === 'bound' && (isManagedOpaquePresetMachineV1(machine) || Boolean(machine.resource))
     && observation?.availability === 'present';
   const retainedTarget = nativeTarget && machine.desired !== 'delete' && !machine.cleanup && machine.submittedNativeEffect?.intent !== 'delete';
@@ -91,9 +94,12 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   // Current native lifecycle is presentation, independent of whether automatic wake is enabled or eligible.
   const state = stopping ? 'stopping' : starting ? 'starting'
     : nativeTarget && parked ? 'asleep' : null;
-  return { available, ready, wakeState, state,
+  return { available: nativeRuntime ? retainedTarget : available,
+    ready: nativeRuntime ? retainedTarget && observation?.power === 'running' : daemonReady,
+    wakeState, state,
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
-    inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };
+    inspectionRequired: wakeState === 'asleep' || !nativeRuntime
+      && !starting && !machineReachable && retainedWake && observation?.power === 'running' };
 }
 
 /** Presentation and finite placement consume the same runtime decision. */

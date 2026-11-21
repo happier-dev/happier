@@ -1,4 +1,4 @@
-import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedMetadataControlAdmissionOutputV1Schema,
     projectManagedMetadataControlResultV1, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -233,6 +233,10 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         if (row.id !== managedId || row.homeId !== homeId) return failure('managed_response_invalid');
         retainedMachine = row;
         foreignManagedCustody = row.custodianAccountId !== account.accountId;
+        if (actionId === MANAGED_EXEC_ACTION_ID_V1 && foreignManagedCustody) {
+            if (!row.controllerAccess) return failure('controller_unavailable');
+            scopedControllerAccess = row.controllerAccess;
+        }
         if ((actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.delete' || operationActionId)
             && row.enrollmentAccountId === account.accountId) {
             if (foreignManagedCustody && !row.controllerAccess) return failure('controller_unavailable');
@@ -367,6 +371,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         ...(material ? { material } : {}),
         ...(machineCustody ? { machineCustody } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(actionId === MANAGED_EXEC_ACTION_ID_V1 && context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}),
         invalidResponseCode: 'managed_response_invalid', requestFailureCode: 'managed_request_failed' });
     return validateExecution(execution);
 }

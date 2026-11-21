@@ -17,6 +17,28 @@ const asleep = ManagedMachineFullV1Schema.parse({
 });
 
 describe('explicit managed execution', () => {
+    it('reviews wake for the exact retained allocation without consulting an enrolled guest', async () => {
+        const target = { homeId: 'home', managedId: 'managed' };
+        const machine = { ...asleep, enrolledMachineId: undefined, retention: { kind: 'unused' as const, effect: 'stop' as const, afterMs: 60_000 } };
+        const reads: ManagedWakePreparationReads = {
+            localMachineId: 'controller',
+            readMachineTarget: async () => { throw new Error('Native execution does not resolve a guest daemon'); },
+            readSessionMachineId: async () => { throw new Error('Native execution does not resolve Session placement'); },
+            readManagedMachine: async ref => { expect(ref).toEqual(target); return machine; },
+        };
+        const actionId = 'machines.managed.exec' as const;
+        const input = { ...target, argv: ['id', '-un'] };
+        const context = { surface: 'rpc' as const };
+        const request = { actionId, input, context,
+            machineRuntimeDemand: { target: { kind: 'managed-machine' as const, ...target } } };
+        const prepared = await prepareManagedMachineWakeChildren(request, reads);
+        expect(prepared).toEqual({ children: [{ action: 'machines.managed.power.set', role: 'managed-wake',
+            input: managedMachineWakePowerInput(machine) }] });
+        expect(await prepareManagedMachineWakeChildren(request, { ...reads,
+            readManagedMachine: async () => ({ ...machine, observation: { ...asleep.observation!, power: 'running' } }),
+        })).toEqual({ children: [] });
+    });
+
     it('retains an ordinary Session target while bypassing all managed runtime work', async () => {
         let placement = 'ordinary-machine';
         let placementReads = 0;
@@ -157,6 +179,7 @@ describe('explicit managed execution', () => {
         const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.open', input: originalInput,
             context, machineRuntimeDemand: demand }, reads, async target => {
                 selected.push(target);
+                if ('native' in target.machineRuntime) throw new Error('Session execution needs the guest daemon');
                 return executeManagedMachineWakeThenRun({ powerInput: target.machineRuntime.managed?.powerInput,
                     power: async input => { expect(input).toBe(prepared && !('ok' in prepared) ? prepared.children[0]!.input : undefined); effects.push('power'); },
                     waitUntilReady: async () => { effects.push('ready'); await observation; },

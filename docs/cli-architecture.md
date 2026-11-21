@@ -1683,22 +1683,27 @@ Open reports that exact initial prerequisite refusal as not started; later,
 replayed or uncertain failures retain their existing effect/outcome classification.
 No background requester controller or custodian-credential fallback is implied.
 
-### Reading an admitted operation (unreleased 0.3)
+### Reading and stopping an admitted operation (unreleased 0.3)
 
-The requester can open `action.operations.get` with the retained Home, Machine
-and operation id. Home routes the signed request from either an Account bearer
+The requester can call `action.operations.get` or `action.operations.cancel`
+with the retained Home, Machine and operation id. Home routes the signed request from either an Account bearer
 or a paired-terminal credential to the current installation. Terminal credentials
 retain their automation authority. The daemon's operation owner looks up the
-snapshot under the requester's Account. Another Account receives `not_found`
+snapshot under the requester's Account and signals cancellation to a supported
+active operation. Another Account receives `not_found`
 for the same address.
-The requester read uses a per-invocation sealed codec. It needs no grant on
+The requester operation uses a per-invocation sealed codec. It needs no grant on
 the executor Machine or access to its content keys. This transport is scoped
-to a single operation read and requires the current 0.3 Home and daemon.
+to one exact Get or Cancel and requires the current 0.3 Home and daemon.
 On the receiver, the exact local call uses the verified requester proof
 retained on the current authorization. The installation may also sign the
-exact Machine lookup under the requester-read purpose. The lookup applies the
+exact Machine lookup under the signed operation purpose. The lookup applies the
 requester's own Machine access when selecting its response.
-0.2 Homes retain the ordinary Machine RPC read.
+For a pending Deploy, the daemon can sign the existing pending-cancel request
+for that same opened Cancel address. Home's pending owner matches the stored
+requester, operation and installation before applying its Source and revision
+checks.
+0.2 Homes retain the ordinary Machine RPC.
 
 ### Presented workspace observation (0.3 development)
 

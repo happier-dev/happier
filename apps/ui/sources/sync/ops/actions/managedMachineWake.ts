@@ -17,14 +17,16 @@ import { requireActionSuccess } from './frontDoorRuntimeActionExecutor';
 export async function executeUiManagedMachineRuntimeDemand(request: ManagedMachineRuntimeDemandExecution,
     account: LazyActionAccountContext | undefined): Promise<ActionExecuteResult> {
     if (!account?.serverIdentityId) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-    const { machineId, serverId } = request.machineRuntime;
-    return executeUiManagedMachineWakeThenRun({ account, machineRuntime: request.machineRuntime,
+    const machineRuntime = request.machineRuntime;
+    if ('native' in machineRuntime) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    const { machineId, serverId } = machineRuntime;
+    return executeUiManagedMachineWakeThenRun({ account, machineRuntime,
         context: request.context, run: () => request.execute(request.context, { machineId, ...(serverId ? { serverId } : {}) }) });
 }
 
 export type UiManagedMachineWakeThenRun<T> = Readonly<{
     account: LazyActionAccountContext;
-    machineRuntime: ManagedMachinePreparedRuntime;
+    machineRuntime: Extract<ManagedMachinePreparedRuntime, { machineId: string }>;
     context: ActionExecutorContext;
     run(): Promise<T>;
 }>;

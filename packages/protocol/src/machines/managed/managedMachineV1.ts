@@ -15,6 +15,7 @@ import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { MachineSetupSourceFactsMapV1Schema } from '../setup/machineSetupSourceFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import { GuestCliIdentityV1Schema } from '../../features/payload/capabilities/guestCliIdentityV1.js';
+import { MachineAccessRoleV1Schema } from '../machineAccessV1.js';
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAdminAccessV1,
@@ -164,6 +165,7 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: z.optional(ManagedControllerV1Schema),
     controllerAccess: z.optional(ManagedControllerAccessV1Schema),
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
+    guestActivityRole: z.optional(MachineAccessRoleV1Schema),
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),
     machineSetup: z.optional(ManagedMachineSetupV1Schema),
     allocation: z.enum(['unsubmitted', 'may-exist', 'bound', 'confirmed-absent']),

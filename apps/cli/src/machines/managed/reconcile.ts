@@ -24,7 +24,7 @@ import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protoc
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -115,6 +115,9 @@ type ManagedNativeInvocationInput = ManagedMachineReconciliationInput | (Omit<Ma
 }>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
     action: 'projects.open';
     projectWorkspaceTarget: Readonly<{ lifetime: AbortSignal }>;
+}>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
+    action: typeof MANAGED_EXEC_ACTION_ID_V1;
+    execTarget: Readonly<{ lifetime: AbortSignal }>;
 }>);
 
 export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, provider: ManagedMachineFullV1['launch']['provider'], localId: string,
@@ -349,7 +352,8 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         && params.options.context?.operationAcceptance?.actionId === params.action;
     const targetAuthority = params.action === 'session.spawn_new' && 'sessionTarget' in params ? params.sessionTarget
         : params.action === 'workspace.sync.relationship.create' && 'workspaceSyncTarget' in params ? params.workspaceSyncTarget
-        : params.action === 'projects.open' && 'projectWorkspaceTarget' in params ? params.projectWorkspaceTarget : undefined;
+        : params.action === 'projects.open' && 'projectWorkspaceTarget' in params ? params.projectWorkspaceTarget
+        : params.action === MANAGED_EXEC_ACTION_ID_V1 && 'execTarget' in params ? params.execTarget : undefined;
     // Admitted lifetimes use the same controller-owned resource and channel authority.
     if (targetAuthority && managedTargetRow(machine, params.input) === undefined) throw new ManagedMachineControllerError('admission_unavailable');
     const assertManagedTargetCurrent = (requested: unknown) => {
@@ -381,7 +385,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             if (targetAuthority) {
                 // Transport preparation and holder channels only; bootstrap returns a carrier, never enrolls.
                 const startsProcess = role === 'exec' && typeof body === 'object' && body !== null && 'processConfig' in body;
-                if (!MANAGED_TARGET_ROLES.has(role) || startsProcess) throw new ManagedMachineControllerError('native_intent_unsupported');
+                if ((params.action === MANAGED_EXEC_ACTION_ID_V1 ? role !== 'exec' : !MANAGED_TARGET_ROLES.has(role)) || startsProcess) throw new ManagedMachineControllerError('native_intent_unsupported');
                 // The body names the guest; it must be this row's own resource (every provider resolves the guest from it).
                 const requested = typeof body === 'object' && body !== null && !Array.isArray(body) && 'resource' in body ? body.resource : undefined;
                 assertManagedTargetCurrent(requested);

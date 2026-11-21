@@ -20,6 +20,9 @@ export async function prepareUiManagedMachineWake(
     account: LazyActionAccountContext | undefined,
 ): Promise<HostReviewedChildrenDomainPreparationV1> {
     if (!request.machineRuntimeDemand) return null;
+    // The installed controller prepares retained native wake in the signed
+    // receiver. The app only prepares operations that need an enrolled daemon.
+    if (request.machineRuntimeDemand.target.kind === 'managed-machine') return null;
     if (!account) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     let facts: ReturnType<typeof projectSessionMessageTarget> | undefined;
     const captureTarget = request.actionId === 'session.message.send' ? (read: SessionTargetRead) => {

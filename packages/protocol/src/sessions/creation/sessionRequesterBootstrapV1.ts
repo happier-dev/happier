@@ -36,7 +36,7 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/project
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import { SessionCreationTagV1Schema, type SessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
@@ -425,6 +425,7 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
     || spec?.sideEffectClass === 'read' && MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.some(id => id === binding.actionId)
     || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry'
+    || binding.actionId === MANAGED_EXEC_ACTION_ID_V1 && binding.managedAdmission?.actionId === binding.actionId
     || isManagedCreationMutationActionIdV1(binding.actionId)
     || isManagedControlAdmissionActionIdV1(binding.actionId) && binding.managedAdmission?.actionId === binding.actionId
     || binding.actionId === 'machines.managed.credentials.install'

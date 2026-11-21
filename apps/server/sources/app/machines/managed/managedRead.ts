@@ -24,7 +24,7 @@ import {
     projectManagedControllerAccess,
     readManagedAdmissionState,
     hasPossibleManagedNativeResource, readStoredOpaquePresetLaunch,
-    resolveManagedMachineRoleInTx, resolveManagedMachineRole,
+    resolveManagedMachineRoleInTx, resolveManagedMachineRolesInTx, resolveManagedMachineRole,
 } from "./managedRows";
 
 type ManagedResourceDependencyTarget =
@@ -166,11 +166,15 @@ export function isManagedMachineCreator(row: Pick<StoredManagedMachine, 'admitte
     const admission = readManagedAdmissionState(row.admittedInput);
     return admission.enrollmentAccountId === actorAccountId && !admission.resourceBoundSessionEnded;
 }
-/** The signed controller presents the requester at the lifetime boundary of native target IO. */
-export async function admitsManagedTargetInTx(tx: Tx, row: StoredManagedMachine, target: ManagedTargetRequesterV1): Promise<boolean> {
+/** The retained target decides admission at the boundary of native work. */
+export async function admitsManagedTargetInTx(tx: Tx, row: StoredManagedMachine,
+    target: ManagedTargetRequesterV1, purpose?: 'exec'): Promise<boolean> {
     if (row.archivedAt || row.creationState !== 'active') return false;
     const { requesterAccountId, committedSessionId } = target;
     if (row.custodianAccountId === requesterAccountId) return true;
+    if (purpose === 'exec') {
+        return (await resolveManagedMachineRolesInTx(tx, row, requesterAccountId)).guestActivityRole === 'manage';
+    }
     const admission = readManagedAdmissionState(row.admittedInput);
     if (admission.acquisitionMode === 'resource-bound') {
         if (!committedSessionId || !isManagedMachineCreator(row, requesterAccountId)) return false;
@@ -230,10 +234,14 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
 /** Private native custody and public creator results share one actor-aware projection. */
 export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, admittedRole?: 'manage'): Promise<ManagedMachineV1> {
     const machine = projectManagedMachine(row);
-    if (row.custodianAccountId === actorAccountId
-        || !isManagedMachineCreator(row, actorAccountId)
-            && (admittedRole ?? await resolveManagedMachineRoleInTx(tx, row, actorAccountId)) === 'manage') return machine;
-    if (!row.controllerMachineId || !row.controllerInstallationId) return redactManagedMachineCredentialReferences(machine);
+    if (row.custodianAccountId === actorAccountId) return machine;
+    const roles = await resolveManagedMachineRolesInTx(tx, row, actorAccountId);
+    const role = roles.guestActivityRole;
+    const creator = isManagedMachineCreator(row, actorAccountId);
+    const viewerMachine = !creator && (admittedRole ?? roles.resourceRole) === 'manage'
+        ? machine : redactManagedMachineCredentialReferences(machine);
+    const projected = role ? { ...viewerMachine, guestActivityRole: role } : viewerMachine;
+    if ((!creator && role !== 'manage') || !row.controllerMachineId || !row.controllerInstallationId) return projected;
     const controller = await tx.machine.findUnique({ where: { id: row.controllerMachineId }, select: {
         kind: true, accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
     } });

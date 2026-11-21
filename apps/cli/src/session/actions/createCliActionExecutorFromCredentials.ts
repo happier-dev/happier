@@ -129,8 +129,9 @@ import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
-import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedResourceTargetV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readManagedMachineRead } from '@/machines/managed/readManagedMachine';
+import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, MANAGED_GET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import {
   fetchServerFeaturesSnapshot,
@@ -165,6 +166,7 @@ import { assertDeploymentArchiveChildCurrentForHost, assertReviewedDeploymentArc
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { getServerProfile } from '@/server/serverProfiles';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -1046,7 +1048,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
     approvalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'],
     routeHostChildAction?: ActionExecutorDeps['routeHostChildAction'],
     prepareApprovalExecutionOriginContext?: ActionExecutorDeps['prepareApprovalExecutionOriginContext'],
+    requesterManagedExec?: Readonly<{
+      managedMachineAction: NonNullable<ActionExecutorDeps['managedMachineAction']>;
+      onApprovalRequested?: typeof params.onApprovalRequested;
+    }>,
   ): ReturnType<typeof createCliActionExecutor> => {
+    const managedMachineAction = requesterManagedExec?.managedMachineAction ?? params.managedMachineAction;
+    const onApprovalRequested = requesterManagedExec ? requesterManagedExec.onApprovalRequested : params.onApprovalRequested;
     const resolveServerFeaturesSnapshot = params.resolveServerFeaturesSnapshot
       ?? (async () => await resolveServerFeaturesSnapshotForCredentials(credentials));
     const ctx = resolveSessionEncryptionContextFromCredentials(credentials);
@@ -1163,7 +1171,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       : undefined;
     return createCliActionExecutor({
       ...cryptoContext,
-      ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
+      ...(onApprovalRequested ? { onApprovalRequested } : {}),
+      ...(requesterManagedExec ? { reviewManagedExecForRemoteDispatch: true } : {}),
       ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
       ...(personalSavedSecretActionExecute ? { personalSavedSecretActionExecute } : {}),
       ...(params.admittedAccountEncryptionMode !== undefined
@@ -1186,7 +1195,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         : {}),
       ...(params.actionsSettingsProvider ? { actionsSettingsProvider: params.actionsSettingsProvider } : {}),
       ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
-      ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
+      ...(managedMachineAction ? { managedMachineAction } : {}),
       ...(params.machinePresetPrepare ? { machinePresetPrepare: params.machinePresetPrepare } : {}),
       ...(params.machineRecipesRead ? { machineRecipesRead: params.machineRecipesRead } : {}),
       ...(params.receivingMachineSetupPlan ? { receivingMachineSetupPlan: params.receivingMachineSetupPlan } : {}),
@@ -1831,7 +1840,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       if (actionId === 'approval.request.decide' && hasStoredSessionCredentialProvenance(credentials)) return { context };
       // Stop's exact handle needs no requester credentials. Keep its proposal
       // and Ask at this Account; native delivery spends a new signed Stop.
-      if (isOriginalCliActionContext(context) && isLocalServiceStopActionIdV1(actionId)) return { context };
+      if (isOriginalCliActionContext(context)
+        && (isLocalServiceStopActionIdV1(actionId) || actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1)) return { context };
       const mountedFilesystemCopy = params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
         && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success);
       // Finite original CLI work is admitted at Home before the selected
@@ -2269,10 +2279,38 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   target: requesterTarget, authentication: { kind: pairedTerminal ? 'terminal' : 'account' },
                 }) : null;
                 if (!invocation) return actionFailure('admission_unavailable');
+                const requesterPresenter = params.onApprovalRequested;
+                const observesRequesterApproval = Boolean(requesterPresenter && accountId && context.serverIdentityId);
                 const run = (requestSignal?: AbortSignal) => dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
                   requestId, target: requesterTarget, credentials,
                   serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
                   invocation,
+                  ...(parsedActionId.data === MANAGED_EXEC_ACTION_ID_V1 && accountId && requesterPresenter ? {
+                    reviewManagedExecOnRequester: async deliver => {
+                      if (!params.actionsSettingsProvider) await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
+                      const signal = requestSignal ?? new AbortController().signal;
+                      const executor = createExecutor(credentials, signal, transcriptFollowLeaseRegistry, undefined, context.serverIdentityId,
+                        readInputTypeOptions(credentials), { actionId: MANAGED_EXEC_ACTION_ID_V1, signal }, undefined, undefined,
+                        { onApprovalRequested: observesRequesterApproval ? undefined : requesterPresenter,
+                          managedMachineAction: async request => {
+                            if (request.actionId === MANAGED_GET_ACTION_ID_V1) {
+                              const target = ManagedResourceTargetV1Schema.parse(request.input);
+                              return await readManagedMachineRead({ ...target, credentials,
+                                serverHttpBaseUrl: resolveActionServerApiUrl(), signal: request.signal ?? signal });
+                            }
+                            if (request.actionId !== MANAGED_EXEC_ACTION_ID_V1) return actionFailure('admission_unavailable');
+                            const reviewed = projectExternalActionRequesterInvocationV1({ actionId: request.actionId, context: request.context,
+                              account: { accountId, serverId: approvalServerId, serverIdentityId: context.serverIdentityId },
+                              target: requesterTarget, authentication: { kind: pairedTerminal ? 'terminal' : 'account' } });
+                            if (!reviewed?.presentUserConfirmation) return actionFailure('approval_context_unavailable');
+                            const result = await deliver(reviewed, request.signal ?? signal);
+                            return result.ok ? result.result : result;
+                          },
+                        });
+                      return await executor.execute(MANAGED_EXEC_ACTION_ID_V1, admittedInput,
+                        { ...originalContext, actionRequestId: requestId, externalActionTarget: requesterTarget, signal });
+                    },
+                  } : {}),
                   // Accepted legacy publications omit Account identity. Keep their
                   // incumbent own-target bridge while Home still admits foreign work.
                   ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
@@ -2292,7 +2330,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
                   execute: executeApprovalAction,
                   context: signal ? { ...context, signal } : context });
-              } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
+              } catch {
+                return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable');
+              }
             }
           }
           if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');

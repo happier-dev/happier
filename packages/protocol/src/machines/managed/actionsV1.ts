@@ -21,7 +21,7 @@ import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRe
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
 import { isManagedOpaquePresetMachineV1, ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
 import { AcquireResultV1Schema, ManagedGuestPlatformV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
-import { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 export { MANAGED_CONTROL_ACTION_IDS_V1, type ManagedControlActionIdV1 } from './actionIdsV1.js';
 import { ManagedConfigurationFactsV1Schema, ManagedOneOffSelectionV1Schema, ManagedPresetSelectionV1Schema } from './managedConfigurationV1.js';
 import { DevcontainerRebuildIntentV1Schema, ManagedIntentInputSchema, ManagedIntentResultSchema, ManagedActivityReadRequestV1Schema } from './managedIntentV1.js';
@@ -68,6 +68,20 @@ const revision = () => mini.int().check(mini.gte(0));
 const actionOperationSchema = lazyZodSchema(() => actionOperations.ActionOperationGetV1RequestSchema);
 export const ManagedMachineActionIdV1Schema = lazyDefinition(() => mini.enum(MANAGED_MACHINE_ACTION_IDS_V1));
 const target = () => ({ homeId: id(), managedId: id() });
+const guestExecString = () => z.string().check(z.refine(value => !value.includes('\0')));
+export const ManagedExecInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...target(),
+  argv: z.tuple([guestExecString().check(z.minLength(1))], guestExecString()),
+  cwd: z.optional(guestExecString().check(z.minLength(1))),
+  env: z.optional(z.record(guestExecString().check(z.minLength(1), z.refine(name => !name.includes('='))), guestExecString())),
+}));
+export const ManagedExecOutputV1Schema = lazyZodSchema(() => z.strictObject({
+  exitCode: z.nullable(z.int()),
+  stdout: z.string(),
+  stderr: z.string(),
+  stdoutTruncated: z.boolean(),
+  stderrTruncated: z.boolean(),
+}));
 const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: z.optional(ManagedControllerV1Schema) });
 /** Exact creation origin fields used by Report, not an online Apply envelope. */
 export const MachineSetupPresetApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -747,6 +761,7 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.birth.get': ManagedResourceTargetV1Schema,
   'machines.managed.references.get': ManagedResourceTargetV1Schema,
   'machines.managed.inspect': ManagedInspectInputV1Schema,
+  [MANAGED_EXEC_ACTION_ID_V1]: ManagedExecInputV1Schema,
   'machines.managed.bootstrap.retry': ManagedBootstrapRetryInputV1Schema,
   'machines.managed.setup.skip': ManagedMutationInputV1Schema,
   'machines.setup.plan': lazyZodSchema(() => z.union([MachineSetupPlanInputV1Schema, MachineSetupCombinedPlanInputV1Schema])),
@@ -774,6 +789,7 @@ export const ManagedMachineActionOutputSchemasV1: {
   readonly 'machines.managed.birth.get': typeof ManagedMachineBirthResultV1Schema;
   readonly 'machines.managed.references.get': z.ZodMiniLazy<typeof MachineReferenceCensusV1Schema>;
   readonly 'machines.managed.inspect': typeof ManagedInspectOutputV1Schema;
+  readonly [MANAGED_EXEC_ACTION_ID_V1]: typeof ManagedExecOutputV1Schema;
   readonly 'machines.managed.bootstrap.retry': typeof ManagedAcceptedV1Schema;
   readonly 'machines.managed.setup.skip': typeof ManagedGetOutputV1Schema;
   readonly 'machines.setup.plan': z.ZodMiniUnion<[typeof MachineSetupPlanResultV1Schema, typeof MachineSetupCombinedPlanResultV1Schema]>;
@@ -801,6 +817,7 @@ export const ManagedMachineActionOutputSchemasV1: {
   'machines.managed.birth.get': ManagedMachineBirthResultV1Schema,
   'machines.managed.references.get': lazyZodSchema(() => z.lazy(() => MachineReferenceCensusV1Schema)),
   'machines.managed.inspect': ManagedInspectOutputV1Schema,
+  [MANAGED_EXEC_ACTION_ID_V1]: ManagedExecOutputV1Schema,
   'machines.managed.bootstrap.retry': ManagedAcceptedV1Schema,
   'machines.managed.setup.skip': ManagedGetOutputV1Schema,
   'machines.setup.plan': lazyZodSchema(() => z.union([MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema])),

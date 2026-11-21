@@ -34,7 +34,8 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { executeManagedMachinePolicyAction } from '@/daemon/startup/managedMachinePolicyAction';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import { createManagedGuestLocalStop } from '@/daemon/startup/createManagedGuestLocalStop';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -241,6 +242,32 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     };
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it('settles a reviewed native command wake with an enrolled guest daemon unavailable', async () => {
+    let inspections = 0;
+    const test = setup(undefined, undefined, 'start', undefined, undefined, undefined, false, undefined, {
+        nativeRoleResults: {
+            inspect: () => ({ availability: 'present', storage: 'retained', observedAt: ++inspections,
+                power: inspections === 1 ? 'stopped' : 'running' }),
+            power: { kind: 'confirmed' },
+            bootstrap: () => { throw new Error('Guest daemon is unavailable'); },
+        },
+    });
+    const { homeId, id: managedId, intentRevision: expectedRevision } = test.readMachine();
+    const child = { action: MANAGED_POWER_SET_ACTION_ID_V1, role: 'managed-wake',
+        input: { homeId, managedId, expectedRevision, when: 'now', intent: 'start' } } as const;
+    const port = createHostReviewedChildPortV1({ actionId: MANAGED_EXEC_ACTION_ID_V1,
+        input: { homeId, managedId, argv: ['true'] }, context: { surface: 'cli' },
+        plan: { children: [child] }, reviewAdmitted: true,
+        policies: [{ action: child.action, role: child.role, surface: 'cli' }],
+        execute: async (input, context) => ({ ok: true, result: await test.driver.execute(child.action, input,
+            { ...test.options, context: { ...context, ...test.options.context } }) }),
+    });
+    await expect(port.invoke(child)).resolves.toMatchObject({ ok: true, result: { kind: 'accepted', managedId } });
+    expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'confirmed' },
+        observation: { availability: 'present', storage: 'retained', power: 'running', observedAt: 2 } })]);
+    expect(test.effects).toEqual(['power']);
+});
 
 it.each(['start', 'resume', 'stop', 'suspend'] as const)(
     'settles %s after another observer clears native custody and the report reply is lost', async intent => {

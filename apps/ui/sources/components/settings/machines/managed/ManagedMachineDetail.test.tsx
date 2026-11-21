@@ -50,6 +50,7 @@ import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
 import { ManagedMachineFullV1Schema, ManagedMachineV1Schema, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedResizeOutputV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -265,10 +266,11 @@ describe('managed Machine detail', () => {
     });
 
     it.each([
-        { enrolled: true, availability: 'present', checkAvailable: false },
-        { enrolled: false, availability: 'present', checkAvailable: true },
-        { enrolled: true, availability: 'unavailable', checkAvailable: true },
-    ] as const)('shows a Use member the managed policy without owner-only power, delete, or policy editors (enrolled: $enrolled; observation: $availability)', async ({ enrolled, availability, checkAvailable }) => {
+        { enrolled: true, availability: 'present', checkAvailable: false, guestActivityRole: 'use' },
+        { enrolled: false, availability: 'present', checkAvailable: true, guestActivityRole: 'use' },
+        { enrolled: true, availability: 'unavailable', checkAvailable: true, guestActivityRole: 'use' },
+        { enrolled: true, availability: 'present', checkAvailable: false, guestActivityRole: 'manage' },
+    ] as const)('shows shared Diagnostics and managed policy for guest $guestActivityRole (enrolled: $enrolled; observation: $availability)', async ({ enrolled, availability, checkAvailable, guestActivityRole }) => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-shared-use.test', scope: 'tab' });
         const homeId = 'srv_managed_shared_use';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -276,7 +278,7 @@ describe('managed Machine detail', () => {
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'shared-controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Shared sandbox', choices: {} };
-        const machine: ManagedMachineFullV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller,
+        const machine: ManagedMachineFullV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller, guestActivityRole,
             allocation: 'bound', creationState: 'active', ...(enrolled ? { enrolledMachineId: 'shared-guest' } : {}),
             observation: availability === 'present' ? { observedAt: 1, availability, power: 'running' } : { observedAt: 1, availability },
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
@@ -310,6 +312,8 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.cancel')).toBeNull();
             expect(screen.findByTestId('managed-machine.policy.keep')).toBeNull();
             expect(screen.findByTestId('managed-machine.policy.whenUnused')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.command.open') !== null).toBe(guestActivityRole === 'manage');
+            expect(screen.findByTestId('managed-machine.logs.read')).toBeNull();
             const policyRow = screen.tree.findAllByType(Item).find(item => item.props.testID === 'managed-machine.policy.whenUnused');
             expect(policyRow?.props.mode).toBe('info');
             expect(policyRow?.props.onPress).toBeUndefined();
@@ -396,6 +400,97 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.controller.pending')).toBeNull();
             expect(screen.findByTestId('managed-machine.controller-unavailable')).toBeNull();
         } finally { await screen.unmount(); }
+    });
+    it('runs one shell script from Diagnostics on a retained target with no enrolled daemon', async () => {
+        const profile = await upsertAndActivateServer({ serverUrl: 'https://managed-command.test', scope: 'tab' });
+        const homeId = 'srv_managed_command';
+        const accountId = 'owner';
+        await setServerProfileIdentityForUrl(profile.serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id },
+            { token: createAccountTokenForTests(accountId, { currentAccount: true }) });
+        const provider = { pluginId: 'custom.provisioner', localId: 'native' };
+        const machine = ManagedMachineFullV1Schema.parse({
+            id: 'retained-guest', homeId, custodianAccountId: accountId,
+            controller: { machineId: 'command-controller', installationId: 'command-installation' },
+            launch: { provider, schemaVersion: 1, name: 'Build sandbox', choices: {} },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-command-guest' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        const script = "printf '%s\\n' 'ready | waiting'\nexit 7";
+        const output = { exitCode: 7, stdout: 'ready | waiting', stderr: 'command warning',
+            stdoutTruncated: false, stderrTruncated: true };
+        const runningOperation = createDeferred<ActionOperationSnapshotV1>();
+        const finishedOperation = createDeferred<void>();
+        const responseReleased = createDeferred<void>();
+        operationRpcBoundary.handler = request => {
+            if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list && request.payload && typeof request.payload === 'object'
+                && 'requestIdentity' in request.payload) {
+                return runningOperation.promise.then(operation => ({ items: [operation], nextCursor: null }));
+            }
+            if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+                return Promise.all([runningOperation.promise, finishedOperation.promise]).then(([operation]) => ({
+                    kind: 'found', operation: { ...operation, revision: 2, state: 'succeeded', settledAt: 3, result: output },
+                }));
+            }
+            return undefined;
+        };
+        let executions = 0;
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            const controller = managedControllerReadBatch(machine, url, init);
+            if (controller) return controller;
+            const authorization = managedControllerAuthorization(machine, url, init);
+            if (authorization) return authorization;
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            if (url.pathname === `/v1/actions/${MANAGED_EXEC_ACTION_ID_V1}`) {
+                const envelope = readNativeControllerRequest(init);
+                expect(envelope.target).toEqual({ kind: 'machine', machineId: machine.controller?.machineId });
+                expect(envelope.input).toEqual({ homeId, managedId: machine.id, argv: ['/bin/sh', '-c', script] });
+                executions++;
+                runningOperation.resolve({ version: 1, operationId: 'managed-command-operation', requestId: envelope.requestId,
+                    revision: 1, actionId: MANAGED_EXEC_ACTION_ID_V1, state: 'running', cancellation: 'supported',
+                    scope: { accountId, machineId: 'command-controller' }, title: 'Run a command', createdAt: 1, startedAt: 2 });
+                await responseReleased.promise;
+                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: envelope.requestId,
+                    actionId: MANAGED_EXEC_ACTION_ID_V1, execution: { ok: true, result: output } }));
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const confirm = vi.spyOn(Modal, 'confirm');
+        const screen = await renderScreen(<ModalProvider><ManagedMachineDetail serverId={profile.id} managedId={machine.id} /></ModalProvider>);
+        try {
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('managed-machine.logs.read')).not.toBeNull();
+            });
+            await screen.pressByTestIdAsync('managed-machine.command.open');
+            expect(executions).toBe(0);
+            await act(async () => screen.changeTextByTestId('managed-machine.command.input', script));
+            await screen.pressByTestIdAsync('managed-machine.command.run');
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('action-operation-cancel')).not.toBeNull();
+            });
+            finishedOperation.resolve();
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(screen.getTextContent()).toContain('ready | waiting');
+                expect(screen.getTextContent()).toContain('command warning');
+                expect(screen.getTextContent()).toContain(`${t('tools.structuredResult.exit')} 7`);
+                expect(screen.findByTestId('managed-machine.command.stderr-truncated')).not.toBeNull();
+            });
+            responseReleased.resolve();
+            expect(executions).toBe(1);
+            expect(confirm).not.toHaveBeenCalled();
+        } finally {
+            finishedOperation.resolve();
+            responseReleased.resolve();
+            await screen.unmount();
+        }
     });
     it('keeps an unreadable preset Machine visible with Retry instead of opening private receipt controls', async () => {
         const machine = ManagedMachineV1Schema.parse({ id: 'opaque-unreadable', homeId: 'home-unreadable', custodianAccountId: 'owner',

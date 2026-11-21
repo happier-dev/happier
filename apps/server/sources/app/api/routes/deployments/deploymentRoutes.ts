@@ -6,6 +6,7 @@ import { DeploymentApprovalEnvironmentInputV1Schema, DeploymentApprovalEnvironme
 import { isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionOperationCancelV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
 import {
     DeploymentActionInputSchemasV1 as inputs, DeploymentActionOutputSchemasV1 as outputs,
     DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema, DeploymentPromoteAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema,
@@ -143,7 +144,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
             readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'ReadCommitted' });
         return reply.code(status(result)).send(result);
     });
-    app.post('/v1/deployments/pending/cancel', {
+    app.post(DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1, {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
         schema: { body: ActionOperationAddressV1Schema,
             response: responses(z.union([ActionOperationCancelV1ResponseSchema, DeploymentActionFailureV1Schema])) },

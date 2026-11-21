@@ -15,7 +15,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, proj
 import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -53,7 +53,8 @@ import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResult
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { executeRequesterActionOperationV1, readRequesterOperationAddressV1, type RequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { randomBytes } from 'node:crypto';
 
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, projectExternalActionWorkflowPreparationTargetV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -147,6 +148,7 @@ import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deplo
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
+import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
 import { BOT_TEMPLATE_ACTION_IDS_V1, BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { logger } from '@/ui/logger';
@@ -760,6 +762,9 @@ type OriginalAccountActionInput = Readonly<{
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   /** Host provenance retained inside the existing installation-bound private box. */
   invocation?: ExternalActionRequesterInvocationV1;
+  /** The requesting CLI owns any Ask after Home admits this exact guest command. */
+  reviewManagedExecOnRequester?: (deliver: (invocation: ExternalActionRequesterInvocationV1, signal?: AbortSignal) =>
+    Promise<ActionExecuteResult>) => Promise<ActionExecuteResult>;
   /** Host-private requester custody already disclosed to this exact installed target. */
   requesterCustody?: ExternalActionExecutionAuthorizationV1;
   /** Host-private installed Run origin. Home reads consent from that Run, never from this caller. */
@@ -859,8 +864,8 @@ export async function prepareOriginalAccountPresetAcquire(
     target: { kind: 'machine', machineId: controller.machineId } });
 }
 
-export function readOriginalAccountRequesterOperation(params: Readonly<{
-  input: NonNullable<ReturnType<typeof readRequesterOperationAddressV1>>;
+export function executeOriginalAccountRequesterOperation(params: Readonly<{
+  operation: RequesterOperationRequestV1;
   credentials: StoredCredentials;
   serverIdentityId: string;
   serverHttpBaseUrl: string;
@@ -885,13 +890,15 @@ export function readOriginalAccountRequesterOperation(params: Readonly<{
     params.signal?.throwIfAborted();
     if (params.isCurrent && !await params.isCurrent()) throw new Error('not_authenticated');
   };
-  return readRequesterActionOperationV1({ input: params.input, accountId, serverIdentityId: params.serverIdentityId,
+  const operationInput = params.operation.input;
+  return executeRequesterActionOperationV1({ ...params.operation, accountId, serverIdentityId: params.serverIdentityId,
     authenticationKind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch,
     requestId: params.requestId, randomBytes,
     request: async (path, body) => {
       await assertCurrent();
       const response = await axios.post<unknown>(`${home}${path}`, body, { headers, validateStatus: () => true,
-        ...(params.input.waitForTerminal ? { timeout: 0 } : {}), ...(params.signal ? { signal: params.signal } : {}) });
+        ...('waitForTerminal' in operationInput && operationInput.waitForTerminal ? { timeout: 0 } : {}),
+        ...(params.signal ? { signal: params.signal } : {}) });
       await assertCurrent();
       return { status: response.status, value: response.data };
     },
@@ -1009,6 +1016,20 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     && (!spawnRequester || input.isCurrent === spawnRequester.isCurrent || await phase('spawn_custody', () => spawnRequester.isCurrent()))
     && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
   if (!await isCurrent()) return fail('target_unavailable', 'dispatch.currentness');
+  const requesterOperation = !workflow && !spawnChild && !input.requesterCustody && !input.executeOnRequester
+    && !input.managedContinuation && (!input.invocation || input.invocation.caller.kind === 'host')
+    && (provenance?.provenance.kind === 'account' || provenance?.provenance.kind === 'terminal')
+    ? readRequesterOperationAddressV1(input.actionId, input.input) : null;
+  if (requesterOperation && input.serverIdentityId && input.target.kind === 'machine' && !input.target.project) {
+    if (requesterOperation.serverId !== input.serverIdentityId) return fail('server_target_mismatch');
+    if (requesterOperation.machineId !== input.target.machineId) return fail('target_unavailable', 'dispatch.target_kind');
+    // The installed operation owner authorizes the exact operation under the requester Account.
+    const result = await executeOriginalAccountRequesterOperation({
+      operation: { actionId: ACTION_OPERATION_GET_ACTION_ID_V1, input: requesterOperation }, requestId: input.requestId,
+      credentials: input.credentials, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: homeUrl,
+      authority: input.authority, isCurrent, ...(input.signal ? { signal: input.signal } : {}) });
+    if (result) return result;
+  }
   // This branch only chooses the incumbent own-account path. Home still owns
   // authentication and the destination owns its Action admission.
   const telemetryRead = !workflow && !input.executeOnRequester && input.target.kind === 'machine' && !input.target.project
@@ -1048,7 +1069,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (row.id !== managed.managedId || row.homeId !== managed.homeId
         || (row.controller ? row.controller.machineId !== input.target.machineId
           : !isManagedAccountNativeControlInvocationV1(input.actionId, input.input))) return fail('controller_retired');
-      if (row.enrollmentAccountId === accountId && row.custodianAccountId !== accountId) {
+      if ((row.enrollmentAccountId === accountId || managedAdmission.actionId === MANAGED_EXEC_ACTION_ID_V1)
+        && row.custodianAccountId !== accountId) {
         if (!row.controller || !row.controllerAccess) return fail('controller_unavailable');
         scopedController = { ...row.controller, ...row.controllerAccess };
       }
@@ -1387,55 +1409,67 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable', 'dispatch.requester_disclosure.currentness');
     };
     const { telemetryReadInstallationPublicKey, ...signedAuthorization } = minted.authorization;
-    let authorization = signedAuthorization;
-    try {
-      if (controllerCodec) {
-        const key = telemetryRead ? telemetryReadInstallationPublicKey : installed?.installationPublicKey;
-        if (!key || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
-        try {
-          // The sealing owner refuses a Home-delivered key its Environment content does not pin.
-          const collectorKeyPins = telemetryRead && isTelemetryCollectorKeyPinRequiredV1(authorization.binding)
-            ? await readTelemetryCollectorKeyPinsV1(telemetryRead.telemetryCollector.environmentIds,
-              createTelemetryCollectorKeyPinPorts({ homeUrl, headers, credentials: input.credentials,
-                serverIdentityId: input.serverIdentityId, ...(input.signal ? { signal: input.signal } : {}) })) : undefined;
-          if (collectorKeyPins && !await isCurrent()) return fail('target_unavailable', 'dispatch.collector_key_pin.currentness');
-          authorization = sealManagedControllerActionCodecV1({ authorization, material,
-            ...(collectorKeyPins ? { collectorKeyPins } : {}),
-            ...(input.invocation ? { invocation: input.invocation } : {}),
-            installationPublicKey: decodeBase64(key, telemetryRead || scopedController ? 'base64url' : 'base64'), randomBytes });
-        } catch (error) {
-          const refused = parseActionExecuteFailure(error);
-          if (refused) return refused;
-          throw error;
+    const deliver = async (invocation = input.invocation, signal = input.signal): Promise<ActionExecuteResult> => {
+      if (signal?.aborted) return fail('cancelled');
+      let authorization = signedAuthorization;
+      let admittedBody: ExternalActionExecutionAuthorizationRequestV1;
+      try {
+        if (controllerCodec) {
+          const key = telemetryRead ? telemetryReadInstallationPublicKey : installed?.installationPublicKey;
+          if (!key || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
+          try {
+            // The sealing owner refuses a Home-delivered key its Environment content does not pin.
+            const collectorKeyPins = telemetryRead && isTelemetryCollectorKeyPinRequiredV1(authorization.binding)
+              ? await readTelemetryCollectorKeyPinsV1(telemetryRead.telemetryCollector.environmentIds,
+                createTelemetryCollectorKeyPinPorts({ homeUrl, headers, credentials: input.credentials,
+                  serverIdentityId: input.serverIdentityId, ...(input.signal ? { signal: input.signal } : {}) })) : undefined;
+            if (collectorKeyPins && !await isCurrent()) return fail('target_unavailable', 'dispatch.collector_key_pin.currentness');
+            authorization = sealManagedControllerActionCodecV1({ authorization, material,
+              ...(collectorKeyPins ? { collectorKeyPins } : {}),
+              ...(invocation ? { invocation } : {}),
+              installationPublicKey: decodeBase64(key, telemetryRead || scopedController ? 'base64url' : 'base64'), randomBytes });
+          } catch (error) {
+            const refused = parseActionExecuteFailure(error);
+            if (refused) return refused;
+            throw error;
+          }
+        } else if (foreign || input.invocation) {
+          if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
+          if (foreign && !retainedRequester) {
+            const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
+            if (refusal) return refusal;
+          }
+          authorization = sealExternalActionRequesterAccountContextV1({ authorization,
+            credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'external_action' },
+            ...(invocation ? { invocation } : {}),
+            installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
         }
-      } else if (foreign || input.invocation) {
-        if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
-        if (foreign && !retainedRequester) {
-          const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
-          if (refusal) return refusal;
+        const wake = authorization.managedFiniteWake;
+        if (wake) {
+          const wakeController = wake.target.controller;
+          if (!wakeController) return fail('admission_unavailable', 'dispatch.wake_controller');
+          // Home already admitted this exact controller and key. Guest Use need
+          // not grant controller inventory access, including delegated enrollment.
+          if (wake.requesterCredentialDisclosure) {
+            const refusal = await confirmDisclosure({ id: wakeController.machineId, custodian: wake.requesterCredentialDisclosure });
+            if (refusal) return refusal;
+          }
+          authorization = sealExternalActionRequesterAccountContextV1({ authorization,
+            credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'managed_finite_wake', target: wake.target },
+            installationPublicKey: decodeBase64(wake.installationPublicKey, 'base64url'), randomBytes });
         }
-        authorization = sealExternalActionRequesterAccountContextV1({ authorization,
-          credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'external_action' },
-          ...(input.invocation ? { invocation: input.invocation } : {}),
-          installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
-      }
-      const wake = authorization.managedFiniteWake;
-      if (wake) {
-        const wakeController = wake.target.controller;
-        if (!wakeController) return fail('admission_unavailable', 'dispatch.wake_controller');
-        // Home already admitted this exact controller and key. Guest Use need
-        // not grant controller inventory access, including delegated enrollment.
-        if (wake.requesterCredentialDisclosure) {
-          const refusal = await confirmDisclosure({ id: wakeController.machineId, custodian: wake.requesterCredentialDisclosure });
-          if (refusal) return refusal;
-        }
-        authorization = sealExternalActionRequesterAccountContextV1({ authorization,
-          credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'managed_finite_wake', target: wake.target },
-          installationPublicKey: decodeBase64(wake.installationPublicKey, 'base64url'), randomBytes });
-      }
-      body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
-        executionAuthorization: authorization });
-    } catch { return fail('content_unavailable'); }
+        admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
+          executionAuthorization: authorization });
+      } catch { return fail('content_unavailable'); }
+      return await deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
+        ...(material ? { material } : {}), ...(binding ? { binding } : {}),
+        ...(signal ? { signal } : {}), isCurrent });
+    };
+    if (managedAdmission?.actionId === MANAGED_EXEC_ACTION_ID_V1 && foreign && controllerCodec
+      && !input.invocation?.presentUserConfirmation && input.reviewManagedExecOnRequester) {
+      return await input.reviewManagedExecOnRequester(deliver);
+    }
+    return await deliver();
   }
   return await deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body, envelope, headers,
     ...(material ? { material } : {}), ...(binding ? { binding } : {}),
@@ -1718,6 +1752,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   isCurrent?: () => Promise<boolean>;
   /** The calling ingress already spent Home admission on this exact root. */
   rootAdmitted?: true;
+  requesterOperationCancelAddress?: z.infer<typeof ActionOperationAddressV1Schema>;
   /** Exact child ingress already rechecks the retained SOURCE packet at Home. */
   forwardedMove?: Readonly<{ credentials: StoredCredentials; isCurrent(): Promise<boolean>;
     method?: string; reviewedChild?: ReviewedActionChildHttpProofV1 }>;
@@ -1833,6 +1868,10 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
       ? { accountEncryptionMode: authorization.binding.accountEncryptionMode } : {}),
     isCurrent,
     createRequestHeaders: async (request) => {
+      if (authorization.binding.requesterOperationRead && authorization.binding.actionId === 'action.operations.cancel'
+        && (request.effectActionId !== authorization.binding.actionId || request.method !== 'POST'
+          || request.path !== DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1
+          || !input.requesterOperationCancelAddress || !sameStrictJsonValue(request.body, input.requesterOperationCancelAddress))) return null;
       if (request.nativeIncumbentSource && (input.forwardedDeploymentChild?.kind !== 'review'
         || request.method !== 'GET' || request.body !== undefined)) {
         recordRequesterCurrentnessRefusal('native_incumbent_source');

@@ -6,6 +6,7 @@ import axios from '@/api/client/credentialAxios';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionOperationCancelV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { DeploymentReceiptListResultV1Schema, readDeploymentAccountChangeV1,
@@ -200,7 +201,7 @@ export async function cancelPendingDeploymentForHost(request: Readonly<{
         || !await isServerProfileHomeIdentity(request.custody.serverId, binding.serverIdentityId)) return denied();
     const body = ActionOperationAddressV1Schema.parse({ serverId: binding.serverIdentityId,
         machineId: scope.machineId, operationId: request.operationId });
-    const path = '/v1/deployments/pending/cancel';
+    const path = DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1;
     const headers = await http.createRequestHeaders({ method: 'POST', path, body,
         effectActionId: 'action.operations.cancel', signal: context.signal });
     if (!headers) return denied();

@@ -239,6 +239,7 @@ import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOr
 import { UsageSourceActionIdSchema, USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '../usage/usageSources.js';
 import type { UsageSourceActionRequest } from './executor/usageSourceActions.js';
 import { projectUsageSourcesDelivery } from '../usage/projectUsageSourcesDelivery.js';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '../machines/managed/actionsV1.js';
 import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../machines/machineReferenceCensusV1.js';
 import { ManagedRefusalCodeV1Schema } from '../machines/managed/providerFactsV1.js';
@@ -2194,6 +2195,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           requestSurface: origin.data.surface,
           decidingAccountId: origin.data.accountId,
           decidedAtMs: request.decision.decidedAtMs,
+          ...(actionId === MANAGED_EXEC_ACTION_ID_V1 && replayReviewedChildren?.children.length
+            ? { reviewDigest: computeActionReviewDigestV1(actionId, { actionArgs: request.actionArgs, preview: request.preview }) } : {}),
         }) } : {}),
       ...(request.v === 2 && request.requesterConfirmation && origin?.success
         && request.status === 'executing' && args.ctx.requesterApprovalDecision ? { presentUserApproval: {

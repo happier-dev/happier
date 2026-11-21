@@ -7,6 +7,8 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedMachinePresetAcquireOverrideV1,
     projectManagedMachinePresetForRecipientV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -30,6 +32,91 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 
 installApprovalCommonModuleMocks();
 const { executeManagedMachineNativeAction } = await import('./managedMachineOrigination');
+
+describe('delegated managed guest command origination', () => {
+    it.each(['available', 'missing'] as const)('keeps foreign E2EE input and output on the exact installation codec (carrier: %s)', async carrier => {
+        const actionId = MANAGED_EXEC_ACTION_ID_V1;
+        const homeId = `srv_delegated_exec_${carrier}`;
+        const serverUrl = `https://${carrier}.delegated-exec.example.test`;
+        const accountId = 'guest-manager';
+        const custodianAccountId = 'guest-owner';
+        const controller = { machineId: 'company-controller', installationId: 'company-installation' };
+        const binding = { serverIdentityId: homeId, accountId, actionId, requestId: 'delegated-exec',
+            target: { kind: 'machine' as const, machineId: controller.machineId },
+            authentication: { kind: 'account' as const, tokenEpoch: 0 } };
+        const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(47));
+        const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }),
+            secret: encodeBase64(new Uint8Array(32).fill(53), 'base64url') };
+        const provider = { pluginId: 'custom.compute', localId: 'vm' };
+        const machine = ManagedMachineFullV1Schema.parse({ id: 'team-guest', homeId, custodianAccountId, controller,
+            guestActivityRole: 'manage', ...(carrier === 'available' ? { controllerAccess: {
+                custodian: { accountId: custodianAccountId }, installationPublicKey: encodeBase64(keys.publicKey, 'base64url'),
+            } } : {}), launch: { provider, schemaVersion: 1, name: 'Team guest', choices: {} },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-guest' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const script = 'printf private-command-marker';
+        const input = { homeId, managedId: machine.id, argv: ['/bin/sh', '-c', script] };
+        const output = { exitCode: 7, stdout: 'private-stdout-marker', stderr: 'private-stderr-marker', stdoutTruncated: false, stderrTruncated: true };
+        const route = `/v1/actions/${actionId}`;
+        await upsertServerProfile({ serverUrl, name: 'Team Home' });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, credentials)).toBe(true);
+
+        let delivered: unknown;
+        let transportFailure: unknown;
+        const dispatchPaths: string[] = [];
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (isServerFetchConnectivityProbeRequest(url)) return Response.json({});
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials));
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (!path.startsWith(route)) return Response.json({ error: 'not_found' }, { status: 404 });
+            dispatchPaths.push(path);
+            try {
+                expect(String(init?.body)).not.toContain(script);
+                expect(String(init?.body)).not.toContain(credentials.token);
+                const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                if (envelope.v !== 2) throw new Error('Expected an encrypted guest command');
+                const managedAdmission = { actionId, input: { homeId, managedId: machine.id } };
+                expect(envelope.managedAdmission).toEqual(managedAdmission);
+                if (path === `${route}/execution-authorization`) return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({
+                    v: 1, token: 'home-signed-exec-authorization', binding: { ...binding, ...controller, custodianAccountId,
+                        accountEncryptionMode: 'e2ee', managedAdmission, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                }));
+                if (!executionAuthorization) throw new Error('Expected signed installation carrier');
+                const material = openManagedControllerActionCodecV1({ authorization: executionAuthorization, serverIdentityId: homeId,
+                    ...controller, installationPrivateKey: keys.secretKey });
+                if (!material) throw new Error('Expected exact installation to open the invocation codec');
+                delivered = openExternalActionRequestV2({ envelope, binding, material,
+                    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+                const response = prepareExternalActionResponseV2({ request: envelope, binding, material, randomBytes: getRandomBytes,
+                    executedMachineId: controller.machineId, execution: { ok: true, result: output } }).response;
+                expect(JSON.stringify(response)).not.toContain(output.stdout);
+                expect(JSON.stringify(response)).not.toContain(output.stderr);
+                return Response.json(response);
+            } catch (error) {
+                transportFailure = error;
+                throw error;
+            }
+        });
+        onTestFinished(resetRuntimeFetch);
+        const account = await captureLazyActionAccountContext(homeId);
+        onTestFinished(() => account.dispose());
+        const execution = await executeManagedMachineNativeAction({ account, actionId, input, confirmInFlow: true,
+            context: { surface: 'ui', authority: 'present_user', actionRequestId: binding.requestId } });
+        expect(transportFailure).toBeUndefined();
+        if (carrier === 'missing') {
+            expect(execution).toMatchObject({ ok: false, errorCode: 'controller_unavailable' });
+            expect(dispatchPaths).toEqual([]);
+            return;
+        }
+        expect(execution).toEqual({ ok: true, result: output });
+        expect(delivered).toEqual({ input });
+        expect(dispatchPaths).toEqual([`${route}/execution-authorization`, route]);
+    });
+});
 
 describe('delegated managed preset origination', () => {
     it.each(['current', 'pool', 'pool-unavailable', 'pool-malformed', 'stale'] as const)(

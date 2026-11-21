@@ -1,5 +1,5 @@
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionIdV1 } from '../../machines/managed/machinePresetActionIdsV1.js';
-import type { ManagedMachineActionIdV1 } from '../../machines/managed/actionIdsV1.js';
+import { MANAGED_EXEC_ACTION_ID_V1, type ManagedMachineActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import type { MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import type { ActionInputFieldHint, ActionInputOption } from '../actionInputHintsRuntime.js';
 
@@ -108,6 +108,10 @@ export const MANAGED_MACHINE_INPUT_FIELDS = {
   'machines.managed.references.get': [home, managed],
   'machines.managed.inspect': [home, managed,
     { path: 'includeGuestDiagnostics', title: 'Read redacted guest daemon logs', widget: 'boolean' }],
+  [MANAGED_EXEC_ACTION_ID_V1]: [home, managed,
+    { path: 'argv', title: 'Command and arguments', widget: 'json', required: true },
+    { path: 'cwd', title: 'Working directory', widget: 'text' },
+    { path: 'env', title: 'Guest environment', widget: 'json' }],
   'machines.managed.credentials.install': [home, managed,
     { path: 'operation', title: 'Binding operation', widget: 'select', options: [{ value: 'install', label: 'Install' }, { value: 'release', label: 'Release' }] },
     { path: 'sessionId', title: 'Session id', widget: 'text', required: true },

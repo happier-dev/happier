@@ -217,10 +217,13 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
       };
       const authorization = context?.callerInputAuthorization;
       if (authorization?.binding.actionId === 'action.operations.cancel') {
-        const reviewed = await readReviewedActionOperationCancelAddress({ authorization,
-          envelope: context?.originalActionEnvelope, signal: context?.signal });
-        if (!reviewed || reviewed.machineId !== scope.machineId || reviewed.operationId !== request.operationId) {
-          throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
+        // The scoped Cancel carrier opens the request before entering this handler in process.
+        if (!authorization.binding.requesterOperationRead) {
+          const reviewed = await readReviewedActionOperationCancelAddress({ authorization,
+            envelope: context?.originalActionEnvelope, signal: context?.signal });
+          if (!reviewed || reviewed.machineId !== scope.machineId || reviewed.operationId !== request.operationId) {
+            throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
+          }
         }
         await cancellationContext.assertCurrent();
       }

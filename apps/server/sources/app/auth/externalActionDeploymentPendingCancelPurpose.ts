@@ -1,5 +1,6 @@
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentPendingCancelInputV1Schema } from '@happier-dev/protocol';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
+import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/protocol/deployments/deploymentPendingAdmissionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** The reached host opens and binds the original cancellation Address. Home
@@ -25,7 +26,7 @@ export function isExternalActionDeploymentPendingCancelPurpose(input: Readonly<{
         } catch { return false; }
     }
     if (input.method.toUpperCase() !== 'POST' || url.search) return false;
-    if (input.path === '/v1/deployments/pending/cancel') {
+    if (input.path === DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1) {
         const address = ActionOperationAddressV1Schema.safeParse(input.body);
         return address.success && address.data.serverId === input.serverIdentityId
             && (input.routeInput === undefined || sameStrictJsonValue(input.routeInput, address.data));

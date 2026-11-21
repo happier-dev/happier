@@ -27,7 +27,7 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { parseTokenPayload } from '@/utils/auth/parseToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { executeRequesterActionOperationV1, readRequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
@@ -77,7 +77,7 @@ export function readOriginalAccountActionAuthentication(token: string) {
         ? authentication.data : null;
 }
 
-export async function readOriginalAccountRequesterOperation(params: Readonly<{
+export async function executeOriginalAccountRequesterOperation(params: Readonly<{
     account: LazyActionAccountContext;
     actionId: string;
     input: unknown;
@@ -87,16 +87,17 @@ export async function readOriginalAccountRequesterOperation(params: Readonly<{
 }>): Promise<ActionExecuteResult | null> {
     const { account } = params;
     if (!account.serverIdentityId || account.credentialAuthorityKind !== 'account') return null;
-    const input = readRequesterOperationAddressV1(params.actionId, params.input);
-    if (!input) return null;
-    if (input.serverId !== account.serverIdentityId && !areServerProfileIdentifiersEquivalent(account.serverId, input.serverId)) {
+    const operation = readRequesterOperationRequestV1(params.actionId, params.input);
+    if (!operation) return null;
+    const { serverId } = operation.input;
+    if (serverId !== account.serverIdentityId && !areServerProfileIdentifiersEquivalent(account.serverId, serverId)) {
         return failure('server_scope_mismatch');
     }
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication) return null;
     const serverIdentityId = account.serverIdentityId;
-    return withActionAccountRequestSignal(account, params.signal, signal => readRequesterActionOperationV1({
-        input, accountId: account.accountId, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
+    return withActionAccountRequestSignal(account, params.signal, signal => executeRequesterActionOperationV1({
+        ...operation, accountId: account.accountId, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
         requestId: params.requestId, randomBytes: getRandomBytes,
         request: async (path, body) => {
             const response = await account.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json',

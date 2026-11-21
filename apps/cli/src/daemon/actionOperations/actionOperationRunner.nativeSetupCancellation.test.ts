@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend,
   machineSetupPlansRequireAdministratorV1, type MachineRecipeStepV1 } from '@happier-dev/cli-common/machineSetup';
 import { createActionOperationRunner } from './actionOperationRunner';
@@ -23,6 +24,36 @@ describe('native setup cancellation custody', () => {
       expect(await runtime.handlers.getV2({ operationId: 'setup-operation', waitForTerminal: true }))
         .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
     });
+  it.each(['cancelled', 'action_outcome_unknown'] as const)(
+    'delivers Stop to the admitted managed command and preserves its provider outcome (%s)', async errorCode => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'requester',
+      generateOperationId: () => 'managed-exec-operation' });
+    const processExit = Promise.withResolvers<void>();
+    let processSignal: AbortSignal | undefined;
+    const accepted = await runtime.observeExecution({ actionId: MANAGED_EXEC_ACTION_ID_V1,
+      input: { homeId: 'home', managedId: 'guest', argv: ['sleep', '60'] }, response: 'admission',
+      // Stand in for the native provider process. The real operation owns Stop and its outcome.
+      execute: async ({ signal }) => {
+        processSignal = signal;
+        await processExit.promise;
+        return { ok: false, errorCode, error: errorCode };
+      },
+    });
+    try {
+      expect(accepted.ok).toBe(true);
+      expect(await runtime.handlers.cancel({ operationId: 'managed-exec-operation' })).toEqual({ kind: 'requested' });
+      expect(processSignal?.aborted).toBe(true);
+      expect(await runtime.handlers.getV2({ operationId: 'managed-exec-operation' })).toMatchObject({
+        kind: 'found', operation: { state: 'running', domainRef: { kind: 'managedMachine', id: 'guest' } },
+      });
+    } finally {
+      processExit.resolve();
+    }
+    expect(await runtime.handlers.getV2({ operationId: 'managed-exec-operation', waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: errorCode === 'cancelled' ? { state: 'cancelled' }
+        : { state: 'running', observation: { kind: 'outcome_uncertain', code: errorCode } } });
+  });
+
   it.each([true, false])('retains custody only when its nonroot package process stop is unconfirmed (%s)', async unconfirmed => {
     const controller = new AbortController();
     const refusal = Object.assign(new Error('Native tree termination is unconfirmed'), { code: 'plugin_exec_termination_incomplete' });

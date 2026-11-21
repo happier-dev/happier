@@ -24,8 +24,8 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCod
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { randomUUID } from 'node:crypto';
-import { readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
-import { readOriginalAccountRequesterOperation } from '@/api/externalActionExecutionAuthorization';
+import { readRequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { executeOriginalAccountRequesterOperation } from '@/api/externalActionExecutionAuthorization';
 
 export function createCliMachineActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl' | 'isCredentialCurrent' | 'savedSecretOperationContext' | 'token' | 'serverId' | 'serverIdentityId'>,
@@ -94,15 +94,15 @@ export function createCliMachineActionDeps(
     actionOperationAction: async ({ actionId, input, context, signal }) => {
       const credentials = params.credentials;
       const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
-      const address = readRequesterOperationAddressV1(actionId, input);
-      if (address && credentials && serverIdentityId
+      const operation = readRequesterOperationRequestV1(actionId, input);
+      if (operation && credentials && serverIdentityId
         && !context.externalActionExecutionAuthorization && !context.externalActionCredential
         && (!context.actionCaller || context.actionCaller.kind === 'host')
-        && params.machineActionDirectTargetTransport?.machineId !== address.machineId) {
-        if (!await isMachineActionServerScopeCurrent({ ...address, context, signal })) {
+        && params.machineActionDirectTargetTransport?.machineId !== operation.input.machineId) {
+        if (!await isMachineActionServerScopeCurrent({ ...operation.input, context, signal })) {
           return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
         }
-        const result = await readOriginalAccountRequesterOperation({ input: address, requestId: context.actionRequestId ?? randomUUID(),
+        const result = await executeOriginalAccountRequesterOperation({ operation, requestId: context.actionRequestId ?? randomUUID(),
           credentials, serverIdentityId,
           serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), authority: context.authority,
           isCurrent: params.isCredentialCurrent, ...(signal ? { signal } : {}) });

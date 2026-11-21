@@ -1,4 +1,4 @@
-import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
@@ -103,6 +103,7 @@ function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult
     || result.errorCode === 'native_toolchain_termination_incomplete')) return true;
   if (actionId === 'machines.reboot') return !result.ok && result.errorCode === 'action_outcome_unknown';
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
+    || actionId === MANAGED_EXEC_ACTION_ID_V1
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
     || actionId === 'machines.services.control' || actionId === 'machines.services.exec' || actionId === 'machines.storage.docker.prune') {
     return !result.ok && result.errorCode === 'action_outcome_unknown';

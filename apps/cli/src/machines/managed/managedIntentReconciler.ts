@@ -272,7 +272,7 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
 }
 
 /** One live admitted Action, one exact retained native resource, no replay queue. */
-export async function reconcileManagedIntent(params: ManagedMachineReconciliationInput): Promise<ManagedMachineFullV1> {
+export async function reconcileManagedIntent(params: ManagedMachineReconciliationInput & Readonly<{ nativeExecWake?: true }>): Promise<ManagedMachineFullV1> {
     let machine = params.machine;
     const { client, options } = params;
     let bridge = params.input.managedGuestActivity;
@@ -550,7 +550,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                         const effect = machine.desired === 'delete'
                             ? await executeManagedMachineDeleteIntent({ machine, invoke: native().invoke, io })
                             : await executeManagedMachinePowerIntent({ machine, invoke: native().invoke, io,
-                                guestStartup: { transport: native().contribution.definition.bootstrapTransport,
+                                guestStartup: params.nativeExecWake ? undefined : { transport: native().contribution.definition.bootstrapTransport,
                                     channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
                                 waitForObservation: createManagedNativeObservationWait(options.signal) });
                         if (effect.result.kind === 'refused') releaseDrain = true;

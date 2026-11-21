@@ -1263,7 +1263,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const usesAccountPending = request.actionId === 'session.message.send'
         && demand?.target.kind === 'session' && demand.target.sessionId === request.context.accountPendingSessionId;
       const wake = usesAccountPending ? null : await prepareCliManagedMachineWake(request, {
-        localMachineId,
+        localMachineId, reviewManagedExecForRemoteDispatch: params.reviewManagedExecForRemoteDispatch,
         provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
         readSessionMachineId: async (target, context) => {
