@@ -7468,11 +7468,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const delegatedHostDecision = resolveHostStampedAuthority(ctx) !== 'present_user'
           && (ctx.surface === 'agent' || ctx.surface === 'mcp' || (ctx.surface === 'cli' && !withdrawal))
           && !ctx.externalActionCredential;
-        // Decisions cannot request another approval. Only an explicit persisted
-        // waiver delegates ordinary decisions; bypass/replay hints never do.
-        if (delegatedHostDecision && (!ctx.actionsSettings
-          || isApprovalRequiredByActionsSettings(actionId, ctx.actionsSettings, ctx))) {
-          return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+        if (delegatedHostDecision) {
+          // Decisions cannot ask for another approval. They accept explicit Account
+          // and Profile preferences, and are ineligible for Session consent rows.
+          const decisionSettings = readAvailabilitySettings(actionId, { ...ctx, sessionApprovalConsents: null });
+          if (!decisionSettings || isApprovalRequiredByActionsSettings(actionId, decisionSettings, ctx)) {
+            return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+          }
         }
         const artifactId = normalizeId(data.artifactId);
         const decision = data.decision === 'approve' || data.decision === 'reject' || data.decision === 'cancel'

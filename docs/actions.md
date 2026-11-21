@@ -9086,7 +9086,10 @@ invocation uses the changed preference.
 `session.permission.respond`: the shared Action approval policy requires approval
 by default on both surfaces, and the user may explicitly waive it per Action
 and surface. Host Agent/MCP callers may decide ordinary approval requests only
-when the user explicitly waives `approval.request.decide` on that surface.
+when the user explicitly waives `approval.request.decide` on that surface in
+Account settings or an explicitly selected Approval Profile. Inherited Team or
+Group profiles can only tighten policy, and Session consent rows cannot delegate
+approval decisions.
 Without that waiver the decision returns `present_user_required`, without
 creating a recursive approval. The waiver covers person-class and public-link
 requests too, but never lets an agent decide its own request: the executor compares

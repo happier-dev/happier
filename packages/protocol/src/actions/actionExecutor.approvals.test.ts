@@ -108,6 +108,53 @@ it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Al
   expect(writes).toHaveLength(1);
 });
 
+it('lets a person-selected Approval Profile delegate shared-check Skip without delegating Allow', async () => {
+  const selected = { automationId: 'shared-check', triggerId: 'shared-trigger', triggerRevision: 1,
+    workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'author',
+    actionIds: ['session.message.send'], phase: 'before', mode: 'wait', onFailure: 'ask' };
+  let stored = ApprovalRequestV2Schema.parse({ ...createApprovalRequest(), automaticChecks: {
+    phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready', subjects: [], selected: [selected],
+    consents: [{ automationId: selected.automationId, triggerId: selected.triggerId, decision: 'pending' }],
+    runs: [], results: [], notices: [],
+  } });
+  const profile = { id: 'decide-profile', name: 'Decide ordinary requests',
+    approvalWaivedSurfaces: { 'approval.request.decide': ['agent' as const] } };
+  const executor = createExecutor({ readActionsSettings: () => defaultActionsSettings,
+    readActionApprovalProfileId: async context => context.defaultSessionId === 'legacy-row-session' ? undefined
+      : { approvalProfileId: profile.id, approvalProfileTeamOrGroupDerived: context.defaultSessionId === 'inherited-session' },
+    readApprovalProfile: id => ({ profile, resolution: { status: 'available', requestedId: id } }),
+    readSessionApprovalConsents: async context => context.defaultSessionId === 'legacy-row-session' ? {
+      sessionId: 'legacy-row-session', rows: [{ actionId: 'approval.request.decide', audience: 'agent', mode: 'allowed' }],
+    } : null,
+    approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true };
+    },
+  });
+  const context = (sessionId: string): ActionExecutorContext => ({ surface: 'agent', authority: 'account_automation',
+    defaultSessionId: sessionId, actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+    runtimeAccountId: 'actor', serverId: 'server-1' });
+  const decide = (sessionId: string, decision: 'allow' | 'skip') => executor.execute('approval.request.decide', {
+    artifactId: 'approval', decision: 'approve', triggerConsent: {
+      automationId: selected.automationId, triggerId: selected.triggerId, decision,
+    },
+  }, context(sessionId));
+
+  for (const [sessionId, decision] of [
+    ['deciding-session', 'allow'], ['inherited-session', 'skip'], ['legacy-row-session', 'skip'], ['s1', 'skip'],
+  ] as const) {
+    expect(await decide(sessionId, decision)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(stored.automaticChecks?.consents).toMatchObject([{ decision: 'pending' }]);
+  }
+  const skipped = await decide('deciding-session', 'skip');
+  expect(skipped, JSON.stringify(skipped)).toMatchObject({ ok: true });
+  expect(stored.automaticChecks).toMatchObject({ consents: [{ decision: 'skip' }], runs: [],
+    notices: [{ code: 'action_automation_skipped', reason: 'consentSkipped' }] });
+});
+
 it('retains qualified contributed identity when an approved automatic check settles', async () => {
   const qualifiedId = 'example.fixture/actions/write';
   const input = { action: { pluginId: 'example.fixture', localId: 'write' }, input: { value: 'accepted' } };

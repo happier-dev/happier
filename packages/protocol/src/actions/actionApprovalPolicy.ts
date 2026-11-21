@@ -354,8 +354,8 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ...(args.targetApproval ? { targetApproval: { actionId: policyActionId,
       databaseAgentLevel: args.targetApproval.databaseAgentLevel, approvalScope: args.approvalScope } } : {}),
   }) : undefined;
-  // A change to approval rules is decided on the person's Account settings only, like profile
-  // control below and approval decisions: no profile or Session row can waive it (owner Q6).
+  // A change to approval rules, including profile control, is decided on the person's
+  // Account settings only. No profile or Session row can waive it (owner Q6).
   const settings = isApprovalRuleChangeActionId(args.actionId) ? args.settings : profiled?.settings ?? args.settings;
   const profile = profiled?.profile ?? (args.context?.approvalProfileId
     ? { status: 'missing' as const, requestedId: args.context.approvalProfileId } : undefined);
