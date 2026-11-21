@@ -236,7 +236,7 @@ it.each([false, true])('defaults the saved organization, retains recovery and re
 
 /** The read projection the sheet receives: an opened detail without a linked runtime or retained receipts. */
 function readDetail(detail: ReturnType<typeof createDeploymentEnvironmentDetailV1>) {
-  return { ...detail, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  return { ...detail, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [], builtInUrls: [] };
 }
 
 it('reviews native creation options, retains an ambiguous create and continues through exact adoption without replay', async () => {

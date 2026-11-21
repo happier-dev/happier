@@ -139,7 +139,7 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
   const other = adopted('data', 'other-database', 'postgresql', railwayData.manifest.id, 'other-service', 'production-id');
   const selected = adopted('data', 'orders-database', 'postgresql', railwayData.manifest.id, 'orders-service', railwayEnvironmentId);
   const detail = { ...base, environment: { ...environment, runtimeTargetLinkId: app.targetLink.id }, targetLinks: [app, other, selected],
-    content: { ...base.content, bindings: [] }, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+    content: { ...base.content, bindings: [] }, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [], builtInUrls: [] };
   const observations: unknown[] = [];
   const writes: unknown[] = [];
   const reference = '${{Orders.DATABASE_URL}}';
