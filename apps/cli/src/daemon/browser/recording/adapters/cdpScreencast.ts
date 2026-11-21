@@ -1,3 +1,4 @@
+import { recordingEncoderFailure } from '../../../recording/encoderFailure';
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 
 import type {
@@ -114,13 +115,10 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           recording: input.recording,
           outputMimeType: 'video/webm',
         });
-      } catch {
+      } catch (error) {
         return {
           status: 'unavailable',
-          reason: unavailable(
-            'browser_recording_capture_failed',
-            'Browser recording encoder could not be created.',
-          ),
+          reason: recordingEncoderFailure(error),
         };
       }
 

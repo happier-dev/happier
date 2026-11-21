@@ -13,6 +13,7 @@ import type {
   MachineLiveStreamRegisteredCaptureSource,
 } from '../peer/mediation/stream/captureRegistry';
 import { startMachineLiveStreamFramePump } from '../peer/mediation/stream/framePump';
+import { recordingEncoderFailure } from './encoderFailure';
 
 export type BrowserRecordingStreamFrameEncoderFrame = Readonly<{
   sequence: number;
@@ -194,13 +195,10 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           registeredSource: resolved.source,
           outputMimeType: 'video/webm',
         });
-      } catch {
+      } catch (error) {
         return {
           status: 'unavailable',
-          reason: unavailable(
-            'browser_recording_capture_failed',
-            'Browser recording encoder could not be created.',
-          ),
+          reason: recordingEncoderFailure(error),
         };
       }
 

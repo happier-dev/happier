@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import type { Writable } from 'node:stream';
 
 import { resolveFfmpegStaticBinaryPath } from '@/daemon/runtime/ffmpegStatic';
+import { RecordingEncoderUnavailableError } from './encoderFailure';
 
 import type {
   BrowserRecordingStreamFrameEncoder,
@@ -37,7 +38,6 @@ export type FfmpegBrowserRecordingStreamFrameEncoderFactoryOptions = Readonly<{
   randomId?: () => string;
 }>;
 
-const ENCODER_UNAVAILABLE_MESSAGE = 'Browser recording ffmpeg encoder is unavailable.';
 const ENCODER_FAILED_MESSAGE = 'Browser recording ffmpeg encoder failed.';
 
 function defaultSpawnFfmpeg(
@@ -286,7 +286,7 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
     }
     const ffmpegBinaryPath = await resolveFfmpegBinaryPath();
     if (!ffmpegBinaryPath) {
-      throw new Error(ENCODER_UNAVAILABLE_MESSAGE);
+      throw new RecordingEncoderUnavailableError();
     }
     await mkdir(outputDirectory, { recursive: true });
     // The existing opaque UUID is a portable filename; recording IDs need no filename cutoff.

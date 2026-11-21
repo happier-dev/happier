@@ -16,7 +16,7 @@ import { combineRecordingStorageOwners } from '../recording/service';
 
 afterEach(() => vi.restoreAllMocks());
 
-async function setup() {
+async function setup(encoder: 'available' | 'unavailable' | 'failed' = 'available') {
   const directory = await mkdtemp(join(tmpdir(), 'happier-computer-recording-'));
   const registry = createMachineLiveStreamCaptureRegistry();
   const source = createComputerCaptureSource({ sessionId: 'session', target, executablePath: '/managed/cua-driver' });
@@ -30,14 +30,17 @@ async function setup() {
   let encodedFrames = 0;
   // Only the encoder process is replaced; real stream capture, lifecycle, file persistence and Action dispatch run.
   const encoderFactory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory: directory,
-    resolveFfmpegBinaryPath: async () => '/fixture/ffmpeg',
+    resolveFfmpegBinaryPath: async () => encoder === 'unavailable' ? null : '/fixture/ffmpeg',
     spawnFfmpeg: (_binary, args) => {
       expect(args).toContain('image2pipe');
       const child = new EventEmitter();
       const stdin = new Writable({ write(_chunk, _encoding, callback) { encodedFrames++; callback(); },
         final(callback) { void writeFile(args.at(-1)!, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]))
           .then(() => { callback(); child.emit('close', 0, null); }, callback); } });
-      queueMicrotask(() => child.emit('spawn'));
+      queueMicrotask(() => {
+        if (encoder === 'failed') { child.emit('error', new Error('synthetic launch failure')); child.emit('close', -2, null); }
+        else child.emit('spawn');
+      });
       return Object.assign(child, { stdin, kill: () => { child.emit('close', null, 'SIGKILL'); return true; } });
     } });
   const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver', defaultDisplayId: target.displayId,
@@ -56,6 +59,18 @@ async function setup() {
 }
 
 describe('Computer recording through the real Action entry', () => {
+  it.each(['unavailable', 'failed'] as const)('preserves the encoder %s cause through Computer start', async encoder => {
+    const fixture = await setup(encoder);
+    try {
+      expect(await fixture.invoke('computer.recording.start', {
+        mediaTarget: { sessionId: 'session', messageLocalId: 'encoder-refusal' },
+      })).toMatchObject({ ok: true, result: { status: 'unavailable', reason: {
+        code: `encoder_${encoder}`,
+      } } });
+      expect(fixture.commits).toEqual([]);
+    } finally { await fixture.close(); }
+  });
+
   it.each(['attached', 'missing'] as const)('discards retained storage when an earlier owner has the same recording ID with %s storage', async firstStorage => {
     const fixture = await setup();
     const owners = [0, 1].map(index => createComputerRecording({ machineId: 'machine', registry: fixture.registry,

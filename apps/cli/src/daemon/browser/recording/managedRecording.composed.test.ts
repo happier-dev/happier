@@ -413,7 +413,7 @@ describe('managed recording Action → private daemon IPC → capture → Sessio
         const runtime = await setup({ missingEncoder: true });
         try {
             expect(await runtime.execute('browser.recording.start', start)).toMatchObject({ ok: true, result: {
-                status: 'unavailable', reason: { code: 'browser_recording_capture_failed' },
+                status: 'unavailable', reason: { code: 'encoder_unavailable' },
             } });
             expect(runtime.commands).toEqual([]);
         } finally { await runtime.dispose(); }
