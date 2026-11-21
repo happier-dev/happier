@@ -939,6 +939,61 @@ test('remote custody cleans up stubborn descendants after the command leader exi
   }
 });
 
+for (const wrapperState of ['live', 'retired']) test(`explicit cancellation of a ${wrapperState} wrapper ends detached grandchildren and preserves an unrelated process`, {
+  skip: process.platform === 'win32',
+}, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-detached-cancel-' });
+  const pidFile = join(root, 'remote-exec', 'detached-tree.pid');
+  const readyFile = join(root, 'ready.json');
+  const hold = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
+  const middle = `
+    const { spawn } = require('node:child_process');
+    const leaf = spawn(process.execPath, ['-e', ${JSON.stringify(hold)}], { detached: true, stdio: 'ignore' });
+    require('node:fs').writeFileSync(${JSON.stringify(readyFile)}, JSON.stringify([process.ppid, process.pid, leaf.pid]));
+    ${hold}
+  `;
+  const payload = `
+    require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(middle)}], {
+      detached: true, stdio: 'ignore',
+    });
+    setInterval(() => {}, 1000);
+  `;
+  const options = { env: { ...process.env, TMPDIR: root }, stdio: ['ignore', 'pipe', 'pipe'] };
+  const wrapper = spawnObservedCustody(['run', pidFile, 'detached-tree', process.execPath, '-e', payload], options);
+  const wrapperDone = once(wrapper, 'close');
+  wrapper.stdout.resume();
+  wrapper.stderr.resume();
+  const unrelated = spawn(process.execPath, ['-e', hold], { detached: true, stdio: 'ignore' });
+  const unrelatedDone = once(unrelated, 'close');
+  let workers = [];
+  t.after(async () => {
+    for (const pid of workers) {
+      if (running(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+    if (running(unrelated.pid)) unrelated.kill('SIGKILL');
+    if (wrapper.exitCode == null && wrapper.signalCode == null) wrapper.kill('SIGTERM');
+    await Promise.all([wrapperDone, unrelatedDone]);
+  });
+  await waitFor(async () => {
+    try { workers = JSON.parse(await readFile(readyFile, 'utf8')); } catch { return false; }
+    return workers.length === 3 && workers.every(running);
+  }, 'both detached generations must be observable before cancel');
+
+  if (wrapperState === 'retired') {
+    const exited = once(wrapper, 'exit');
+    wrapper.kill('SIGKILL');
+    assert.deepEqual(await exited, [null, 'SIGKILL']);
+  }
+  const cancel = spawn('/bin/bash', [custody, 'cancel', pidFile, 'detached-tree'], options);
+  let diagnostic = '';
+  cancel.stdout.resume();
+  cancel.stderr.on('data', chunk => { diagnostic += chunk; });
+  assert.deepEqual(await once(cancel, 'close'), [0, null], diagnostic);
+  await waitFor(() => workers.every(pid => !running(pid)), 'a detached descendant survived explicit cancellation');
+  await wrapperDone;
+  assert.ok(running(unrelated.pid), 'cancellation touched a process outside the execution');
+});
+
 test('TTY custody cancellation terminates a foreground job that defers wrapper traps', { skip: process.platform !== 'linux' }, async t => {
   for (const [reason, initiatingExecutionId, cancelArgs] of [
     ['custody_cancel', 'tty-custody', []],

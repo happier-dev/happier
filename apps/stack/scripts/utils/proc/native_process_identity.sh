@@ -1,5 +1,5 @@
-# Shared native Linux process identity for admission and remote custody. The
-# kernel start token guards PID reuse; '-' means no strong identity is available.
+# Shared native process identity for admission and remote custody. The kernel
+# start token guards PID reuse; '-' means no strong identity is available.
 heavyweight_read_process_token() {
   heavyweight_token_pid=$1
   heavyweight_process_token_value=-
@@ -21,6 +21,14 @@ heavyweight_read_process_token() {
     heavyweight_process_state=$1
     shift 19
     case "$1" in ''|*[!0-9]*) ;; *) heavyweight_process_token_value=$1 ;; esac
+  elif [ ! -d /proc/self ] && [ "$(uname -s)" = Darwin ]; then
+    # The Darwin process table exposes birth time rather than Linux ticks.
+    # Keep the numeric token format shared by custody records and signal events.
+    set -- $(LC_ALL=C TZ=UTC ps -p "$heavyweight_token_pid" -o lstart=,stat= 2>/dev/null)
+    [ "$#" -eq 6 ] || return 0
+    heavyweight_process_state=${6%"${6#?}"}
+    heavyweight_birth=$(LC_ALL=C date -j -u -f '%a %b %e %T %Y' "$1 $2 $3 $4 $5" +%s 2>/dev/null) || return 0
+    case "$heavyweight_birth" in ''|*[!0-9]*) ;; *) heavyweight_process_token_value=$heavyweight_birth ;; esac
   fi
 }
 

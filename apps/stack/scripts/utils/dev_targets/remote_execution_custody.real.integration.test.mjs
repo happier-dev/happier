@@ -25,7 +25,11 @@ async function waitFor(predicate, message) {
 // cgroup even after its launcher process group has terminated. A dead SSH
 // dispatcher also takes sshd's stdout/stderr readers with it, so custody's own
 // teardown diagnostics must not end custody before it stops the scope.
-for (const [admitted, dispatcherGone] of [[false, false], [true, false], [false, true], [true, true]]) test(`${dispatcherGone ? 'dispatcher death' : 'lifeline EOF'} ends ${admitted ? 'the owned scope including a detached worker' : 'a queued job without running its payload'}`, {
+for (const [admitted, cause] of [
+  [false, 'lifeline EOF'], [true, 'lifeline EOF'],
+  [false, 'dispatcher death'], [true, 'dispatcher death'],
+  [true, 'explicit cancellation'],
+]) test(`${cause} ends ${cause === 'explicit cancellation' ? 'a detached worker in the shared jobs slice and releases admission' : admitted ? 'the owned scope including a detached worker' : 'a queued job without running its payload'}`, {
   skip: process.platform !== 'linux' || process.env.HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS !== '1',
 }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'custody-scope-' });
@@ -49,7 +53,8 @@ await runAdmittedTask({ root: ${JSON.stringify(admissionRoot)}, className: 'vali
   await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
 });
 `);
-  const child = spawn('systemd-run', ['--user', '--scope', '--quiet', '--slice=happier-critical.slice',
+  const parentSlice = cause === 'explicit cancellation' ? 'happier-jobs' : 'happier-critical';
+  const child = spawn('systemd-run', ['--user', '--scope', '--quiet', `--slice=${parentSlice}.slice`,
     'env', 'HAPPIER_REMOTE_EXEC_LIFELINE=1', '/bin/bash', custody, 'run',
     join(root, 'remote-exec', 'scope.pid'), 'native-scope-regression', process.execPath, worker], {
     env: { ...process.env, TMPDIR: root }, stdio: ['pipe', 'pipe', 'pipe'],
@@ -74,17 +79,26 @@ await runAdmittedTask({ root: ${JSON.stringify(admissionRoot)}, className: 'vali
   }, 'job never reached its admission state');
   if (!admitted) assert.ok(!output.includes('READY'), 'queued payload ran before admission');
   const cgroup = (await readFile(`/proc/${workerPid}/cgroup`, 'utf8')).trim().split('/').at(-1);
-  assert.match(cgroup, /^happier-jobs-.*\.scope$/u);
+  if (cause === 'explicit cancellation') assert.doesNotMatch(cgroup, /^happier-jobs-.*\.scope$/u);
+  else assert.match(cgroup, /^happier-jobs-.*\.scope$/u);
   assert.equal((await requestAdmissionSample(admissionRoot)).activeCount, admitted ? 1 : 0);
-  if (dispatcherGone) { child.stdout.destroy(); child.stderr.destroy(); }
-  child.stdin.end();
+  if (cause === 'explicit cancellation') {
+    const cancel = spawn('/bin/bash', [custody, 'cancel', join(root, 'remote-exec', 'scope.pid'), 'native-scope-regression'],
+      { env: { ...process.env, TMPDIR: root }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let cancelError = '';
+    cancel.stderr.on('data', chunk => { cancelError += chunk; });
+    assert.deepEqual(await once(cancel, 'close'), [0, null], cancelError);
+  } else {
+    if (cause === 'dispatcher death') { child.stdout.destroy(); child.stderr.destroy(); }
+    child.stdin.end();
+  }
   await completion;
   await waitFor(async () => {
     const sample = await requestAdmissionSample(admissionRoot);
     return sample.activeCount === 0 && sample.waitingCount === 0;
-  }, 'broker slot or queued request survived caller EOF');
-  await waitFor(() => !running(workerPid), 'detached worker survived caller EOF after broker slot release');
+  }, 'broker slot or queued request survived cancellation');
+  await waitFor(() => !running(workerPid), 'detached worker survived cancellation after broker slot release');
   const scope = spawnSync('systemctl', ['--user', 'show', cgroup, '--property=ActiveState', '--value'], { encoding: 'utf8' });
-  assert.notEqual(scope.stdout.trim(), 'active', 'job scope survived caller EOF');
-  if (!dispatcherGone) assert.match(error, /"target_kind":"scope"/u);
+  assert.notEqual(scope.stdout.trim(), 'active', 'job scope survived cancellation');
+  if (cause === 'lifeline EOF') assert.match(error, /"target_kind":"scope"/u);
 });

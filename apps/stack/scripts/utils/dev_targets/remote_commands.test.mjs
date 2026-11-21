@@ -4248,6 +4248,49 @@ test('Windows remote cancellation targets only the recorded execution identity a
   assert.match(decodedPowerShell, /taskkill\.exe \/PID \$remoteProcessId \/T \/F/);
 });
 
+test('Windows routed cancellation ends the recorded command and its grandchildren', { skip: process.platform !== 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-windows-cancel-' });
+  const target = { ...windows, repoDir: root, cliHomeDir: join(root, 'home') };
+  const ready = join(root, 'ready.json');
+  const leaf = 'setInterval(() => {}, 1000)';
+  const childArgs = [process.execPath, '-e', leaf];
+  const payload = `
+    const { spawn } = require('node:child_process');
+    spawn(${JSON.stringify(process.execPath)}, ['-e', ${JSON.stringify(`
+      const [command, ...args] = ${JSON.stringify(childArgs)};
+      const grandchild = require('node:child_process').spawn(command, args, { detached: true, stdio: 'ignore' });
+      require('node:fs').writeFileSync(${JSON.stringify(ready)}, JSON.stringify([process.pid, grandchild.pid]));
+      ${leaf}
+    `)}], { detached: true, stdio: 'ignore' });
+    ${leaf}
+  `;
+  const invocation = command => {
+    const encoded = command.split(' ').at(-1);
+    return ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded];
+  };
+  const wrapper = spawn('powershell.exe', invocation(buildRemoteExecCommand(target, {
+    executionId, commandArgs: [process.execPath, '-e', payload],
+  })), { stdio: 'ignore' });
+  const closed = once(wrapper, 'close');
+  const unrelated = spawn(process.execPath, ['-e', leaf], { detached: true, stdio: 'ignore' });
+  const siblingClosed = once(unrelated, 'close');
+  let pids = [];
+  t.after(async () => {
+    for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    if (unrelated.exitCode == null) unrelated.kill();
+    if (wrapper.exitCode == null) wrapper.kill();
+    await Promise.all([closed, siblingClosed]);
+  });
+  const deadline = Date.now() + 5000;
+  while (!existsSync(ready) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(existsSync(ready), 'Windows payload must publish its process tree before cancellation');
+  pids = JSON.parse(readFileSync(ready, 'utf8'));
+  await execFileAsync('powershell.exe', invocation(buildRemoteCancelCommand(target, { executionId })));
+  await closed;
+  for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  assert.doesNotThrow(() => process.kill(unrelated.pid, 0));
+});
+
 test('POSIX remote cancellation terminates the live execution tree and removes its identity file', async (t) => {
   try {
     await execFileAsync('/bin/ps', ['-p', String(process.pid), '-o', 'command=']);

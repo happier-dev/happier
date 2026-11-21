@@ -1050,6 +1050,14 @@ In 0.3 development, routed Linux commands get a unique disk-backed `/var/tmp/hst
 
 In current 0.3 development, the POSIX remote custody owner emits `[preferred-execution] custody_signal ` followed by one JSON object for each TERM/KILL it attempts. Find these lines in command stderr or the controller log that already captures it, including successful explicit cancellation through either dispatcher. The event carries UTC time sampled immediately before the signal, execution id, teardown reason (`completed`, `lifeline_eof`, `signal`, `orphan`), signal, target PID/PGID, the collected PID/start-token members and the actual syscall result (`0` for success). It is written as one complete line immediately after the syscall, with no argv or environment. Completion with no signal attempt emits no signal event. These records establish this owner's attempted signals; their absence does not identify an external signal sender or explain a historical daemon exit.
 
+In current 0.3 development, explicit routed cancellation asks the worker to
+end the recorded command tree. POSIX custody captures descendants that left
+the command's group before signaling and checks their process birth identities
+again before forcing termination. Linux custody stops a per-command systemd
+scope when that execution owns one. The admission client releases its slot
+when its lifetime connection closes. Windows custody reports the result of
+tree termination for the recorded PowerShell process.
+
 For broad local collection, inspect `node scripts/pipeline/run.mjs checks --profile fast --dry-run` first. For a focused rerun, use a workspace command or `checks --profile custom --custom-checks integration,typecheck --install-deps false`. Custom selection is exact, not an implicit full baseline. The checks owner collects independent failures and returns nonzero; install failure still stops dependent checks.
 
 Local and hosted profiles share selection policy ownership in `scripts/pipeline/checks/lib/checks-profile.mjs`, but are not interchangeable matrices: local profiles preserve local toolchain coverage; hosted profiles include platform/runner jobs. Read the current command help or workflow inputs instead of assuming a local `fast` result certifies hosted `release` coverage. In 0.3, route these commands through `hstack-exec`; its public test scripts already do so.

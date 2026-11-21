@@ -133,8 +133,77 @@ finish_group_cancellation() {
   fi
 }
 
+# A job group misses descendants that changed their session (including an
+# admitted foreground launcher). Collect them before TERM can reparent them.
+descendant_identities() {
+  local member token
+  for member in $(ps -eo pid=,ppid=,pgid= | awk -v root="$1" -v group="$2" '
+    { parent[$1]=$2; pgid[$1]=$3 }
+    END {
+      for (pid in parent) {
+        if (pid == root || pgid[pid] == group) continue
+        for (ancestor=parent[pid]; ancestor > 1 && ancestor in parent; ancestor=parent[ancestor]) {
+          if (ancestor == root) { print pid; break }
+        }
+      }
+    }'); do
+    token=$(heavyweight_process_token "$member")
+    if [ "$token" != - ]; then printf '%s:%s ' "$member" "$token"; fi
+  done
+}
+
+signal_current_descendants() {
+  local reason=$1 signal=$2 identity member token result=0
+  for identity in $3; do
+    member=${identity%%:*}; token=${identity#*:}
+    if heavyweight_process_is_current "$member" "$token"; then
+      if ! signal_member "$reason" "$signal" pid "$member" "$identity" &&
+          [ "$signal" = KILL ] && heavyweight_process_is_current "$member" "$token"; then
+        result=1
+      fi
+    fi
+  done
+  return "$result"
+}
+
+owned_jobs_scope() {
+  local unit
+  [ -d /proc/self ] || return 1
+  case "$1:$2" in *[!0-9:]*|:*|*:) return 1 ;; esac
+  unit=$(jobs_scope_unit "$1" "$2")
+  [ "$(systemctl --user show "$unit" --property=LoadState --value 2>/dev/null)" = loaded ] || return 1
+  printf '%s' "$unit"
+}
+
+stop_owned_jobs_scope() {
+  signal_member "$1" KILL scope "$2" '' || true
+  # Stop waits for the unit, so its admission client's lifetime socket closes
+  # through the existing broker release protocol.
+  if systemctl --user stop "$2" >/dev/null 2>&1; then return 0; fi
+  case "$(systemctl --user show "$2" --property=ActiveState --value 2>/dev/null)" in
+    inactive|failed) return 0 ;;
+  esac
+  printf '[preferred-execution] cancellation incomplete for remote job scope %s of %s\n' "$2" "$execution_id" >&2
+  return 1
+}
+
+cancel_owned_group() {
+  local reason=$1 group=$2 group_token=$3 scope=$4 members identities result=0
+  members=$(group_identities "$group")
+  identities=$(descendant_identities "$group" "$group")
+  if [ -n "$group_token" ] && ! heavyweight_process_is_current "$group" "$group_token"; then return 1; fi
+  if [ -n "$scope" ]; then signal_member "$reason" TERM scope "$scope" '' || true; fi
+  signal_current_descendants "$reason" TERM "$identities"
+  signal_member "$reason" TERM pgid "$group" "$members"
+  sleep 2
+  signal_current_descendants "$reason" KILL "$identities" || result=$?
+  finish_group_cancellation "$group" "$members" "$reason" || result=$?
+  if [ -n "$scope" ]; then stop_owned_jobs_scope "$reason" "$scope" || result=$?; fi
+  return "$result"
+}
+
 cancel_record() {
-  local reason=${1:-custody_cancel}
+  local reason=${1:-custody_cancel} identities scope result=0
   [ -f "$pid_file" ] || return 0
   pid=$(sed -n '1p' "$pid_file")
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
@@ -142,15 +211,14 @@ cancel_record() {
   group=$(sed -n '2p' "$pid_file")
   group_token=$(sed -n '4p' "$pid_file")
   if heavyweight_process_is_provably_retired "$pid" "${recorded_token:--}"; then
-    # A crashed wrapper cannot invalidate its still-current worker identity.
-    # Legacy records without that witness cannot authorize a group signal.
-    case "$group:$group_token" in ''|*[!0-9:]*|:*|*:) rm -f -- "$pid_file"; return 0 ;; esac
-    if heavyweight_process_is_current "$group" "$group_token" &&
+    # The birth token still identifies a live process group or an owned Linux
+    # scope when its original wrapper has been retired.
+    scope=$(owned_jobs_scope "$pid" "${recorded_token:--}") || scope=
+    if [ "$group_token" != - ] && heavyweight_process_is_current "$group" "$group_token" &&
         [ "$(ps -p "$group" -o pgid= 2>/dev/null | tr -d ' ')" = "$group" ]; then
-      members=$(group_identities "$group")
-      signal_member "$reason" TERM pgid "$group" "$members"
-      sleep 2
-      finish_group_cancellation "$group" "$members" "$reason" || return $?
+      cancel_owned_group "$reason" "$group" "$group_token" "$scope" || return $?
+    elif [ -n "$scope" ]; then
+      stop_owned_jobs_scope "$reason" "$scope" || return $?
     fi
     rm -f -- "$pid_file"
     return 0
@@ -163,54 +231,37 @@ cancel_record() {
     return 0
   fi
   root_token=$(heavyweight_process_token "$pid")
-  group=$(sed -n '2p' "$pid_file")
+  scope=$(owned_jobs_scope "$pid" "$root_token") || scope=
   case "$group" in
     ''|*[!0-9]*) ;;
     *)
       group_parent=$(ps -p "$group" -o ppid= 2>/dev/null | tr -d ' ')
       group_id=$(ps -p "$group" -o pgid= 2>/dev/null | tr -d ' ')
-      if [ "$group_parent" = "$pid" ] && [ "$group_id" = "$group" ]; then
-        members=$(group_identities "$group")
-        signal_member "$reason" TERM pgid "$group" "$members"
-        sleep 2
-        current_command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+      if [ "$group_parent" = "$pid" ] && [ "$group_id" = "$group" ] &&
+          { [ -z "$group_token" ] || heavyweight_process_is_current "$group" "$group_token"; }; then
+        if ! heavyweight_process_is_current "$pid" "$root_token"; then return 1; fi
+        cancel_owned_group "$reason" "$group" "$group_token" "$scope" || result=$?
         if heavyweight_process_is_current "$pid" "$root_token"; then
-          case "$current_command" in
-            *"$execution_id"*)
-              finish_group_cancellation "$group" "$members" "$reason" || return $?
-              signal_member "$reason" TERM pid "$pid" "$pid:$root_token"
-              ;;
-          esac
+          signal_member "$reason" TERM pid "$pid" "$pid:$root_token" || true
         fi
-        return 0
+        return "$result"
       fi
       ;;
   esac
-  # Pin descendants before signaling them, then recheck the delayed KILL.
-  # An interactive wrapper's fg builtin can defer TERM traps until the job
-  # exits, so cancellation cannot rely on signaling only that wrapper.
-  pids=$(collect_descendants "$pid")
-  identities=
-  for child in $pids; do
-    [ "$child" = "$pid" ] && continue
-    token=$(heavyweight_process_token "$child")
-    if [ "$token" = - ]; then
-      printf '[preferred-execution] cannot verify remote descendant %s of %s; leaving it untouched\n' "$child" "$execution_id" >&2
-      continue
-    fi
-    identities="$identities $child:$token"
-    heavyweight_process_is_current "$child" "$token" && signal_member "$reason" TERM pid "$child" "$child:$token"
-  done
+  # An interactive wrapper can defer TERM in fg. When there is no dedicated
+  # PGID, snapshot the same command's descendants and signal them directly.
+  identities=$(descendant_identities "$pid" '')
+  if ! heavyweight_process_is_current "$pid" "$root_token"; then return 1; fi
+  if [ -n "$scope" ]; then signal_member "$reason" TERM scope "$scope" '' || true; fi
+  signal_current_descendants "$reason" TERM "$identities"
   sleep 2
-  for identity in $identities; do
-    child=${identity%%:*}; token=${identity#*:}
-    heavyweight_process_is_current "$child" "$token" && signal_member "$reason" KILL pid "$child" "$child:$token"
-  done
+  signal_current_descendants "$reason" KILL "$identities" || result=$?
+  if [ -n "$scope" ]; then stop_owned_jobs_scope "$reason" "$scope" || result=$?; fi
   if heavyweight_process_is_current "$pid" "$root_token"; then
-    current_command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    case "$current_command" in *"$execution_id"*) signal_member "$reason" TERM pid "$pid" "$pid:$root_token" ;; esac
+    signal_member "$reason" TERM pid "$pid" "$pid:$root_token" || true
   fi
-  rm -f -- "$pid_file"
+  [ "$result" -ne 0 ] || rm -f -- "$pid_file"
+  return "$result"
 }
 
 read_test_temp_root_users() {
@@ -392,14 +443,9 @@ terminate_command() {
   # Name only the scope this wrapper could have created; inherited scopes
   # belong to their containing executor and are never cancelled here.
   local members owned_scope=
-  if [ "$reason" != completed ] && [ "$(uname -s)" = Linux ]; then
-    owned_scope=$(jobs_scope_unit "$$" "$wrapper_token")
-    if [ "$(systemctl --user show "$owned_scope" --property=LoadState --value 2>/dev/null)" != loaded ]; then
-      owned_scope=
-    else
-      printf '[preferred-execution] stopping owned job scope %s (reason=%s)\n' "$owned_scope" "$reason" >&2
-      signal_member "$reason" TERM scope "$owned_scope" '' || true
-    fi
+  if [ "$reason" != completed ] && owned_scope=$(owned_jobs_scope "$$" "$wrapper_token"); then
+    printf '[preferred-execution] stopping owned job scope %s (reason=%s)\n' "$owned_scope" "$reason" >&2
+    signal_member "$reason" TERM scope "$owned_scope" '' || true
   fi
   members=$(group_identities "$remote_child_pid")
   kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope" ] || return 0
@@ -416,8 +462,7 @@ terminate_command() {
     # Reuse custody's existing TERM grace above, including when the group
     # leader departed before its detached workers. Admission releases its
     # existing slot through socket close; there is no separate release path.
-    signal_member "$reason" KILL scope "$owned_scope" '' || true
-    systemctl --user stop "$owned_scope" >/dev/null 2>&1 || true
+    stop_owned_jobs_scope "$reason" "$owned_scope"
   fi
 }
 # Teardown outlives the controller's output readers: a dead SSH dispatcher

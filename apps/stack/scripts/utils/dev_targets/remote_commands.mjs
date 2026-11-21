@@ -2019,11 +2019,13 @@ export function buildRemoteCancelCommand(target, { executionId } = {}) {
           + 'if (-not [int]::TryParse($identity[0], [ref]$remoteProcessId)) { exit 0 }; '
           + 'if (-not [long]::TryParse($identity[1], [ref]$remoteStartTicks)) { exit 0 }; '
           + '$remoteProcess = Get-Process -Id $remoteProcessId -ErrorAction SilentlyContinue; '
-          + 'if ($null -eq $remoteProcess) { exit 0 }; '
-          + 'if ($remoteProcess.StartTime.ToUniversalTime().Ticks -ne $remoteStartTicks) { exit 0 }; '
+          + 'if ($null -eq $remoteProcess -or $remoteProcess.StartTime.ToUniversalTime().Ticks -ne $remoteStartTicks) { '
+          + 'Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $pidFile; exit 0 }; '
           + 'taskkill.exe /PID $remoteProcessId /T /F | Out-Null; '
+          + 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; '
+          + 'Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $pidFile; '
           + 'exit 0 '
-          + '} finally { Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $pidFile }',
+          + '} catch { Write-Error $_; exit 1 }',
       ].join('; '),
     );
   }

@@ -52,6 +52,8 @@ native_execution_signal() {
   else
     if kill "-$native_signal_signal" "$native_signal_target" 2>/dev/null; then native_signal_result=0; else native_signal_result=$?; fi
   fi
-  printf '[preferred-execution] custody_signal {"at":"%s",%s,"syscall_result":%s}\n' "$native_signal_at" "$native_signal_fields" "$native_signal_result" >&2
+  # A lost dispatcher can close stderr before TERM grace finishes. In
+  # particular, an EPIPE in macOS Bash's builtin printer can end its shell.
+  (printf '[preferred-execution] custody_signal {"at":"%s",%s,"syscall_result":%s}\n'     "$native_signal_at" "$native_signal_fields" "$native_signal_result" >&2) || true
   return 0
 }
