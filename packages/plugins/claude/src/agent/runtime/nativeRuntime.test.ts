@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -789,7 +789,10 @@ describe('createClaudeNativeRuntime', () => {
     expect(runtime.surfaces?.handoff).toBe(claudeHandoffSurface);
   });
 
-  it('publishes the effective Claude config directory in a merged runtime descriptor', async () => {
+  it.each([
+    { source: 'explicit', launch: { CLAUDE_CONFIG_DIR: '/effective/claude' }, inherited: '/other/claude' },
+    { source: 'inherited', launch: {}, inherited: '/effective/claude' },
+  ])('publishes the $source Claude config directory in a merged runtime descriptor', async ({ launch, inherited }) => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: () => createNativeOperations('descriptor-session').runtime,
     });
@@ -800,7 +803,7 @@ describe('createClaudeNativeRuntime', () => {
       cwd: '/repo/project',
       launchEnvironment: {
         values: {
-          CLAUDE_CONFIG_DIR: '/effective/claude',
+          ...launch,
           ANTHROPIC_API_KEY: 'must-not-be-described',
         },
         unset: [],
@@ -813,7 +816,17 @@ describe('createClaudeNativeRuntime', () => {
           backendMode: 'host-generic',
         },
       },
-    }, context as unknown as AgentSessionRuntimeContext);
+    }, {
+      ...context,
+      services: {
+        ...context.services,
+        exec: {
+          ...context.services.exec,
+          readEnvironment: (keys) => keys.includes('HAPPIER_CLAUDE_CONFIG_DIR')
+            ? { HAPPIER_CLAUDE_CONFIG_DIR: inherited } : {},
+        },
+      },
+    });
 
     expect(session.runtimeDescriptorV1).toEqual({
       v: 1,
@@ -850,7 +863,7 @@ describe('createClaudeNativeRuntime', () => {
         signal: new AbortController().signal,
         deadlineAtMs: Date.now() + 30_000,
         maxSerializedBytes: 1024 * 1024,
-      })).toEqual({ path, containmentRoot: configDir });
+      })).toEqual({ path: await realpath(path), containmentRoot: configDir });
     } finally {
       await session.dispose();
       await rm(home, { recursive: true, force: true });

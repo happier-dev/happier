@@ -7,7 +7,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS } from '@happier-dev/protocol/agents/claude/session-retention';
 import { readClaudeCleanupPeriodDays } from '../settings/sessionRetention.js';
-import { CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY, resolveClaudeConfigDir } from '../environment.js';
+import { CLAUDE_CONFIG_DIR_ENV_KEYS, CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY, resolveClaudeConfigDir, resolveClaudeConfigDirOverride } from '../environment.js';
 import {
   isSessionPermissionShellToolName,
   matchSessionPermissionToolIdentifier,
@@ -34,7 +34,11 @@ const CLAUDE_AGENT_TEAMS_ENV_KEY = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS';
 const CLAUDE_PROMPT_SUGGESTION_ENV_KEY = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
 const CLAUDE_LOCAL_AUTH_USER_ENV_KEY = 'USER';
 const CLAUDE_EXTERNAL_SANDBOX_ENV_KEY = 'IS_SANDBOX';
-const CLAUDE_NATIVE_INHERITED_ENV_KEYS = [CLAUDE_LOCAL_AUTH_USER_ENV_KEY, CLAUDE_EXTERNAL_SANDBOX_ENV_KEY] as const;
+const CLAUDE_NATIVE_INHERITED_ENV_KEYS = [
+  ...CLAUDE_CONFIG_DIR_ENV_KEYS,
+  CLAUDE_LOCAL_AUTH_USER_ENV_KEY,
+  CLAUDE_EXTERNAL_SANDBOX_ENV_KEY,
+] as const;
 
 type ClaudeSettingsReader = Readonly<{
   get(key: string): unknown | Promise<unknown>;
@@ -318,16 +322,29 @@ export function resolveClaudeNativeBaseLaunchEnvironment(input: Readonly<{
   }
   const processEnv = input.processEnv ?? readEnvironment?.(CLAUDE_NATIVE_INHERITED_ENV_KEYS) ?? process.env;
   const values = { ...(input.launchEnvironment?.values ?? {}) };
+  const unset = input.launchEnvironment?.unset ?? [];
+  const [nativeConfigKey, happierConfigKey] = CLAUDE_CONFIG_DIR_ENV_KEYS;
+  if (unset.includes(nativeConfigKey)) {
+    // The legacy selector reaches Claude only through its native key.
+    delete values[nativeConfigKey];
+    delete values[happierConfigKey];
+  } else {
+    const configDir = resolveClaudeConfigDirOverride(values) ?? resolveClaudeConfigDirOverride({
+      [nativeConfigKey]: processEnv[nativeConfigKey],
+      [happierConfigKey]: unset.includes(happierConfigKey) ? undefined : processEnv[happierConfigKey],
+    });
+    if (configDir) values[nativeConfigKey] = configDir;
+  }
   if (
     values[CLAUDE_LOCAL_AUTH_USER_ENV_KEY] === undefined
-    && !input.launchEnvironment?.unset.includes(CLAUDE_LOCAL_AUTH_USER_ENV_KEY)
+    && !unset.includes(CLAUDE_LOCAL_AUTH_USER_ENV_KEY)
   ) {
     const user = processEnv[CLAUDE_LOCAL_AUTH_USER_ENV_KEY]?.trim();
     if (user) values[CLAUDE_LOCAL_AUTH_USER_ENV_KEY] = user;
   }
   if (
     values[CLAUDE_EXTERNAL_SANDBOX_ENV_KEY] === undefined
-    && !input.launchEnvironment?.unset.includes(CLAUDE_EXTERNAL_SANDBOX_ENV_KEY)
+    && !unset.includes(CLAUDE_EXTERNAL_SANDBOX_ENV_KEY)
   ) {
     Object.assign(values, resolveClaudeExternalSandboxEnv(processEnv));
   }

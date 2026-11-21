@@ -1488,6 +1488,11 @@ binding uses its own credential transport rather than requiring native CLI login
 
 #### Claude plugin runtime contracts (development)
 
+Claude resolves the config directory from explicit Session launch values and
+the Session host's inherited selectors. The native launch and Session runtime
+descriptor use that same selection. An explicit unset of `CLAUDE_CONFIG_DIR`
+keeps the vendor key absent.
+
 For an isolated Claude Session, Happier publishes the native resume ID and transcript
 path together after Claude's owned stdio submit hook and a matching new row in that
 file. The Session runtime captures the baseline before acknowledging the hook.

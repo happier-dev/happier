@@ -21,6 +21,26 @@ describe('Claude launch environment', () => {
       .toThrow(expect.objectContaining({ code: 'plugin_service_unavailable' }));
   });
 
+  it('launches Claude in the Session host’s selected config directory', () => {
+    const inherited = { HAPPIER_CLAUDE_CONFIG_DIR: '/fixture/claude' };
+    const exec = {
+      readEnvironment: (keys: readonly string[]) => Object.fromEntries(
+        Object.entries(inherited).filter(([key]) => keys.includes(key)),
+      ),
+    };
+    expect(resolveClaudeNativeBaseLaunchEnvironment({ exec })).toEqual({
+      CLAUDE_CONFIG_DIR: '/fixture/claude',
+    });
+    expect(resolveClaudeNativeBaseLaunchEnvironment({
+      exec,
+      launchEnvironment: { values: { CLAUDE_CONFIG_DIR: '/admitted/claude' }, unset: [] },
+    })).toEqual({ CLAUDE_CONFIG_DIR: '/admitted/claude' });
+    expect(resolveClaudeNativeBaseLaunchEnvironment({
+      exec,
+      launchEnvironment: { values: {}, unset: ['CLAUDE_CONFIG_DIR'] },
+    })).toEqual({});
+  });
+
   it('recognizes only Claude\'s exact external sandbox assertion', () => {
     expect(resolveClaudeExternalSandboxEnv({ IS_SANDBOX: '1' })).toEqual({
       IS_SANDBOX: '1',

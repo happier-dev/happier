@@ -792,7 +792,10 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         ...sourceRuntimeDescriptor,
         agent: Object.freeze({
           ...sourceRuntimeAgent,
-          configDir: resolveClaudeConfigDir(request.launchEnvironment?.values ?? {}),
+          configDir: resolveClaudeConfigDir(resolveClaudeNativeBaseLaunchEnvironment({
+            launchEnvironment: request.launchEnvironment,
+            exec: context.services.exec,
+          })),
         }),
       })
     : undefined;
