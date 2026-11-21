@@ -1,6 +1,5 @@
 import type { DeploymentTargetOwnedVariableV1, DeploymentTargetVariablesSyncInputV1, DeploymentTargetVariablesSyncResultV1,
-    DeploymentTargetVariableMetadataV1 } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+    DeploymentTargetVariableMetadataV1 } from '@happier-dev/plugin-sdk/deployment-targets';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { encodeTelemetryAuthorizationHeaderV1 } from './telemetry.js';
 
@@ -10,6 +9,15 @@ type FailureCode = SyncResult['failures'][number]['code'];
 type Binding = SyncInput['set'][number];
 type SupportedSource = Extract<Binding['source'], { kind: 'secret' | 'value' }>;
 type WritableBinding = Binding & { source: SupportedSource };
+
+type VariableMaterializationContext = Readonly<{
+    signal: AbortSignal;
+    services: Readonly<{
+        secrets?: Readonly<{
+            readSavedSecret(ref: string, options: { resourceRevision?: number; signal: AbortSignal }): Promise<string>;
+        }>;
+    }>;
+}>;
 
 export type DeploymentTargetObservedVariableV1 = Readonly<Pick<DeploymentTargetVariableMetadataV1,
     'key' | 'providerId' | 'providerRevision' | 'secret'>>;
@@ -126,7 +134,7 @@ export function createDeploymentTargetVariableSyncV1(input: SyncInput, observed:
         else remove.push(current);
     }
 
-    async function materialize(binding: WritableBinding, context: Pick<PluginAccountActionContext, 'services' | 'signal'>):
+    async function materialize(binding: WritableBinding, context: VariableMaterializationContext):
         Promise<{ value: string; secret: boolean } | null> {
         const source = binding.source;
         let value: string;

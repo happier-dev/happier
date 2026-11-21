@@ -90,7 +90,6 @@
 | `.` | `DeploymentTargetLinkRoleInputV1` | type | any |
 | `.` | `DeploymentTargetLogsResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetObserveInputV1` | type | any |
-| `.` | `DeploymentTargetOwnedVariableV1` | type | any |
 | `.` | `DeploymentTargetPreparationBaseV1` | type | any |
 | `.` | `DeploymentTargetPreparationBaseV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetPriorDeploymentRefV1` | type | any |
@@ -108,12 +107,9 @@
 | `.` | `DeploymentTargetRuntimeRoleV1` | type | any |
 | `.` | `DeploymentTargetTeardownInputV1` | type | any |
 | `.` | `DeploymentTargetUploadDeployInputV1` | type | any |
-| `.` | `DeploymentTargetVariableMetadataV1` | type | any |
 | `.` | `DeploymentTargetVariablesReadInputV1` | type | any |
 | `.` | `DeploymentTargetVariablesReadResultV1` | type | any |
 | `.` | `DeploymentTargetVariablesReadResultV1ProtocolSchema` | value | any |
-| `.` | `DeploymentTargetVariablesSyncInputV1` | type | any |
-| `.` | `DeploymentTargetVariablesSyncResultV1` | type | any |
 | `.` | `DeploymentTargetVariablesSyncResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTelemetryAssignmentV1` | type | daemon |
 | `.` | `DeploymentTelemetryServiceV1` | type | daemon |
@@ -1984,6 +1980,10 @@
 | `./database` | `UI_DATABASE_NAVIGATE_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_OPEN_ACTION_ID_V1` | value | any |
 | `./database` | `projectTelemetryMetricsActionReadResultV1` | value | any |
+| `./deployment-targets` | `DeploymentTargetOwnedVariableV1` | type | any |
+| `./deployment-targets` | `DeploymentTargetVariableMetadataV1` | type | any |
+| `./deployment-targets` | `DeploymentTargetVariablesSyncInputV1` | type | any |
+| `./deployment-targets` | `DeploymentTargetVariablesSyncResultV1` | type | any |
 | `./errors` | `ActionFailureCauseV1` | type | any |
 | `./errors` | `ActionFailureCauseV1ProtocolSchema` | value | any |
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |

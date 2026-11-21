@@ -24,9 +24,7 @@ export type {
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
     DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1,
     DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1,
-    DeploymentTargetVariablesReadInputV1, DeploymentTargetVariablesSyncInputV1,
-    DeploymentTargetVariablesReadResultV1, DeploymentTargetVariablesSyncResultV1,
-    DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
+    DeploymentTargetVariablesReadInputV1, DeploymentTargetVariablesReadResultV1,
 } from './deploymentTargets.js';
 export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
     DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,

@@ -182,6 +182,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     './protocol': available(),
     './contributions': available(),
     './database': available(),
+    './deployment-targets': available(),
     './resources': available(),
     './reviews': available(),
     './scm': available(),

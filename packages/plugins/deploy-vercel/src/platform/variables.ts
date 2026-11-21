@@ -1,9 +1,11 @@
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
   DeploymentTargetVariablesSyncResultV1ProtocolSchema as syncOutput, PluginError,
-  type DeploymentTargetVariablesReadInputV1, type DeploymentTargetVariablesSyncInputV1,
-  type DeploymentTargetVariablesReadResultV1, type DeploymentTargetVariablesSyncResultV1,
+  type DeploymentTargetVariablesReadInputV1,
+  type DeploymentTargetVariablesReadResultV1,
   type JsonValue } from '@happier-dev/plugin-sdk';
+import type { DeploymentTargetVariablesSyncInputV1, DeploymentTargetVariablesSyncResultV1 }
+  from '@happier-dev/plugin-sdk/deployment-targets';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';

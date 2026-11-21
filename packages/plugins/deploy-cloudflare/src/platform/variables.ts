@@ -2,9 +2,10 @@ import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happi
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
   DeploymentTargetVariablesSyncResultV1ProtocolSchema as syncOutput, PluginError, isPluginError,
-  type DeploymentTargetVariablesReadInputV1, type DeploymentTargetVariablesSyncInputV1,
-  type DeploymentTargetVariablesSyncResultV1,
+  type DeploymentTargetVariablesReadInputV1,
   type JsonValue } from '@happier-dev/plugin-sdk';
+import type { DeploymentTargetVariablesSyncInputV1, DeploymentTargetVariablesSyncResultV1 }
+  from '@happier-dev/plugin-sdk/deployment-targets';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';

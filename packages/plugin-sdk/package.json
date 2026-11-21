@@ -94,6 +94,11 @@
       "types": "./dist/database/index.d.ts",
       "default": "./dist/database/index.js"
     },
+    "./deployment-targets": {
+      "happier-source": "./src/deployment-targets/index.ts",
+      "types": "./dist/deployment-targets/index.d.ts",
+      "default": "./dist/deployment-targets/index.js"
+    },
     "./errors": {
       "happier-source": "./src/errors/index.ts",
       "types": "./dist/errors/index.d.ts",

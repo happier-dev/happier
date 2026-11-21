@@ -365,6 +365,12 @@ const FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST = new Set(
 const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
     [SDK_PROTOCOL_SUBPATH]: FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST,
     [SDK_CONTRIBUTIONS_SUBPATH]: FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST,
+    [`${SDK_PACKAGE_NAME}/deployment-targets`]: new Set([
+        'DeploymentTargetOwnedVariableV1',
+        'DeploymentTargetVariableMetadataV1',
+        'DeploymentTargetVariablesSyncInputV1',
+        'DeploymentTargetVariablesSyncResultV1',
+    ]),
     [`${SDK_PACKAGE_NAME}/database`]: new Set([
         'DatabaseAccessSummaryV1Schema',
         'DatabaseAgentAccessV1Schema',
@@ -1781,6 +1787,27 @@ describe('feature-protocol package policy', () => {
         });
         expect(() => assertFeatureProtocolPackageBoundary(source('ReviewRoundBindingV1ProtocolSchema'))).not.toThrow();
         expect(() => assertFeatureProtocolPackageBoundary(source('readReviewStartActionResultV1', '@happier-dev/plugin-sdk/reviews'))).toThrow('@happier-dev/plugin-sdk/reviews');
+    });
+
+    it('admits deployment variable types while keeping deployment runtime helpers out of feature protocols', () => {
+        const portableTypes = 'DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1, '
+            + 'DeploymentTargetVariablesSyncInputV1, DeploymentTargetVariablesSyncResultV1';
+        const fixture = (statement: string) => ({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/variables.ts': statement,
+            },
+        });
+        expect(() => assertFeatureProtocolPackageBoundary(fixture(
+            `import type { ${portableTypes} } from '@happier-dev/plugin-sdk/deployment-targets';\n`,
+        ))).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary(fixture(
+            `import type { ${portableTypes} } from '@happier-dev/plugin-sdk';\n`,
+        ))).toThrow('imports the SDK root from src/v1/variables.ts');
+        expect(() => assertFeatureProtocolPackageBoundary(fixture(
+            "import { settleDeploymentTargetResourceRemovalV1 } from '@happier-dev/plugin-sdk/deployment-targets';\n",
+        ))).toThrow('imports unapproved SDK symbol settleDeploymentTargetResourceRemovalV1');
     });
 
     it('allows only named, allowlisted public SDK schema facts in feature protocol source', () => {

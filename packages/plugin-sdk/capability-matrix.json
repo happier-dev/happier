@@ -2214,6 +2214,14 @@
       "availabilityDisposition": "available"
     },
     {
+      "specifier": "./deployment-targets",
+      "sourceModule": "src/deployment-targets/index.ts",
+      "realm": "any",
+      "producer": "src/deployment-targets/index.ts",
+      "lifecycle": "published",
+      "availabilityDisposition": "available"
+    },
+    {
       "specifier": "./errors",
       "sourceModule": "src/errors/index.ts",
       "realm": "any",
