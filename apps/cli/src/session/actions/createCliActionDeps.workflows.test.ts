@@ -39,6 +39,8 @@ import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemon
   removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRecordV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { getActiveAccountSettingsSnapshot, readAccountRoleOverridesFromSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -894,6 +896,7 @@ describe('createCliActionDeps workflow boundary', () => {
     { pendingMaintenance: false, discussionOrigin: true, caller: 'host' },
     { pendingMaintenance: false, discussionOrigin: false, caller: 'host_without_mode' },
     { pendingMaintenance: false, discussionOrigin: false, caller: 'invalid_agent_causal' },
+    { pendingMaintenance: false, discussionOrigin: false, caller: 'managed_project' },
   ])('keeps fresh Workflow materialization in the admitted Account holder (caller: $caller, maintenance pending: $pendingMaintenance, Discussion: $discussionOrigin)', async ({ pendingMaintenance, discussionOrigin, caller }) => {
     // Real daemon publication with no SCM plugin: a plain directory is valid.
     const lease = await pluginReloadController.acquireRuntimeRegistry({
@@ -902,6 +905,11 @@ describe('createCliActionDeps workflow boundary', () => {
     await lease.release();
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const managedRef = caller === 'managed_project' ? {
+      v: 2 as const, kind: 'managed' as const, id: 'coder-checkout', serverId: 'srv_fresh_home', managedId: 'coder-guest',
+      controller: { machineId: 'machine-1', installationId: 'installation' }, rootPath: '/home/coder/qa-rws-repo', createdAtMs: 1,
+    } : undefined;
+    const guestStat = vi.fn(async () => localWorkspaceSource.stat(tmpdir()));
     const rawSettings = { workDepthLimit: 2 };
     const source = { source: 'network' as const, scopeKey: resolveAccountSettingsScopeKeyForToken(token),
       settings: AccountSettingsSchema.parse(rawSettings), rawSettings, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: 1 };
@@ -915,15 +923,30 @@ describe('createCliActionDeps workflow boundary', () => {
     const maintenanceIssued = createDeferred<void>();
     let destinationsObserved = false;
     const post = http.post.getMockImplementation()!;
-    http.post.mockImplementation(async (url: string, body: Readonly<Record<string, unknown>>) =>
-      url.endsWith('/v2/sessions/lookup-by-tags')
-        ? { status: 200, data: { sessions: [] } } : post(url, body));
+    http.post.mockImplementation(async (url: string, body: Readonly<Record<string, unknown>>) => {
+      if (url.endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+      if (managedRef) {
+        const key = { kind: 'workspace-ref', serverId: managedRef.serverId, id: managedRef.id };
+        const row = ProjectAccountRowV1Schema.parse({ key, revision: 0, content: { t: 'plain', v: { key, value: managedRef } } });
+        if (url.endsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`)) {
+          return { status: 200, data: { status: 'listed', rows: [row], coverage: 'complete' } };
+        }
+        if (url.endsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`)) {
+          expect(body).toEqual({ key });
+          return { status: 200, data: { status: 'present', row } };
+        }
+      }
+      return post(url, body);
+    });
     const get = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string) => {
       const path = new URL(url).pathname;
       if (caller === 'invalid_agent_causal' && path === '/v2/sessions/c123456789012345678901234') {
         return { status: 200, data: { session: createSessionRecordFixture({ id: 'c123456789012345678901234',
           encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1', path: tmpdir(), permissionMode: 'default' }) }) } };
+      }
+      if (managedRef && path === '/v1/account/encryption') {
+        return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       }
       if (path === '/v2/sessions' || path === '/v2/sessions/archived') {
         return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
@@ -975,11 +998,16 @@ describe('createCliActionDeps workflow boundary', () => {
     }) } : enabledFeatures;
     const deps = createCliActionDeps({ token, credentials, savedSecretOperationContext: operationContext,
       serverId: 'profile', serverHttpBaseUrl: operationContext.serverHttpBaseUrl, resolveServerFeaturesSnapshot: () => features as never,
-      ...(discussionOrigin ? { serverIdentityId: 'srv_fresh_home' } : {}),
+      ...(discussionOrigin || managedRef ? { serverIdentityId: 'srv_fresh_home' } : {}),
+      ...(managedRef ? { restoreManagedWorkflowWorkspaceSource: async () => ({
+        ...localWorkspaceSource, id: 'managed-workflow-guest', kind: 'target' as const, stat: guestStat,
+      }) } : {}),
       sessionId: 'cli-global', mode: 'plain', ctx: null });
     const context: ActionExecutorContext = { serverId: 'profile', surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, ...(caller === 'host_without_mode' ? {} : { callerPermissionMode: 'default' }),
-      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } },
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: {
+        machineId: 'machine-1', directory: managedRef?.rootPath ?? tmpdir(), ...(managedRef ? { workspaceRefId: managedRef.id } : {}),
+      } },
       ...(caller === 'invalid_agent_causal' ? { surface: 'agent', authority: 'account_automation',
         actionCaller: { kind: 'session', sessionId: 'c123456789012345678901234', starterDepth: 0, turnDepth: 0 },
         // Null denotes an absent ceiling; malformed present authority must refuse before reads.
@@ -989,7 +1017,7 @@ describe('createCliActionDeps workflow boundary', () => {
     let admissionCompleted = false;
     const admission = deps.workflowAction!({ actionId: 'workflow.run.start', input: {
       runId: '77777777-7777-4777-8777-777777777777', source: { kind: 'inline', definition: { version: 1,
-        defaults: { engine: { role: 'scout' } }, roles: [{ roleId: 'scout', runsAs: { kind: 'session' },
+        defaults: { roleId: 'scout' }, roles: [{ roleId: 'scout', runsAs: { kind: 'session' },
           engine: { agentTargetKey: 'agent:happier.agent.codex/codex' } }],
         blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] } },
       ...(discussionOrigin ? { origin: { kind: 'discussion' as const,
@@ -1029,6 +1057,16 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     expect(accepted.kind).toBe('available');
     if (accepted.kind !== 'available') throw new Error('accepted_snapshot_unavailable');
+    if (managedRef) {
+      const { id: workspaceId, serverId, controller, managedId, rootPath } = managedRef;
+      expect(guestStat).toHaveBeenCalledWith(rootPath);
+      expect(http.post.mock.calls.filter(([url]) => String(url).includes(PROJECT_ACCOUNT_ROWS_ROUTE_V1))
+        .map(([url]) => new URL(String(url)).pathname)).toEqual([`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`]);
+      expect(accepted.content.workspaceTarget).toMatchObject({
+        project: { machineId: controller.machineId, workspaceRefId: workspaceId, directory: rootPath, checkoutRootPath: rootPath },
+        sessionPlacement: { kind: 'in_place', workspace: { v: 2, kind: 'managed', workspaceId, serverId, controller, managedId, rootPath } },
+      });
+    }
     expect(accepted.content.materializedLeaves).toMatchObject([{ role: { roleId: 'scout',
       instructions: 'Use the admitted Workflow Account.', engine: { agentTargetKey: 'agent:happier.agent.codex/codex' } } }]);
     if (caller === 'host_without_mode') expect(accepted.content.authorization).toMatchObject({

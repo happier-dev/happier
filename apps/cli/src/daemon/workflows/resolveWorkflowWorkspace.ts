@@ -8,7 +8,8 @@ import type {
   WorkflowProjectTargetV1,
 } from '@happier-dev/protocol/workflows';
 import type { WorkflowAcceptedSnapshotV1, WorkflowDefinitionV1, WorkflowProgressEnvelopeV1, WorkflowStep, WorkflowWorkspaceProgressV1 } from '@happier-dev/protocol';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { matchesAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWorkspace';
 import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import {
@@ -240,28 +241,32 @@ export async function admitWorkflowProjectWorkspace(input: Readonly<{
   }> | null>;
   pathIsDirectory?: (path: string) => Promise<boolean>;
 }>): Promise<WorkflowProjectWorkspaceAdmission> {
-  // Detached Run admission currently carries a controller cwd, not a guest address.
-  if (input.projectTarget.sessionPlacement?.kind === 'in_place' && input.executionTargetKind === 'detached_run') {
-    return { ok: false, code: 'workflow_in_place_not_available' };
-  }
   const normalizedTarget = normalizeWorkflowProjectTarget({
     projectTarget: input.projectTarget,
     env: input.env,
     platform: input.platform,
   });
   if (!normalizedTarget) return { ok: false, code: 'workspace_unavailable' };
-  const placement = normalizedTarget.sessionPlacement;
-  const managed = placement?.kind === 'in_place' ? placement.workspace : undefined;
-  const refId = managed?.workspaceId ?? normalizedTarget.workspaceRefId;
+  const requestedPlacement = normalizedTarget.sessionPlacement;
+  const requestedManaged = requestedPlacement?.kind === 'in_place' ? requestedPlacement.workspace : undefined;
+  const refId = requestedManaged?.workspaceId ?? normalizedTarget.workspaceRefId;
+  const workspaceRef = refId ? await input.resolveWorkspaceRef?.(refId) ?? null : null;
+  // A Project-launched Run can name the checkout by its signed Account row id.
+  const selectedAddress = requestedPlacement === undefined && workspaceRef ? workspaceAddressFromRefV2(workspaceRef) : undefined;
+  const managed = requestedManaged ?? (selectedAddress?.kind === 'managed' ? selectedAddress : undefined);
+  // Detached Run admission currently carries a controller cwd, not a guest address.
+  if (managed && input.executionTargetKind === 'detached_run') return { ok: false, code: 'workflow_in_place_not_available' };
+  const placement = managed ? { kind: 'in_place' as const, workspace: managed } : requestedPlacement;
   if (managed && (input.currentServerId !== managed.serverId || normalizedTarget.machineId !== managed.controller.machineId
     || (normalizedTarget.workspaceRefId && normalizedTarget.workspaceRefId !== refId)
     || getPathRemainderWithinBase(normalizedTarget.directory, managed.rootPath) === null)) {
     return { ok: false, code: 'workspace_conflict' };
   }
-  const workspaceRef = refId ? await input.resolveWorkspaceRef?.(refId) ?? null : null;
   let workspaceSource: WorkspaceSource | undefined;
   if (managed) {
-    if (!input.accountId || !matchesAcceptedManagedWorkspaceRef(workspaceRef, managed)) return { ok: false, code: 'workspace_conflict' };
+    if (!input.accountId || requestedManaged && !matchesAcceptedManagedWorkspaceRef(workspaceRef, requestedManaged)) {
+      return { ok: false, code: 'workspace_conflict' };
+    }
     workspaceSource = await selectManagedWorkflowWorkspaceSource({ workspace: managed,
       accountId: input.accountId, restore: input.restoreManagedWorkspaceSource, signal: input.signal }) ?? undefined;
     if (!workspaceSource) return { ok: false, code: 'workspace_unavailable' };

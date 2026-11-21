@@ -508,18 +508,19 @@ describe('shared Account workflow run owner', () => {
     } })).rejects.toMatchObject({ code: 'currentness_conflict' });
   });
 
-  it('freezes the admitted guest repository definition even with a controller repository at the same path', async () => {
+  it.each(['placement', 'checkout-id'] as const)('freezes the admitted guest repository with %s even at the same controller path', async targetKind => {
     const directory = '/repo';
     const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-workspace', managedId: 'guest',
       controller: { machineId: 'machine-a', installationId: 'installation' }, rootPath: directory } as const;
-    const projectTarget = { machineId: 'machine-a', directory,
-      sessionPlacement: { kind: 'in_place' as const, workspace } };
+    const sessionPlacement = { kind: 'in_place' as const, workspace };
+    const projectTarget = { machineId: 'machine-a', directory, ...(targetKind === 'placement'
+      ? { sessionPlacement } : { workspaceRefId: workspace.workspaceId }) };
     const commit = 'b'.repeat(40);
     const depot = new Map<string, ReturnType<typeof runSnapshot>>();
     let controllerReads = 0;
     let guestReads = 0;
     const admission = {
-      admitInPlaceWorkspace: async (input: Parameters<NonNullable<WorkflowAccountRunActionDeps['admitInPlaceWorkspace']>>[0]) => {
+      admitProjectWorkspace: async (input: Parameters<NonNullable<WorkflowAccountRunActionDeps['admitProjectWorkspace']>>[0]) => {
         expect(input.projectTarget).toEqual(projectTarget);
         expect(input.accountId).toBe('account-1');
         return {
@@ -531,7 +532,7 @@ describe('shared Account workflow run owner', () => {
           },
           prepareWorkspace: async () => ({ ok: true as const, workspaceTarget: {
             project: { machineId: projectTarget.machineId, directory, checkoutRootPath: directory, workspaceRefId: workspace.workspaceId },
-            sessionPlacement: projectTarget.sessionPlacement,
+            sessionPlacement,
           } }),
         };
       },

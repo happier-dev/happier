@@ -552,15 +552,15 @@ export type WorkflowAccountRunActionDeps = Readonly<{
     directory: string;
   }>, readAgentStartContext: () => ReturnType<typeof resolveActionAgentStartContextV1>) => Promise<Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>>;
   assertCurrent?: () => void;
-  /** Host effect bound once to the exact requester and attached Project. */
-  admitInPlaceWorkspace?: (input: Readonly<{
+  /** Resolve the exact requester checkout once, before repository source reads. */
+  admitProjectWorkspace?: (input: Readonly<{
     projectTarget: WorkflowProjectTargetV1;
     executionTargetKind: WorkflowAcceptedSnapshotV1['executionTarget']['kind'];
     accountId: string;
     signal?: AbortSignal;
   }>) => Promise<Readonly<{
     ok: true;
-    readRepositoryWorkflow: NonNullable<WorkflowAccountRunActionDeps['readRepositoryWorkflow']>;
+    readRepositoryWorkflow?: NonNullable<WorkflowAccountRunActionDeps['readRepositoryWorkflow']>;
     prepareWorkspace: (definition: WorkflowDefinitionV1) => Promise<WorkflowAcceptedWorkspaceTargetPreparation>;
   }> | Extract<WorkflowAcceptedWorkspaceTargetPreparation, { ok: false }>>;
   prepareWorkspace?: (input: Readonly<{ projectTarget: NonNullable<WorkflowMachineTarget['project']>; definition: WorkflowDefinitionV1 }>) =>
@@ -1254,6 +1254,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       const normalizedExpectedTarget = expectedTarget
         ? normalizeProjectTargetForComparison(expectedTarget, deps.normalizeAbsolutePath)
         : null;
+      const acceptedPlacement = existing.accepted.workspaceTarget.sessionPlacement;
+      const matchesPlacement = sameStrictJsonValue(acceptedPlacement, expectedTarget?.sessionPlacement)
+        || (expectedTarget?.sessionPlacement === undefined && acceptedPlacement?.kind === 'in_place'
+          && expectedTarget?.workspaceRefId === acceptedPlacement.workspace.workspaceId);
       const acceptedProjectTarget = {
         machineId: existing.accepted.machineId,
         directory: existing.accepted.workspaceTarget.project.directory,
@@ -1274,7 +1278,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       if (!sameSource
         || (combined !== undefined && !sameStrictJsonValue(existing.accepted.approvedOperation?.parent, combined.parent))
         || existing.snapshot.managedCreationId !== (input.managedCreation?.managedId ?? null)
-        || !sameStrictJsonValue(existing.accepted.workspaceTarget.sessionPlacement, expectedTarget?.sessionPlacement)
+        || !matchesPlacement
         || ((inputSource.kind === 'saved' || inputSource.kind === 'inline') && inputSource.visibleTeamId !== undefined
           && inputSource.visibleTeamId !== existing.snapshot.keyCensus.visibleTeamId)
         || !sameStrictJsonValue(existing.accepted.roleOverrides ?? [], replaySource?.accepted.roleOverrides ?? input.roleOverrides ?? [])
@@ -1344,18 +1348,18 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
-    const inPlaceWorkspace = !replaySource && projectTarget.sessionPlacement?.kind === 'in_place'
+    const workspaceAdmission = !replaySource && (deps.admitProjectWorkspace || projectTarget.sessionPlacement?.kind === 'in_place')
       ? await measureActionStartPhaseV1(args.context, 'workflow_workspace', async () => {
         deps.assertCurrent?.();
-        const admitted = await deps.admitInPlaceWorkspace?.({ projectTarget, executionTargetKind: executionTarget.kind, accountId,
+        const admitted = await deps.admitProjectWorkspace?.({ projectTarget, executionTargetKind: executionTarget.kind, accountId,
           ...(args.context.signal ? { signal: args.context.signal } : {}) });
         deps.assertCurrent?.();
         args.context.signal?.throwIfAborted();
         return admitted ?? { ok: false as const, code: 'workspace_unavailable' as const };
       }) : null;
-    if (inPlaceWorkspace?.ok === false) throw workflowError('target_unavailable', {
+    if (workspaceAdmission?.ok === false) throw workflowError('target_unavailable', {
       ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
-      errorCode: inPlaceWorkspace.code,
+      errorCode: workspaceAdmission.code,
     });
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
     let agentStartContext: ReturnType<typeof resolveActionAgentStartContextV1> | undefined;
@@ -1366,7 +1370,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         () => deps.resolveMaterializationContext!(args, projectTarget, readAgentStartContext));
     }
     const resolvedDefinition = await readStartDefinition(args, projectTarget, ingressContext, replaySource, checkedInline,
-      projectExisting, inPlaceWorkspace?.readRepositoryWorkflow);
+      projectExisting, workspaceAdmission?.readRepositoryWorkflow);
     if (resolvedDefinition.kind === 'existing') return resolvedDefinition.prepared;
     let { definition, definitionValidation, metadata, source } = resolvedDefinition;
     if (!materialization) {
@@ -1415,14 +1419,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         if (!current || current.occurrenceId !== type.occurrenceId) throw workflowError('input_type_retired');
       }
     }
-    const prepare = inPlaceWorkspace?.prepareWorkspace
+    const prepare = workspaceAdmission?.prepareWorkspace
       ?? (deps.prepareWorkspace ? (definition: WorkflowDefinitionV1) => deps.prepareWorkspace!({ projectTarget, definition }) : undefined);
     if (!replaySource && !prepare) throw workflowError('target_unavailable', actionStartTargetUnavailableV1(args.context,
       'workflow_workspace', 'workspace_unavailable').details);
     const preparedWorkspace = replaySource ? { ok: true as const, workspaceTarget: replaySource.accepted.workspaceTarget }
       : await measureActionStartPhaseV1(args.context, 'workflow_workspace', async () => {
         const result = await prepare!(definition);
-        if (inPlaceWorkspace) deps.assertCurrent?.();
+        if (workspaceAdmission) deps.assertCurrent?.();
         args.context.signal?.throwIfAborted();
         return result;
       });
