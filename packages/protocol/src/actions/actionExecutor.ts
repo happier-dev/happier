@@ -3161,15 +3161,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const request = readRecord(admittedInput);
       // Forward the authored choice only for native Runs without Role selection.
       // A Voice Run also launches a commit Agent with its own selection.
-      const explicitRunDefault = !roleSelected && agentStartAction && isAgentStartActionV1(actionId)
+      const roleFreeNativeRun = !roleSelected && agentStartAction && isAgentStartActionV1(actionId)
         && actionId !== 'session.spawn_new' && actionId !== 'voice_agent.start' && request.intent !== 'voice_agent'
-        && (actionId === 'review.start'
-          ? (admittedInput as ReviewStartInput).reviewers.every(reviewer => reviewer.kind === 'engine'
-            && (reviewer.childSelection ?? request.childSelection) === 'agentDefault')
-          : request.childSelection === 'agentDefault');
+        && (actionId !== 'review.start' || (admittedInput as ReviewStartInput).reviewers.every(reviewer => reviewer.kind === 'engine'));
+      const explicitRunDefault = roleFreeNativeRun && (actionId === 'review.start'
+        ? (admittedInput as ReviewStartInput).reviewers.every(reviewer => reviewer.kind === 'engine'
+          && (reviewer.childSelection ?? request.childSelection) === 'agentDefault')
+        : request.childSelection === 'agentDefault');
+      const attachedRoleFreeRun = roleFreeNativeRun && !explicitRunDefault && request.sessionId !== null
+        && readRecord(request.target).kind !== 'detached' && request.resumeHandle === undefined;
       const resolved = admittedWorkflowLeafStart ? ctx.agentStartContext : await resolveActionAgentStartContextV1(deps,
         { ...ctx, callerPermissionMode: caller.effectiveCallerMode }, typeof targetSessionId === 'string' ? targetSessionId : undefined,
-        explicitRunDefault ? { executionRunChildSelection: 'agentDefault' } : undefined);
+        explicitRunDefault ? { executionRunChildSelection: 'agentDefault' }
+          : attachedRoleFreeRun ? { purpose: 'attached_execution_run' } : undefined);
       if (resolved && 'ok' in resolved) return classifyExecutionRunStartPreDispatchFailure(actionId, resolved);
       // This fact comes from the authenticated Action caller, never authored input.
       const startContext = resolved ? { ...resolved, callerPermissionCeiling: ceiling,

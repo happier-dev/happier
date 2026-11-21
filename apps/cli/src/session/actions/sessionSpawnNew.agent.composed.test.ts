@@ -159,6 +159,7 @@ it('admits a J6 Account-default child without inheriting the unavailable parent 
   });
   const executor = createActionExecutor({ executionRunStart, resolveAgentStartContext: deps.resolveAgentStartContext,
     executionRunCheckProtocolV2: async () => ({ ok: true }),
+    reviewEnginesList: async () => ({ items: [{ value: 'agent:happier.agent.claude/claude', label: 'Claude' }] }),
   } as ActionExecutorDeps);
   const bridge = createActionToolExecutorBridge({ surface: 'agent', defaultSessionMachineId: machineId,
     resolveCallerPermissionMode: () => 'yolo',
@@ -198,6 +199,41 @@ it('admits a J6 Account-default child without inheriting the unavailable parent 
         refusal: { code: 'caller_agent_unavailable', phase: 'agent_start_context' } } } });
   }
   expect(executionRunStart).not.toHaveBeenCalled();
+
+  appliedSelection = { status: 'unavailable', reason: 'direct_custody' };
+  const choiceRequired = { ok: false, errorCode: 'execution_run_child_choice_required',
+    details: { executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' } } };
+  expect(await invoke({})).toMatchObject(choiceRequired);
+  // Choosing a model alone still asks to inherit the credential route.
+  expect(await invoke({ modelId: 'applied-model' })).toMatchObject(choiceRequired);
+  const runParentUnavailable = { ok: false, errorCode: 'target_unavailable',
+    details: { executionRunStart: { runCreation: 'noRunCreated',
+      refusal: { code: 'caller_agent_unavailable', phase: 'agent_start_context' } } } };
+  expect(await invoke({ connectedServices: null })).toMatchObject(runParentUnavailable);
+  const invokeSibling = (actionId: string, input: unknown) => bridge.executeActionByToolName('action_execute', {
+    actionId, input,
+  }, sessionId);
+  const engineId = 'agent:happier.agent.claude/claude';
+  const delegated = await invokeSibling('subagents.delegate.start', {
+    sessionId, backendTargetKeys: [engineId, 'agent:happier.agent.codex/codex'],
+    instructions: 'Delegate to these Agents.', permissionMode: 'read_only',
+  });
+  expect(delegated, JSON.stringify(delegated)).toMatchObject({ ok: true, result: { results: [choiceRequired, choiceRequired] } });
+  const reviewed = await invokeSibling('review.start', { sessionId, scope: 'repository', instructions: 'Review the repository.',
+    reviewRound: { reviewId: 'custody-review', roundOrdinal: 1 },
+    reviewers: [{ kind: 'engine', engineId, modelId: 'applied-model' }],
+  });
+  expect(reviewed, JSON.stringify(reviewed)).toMatchObject({ ok: true, result: { results: [choiceRequired] } });
+  expect(await invokeSibling('session.spawn_new', inheritedCodexInput)).toMatchObject({
+    ok: false, errorCode: 'target_unavailable', details: { code: 'target_unavailable', reason: 'caller_agent_unavailable' },
+  });
+  for (const reason of ['not_registered', 'validation_failed'] as const) {
+    appliedSelection = { status: 'unavailable', reason };
+    expect(await invoke({})).toMatchObject(runParentUnavailable);
+  }
+  expect(executionRunStart).not.toHaveBeenCalled();
+  appliedSelection = { status: 'unavailable', reason: 'direct_custody' };
+  expect(await invoke({ childSelection: 'agentDefault' })).toMatchObject(accepted);
 });
 
 // Exact author input from QA-R27's completed action_execute tool, with no

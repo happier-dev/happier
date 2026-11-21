@@ -44,6 +44,7 @@ export function resolveCliAgentStartContextV1(input: Readonly<{
   backendTarget: PersistedBackendTargetRefV2 | null;
   metadata: Readonly<Record<string, unknown>> | null;
   appliedChildSelection?: ExecutionRunAppliedParentSelection;
+  directParentCustody?: true;
   /** Workflow daemon birth only: resolved child engine, never origin readback. */
   workflowStepRoleDefaultEngine?: RoleEngineV1;
   starterDepth: number | undefined;
@@ -113,7 +114,9 @@ export function resolveCliAgentStartContextV1(input: Readonly<{
       ? { kind: 'originless', runId: workflowRun.runId, runDepth: workflowRun.runDepth,
         ...(workflowRun.runOriginSessionId ? { runOriginSessionId: workflowRun.runOriginSessionId } : {}) }
       : { kind: 'session', sessionId: input.sessionId, starterDepth, turnDepth: input.turnDepth },
-    baseline: { machineId: input.machineId, directory: input.directory, ...(applied ? { configuration: {
+    baseline: { machineId: input.machineId, directory: input.directory,
+      ...(input.directParentCustody && !workflowRun ? { directParentCustody: true } : {}),
+      ...(applied ? { configuration: {
       agentTarget: input.backendTarget, modelSelection: model, permissionMode: ceiling,
       agentModeId: mode, configOptions,
       ...(typeof metadata.profileId === 'string' ? { profileId: metadata.profileId } : {}),

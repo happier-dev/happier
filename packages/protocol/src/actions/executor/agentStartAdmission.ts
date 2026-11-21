@@ -640,7 +640,8 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
             connectedServicesDefaultServiceIds: selected.connectedServicesDefaultServiceIds,
             modelSelection: authoredModel ?? selected.modelSelection,
             teamCredentialModel: selected.teamCredentialModel, childSelection: selected.childSelection,
-        }, machineId !== undefined && machineId !== baseline.machineId ? undefined : baseline.configuration);
+        }, machineId !== undefined && machineId !== baseline.machineId ? undefined
+            : baseline.directParentCustody ? { directParentCustody: true } : baseline.configuration);
         return { ...selected,
             ...(inherited.profileId !== undefined ? { [profileField]: inherited.profileId } : {}),
             ...(inherited.connectedServices !== undefined ? { connectedServices: projectStartConnectedServicesV1(inherited.connectedServices, kind) } : {}),

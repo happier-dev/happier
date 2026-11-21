@@ -247,6 +247,17 @@ describe('resolveExecutionRunChildSelection', () => {
             .toThrow(expect.objectContaining({ code: 'execution_run_parent_selection_unavailable' }));
     });
 
+    it('requires a child choice when the applied read proves direct custody', () => {
+        const parent = { status: 'unavailable', reason: 'direct_custody' } as const;
+        expect(() => resolveExecutionRunChildSelection({ backendTarget: codexTarget, lifecycle: 'attached', parent }))
+            .toThrow(expect.objectContaining({ code: 'execution_run_child_choice_required', details: {
+                childChoice: expect.objectContaining({ parentRouteCompatibility: 'incompatible' }),
+            } }));
+        expect(() => resolveExecutionRunChildSelection({
+            backendTarget: codexTarget, lifecycle: 'attached', parent, connectedServices: null,
+        })).toThrow(expect.objectContaining({ code: 'execution_run_parent_selection_unavailable' }));
+    });
+
     it('refuses an omitted model when only native auth is explicit and applied model is unavailable', () => {
         expect(() => resolveExecutionRunChildSelection({
             backendTarget: codexTarget, lifecycle: 'attached', parent: { status: 'unavailable' }, connectedServices: null,

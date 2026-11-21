@@ -22,7 +22,7 @@ import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV
 import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
 import type { SessionModelRefV2 } from '../../providers/selection/v2.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
-import { stampAgentStartSelectionV1 } from './agentStartAdmission.js';
+import { actionStartTargetUnavailableV1, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
 import { refuseAgentStartWhenNotReadyV1 } from './agents/agentBackendReadiness.js';
 
 /** Native Run dispatch consumes the same admitted selection for every start Action. */
@@ -38,11 +38,6 @@ export async function startExecutionRunWithSelectionV1(
   const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
   const current = resolved && machineId && machineId !== resolved.baseline.machineId
     ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
-  const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
-    machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
-    backendTarget: input.backendTarget,
-  }, context);
-  if (notReady) return notReady;
   const request = { ...input,
     // An absent root choice remains unset; authored null is an opt-out and attached children inherit.
     approvalProfileId: sessionId === null && !input.resumeHandle && input.approvalProfileId === undefined
@@ -50,6 +45,16 @@ export async function startExecutionRunWithSelectionV1(
       : resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
   const admitted = current
     ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
+  // The refusal-only baseline cannot admit other selections that previously
+  // needed a full snapshot. An explicit Account default is already independent.
+  if (resolved?.baseline.directParentCustody && (!current?.baseline.directParentCustody || input.childSelection !== 'agentDefault')) {
+    return classifyExecutionRunStartFailure(actionStartTargetUnavailableV1(context, 'agent_start_context', 'caller_agent_unavailable'), 'noRunCreated');
+  }
+  const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
+    machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
+    backendTarget: input.backendTarget,
+  }, context);
+  if (notReady) return notReady;
   const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(admitted, context);
   if (modelNotGranted) return modelNotGranted;
   return deps.executionRunStart(sessionId, admitted, { ...opts, approvalProfileTeamOrGroupDerived:

@@ -176,6 +176,12 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
             return resolveExecutionRunChildSelectionInput({ ...input, lifecycle: 'independent',
                 modelSelection: { ...input.fallbackSelection, modelId: modelId ?? input.fallbackSelection.modelId } });
         }
+        if (parent?.reason === 'direct_custody') {
+            resolveAgentStartBaselineSelectionV1({
+                ...input, targetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget)),
+                profileId: undefined, connectedServices: input.connectedServices,
+            }, { directParentCustody: true });
+        }
         throw childSelectionRefusal('execution_run_parent_selection_unavailable',
             'The parent applied model and route are unavailable. Choose an explicit child model and route.');
     }

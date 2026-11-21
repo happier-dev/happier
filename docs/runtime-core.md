@@ -1468,6 +1468,10 @@ direct Team custody (`direct_custody`), no matching target (`not_registered`),
 or failed validation (`validation_failed`). The daemon and Session runner
 carry that reason without credential identifiers, credential material, or
 parser errors. A reasonless response remains a generic unavailable result.
+In 0.3 development source, an attached, Role-free Run that would inherit a
+known direct Team credential returns `execution_run_child_choice_required`
+with `noRunCreated`. Missing registrations and failed validation still return
+the generic start-context refusal through Actions.
 
 Attached SCM summary Runs inherit the applied parent when available; otherwise
 they use the configured summary model with the child Account's default route.

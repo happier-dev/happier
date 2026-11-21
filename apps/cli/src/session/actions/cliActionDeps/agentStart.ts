@@ -98,7 +98,9 @@ export function createCliAgentStartContext(
       // and no launch configuration when the native selector allows it.
       const hasLaunchBaseline = !scopeOnly && (appliedChildSelection?.status === 'applied' || Boolean(workflowStepRoleDefaultEngine));
       const childSelection = options?.executionRunChildSelection;
-      if (!scopeOnly && (!session.backendTarget || (!hasLaunchBaseline
+      const directParentCustody = options?.purpose === 'attached_execution_run'
+        && appliedChildSelection?.status === 'unavailable' && appliedChildSelection.reason === 'direct_custody';
+      if (!scopeOnly && (!session.backendTarget || (!hasLaunchBaseline && !directParentCustody
         && (!childSelection || executionRunChildSelectionNeedsAppliedParent({ lifecycle: 'attached', childSelection }))))) {
         return { effectiveSnapshotUnavailable: true } as const;
       }
@@ -124,13 +126,13 @@ export function createCliAgentStartContext(
           defaultEngine: readCliSessionEngineBaselineV1({ backendTarget: session.backendTarget!, appliedChildSelection }).defaultEngine,
           availableAgentTargetKeys: availableAgents.items.filter(item => item.enabled).map(item => item.targetKey),
         }, context.signal)) : undefined;
-      return { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline };
+      return { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline, directParentCustody };
     };
     const { resolveCliAgentStartContextV1 } = await import("../resolveCliAgentStartContextV1");
     const prepared = await prepareStartReads();
     context.signal?.throwIfAborted();
     if (prepared.effectiveSnapshotUnavailable) return refuse('caller_agent_unavailable');
-    const { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline } = prepared;
+    const { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline, directParentCustody } = prepared;
     if (!scopeOnly && params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
       return refuse('caller_session_unavailable');
     }
@@ -143,6 +145,7 @@ export function createCliAgentStartContext(
       backendTarget: session.backendTarget ?? null,
       metadata: session.metadata, starterDepth: typeof starterDepth === 'number' ? starterDepth : undefined, runCaller,
       appliedChildSelection,
+      ...(directParentCustody ? { directParentCustody: true } : {}),
       workflowStepRoleDefaultEngine,
       turnDepth,
       callerPermissionMode: context.callerPermissionMode ?? null, settings,

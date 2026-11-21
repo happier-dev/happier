@@ -21,7 +21,7 @@ export function resolveAgentStartBaselineSelectionV1<Profile, Connected>(input: 
     teamCredentialModel?: unknown;
     childSelection?: unknown;
 }>, parent: (Omit<NonNullable<AgentStartContextV1['baseline']['configuration']>, 'connectedServices'>
-    & Readonly<{ connectedServices?: ConnectedServiceBindingsV2 | null }>) | undefined): Readonly<{
+    & Readonly<{ connectedServices?: ConnectedServiceBindingsV2 | null; directParentCustody?: true }>) | undefined): Readonly<{
     profileId?: Profile | string;
     connectedServices?: Connected | ConnectedServiceBindingsV2 | null;
 }> {
@@ -39,8 +39,9 @@ export function resolveAgentStartBaselineSelectionV1<Profile, Connected>(input: 
     const connectedServices = resolveConnectedServiceBindingsForChild({ explicitSelection: input.connectedServices,
         resolvedTargetKey: input.targetKey, originTargetKey,
         originBindings: explicitSource ? undefined : parent?.connectedServices });
-    if (input.connectedServices === undefined && connectedServices !== undefined && input.targetKey && parent?.connectedServices
-        && Object.values(parent.connectedServices.bindingsByServiceId).some(binding => binding.source === 'team_resource' && binding.deliveryMode === 'direct')) {
+    if (input.connectedServices === undefined && !explicitSource && input.targetKey
+        && (parent?.directParentCustody || (connectedServices !== undefined && parent?.connectedServices
+            && Object.values(parent.connectedServices.bindingsByServiceId).some(binding => binding.source === 'team_resource' && binding.deliveryMode === 'direct')))) {
         throw new AgentStartBaselineSelectionErrorV1();
     }
     const profileId = input.profileId === undefined && sameAgent && input.childSelection !== 'agentDefault'

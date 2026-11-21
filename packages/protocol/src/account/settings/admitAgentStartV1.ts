@@ -73,6 +73,8 @@ export type AgentStartBaselineV1 = Readonly<{
   machineId: string;
   directory: string;
   configuration?: AgentStartConfigurationV1;
+  /** The applied reader proved direct custody without disclosing a binding. */
+  directParentCustody?: true;
 }>;
 
 /** FIN's role materializer is the sole producer of these accepted leaf selections. */

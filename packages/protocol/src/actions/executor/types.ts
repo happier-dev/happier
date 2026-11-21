@@ -2212,10 +2212,11 @@ export type ActionExecutorDeps = Readonly<{
    * Session-scope readers need the same validated caller/baseline but consume
    * no launch Role or Agent selections. Run admission additionally retains
    * Account work policy. An explicit Run choice is forwarded only when no
-   * child consumes a Role snapshot. Omission retains full start admission.
+   * child consumes a Role snapshot. An attached Run can carry a known direct
+   * custody refusal to concrete child selection without an applied baseline.
    */
   resolveAgentStartContext?: (context: ActionExecutorContext,
-    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
+    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_run' | 'attached_execution_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
   /** Live Session role owner; checked again after deferred approval/prepared invocation. */
   getCurrentWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
   /**
