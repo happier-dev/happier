@@ -116,6 +116,7 @@ type TelemetryJourneyActor = Readonly<{
     accountId: string;
     credentials: ReturnType<typeof readS0ControllerCredentials>;
     invoke: Invoke;
+    invokeSettled: Invoke;
     accepted(name: string, input: unknown, machineId?: string): Promise<unknown>;
     prepare(kind: string, body: unknown): Promise<Readonly<{
         contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number;
@@ -136,7 +137,11 @@ export type ProductionTelemetryCollectorAppJourney = (context: Readonly<{
     signal: AbortSignal;
     nativeDockerEngineId: string;
     nativeDocker(args: readonly string[]): Promise<Readonly<{ stdout: string; stderr: string }>>;
-    initiator: TelemetryJourneyActor & Readonly<{ projectSourceId: string; teamId: string }>;
+    initiator: TelemetryJourneyActor & Readonly<{
+        projectSourceId: string;
+        teamId: string;
+        grantHostManage(): Promise<void>;
+    }>;
 }>) => Promise<Readonly<{
     machineId: string; environmentId: string;
     restart(): Promise<void>; stop(): Promise<void>; start(): Promise<void>;
@@ -359,8 +364,10 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                             publicKey: new Uint8Array(keys.publicKey) } : null });
                     const invokeReader = createInvoke(createExecutor(readerCredentials, undefined,
                         options?.consentToFixtureHost ? account.id : undefined), home.serverId, account.id);
+                    const invokeSettled: Invoke = async (name, input, machineId) =>
+                        support.settlePublicApproval(invokeReader, await invokeReader(name, input, machineId));
                     const acceptedReader = async (name: string, input: unknown, machineId?: string) => {
-                        const result = await support.settlePublicApproval(invokeReader, await invokeReader(name, input, machineId));
+                        const result = await invokeSettled(name, input, machineId);
                         expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
                             : { name, errorCode: result.errorCode, failureCause: result.failureCause })).toBe(true);
                         if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
@@ -374,7 +381,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                             contentBodyVersion: artifact.revision.bodyVersion };
                     };
                     return { accountId: account.id, token, credentials: readerCredentials, invoke: invokeReader,
-                        accepted: acceptedReader, prepare: prepareReader };
+                        invokeSettled, accepted: acceptedReader, prepare: prepareReader };
                 };
                 const teammate = await createReader();
                 const outsider = await createReader();
@@ -715,16 +722,19 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     { teamId: operatorTeam.id, accountId: home.accountId, role: 'owner' },
                     { teamId: operatorTeam.id, accountId: collectorOperator.accountId, role: 'owner' },
                 ] });
-                // Only AB receives deployment use. The separate AC reader Team
-                // never receives a collector or hosting-Machine grant.
-                await accepted(MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1, { serverId: home.serverId, machineId: home.machineId,
-                    principal: { kind: 'team', teamId: operatorTeam.id }, level: 'view' });
-                const savedOperatorGrant = await db.machineGrant.findFirst({
-                    where: { machineId: home.machineId, teamId: operatorTeam.id },
-                    select: { accessLevel: true },
-                });
-                expect(savedOperatorGrant).toEqual({ accessLevel: 'view' });
-                await accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId: home.machineId });
+                // Progress the operator from Use to Manage through reviewed grants.
+                // The separate reader Team never receives a grant on either Machine.
+                const grantCollectorHost = async (level: 'view' | 'admin') => {
+                    await accepted(MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1, { serverId: home.serverId, machineId: home.machineId,
+                        principal: { kind: 'team', teamId: operatorTeam.id }, level });
+                    const grant = await db.machineGrant.findFirst({
+                        where: { machineId: home.machineId, teamId: operatorTeam.id },
+                        select: { accessLevel: true },
+                    });
+                    expect(grant).toEqual({ accessLevel: level });
+                    await accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId: home.machineId });
+                };
+                await grantCollectorHost('view');
                 const operatorSourceResponse = await fetch(`${home.baseUrl}/v1/projects/sources`, {
                     method: 'POST', headers: { Authorization: `Bearer ${collectorOperator.token}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ serverId: home.serverId, requestKey: randomUUID(), name: 'F14 deployed collector', audience: [],
@@ -738,7 +748,11 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const secondCollector = await support.collectorAppJourney?.({ home, daemon, credentials, invoke, accepted,
                     prepare, createEnvironment, readEnvironment, cleanup, signal: lifetime.signal, nativeDockerEngineId,
                     nativeDocker: args => execute('docker', [...args]),
-                    initiator: { ...collectorOperator, projectSourceId: operatorSource.source.id, teamId: operatorTeam.id } });
+                    initiator: { ...collectorOperator, projectSourceId: operatorSource.source.id, teamId: operatorTeam.id,
+                        grantHostManage: async () => {
+                            expect(await db.deploymentEnvironment.count({ where: { projectSourceId: operatorSource.source.id } })).toBe(0);
+                            await grantCollectorHost('admin');
+                        } } });
                 const otherEnvironmentId = await createEnvironment('F14 isolation control');
                 const other = await readEnvironment(otherEnvironmentId);
                 await accepted('deployments.environments.telemetry.set', { serverId: home.serverId,

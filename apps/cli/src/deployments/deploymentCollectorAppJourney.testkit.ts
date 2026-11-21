@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { expect } from 'vitest';
 import { z } from 'zod';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries/registryActionsV1';
-import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentTemplateInstantiateResultV1Schema,
+    type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptResultV1Schema,
     DeploymentDomainMutationResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentAppMachineAssociationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
@@ -34,14 +36,20 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready' || !selected.summary.version) {
         throw new Error('The catalog must produce the ready collector App');
     }
-    const applied = DeploymentTemplateInstantiateResultV1Schema.parse(await initiator.accepted('deployments.templates.instantiate', {
+    const instantiate = {
         mode: 'apply', serverId: home.serverId, machineId: home.machineId, projectSourceId: initiator.projectSourceId,
         templateRef: { sourceId: catalog.id, itemId: selected.summary.itemId, version: selected.summary.version, ref: selected.payload.ref },
         environment: { kind: 'create', name: 'F14 collector App', requestKey: randomUUID(), protection: 'nonProduction',
             purpose: 'standard', deployerMode: 'managers', controllerMachineId: home.machineId },
         target: { kind: 'new', installationId: home.installationId }, destination: { kind: 'stored' },
         bindings: [{ purpose: 'variable', phase: 'runtime', name: 'HAPPIER_SERVER_URL', source: { kind: 'value', value: home.baseUrl } }],
-    }));
+    } satisfies DeploymentTemplateInstantiateInputV1;
+    const useAttempt = await initiator.invokeSettled('deployments.templates.instantiate', instantiate, home.machineId);
+    expect(useAttempt).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
+    if (!useAttempt.ok) expect(useAttempt.effectAttempted).not.toBe(true);
+    await initiator.grantHostManage();
+    const applied = DeploymentTemplateInstantiateResultV1Schema.parse(
+        await initiator.accepted('deployments.templates.instantiate', instantiate, home.machineId));
     if (applied.kind !== 'applied') throw new Error(`Collector template did not apply: ${applied.kind}`);
     const environmentId = applied.environmentId;
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
