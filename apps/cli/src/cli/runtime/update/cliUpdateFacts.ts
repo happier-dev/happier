@@ -1,4 +1,5 @@
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { CliInstallSource, CliUpdateFacts } from '@happier-dev/protocol';
 import {
@@ -28,9 +29,24 @@ function comparablePath(path: string, platform: NodeJS.Platform): string {
 }
 
 /**
+ * Same file, including a hardlink. `realpath` does not follow hardlinks, so `bin\\happier.exe` stays `bin`.
+ * File indexes on some NTFS volumes do not fit in a JavaScript number, and nearby files then compare equal.
+ */
+function sameInstalledFile(left: string, right: string): boolean {
+  try {
+    const a = statSync(left, { bigint: true });
+    const b = statSync(right, { bigint: true });
+    return a.ino > 0n && a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Where the running CLI came from. `managed` only when this process runs a version the managed
  * install of its own ring recorded (`current.version` present and the executable inside that
- * install's `versions/`) — the install the one update transaction can replace and restore.
+ * install's `versions/`, or a hardlink of that payload such as `bin\\happier.exe`) — the install
+ * the one update transaction can replace and restore.
  */
 function resolveRunningCliInstallSource(params: Readonly<{
   homeDir: string;
@@ -47,7 +63,13 @@ function resolveRunningCliInstallSource(params: Readonly<{
   });
   const { currentVersionId } = readInstalledVersionMarkersSync(layout);
   const versionsDir = `${comparablePath(layout.versionsDir, params.platform)}/`;
-  if (currentVersionId && comparablePath(params.execPath, params.platform).startsWith(versionsDir)) {
+  const versionPayload = currentVersionId
+    ? join(layout.versionsDir, currentVersionId, params.platform === 'win32' ? 'happier.exe' : 'happier')
+    : '';
+  if (currentVersionId && (
+    comparablePath(params.execPath, params.platform).startsWith(versionsDir)
+    || sameInstalledFile(params.execPath, versionPayload)
+  )) {
     return { installSource: 'managed', packageManagerCommand: null };
   }
   const origin = resolveRunningCliPackageManagerOrigin(params);
@@ -91,11 +113,11 @@ export function resolveRunningCliPackageManagerOrigin(params: Readonly<{
  * version, the ring-filtered cached daily check, the install source with the exact command that
  * updates it, whether its daemon can run the update itself, and the last update outcome.
  *
- * `canUpdateRemotely` is false on Windows: the daemon-started updater must outlive the service
- * restart, which systemd (`KillMode=process`) and launchd (`AbandonProcessGroup`) allow for a
- * detached child, but the Windows update path stops the payload's processes with `taskkill /T`
- * (which ends the updater, a descendant of the daemon) and Task Scheduler's handling of a detached
- * descendant across `/End` is unverified.
+ * `canUpdateRemotely` is true for a managed install on every platform. On Windows the daemon does
+ * not spawn the updater as its child: `spawnWindowsRemoteCliUpdate` runs it as the scheduled task
+ * `Happier\\happier-cli-remote-update`, so `taskkill /T` of the service does not end it, and the
+ * updater's ancestry check still refuses an in-session update. systemd (`KillMode=process`) and
+ * launchd (`AbandonProcessGroup`) already leave a detached child running.
  */
 export function readCliUpdateFacts(params: Readonly<{
   homeDir: string;
@@ -120,7 +142,7 @@ export function readCliUpdateFacts(params: Readonly<{
     channel: getReleaseRingCatalogEntry(params.publicReleaseRing).publicLabel,
     installSource,
     updateCommand: managed ? `${resolveManagedCliToolNameForRing(params.publicReleaseRing)} self update` : packageManagerCommand,
-    canUpdateRemotely: managed && params.platform !== 'win32',
+    canUpdateRemotely: managed,
     lastUpdate: managed
       ? readLastCliUpdateResult({ channel: params.publicReleaseRing, processEnv: { HAPPIER_HOME_DIR: params.homeDir } })
       : null,

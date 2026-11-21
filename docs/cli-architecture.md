@@ -757,7 +757,7 @@ app and machine-capability checks, not this cached CLI lookup. A cached version 
 than the running CLI therefore leaves the row's latest-version status unknown; it cannot certify
 that no newer release exists. A known newer cached version still offers the existing update path.
 Manual-only rows retain the producer's command and warn that services and sessions may stop.
-No new release lookup, cache writer, updater, or remote Windows update path is introduced.
+No new release lookup or cache writer is introduced.
 The popover keeps unknown and unchecked rows visible instead of counting them as current.
 Remote completion still follows the changed update outcome and running target version; a cached
 release answer no longer doubles as the completion proof.
@@ -776,9 +776,13 @@ service restart because systemd uses `KillMode=process` and launchd `AbandonProc
 outcome is observed when the machine reconnects: its metadata carries the new (or restored)
 version and `lastUpdate`; an attempt that ended without a restart (e.g. the download failed) is
 republished by the still-running daemon when the updater records it. npm/Homebrew installs are refused with their exact update command
-(`cli_not_managed`). Windows reports `canUpdateRemotely: false`: its update stops the payload's
-processes with `taskkill /T`, which would end the updater (a descendant of the daemon), and Task
-Scheduler's treatment of a detached descendant across `/End` is unverified.
+(`cli_not_managed`). On Windows the daemon starts that same `self update` as the scheduled task
+`Happier\happier-cli-remote-update` (the logged-on user, Interactive, not a child of the daemon).
+`taskkill /T` of the service therefore does not end the updater, and the updater's ancestry check
+still refuses an update started inside a daemon or a daemon-started session. The admission report
+is one JSON line at `<log>.admission.json` (`--admission-path`): a scheduled task cannot inherit
+the daemon's pipe. A managed install reports `canUpdateRemotely: true`, including when
+`bin\happier.exe` is a hardlink of the versioned payload (`realpath` does not follow hardlinks).
 
 Current development UI preserves an explicit failed outcome even when its target version is the
 version answering now; version equality can settle a pending reconnect, but does not prove service
