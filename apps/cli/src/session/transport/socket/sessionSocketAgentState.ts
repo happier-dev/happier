@@ -258,6 +258,7 @@ function tryDecryptMessageEnvelope(params: Readonly<{
 export async function waitForIdleViaSocket(params: Readonly<{
   token: string;
   sessionId: string;
+  scope?: 'user';
   ctx: SessionEncryptionContext | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
   timeoutMs: number;

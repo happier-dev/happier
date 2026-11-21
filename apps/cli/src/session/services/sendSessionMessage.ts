@@ -29,7 +29,6 @@ import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipien
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
-import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { EXECUTION_RUN_REPLY_REFUSALS_META_KEY, readExecutionRunReplyRefusal } from '@/agent/runtime/bridges/executionRun/messages/sessionMessageReply';
@@ -94,7 +93,7 @@ import {
 } from '@/session/shared/sessionTurnLifecycle';
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
-import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId } from './sessionInputAdmissionIdentity';
+import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, supportsAccountPendingForCliSessionInput } from './sessionInputAdmissionIdentity';
 import { MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import {
   resolveSessionMessageModel,
@@ -1736,7 +1735,7 @@ export async function sendSessionMessage(
   const sessionRole = readSessionAccessProjectionRoleV1(sessionTarget.rawSession);
   const usesAccountPending = protectedAdmission?.request.v === 1 && protectedAdmission.request.caller?.kind === 'host'
     && params.executionAuthority !== 'account_automation' && !params.callerInputAuthorization && !params.targetMachineId
-    && supportsAccountPendingForSessionInput({
+    && supportsAccountPendingForCliSessionInput({
       request: protectedAdmission.request, wait: params.wait, recipient,
       cliSession: { role: sessionRole, pairedTerminal: sessionRole === 'owner'
         && readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true })?.provenance.kind === 'terminal' },
@@ -2414,6 +2413,7 @@ export async function sendSessionMessage(
       token: params.credentials.token,
       sessionId,
       localId,
+      ...(usesSharedAccountPending ? { scope: 'user' as const } : {}),
       deadlineMs,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders
@@ -2445,6 +2445,7 @@ export async function sendSessionMessage(
         token: params.credentials.token,
         sessionId,
         localId,
+        ...(usesSharedAccountPending ? { scope: 'user' as const } : {}),
         materializedSeq: materialized.seq,
         materializedContent: materialized.content,
         ctx: sessionTarget.ctx,
@@ -2516,6 +2517,7 @@ export async function sendSessionMessage(
     await waitForIdleViaSocket({
       token: params.credentials.token,
       sessionId,
+      ...(usesSharedAccountPending ? { scope: 'user' as const } : {}),
       ctx: sessionTarget.ctx,
       sessionEncryptionMode: sessionTarget.mode,
       timeoutMs: remainingTimeoutMs(),
@@ -2617,6 +2619,7 @@ export async function sendSessionMessage(
       token: params.credentials.token,
       sessionId,
       localId,
+      ...(usesSharedAccountPending ? { scope: 'user' as const } : {}),
       materializedSeq: materialized.seq,
       materializedContent: materialized.content,
       ctx: sessionTarget.ctx,

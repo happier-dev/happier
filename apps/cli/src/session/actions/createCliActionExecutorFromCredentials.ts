@@ -55,9 +55,9 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveCliActionCallerWorkflowTarget } from './resolveCliActionCallerSession';
-import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
+import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget, supportsAccountPendingForCliSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
 export { resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
-import { buildTrustedHostSessionInputAdmissionV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -2078,7 +2078,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           && !requireDaemonIngress
           && !params.machineId && context.externalActionTarget?.kind !== 'machine') {
           const send = SessionSendMessageInputSchema.safeParse(admittedInput);
-          if (send.success && 'message' in send.data && supportsAccountPendingForSessionInput({
+          if (send.success && 'message' in send.data && supportsAccountPendingForCliSessionInput({
             ...send.data, request, cliSession: { role: readSessionAccessProjectionRoleV1(transport.rawSession), pairedTerminal },
           })) {
             // Home Pending admits the Account and exact Session placement before accepting input.

@@ -6,9 +6,21 @@ import { SessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ActionPluginCaller, ActionCaller, ActionSurfaces, ExternalActionExecutionAuthorizationV1, PluginInvocationSurfaceV1, PluginSessionInputSourceV1, SessionInputCausalPermissionAuthorityV1, SessionInputRequestV1, SessionInputRequestV2, SessionInputRequest, SessionInputSourceAuthorityV1, SessionInputWorkflowV2, SessionMessageProvenanceV1, SessionMessageProvenanceV2 } from '@happier-dev/protocol';
 
 export { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+
+export function supportsAccountPendingForCliSessionInput(
+  input: Parameters<typeof supportsAccountPendingForSessionInput>[0],
+): boolean {
+  // Legacy CLI --wait observes the turn after admission. Home still admits
+  // the original prompt with the same authenticated Account as a no-wait send.
+  return supportsAccountPendingForSessionInput({
+    ...input,
+    wait: input.request?.v === 1 && input.request.producer === 'cli' ? undefined : input.wait,
+  });
+}
 
 /** Private host invocation uses the Machine seal; other live input keeps Session custody. */
 export function resolveProtectedSessionInputActionTarget(input: Readonly<{
