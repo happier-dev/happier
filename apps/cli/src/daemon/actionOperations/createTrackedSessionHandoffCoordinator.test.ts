@@ -58,6 +58,8 @@ import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSy
 
 type MachineCallInput = Parameters<NonNullable<Parameters<typeof createTrackedSessionHandoffCoordinator>[0]['callMachine']>>[0];
 
+const transferCapability = { protocolVersion: 3, atomicTargetResume: false, targetCleanup: false };
+
 afterEach(() => { vi.restoreAllMocks(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
 
 function ordinaryMachineHttpBoundary() {
@@ -115,6 +117,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       let firstStatusRead!: () => void;
       const observed = new Promise<void>(resolve => { firstStatusRead = resolve; });
       const callMachine = async (input: MachineCallInput) => {
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
         if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) return { handoffId: status.handoffId, status };
         if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3) {
           statusReads++;
@@ -204,6 +207,33 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     })).toMatchObject({ ok: false, errorCode: 'handoff_existing_state_update_required' });
     expect(start).not.toHaveBeenCalled();
     expect(callMachine).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 }));
+  });
+
+  it('refuses an ordinary same-Account transfer to a bare sandbox Machine before starting the source', async () => {
+    await withTempDir('handoff-own-bare-sandbox-', async activeServerDir => {
+      const sessionId = `c${'g'.repeat(24)}`;
+      handoffSourceHttpBoundary(sessionId);
+      const target = createSandboxHandoffTarget(activeServerDir);
+      const coordinate = createTrackedSessionHandoffCoordinator({ expectedAccountServerId: 'server-1',
+        readCredentials: async () => ({ token: 'owner-token', encryption: null }),
+        callMachine: async ({ machineId, method, request }) => {
+          expect(machineId).toBe('target');
+          return await target.invokeLocal(method, request, { rpcContext: {
+            machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: 'target',
+              installationId: 'target-installation', role: 'manage' },
+          } });
+        },
+        workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync: {} as never,
+          bootstrap: async () => { throw new Error('Unexpected workspace bootstrap'); } }),
+      });
+      const start = vi.fn(async () => ({ ok: false as const, errorCode: 'source_stopped', error: 'source_stopped' }));
+      const result = await coordinate({ operationId: 'ordinary-transfer',
+        actionInput: { sessionId, targetMachineId: 'target', targetPath: '/target', stateTransfer: 'transfer' },
+        start, signal: new AbortController().signal, publishOwnerUpdate: vi.fn(),
+      });
+      expect(result).toMatchObject({ ok: false, errorCode: 'handoff_target_requires_sandbox_preset' });
+      expect(start).not.toHaveBeenCalled();
+    });
   });
 
   it.each(['existing', 'transfer'] as const)('preflights an accepted %s handoff before the source stops', async stateTransfer => {
@@ -595,9 +625,12 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
           throw new Error('Unexpected controller socket request');
         }
-        expect(payload.method).toBe('parent:machines.managed.inspect');
         const content = { mode: 'plain' as const };
         const decoded = await socketRpcCodec.decodeRequestParams(content, payload.params, payload.method);
+        if (payload.method === `target:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET}`) {
+          return { ok: true, result: await socketRpcCodec.encodeResponse(content, transferCapability, decoded.callId) };
+        }
+        expect(payload.method).toBe('parent:machines.managed.inspect');
         expect(decoded.params).toMatchObject({ homeId: home, managedId: managed.id });
         const inspected = ManagedMachineV1Schema.parse({ ...managed,
           observation: { observedAt: Date.now(), availability: 'present', power: 'running' } });
@@ -713,11 +746,13 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       relationshipController: { flush },
       bootstrap: async () => ({ release: async () => undefined }),
     });
-    const callMachine = vi.fn(async (input: { method: string }) => (
-      input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3
-        ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }
-        : { ok: true }
-    ));
+    const callMachine = vi.fn(async (input: { method: string }) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      }
+      return { ok: true };
+    });
     const coordinate = createTrackedSessionHandoffCoordinator({
       expectedAccountServerId: 'server-1',
       readCredentials: async () => ({ token: 'token', encryption: null }),
@@ -776,6 +811,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       finalize: vi.fn(), commit: vi.fn(), abort: vi.fn(async () => undefined),
     };
     const callMachine = vi.fn(async (input: MachineCallInput) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) {
         return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       }
@@ -904,7 +940,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       commit: vi.fn(async () => prepared),
       abort: vi.fn(async () => undefined),
     };
-    const callMachine = vi.fn(async () => {
+    const callMachine = vi.fn(async (input: MachineCallInput) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
       throw Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
       });
@@ -956,12 +993,12 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       errorCode: 'workspace_sync_update_required',
     });
     // An older TARGET has no workspace capture; its copy keeps today's placement.
-    expect(callMachine).toHaveBeenCalledTimes(4);
-    expect(callMachine).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    expect(callMachine).toHaveBeenCalledTimes(5);
+    expect(callMachine).toHaveBeenNthCalledWith(2, expect.objectContaining({
       machineId: 'target-1',
       method: RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3,
     }));
-    expect(callMachine).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(callMachine).toHaveBeenNthCalledWith(3, expect.objectContaining({
       machineId: 'target-1',
       method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
     }));
@@ -983,6 +1020,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     // The TARGET daemon is the network boundary; the coordinator, transport
     // wrapping and the workspace input it builds stay real.
     const callMachine = vi.fn(async (input: MachineCallInput) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) {
         const request = input.request as { input: { release?: true } };
         captures.push(request.input);
@@ -1033,6 +1071,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     let statusGets = 0;
     const callMachine = vi.fn(async (input: MachineCallInput) => {
       calls.push(input);
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
       // This TARGET is the requester's own: the workspace copy keeps native placement.
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) return { ok: true, capture: 'not_required' };
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) {
@@ -1261,9 +1300,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       targetMachineId: 'target-1',
       sessionStorageMode: 'persisted',
       preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-      handoffTargetReplacementApprovalReceiptId: 'approval-receipt-1',
+      ...(receiptId ? { handoffTargetReplacementApprovalReceiptId: receiptId } : {}),
     });
     expect(calls.map(({ machineId, method }) => [machineId, method])).toEqual([
+      ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
@@ -1274,13 +1314,13 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3],
       ['source-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3],
     ]);
-    expect((calls[5]!.request as { sessionId?: string }).sessionId).toBe('session-1');
-    expect(calls[1]!.request).toEqual(expect.objectContaining({
+    expect((calls[6]!.request as { sessionId?: string }).sessionId).toBe('session-1');
+    expect(calls[2]!.request).toEqual(expect.objectContaining({
       targetPath: '/target/workspace/packages/app',
       workspaceRootPath: '/target/workspace',
       workspaceSessionRelativeCwd: 'packages/app',
     }));
-    expect(calls[5]!.timeoutMs).toBe(5 * 60_000);
+    expect(calls[6]!.timeoutMs).toBe(5 * 60_000);
     expect(refreshProjectSnapshot).not.toHaveBeenCalled();
     expect(prepareCreate).toHaveBeenCalledTimes(1);
     expect(prepareCreate).toHaveBeenCalledWith(expect.objectContaining({

@@ -507,12 +507,16 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   registerUnsupportedSessionHandoffRpcHandlers(rpcHandlerManager);
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, async (raw: unknown, context?: RpcHandlerContext) => {
     const empty = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0;
-    // Governed peer preflight binds the diagnostic to the exact handoff tuple.
-    if (!empty && !SessionHandoffExistingStateCheckRequestV3Schema.safeParse(raw).success) return invalidRequest();
+    const request = empty ? null : SessionHandoffExistingStateCheckRequestV3Schema.safeParse(raw);
+    if (request && !request.success) return invalidRequest();
     const binding = context?.callerInputAuthorization?.binding;
-    const handoff = binding?.handoffAdmission;
-    if (binding?.handoffPreflight && handoff && handoff.sourceMachineId !== handoff.targetMachineId
-      && handoff.targetMachineId === params.localMachineId) {
+    const admission = context?.machineAdmission;
+    // Signed preflight binds both peers. Ordinary preflight uses the Home-stamped
+    // custodian's admission to this Machine and reads only its own isolation policy.
+    const handoff = binding?.handoffPreflight ? binding.handoffAdmission
+      : !binding && request?.success && admission && admission.machineId === params.localMachineId
+        && admission.actorAccountId === admission.custodianAccountId ? request.data : undefined;
+    if (handoff && handoff.sourceMachineId !== handoff.targetMachineId && handoff.targetMachineId === params.localMachineId) {
       const unavailable = { ok: false, errorCode: 'target_unavailable', error: 'The receiving machine’s isolation policy is unavailable.' };
       const snapshot = params.readHandoffTargetMachineMetadata?.();
       if (snapshot?.status !== 'ready') return unavailable;

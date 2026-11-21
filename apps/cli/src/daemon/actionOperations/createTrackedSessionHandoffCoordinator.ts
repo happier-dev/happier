@@ -409,8 +409,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
 
     // Existing-state admission already reads both capabilities. For transfer, give
     // the receiving daemon the same chance to refuse before workspace or source effects.
-    if (stateTransfer !== 'existing' && hostInput.context?.externalActionExecutionAuthorization
-      && source.sourceMachineId !== targetMachineId) {
+    if (stateTransfer !== 'existing' && source.sourceMachineId !== targetMachineId) {
       const preflightPath = targetSessionPath ?? source.sourceRootPath;
       if (!preflightPath) return { ok: false, errorCode: 'target_unavailable', error: 'The target session directory is unavailable.' };
       const capability = await preflightMachineRpc({
