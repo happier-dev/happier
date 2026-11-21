@@ -3,7 +3,7 @@ import { normalizeSpawnSessionErrorDetail, SpawnSessionErrorCodeSchema } from '.
 import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
-import { readActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { ActionExecuteFailureSchema, readActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 import { readHomeDomainConfirmedRollbackV1 } from '../homeDomainHttpBinding.js';
 
@@ -94,10 +94,13 @@ export function readActionFailureEnvelope(
   const error = rawError && rawError !== errorCode ? rawError : rawFallbackMessage || rawError || errorCode;
   const details = declared ? record : readFailureEnvelopeDetails(record);
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(record.goalControlFailure);
+  const setupRetry = record.setupRetry === undefined ? undefined
+    : ActionExecuteFailureSchema.shape.setupRetry.safeParse(record.setupRetry);
   const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
   return carryActionFailureDiagnostic({ ok: false as const, errorCode, error, ...(details !== undefined ? { details } : {}),
     ...(typeof record.requestId === 'string' ? { requestId: record.requestId } : {}),
     ...(failureCause === undefined ? {} : { failureCause }),
     ...(typeof record.effectAttempted === 'boolean' ? { effectAttempted: record.effectAttempted } : {}),
-    ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}) }, result);
+    ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
+    ...(setupRetry?.success ? { setupRetry: setupRetry.data } : {}) }, result);
 }

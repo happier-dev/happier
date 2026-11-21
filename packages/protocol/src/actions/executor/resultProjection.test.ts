@@ -55,6 +55,16 @@ describe('Action thrown-error classification', () => {
 });
 
 describe('declared typed Action failures', () => {
+  it('carries an actionable Setup retry through final Action settlement', () => {
+    const failure = { ok: false as const, errorCode: 'native_effect_failed', error: 'native_effect_failed' };
+    const setupRetry = {
+      runId: '4d5dbe56-ada7-4fc8-afc6-f1f0a05b73d2',
+      invocationId: 'c40618ca-7351-46ea-8928-4721c6d0c941',
+    };
+    expect(settleActionOutput('machines.setup.apply', { ...failure, setupRetry }))
+      .toEqual({ ...failure, setupRetry });
+  });
+
   it.each([
     ['sessions.spawn.capabilities.preview', { ok: false, reason: 'machine_unreachable' }, 'machine_unreachable'],
     ['session.capabilities.get', { ok: false, code: 'preview_timeout' }, 'preview_timeout'],

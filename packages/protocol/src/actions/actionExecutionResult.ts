@@ -502,6 +502,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
   const result = value as Readonly<Record<string, unknown>>;
   if (result.ok !== false) return null;
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
+  const setupRetry = result.setupRetry === undefined ? undefined : MachineSetupRetryV1Schema.safeParse(result.setupRetry);
   const automationNotices = ActionAutomationNoticesV1Schema.safeParse(result.automationNotices);
   const projected = ActionExecuteFailureSchema.safeParse({
     ok: false,
@@ -512,6 +513,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     ...(result.details === undefined ? {} : { details: result.details }),
     ...(result.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(result.failureCause) }),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
+    ...(setupRetry?.success ? { setupRetry: setupRetry.data } : {}),
     ...(automationNotices.success ? { automationNotices: automationNotices.data } : {}),
   });
   return projected.success ? projected.data : null;

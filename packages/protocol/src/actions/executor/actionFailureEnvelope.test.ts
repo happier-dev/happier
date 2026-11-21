@@ -96,6 +96,16 @@ describe('Machine RPC refusal admission before Action output validation', () => 
       }));
   });
 
+  it('retains only a valid exact Workflow retry reference on a Setup failure', () => {
+    const failure = { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed' };
+    const setupRetry = {
+      runId: '4d5dbe56-ada7-4fc8-afc6-f1f0a05b73d2',
+      invocationId: 'c40618ca-7351-46ea-8928-4721c6d0c941',
+    };
+    expect(readActionFailureEnvelope({ ...failure, setupRetry })).toEqual({ ...failure, setupRetry });
+    expect(readActionFailureEnvelope({ ...failure, setupRetry: { runId: setupRetry.runId } })).toEqual(failure);
+  });
+
   it('retains the typed spawn refusal and remedy through Action classification', () => {
     const errorDetail = { kind: 'connected_service_ux_diagnostic', uxDiagnostic: {
       code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
