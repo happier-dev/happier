@@ -89,7 +89,7 @@ describe('Agent mix bodies keep the unattributed member', () => {
     }
   });
 
-  it('places every Constellation member, beyond the seven composed slots', () => {
+  it('exposes every Constellation member in Values, including those outside the drawing', () => {
     const ids = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9'];
     const mount = mountThroughReactNativeWeb(
       <UsageConstellation
@@ -121,9 +121,18 @@ describe('Agent mix bodies keep the unattributed member', () => {
       />,
     );
     try {
-      const text = query(mount.container, 'const')!.textContent!;
-      for (const id of ids) expect(text).toContain(`Agent ${id}`);
-      expect(text).toContain('Unknown agent');
+      const toggle = query(mount.container, 'const-values-toggle')!;
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      act(() => toggle.click());
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+      const table = mount.container.querySelector('[role="table"]')!;
+      const rowLabels = [...table.querySelectorAll('[role="row"][aria-label]')]
+        .map((row) => row.getAttribute('aria-label')!.split(', ')[0]);
+      expect(rowLabels).toEqual([
+        ...ids.map((id) => `Agent: Agent ${id}`),
+        'Agent: Unknown agent',
+      ]);
     } finally {
       mount.unmount();
     }
