@@ -254,7 +254,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       finishPhase('web-selection');
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
-      const check = () => admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
+      // An automatic miss must replace the old UI selection as part of the server swap.
+      const uiSelection = ui ?? (components.server && uiMode === 'auto' ? null : undefined);
+      const check = () => admitSourceRuntimeReload({ stackBaseDir, components, ui: uiSelection, pending,
         env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir }, logger });
       let admitted;
       try {

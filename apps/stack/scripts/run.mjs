@@ -329,17 +329,18 @@ async function main() {
     // A one-shot builder releases its esbuild service before the next phase;
     // the long-lived Stack owner must not retain their large idle heaps.
     if ((sourceUi === 'auto' || sourceUi === 'export') && serverRequested) {
-      const selectedUi = reuseSourceRuntime
-        ? kv.get('--source-ui-dir') ?? (sourceUi === 'export'
-          ? (await readJsonIfExists(join(sourceRoot, 'selected-ui.json')))?.uiDir : null) : null;
-      if (reuseSourceRuntime && (sourceUi === 'export' || selectedUi)) {
-        const uiDir = selectedUi;
-        if (!uiDir || !await pathExists(uiDir)) {
+      if (reuseSourceRuntime) {
+        // On a remote reload, the serving host has already selected the export
+        // alongside the server. Startup must use that selection in either mode.
+        const uiDir = kv.get('--source-ui-dir') ?? (await readJsonIfExists(join(sourceRoot, 'selected-ui.json')))?.uiDir;
+        if (uiDir ? !await pathExists(uiDir) : sourceUi === 'export') {
           throw new Error('[source-bundle] selected source UI is unavailable; explicitly restart the Stack to select current source');
         }
-        const { publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
-        sourceUi = 'export';
-        sourceUiLaunch = await publishSourceWebUi({ built: { uiDir }, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
+        if (uiDir) {
+          const { publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
+          sourceUi = 'export';
+          sourceUiLaunch = await publishSourceWebUi({ built: { uiDir }, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
+        }
       } else {
         const { prepareSourceQaWebUi, publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
         const { mode, built } = await prepareSourceQaWebUi({ mode: sourceUi, repoDir, baseDir: sourceRoot,

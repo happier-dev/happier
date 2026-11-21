@@ -3492,6 +3492,21 @@ test(`source reload rejects a ${provider} replacement server that exits before h
 });
 }
 
+test('source reload removes the previous UI selection only when the new server falls back to Expo', async t => {
+  const graph = await reloadFixtureGraph(t, 'export {};');
+  const server = await reloadServerGraph(graph, reloadHttpServerSource);
+  const selectedUi = join(graph.stackBaseDir, 'source-runtime/selected-ui.json');
+  const previousUi = { uiDir: graph.fixture.path('previous-web') };
+  await writeFile(selectedUi, JSON.stringify(previousUi));
+  const admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
+    components: { server }, ui: null, pending: graph.pending,
+    env: { ...process.env, HAPPIER_STACK_REPO_DIR: fileURLToPath(new URL('../../../../', import.meta.url)) } });
+  assert.deepEqual(JSON.parse(await readFile(selectedUi, 'utf8')), previousUi);
+  await admitted.activate();
+  await assert.rejects(access(selectedUi), { code: 'ENOENT' });
+  assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+});
+
 for (const broken of [false, true]) {
 test(`source reload browser boot ${broken ? 'rejects entry exceptions' : 'admits rendered entry content'}`, async t => {
   if (spawnSync('agent-browser', ['--version'], { encoding: 'utf8' }).status !== 0) {

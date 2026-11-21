@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -21,7 +21,7 @@ const canonicalServer = join(repoRoot, 'apps/server');
 const requireServer = createRequire(join(canonicalServer, 'package.json'));
 
 for (const shared of [false, true]) {
-  test(`source-snapshot start ${shared ? 'refuses a shared database with pending consumer migrations' : 'applies a pending SQLite migration before serving'}`,
+  test(`source-snapshot start ${shared ? 'refuses a shared database with pending consumer migrations' : 'applies a pending SQLite migration and serves the adopted export'}`,
     { timeout: 90_000 }, async t => {
       const fixture = await createTempFixture(t, { prefix: 'hstack-source-migration-' });
       const sourceRepo = fixture.path('repo');
@@ -100,12 +100,21 @@ await runSqliteMigrationDeploy({serverRoot:${JSON.stringify(serverDir)},runSchem
       }
       await writeFile(entrypoint, `
         import { DatabaseSync } from 'node:sqlite';
+        import { readFile } from 'node:fs/promises';
         import { createServer } from 'node:http';
+        import { join } from 'node:path';
         const db = new DatabaseSync(${JSON.stringify(dbPath)}, {readOnly:true});
         const row = db.prepare(${JSON.stringify(shared ? 'SELECT id FROM MigrationProbe' : 'SELECT id, ready FROM MigrationProbe')}).get();
         if (row.id !== 'retained' ${shared ? '' : "|| row.ready !== 'applied'"}) throw new Error('schema unavailable before serve');
         db.close();
-        createServer((_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({service:'happier-server',status:'ok'}));})
+        createServer(async (req,res)=>{
+          if(req.url==='/health') {res.setHeader('content-type','application/json');res.end(JSON.stringify({service:'happier-server',status:'ok'}));return;}
+          const name = {'/':'index.html','/_expo/static/adopted.js':'_expo/static/adopted.js'}[req.url];
+          if(!name || !process.env.HAPPIER_SERVER_UI_DIR) {res.statusCode=404;res.end();return;}
+          try {res.setHeader('content-type', name.endsWith('.html') ? 'text/html' : 'text/javascript');
+            res.end(await readFile(join(process.env.HAPPIER_SERVER_UI_DIR,name)));}
+          catch {res.statusCode=404;res.end();}
+        })
           .listen(Number(process.env.PORT),'127.0.0.1',()=>console.log('MIGRATION_SERVER_READY'));
       `);
       const sourceRuntimeServer = {
@@ -134,6 +143,17 @@ await runSqliteMigrationDeploy({serverRoot:${JSON.stringify(serverDir)},runSchem
         finally { preflightDb.close(); }
       }
       await writeFile(join(baseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint }));
+      const sharedUiDir = fixture.path('stacks/source-bundles/web-other-stack/web');
+      const html = '<!doctype html><script src="/_expo/static/adopted.js"></script>';
+      const script = 'globalThis.adoptedExport = true;';
+      if (!shared) {
+        await mkdir(join(sharedUiDir, '_expo/static'), { recursive: true });
+        await writeFile(join(sharedUiDir, 'index.html'), html);
+        await writeFile(join(sharedUiDir, '_expo/static/adopted.js'), script);
+        // Remote reload activation writes this on the serving host. Its next
+        // run receives reuse flags without a controller-local UI path.
+        await writeFile(join(baseDir, 'source-runtime/selected-ui.json'), JSON.stringify({ uiDir: sharedUiDir }));
+      }
       // Stack env is the database authority, including explicit empty values
       // that prevent repository defaults from selecting a different database.
       await writeFile(join(baseDir, 'env'), [
@@ -149,7 +169,7 @@ await runSqliteMigrationDeploy({serverRoot:${JSON.stringify(serverDir)},runSchem
       const port = await pickNextFreeTcpPort(40_000);
       env.HAPPIER_STACK_SERVER_PORT = String(port);
       const runner = spawn(process.execPath, [runScript, '--runtime=source', '--reuse-source-runtime', '--restart',
-        '--no-dev-targets', '--no-daemon', '--no-ui', '--no-browser'],
+        '--no-dev-targets', '--no-daemon', ...(shared ? ['--no-ui'] : ['--prepared-source-reload']), '--no-browser'],
       { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', signal: t.signal });
       const completion = new Promise(resolve => runner.once('close', resolve));
       t.after(async () => { await killProcessTree(runner, 'SIGTERM'); await completion; });
@@ -183,6 +203,15 @@ await runSqliteMigrationDeploy({serverRoot:${JSON.stringify(serverDir)},runSchem
       const state = JSON.parse(await readFile(join(baseDir, 'stack.runtime.json'), 'utf8'));
       assert.equal(state.sourceRuntimeIdentities.server.selected, 'selected-migration-source');
       if (!shared) {
+        const origin = `http://127.0.0.1:${state.ports.server}`;
+        const page = await fetch(`${origin}/`);
+        assert.equal(page.status, 200, 'the restarted server must serve the adopted export');
+        assert.equal(await page.text(), html);
+        const asset = await fetch(`${origin}/_expo/static/adopted.js`);
+        assert.equal(asset.status, 200);
+        assert.equal(await asset.text(), script);
+        assert.equal(state.sourceUi, 'export');
+        assert.equal(state.sourceUiLaunch.exportDir, await realpath(sharedUiDir));
         const succeedsFirst = '20260103000000_succeeds';
         await mkdir(join(migrationsDir, succeedsFirst));
         await writeFile(join(migrationsDir, succeedsFirst, 'migration.sql'),

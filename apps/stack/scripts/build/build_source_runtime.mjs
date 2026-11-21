@@ -1312,8 +1312,9 @@ async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, compone
 
 /** The source selection owner admits a complete replacement, without claiming
  * that its processes have loaded it. Preparation never writes these pointers.
+ * A null UI selection clears the previous export on activation. Omit it to keep that selection.
  */
-export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = null, pending, env = process.env, logger = console }) {
+export async function admitSourceRuntimeReload({ stackBaseDir, components, ui, pending, env = process.env, logger = console }) {
   pending.signal.throwIfAborted();
   if (components.daemon) {
     const started = performance.now();
@@ -1360,11 +1361,12 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
         }
       }
       const selections = { ...Object.fromEntries(Object.entries(components).map(([component, built]) => [component, { entrypoint: built.entrypoint }])),
-        ...(ui ? { ui } : {}) };
+        ...(ui === undefined ? {} : { ui }) };
       for (const [component, selection] of Object.entries(selections)) {
         const path = join(sourceRoot, `selected-${component}.json`);
         previous.set(path, await readOptionalJson(path));
-        await writeJsonAtomic(path, selection);
+        if (selection === null) await rm(path, { force: true });
+        else await writeJsonAtomic(path, selection);
       }
     } catch (error) {
       for (const [path, selection] of previous) {
