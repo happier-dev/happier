@@ -2,6 +2,12 @@ import fastify from 'fastify';
 import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { createCommittedContributedActionDefinitionLister, createCommittedInputTypeDeps } from './invocation/actions/createCommittedContributedActionDeps';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
@@ -19,7 +25,7 @@ import * as persistence from '@/persistence';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 
-it('retains local Account custody through Machine Actions into an Account Action for a spawned Session', async () => {
+it.each([false, true])('retains local Account custody through Machine Actions and Resource reads (restoring: %s)', async (restoring) => {
     const accountId = 'local-placement-owner';
     const origin = 'http://local-placement.test';
     const credentials = { token: 'e30.' + Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url') + '.signature', encryption: null };
@@ -54,17 +60,55 @@ it('retains local Account custody through Machine Actions into an Account Action
     let runtime: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, () => authored.publishArtifacts(credentials));
-        const parent = definePlugin({ id: 'acme.machine-placement-parent', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, actions: {
+        const parentId = 'acme.machine-placement-parent';
+        const parent = definePlugin({ id: parentId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+          inputTypes: { source: { title: 'Source', semantic: 'configured-source', valueSchema: { type: 'string' }, options: { resource: 'sources' } } },
+          resources: { sources: { source: 'dynamic', scope: 'global', kind: 'config', contentType: 'application/json',
+            runtime: { read: async () => '', observe: () => ({ dispose() {} }) } } },
+          actions: {
             start: { title: 'Start', surfaces: ['cli', 'plugin'], dangerLevel: 'safe', run: async () => null },
             link: { title: 'Link', surfaces: ['cli', 'plugin'], dangerLevel: 'safe', run: async () => null },
+            watch: { title: 'Watch', surfaces: ['cli'], dangerLevel: 'safe',
+                inputSchema: defineProtocolObject({ source: defineProtocolString() }, { policy: 'closed' }),
+                inputHints: { fields: [{ path: 'source', title: 'Source', widget: 'select', inputType: { pluginId: parentId, localId: 'source' } }] },
+                run: async () => null },
         } });
         runtime = await runWithServerHttpBaseUrl(origin, () => createAuthoredAdmittedPluginRuntimeFixture({
             runtimeOptions: { scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } },
             plugins: [{ manifest: parent.manifest, files: { 'daemon.mjs': `export function activate(api) {
                 api.actions.register('start', (input, context) => context.services.actions.execute({ pluginId: 'acme.machine-placement-parent', localId: 'link' }, input));
                 api.actions.register('link', (input, context) => context.services.actions.execute({ pluginId: 'acme.account-session-source', localId: 'account-only' }, input));
+                api.actions.register('watch', () => null);
+                api.resources.registerDynamicResource('sources', {
+                    async read({ readAction, signal }) {
+                        const result = await readAction({ pluginId: 'acme.account-session-source', localId: 'account-scope' }, {}, { signal });
+                        return JSON.stringify(result.ok ? { options: [] } : result);
+                    },
+                    observe() { return { dispose() {} }; },
+                });
             }` } }, { manifest, files: { 'daemon.mjs': 'export function activate() {}' } }],
         }));
+        await runWithServerHttpBaseUrl(origin, () => ensureCliActionPolicySettings(credentials, origin));
+        const { controller, registry } = runtime;
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            listContributedActionDefinitions: createCommittedContributedActionDefinitionLister({
+                tryAcquireRuntimeRegistryLease: () => controller.tryAcquireRuntimeRegistry(),
+            }),
+            ...createCommittedInputTypeDeps({ acquireRuntimeRegistryLease: () => controller.acquireRuntimeRegistry() }),
+        });
+        const actionId = formatQualifiedPluginActionId({ pluginId: parentId, localId: 'watch' });
+        const fixtureShutdown = Promise.withResolvers<void>();
+        const initialization = restoring ? runWithServerHttpBaseUrl(origin, () => registry.activatePluginsForValidation([parentId])) : undefined;
+        if (initialization) controller.setRuntimeInitialization(Promise.race([initialization, fixtureShutdown.promise]));
+        try {
+            const options = await runWithServerHttpBaseUrl(origin, () => executor.execute('action.options.resolve',
+                { actionId, fieldPath: 'source', draftInput: {} }, { surface: 'cli', signal: AbortSignal.timeout(10_000) }));
+            expect(options, JSON.stringify(options)).toMatchObject({ ok: true, result: { options: [] } });
+        } finally {
+            fixtureShutdown.resolve();
+            await initialization;
+        }
+        if (restoring) return;
         const result = await runWithServerHttpBaseUrl(origin, () => executeAppliedDaemonPluginActionWithController({
             actionId: buildQualifiedPluginContributionKey({ pluginId: 'acme.machine-placement-parent', localId: 'start' }), input: { sessionId: 'spawned-on-machine' },
             surface: 'cli', defaultSessionId: 'spawned-on-machine',

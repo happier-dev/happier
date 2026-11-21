@@ -2,6 +2,7 @@ import { PluginError, type Disposable, type JsonValue, type PluginInvocationCall
 import type { ActionExecuteResult } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import type { InvokeContributedAction, ContributedActionInvocationResult } from './actions';
+import { resolvePluginActionCaller } from './actionCaller';
 import type { BindDynamicResourceActions } from './resources';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -113,7 +114,16 @@ export function createDynamicResourceActionBinding(params: Readonly<{
         if (!caller || caller.occurrenceId !== binding.occurrenceId) {
             throw new PluginError({ code: 'plugin_action_caller_unavailable', message: 'Resource Action reads require their current owning plugin' });
         }
-        const result = await params.invoke({ action, input, caller, surface: 'plugin', requiredReadOnly: true,
+        const actionCaller = resolvePluginActionCaller({
+            plugin: { id: caller.pluginId }, caller, surface: 'plugin', occurrenceId: caller.occurrenceId,
+            sourceCustody: caller.sourceCustody,
+            ...(caller.contribution ? { contribution: caller.contribution } : {}),
+        });
+        if (!actionCaller) {
+            throw new PluginError({ code: 'plugin_action_caller_unavailable', message: 'Resource Action caller provenance is unavailable' });
+        }
+        const result = await params.invoke({ action, input, caller, initiatingActionCaller: actionCaller,
+            surface: 'plugin', requiredReadOnly: true,
             ...(sessionId === undefined ? {} : { sessionId, resourceSessionId: sessionId }),
             ...(readObservation ? { readObservation } : {}), signal });
         await assertCurrent(signal);

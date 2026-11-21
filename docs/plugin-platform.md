@@ -2340,7 +2340,9 @@ typed unavailable reason; neighbouring valid slots and daemon startup remain usa
 In 0.3 development source, dynamic Resources and Composer References do not
 activate an otherwise undemanded daemon plugin during serving startup. Resource
 reads, watches and prompt preparation demand the selected producer through the
-existing activation owner. An activated plugin's asynchronous invocation boundary
+existing activation owner. Registry readiness validates Resource registrations.
+Serving demand runs their first byte reads after publication, when producers can
+call Actions that wait for restoration. An activated plugin's asynchronous invocation boundary
 settles its Resource descriptors before supplying synchronous `describe` and
 `watch` services. Composer inventory comes from admitted declarations; search
 and resolution demand the exact declared reference before reading registrations.
@@ -13015,7 +13017,7 @@ handoff or shutdown retires them; settled rejoin results remain for the daemon l
 cleanup is awaited through that lifecycle and reports failures without a shorter
 phase timeout. The daemon starter's readiness wait bounds only its observation
 of startup. It does not cancel source preparation, module loading, required
-startup activation or initial Resource admission. Reload uses the same startup
+startup activation or serving Resource reads. Reload uses the same startup
 activation predicate as cold start, so demand-only Agents remain dormant.
 Primary Agent construction belongs to first use, with no eager construction
 before publication. A valid update adopts the new version; a constructor failure

@@ -14,7 +14,7 @@ const plugin = definePlugin({
     id: 'acme.account-session-source', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
     contributionPoints: { sources: protocol.point() },
     actions: {
-        'account-scope': { title: 'Read Account Home scope', surfaces: ['plugin', 'cli'], dangerLevel: 'safe',
+        'account-scope': { title: 'Read Account Home scope', surfaces: ['plugin', 'cli'], dangerLevel: 'safe', readOnly: true,
             inputSchema: defineProtocolObject({}, { policy: 'closed' }),
             execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
             run: async (_input, context) => ({ scope: context.accountScope ?? null }) },

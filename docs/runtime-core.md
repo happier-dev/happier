@@ -1496,8 +1496,10 @@ neither authority nor retry behavior; loaded QA replay remains a separate check.
 
 The daemon starter's readiness timeout bounds the starter's observation, not
 plugin execution. The existing daemon plugin runtime owner awaits source
-preparation, module loading, required startup activation and initial Resource
-admission before publishing the serving registry. Reload uses the same startup
+preparation, module loading and required startup activation before publishing
+the serving registry. Serving demand reads dynamic Resource bytes after
+publication, so a Resource can call an Action that waits for restoration.
+Reload uses the same startup
 activation predicate as cold start; demand-only Agents stay dormant. Primary
 Agent runtimes are constructed on demand, not as a publication readiness probe.
 A valid update adopts the new version; if its Agent constructor fails on first

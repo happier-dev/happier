@@ -5286,9 +5286,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const previousFacts = activatedRegistry.targetActivationFacts;
         const results = await activatedRegistry.activatePluginsForValidation(pluginIds);
         await refreshActivatedConsumersIfChanged(previousFacts);
-        for (const { pluginId } of results) {
-            if (activatedRegistry.activatedPluginIds.has(pluginId)) await resourcesOwner?.preparePlugin(pluginId);
-        }
+        // Resource callbacks can dispatch Actions that await this registry's
+        // readiness. Serving demand owns their first read after publication.
         // The External Sessions author service invokes each configured Agent's
         // `resolveSource` leaf while it is built, and that leaf needs this
         // generation's Agent CLI system-tool services. Publish the synchronous
