@@ -11,12 +11,13 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
     termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } } };
 }
 
-async function runFixture(options: { failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean } = {}) {
+async function runFixture(options: { engineId?: string; failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean } = {}) {
+  const engineId = options.engineId ?? 'panels';
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'panels')?.factory;
   if (!factory) throw new Error('Expected panel reviewer Agent registration');
   const controller = new AbortController();
-  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'panels' }, signal: controller.signal });
+  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: controller.signal });
   const record = structuredClone(selectedReview);
   if (options.failedMember) record.panel.members[1]!.status = 'failed';
   if (options.unableToReview) record.structured_output.verdict = 'unable_to_review';
@@ -38,16 +39,16 @@ async function runFixture(options: { failedMember?: boolean; unableToReview?: bo
   });
   const writeFile = vi.fn(async () => {});
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'panels', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/panels` },
-    surface: 'agent', signal: controller.signal, agent: { id: 'panels' }, services: { availability: () => ({ status: 'available' }),
+    surface: 'agent', signal: controller.signal, agent: { id: engineId }, services: { availability: () => ({ status: 'available' }),
       exec: { run }, fs: { getPluginDataDirectory: async () => '/plugin-data/runs/test', writeFile } },
   } as unknown as AgentRuntimeContext;
   const request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> = {
     kind: 'create', runId: 'test', cwd: '/workspace', profile: { pluginId: PLUGIN_MANIFEST.id, localId: 'review' },
     launchEnvironment: { values: { SELECTED_OVERLAY: 'value' }, unset: ['SELECTED_OVERLAY'] },
-    input: { text: 'Review this change.', structuredInput: { reviewers: [{ kind: 'engine', engineId: 'panels' }], instructions: 'Review this change.',
+    input: { text: 'Review this change.', structuredInput: { reviewers: [{ kind: 'engine', engineId }], instructions: 'Review this change.',
       ...(options.selectedPaths ? { selectedPaths: options.selectedPaths } : {}),
       ...(options.selectedFiles ? { selectedFiles: options.selectedFiles } : {}),
-      scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' }, engines: { panels: { panel: 'fixture', reviewType: 'security', agent: 'codex', reasoning: 'high' } },
+      scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' }, engines: { [engineId]: { panel: 'fixture', reviewType: 'security', agent: 'codex', reasoning: 'high' } },
       scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scmBackendId: 'git', scmMode: '.git',
         repositoryRoot: '/workspace', worktreeRoot: '/workspace', baseRef: { source: 'unavailable', ref: null },
         selectedPaths: [], committedPaths: [], uncommittedPaths: [], changedPaths: [], diagnostics: [],
@@ -101,7 +102,7 @@ describe('activated panel reviewer', () => {
       new TextEncoder().encode('review_guidelines = "Review this change."\n'), { signal: expect.any(AbortSignal) });
   });
   it('translates captured endpoints without re-resolving the ambient branch', async () => {
-    const result = await runFixture({ captured: true });
+    const result = await runFixture({ captured: true, engineId: 'happier.review.panels/panels' });
     expect(result.output?.comparisonId).toBe('captured');
     expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
       .toEqual(['review', '--sha', 'base-oid..head-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);

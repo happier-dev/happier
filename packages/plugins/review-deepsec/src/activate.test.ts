@@ -207,8 +207,10 @@ function createOpenRequest(params?: Readonly<{
   scmReviewScope?: unknown;
   cwd?: string;
   engineSelectedFiles?: readonly string[];
+  engineId?: string;
 }>): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   const paths = params?.paths ?? ['src/auth.ts'];
+  const engineId = params?.engineId ?? 'deepsec';
   return {
     kind: 'create',
     runId: params?.runId ?? 'run-1',
@@ -226,13 +228,13 @@ function createOpenRequest(params?: Readonly<{
       structuredInput: {
         projectId: 'project-1',
         workspaceId: 'workspace-1',
-        reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
+        reviewers: [{ kind: 'engine', engineId }],
         instructions: 'Review the current diff.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
         scmReviewScope: params?.scmReviewScope ?? createSupportedScmReviewScope(paths),
         engines: {
-          deepsec: {
+          [engineId]: {
             ...(params?.includeExplicitMode === false
               ? {}
               : { mode: params?.mode ?? 'current_diff' }),
@@ -619,21 +621,22 @@ describe('activate', () => {
   });
 
   it.each([
-    { profileLocalId: 'review', commands: ['process'] },
-    { profileLocalId: 'repository-security-audit', commands: ['scan', 'process', 'export'] },
-  ])('requires fresh paid-start consent and allows an explicit retry ($profileLocalId)', async ({ profileLocalId, commands }) => {
+    { profileLocalId: 'review', engineId: 'happier.review.deepsec/deepsec', commands: ['process'] },
+    { profileLocalId: 'repository-security-audit', engineId: 'deepsec', commands: ['scan', 'process', 'export'] },
+  ])('requires fresh paid-start consent and allows an explicit retry ($profileLocalId)', async ({ profileLocalId, engineId, commands }) => {
     const profile = PLUGIN_MANIFEST.contributes?.executionRunProfiles?.find(profile => profile.id === profileLocalId);
     const consentOption = profile?.metadata?.reviewCostConsentOption;
     expect(consentOption).toBe('confirmedCostWarning');
     if (typeof consentOption !== 'string') throw new Error('Expected per-start cost consent option');
     const fixture = createRuntimeContext();
+    const context = { ...fixture.context, agent: { id: engineId } };
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open(createOpenRequest({
       runId: 'run-confirmation-required',
-      profileLocalId,
+      profileLocalId, engineId,
       includeExplicitMode: false,
       confirmedCostWarning: false,
-    }), fixture.context);
+    }), context);
     if (!opened) throw new Error('Expected native DeepSec execution run');
 
     const events = await watchToTerminal(opened);
@@ -650,14 +653,14 @@ describe('activate', () => {
 
     const acceptedRequest = createOpenRequest({
       runId: 'run-confirmed-retry',
-      profileLocalId,
+      profileLocalId, engineId,
       includeExplicitMode: false,
       confirmedCostWarning: false,
     });
     const retried = await runtime.executionRuns?.open({ ...acceptedRequest, input: { ...acceptedRequest.input,
       structuredInput: { ...acceptedRequest.input.structuredInput as Record<string, unknown>,
-        engines: { deepsec: { [consentOption]: true } } },
-    } }, fixture.context);
+        engines: { [engineId]: { [consentOption]: true } } },
+    } }, context);
     if (!retried) throw new Error('Expected explicit DeepSec retry');
     const retryEvents = await watchToTerminal(retried);
     await retried.dispose();
@@ -665,8 +668,8 @@ describe('activate', () => {
     expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(commands);
 
     const next = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-next-unconfirmed',
-      profileLocalId, includeExplicitMode: false, confirmedCostWarning: false,
-    }), fixture.context);
+      profileLocalId, engineId, includeExplicitMode: false, confirmedCostWarning: false,
+    }), context);
     if (!next) throw new Error('Expected next DeepSec review');
     const nextEvents = await watchToTerminal(next);
     await next.dispose();

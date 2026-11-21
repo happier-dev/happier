@@ -29,6 +29,7 @@ import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { postEncryptedSessionMessage } from '../../src/testkit/memoryRpc';
 import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
+import { repoRootDir } from '../../src/testkit/paths';
 
 const run = createRunDirs({ runLabel: 'core' });
 const muse = { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } } as const;
@@ -203,7 +204,8 @@ else {
       await writeFile(join(packageDir, 'index.cjs'), await readFile(join(bin, 'clawpatch')));
     }, env: { ...features,
       HAPPIER_MUSE_PATH: executablePath, PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter), MUSE_INSTALL_DIR: bin,
-      HAPPIER_JS_RUNTIME_PATH: process.execPath,
+      HAPPIER_JS_RUNTIME_PATH: undefined, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
+      HAPPIER_MANAGED_TOOLS_ROOT: join(testDir, 'managed-tools'),
       HOME: nativeHome, XDG_CONFIG_HOME: join(nativeHome, 'config'), XDG_DATA_HOME: join(nativeHome, 'data'),
       XDG_CACHE_HOME: join(nativeHome, 'cache'), CODEX_HOME: join(nativeHome, 'codex'),
     } });
@@ -525,13 +527,27 @@ else {
     await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan', true);
   });
   it('D1 DeepSec admits live captured files and refuses dirty committed or moved HEAD subjects through public Actions', async () => {
+    const installed = await act('plugins.install', { path: join(repoRootDir(), 'packages/plugins/review-deepsec'), dev: true });
+    expect(installed, JSON.stringify(installed)).toMatchObject({ ok: true });
+    const roster = ReviewEngineInventorySchema.parse(await act('review.engines.list', { sessionId: null }));
+    const installedEngine = roster.items.find(item => item.engineId === 'happier.review.deepsec/deepsec');
+    if (!installedEngine?.profileSourceCustody) throw new Error('Installed DeepSec source custody is unavailable');
+    const inventory = ReviewEngineInventorySchema.parse(await act('review.engines.list', {
+      sessionId: null, profileSelections: [{ engineId: installedEngine.engineId,
+        profileId: 'happier.review.deepsec/review', profileSourceCustody: installedEngine.profileSourceCustody }],
+    }));
+    const selected = inventory.selectionItems?.find(item => item.engineId === installedEngine.engineId
+      && item.profileId === 'happier.review.deepsec/review');
+    if (!selected?.profileSourceCustody) throw new Error('Installed DeepSec review profile is unavailable');
     const reviewer = { roleId: await createWriteEnabledReviewRole(),
+      profileId: selected.profileId, profileSourceCustody: selected.profileSourceCustody,
       options: { confirmedCostWarning: true, preferredExecutablePath: deepSecExecutablePath } };
     const working = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
       cwd: machine.workspaceDir, source: { kind: 'workingTree', area: 'both' },
     }));
     if (!working.success) throw new Error(working.errorCode);
-    expect(await startNativeReview('deepsec', { comparisonId: working.comparison.id }, reviewer))
+    const workingResult = await startNativeReview(selected.engineId, { comparisonId: working.comparison.id }, reviewer);
+    expect(workingResult, JSON.stringify({ engineId: selected.engineId, profileId: selected.profileId, error: workingResult.run.error }))
       .toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'complete', findings: [] } });
     const commands = (await readFile(deepSecAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as {
       args: string[]; files?: { path: string; contents: string }[];
@@ -547,11 +563,11 @@ else {
     }));
     if (!committed.success) throw new Error(committed.errorCode);
     await writeFile(join(machine.workspaceDir, 'README.md'), 'Uncaptured tracked checkout edit\n');
-    expect(await startNativeReview('deepsec', { comparisonId: committed.comparison.id }, reviewer))
+    expect(await startNativeReview(selected.engineId, { comparisonId: committed.comparison.id }, reviewer))
       .toMatchObject({ run: { status: 'failed', error: { code: 'deepsec_execution_failed', message: expect.stringMatching(/clean tracked checkout/) } } });
     execGit(machine.workspaceDir, ['add', 'README.md']);
     execGit(machine.workspaceDir, ['commit', '-m', 'test: advance beyond DeepSec captured head']);
-    expect(await startNativeReview('deepsec', { comparisonId: committed.comparison.id }, reviewer))
+    expect(await startNativeReview(selected.engineId, { comparisonId: committed.comparison.id }, reviewer))
       .toMatchObject({ run: { status: 'failed', error: { code: 'deepsec_execution_failed', message: expect.stringMatching(/captured comparison.*live checkout/) } } });
     expect((await readFile(deepSecAuditPath, 'utf8')).trim().split('\n')).toHaveLength(1);
   });

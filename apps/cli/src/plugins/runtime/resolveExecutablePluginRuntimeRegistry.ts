@@ -1237,22 +1237,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 )
             )
         ));
-    // First-party daemon occurrences select their package in the runtime, outside
-    // the installed plugin store. Admit file declarations under that exact root.
+    // Bundled and development occurrences have no immutable package generation.
+    // Bind their file declarations to the same admitted source as activation.
     if (!params?.accountExecution) {
         const packagedResourcePluginIds = new Set(committedResourceContributes.flatMap(resource => (
-            resource.pluginId && resource.source.kind === 'bundled' && !isDynamicPluginResourceContributionV2(resource.definition)
+            resource.pluginId && !isDynamicPluginResourceContributionV2(resource.definition)
                 ? [resource.pluginId] : []
         )));
         for (const declaration of canonicalResourceRegistry.pluginDeclarations ?? []) {
             const { pluginId } = declaration;
-            if (declaration.sourceSpec.kind !== 'bundled' || !packagedResourcePluginIds.has(pluginId)
-                || resourceGenerations.has(pluginId)) continue;
+            if (!packagedResourcePluginIds.has(pluginId) || resourceGenerations.has(pluginId)) continue;
             const occurrenceId = candidateOccurrenceIdsByPluginId.get(pluginId);
             const custody = admittedPluginSourceCustodiesByPluginId.get(pluginId);
             if (!occurrenceId || !custody) continue;
             const target = resolveCanonicalResourceActivationTarget(pluginId);
-            const authority = resolveBundledActivationSource(target ?? declaration)?.sourceAuthority;
+            const authority = (target
+                ? resolveCommittedActivationSource(target, { recordActivatedManifestAuthority: false })
+                : resolveBundledActivationSource(declaration))?.sourceAuthority;
             if (!authority) continue;
             const rootPath = authority.kind === 'bundled_first_party' ? authority.resolvedRoot
                 : authority.kind === 'development' ? authority.canonicalRoot : null;

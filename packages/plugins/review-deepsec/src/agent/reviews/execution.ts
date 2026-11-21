@@ -63,9 +63,9 @@ function readAgentCli(value: unknown): DeepSecAgentCli | null {
   return DEEPSEC_AGENT_CLIS.find(agentCli => agentCli === value) ?? null;
 }
 
-function readDeepSecEngineConfig(intentRecord: Record<string, unknown>): Record<string, unknown> {
+function readDeepSecEngineConfig(intentRecord: Record<string, unknown>, agentId: string): Record<string, unknown> {
   const engines = readRecord(intentRecord.engines);
-  return readRecord(engines?.deepsec) ?? {};
+  return readRecord(engines?.[agentId]) ?? {};
 }
 
 function readScmReviewScope(intentRecord: Record<string, unknown>): ReviewScmScopeV1 | null {
@@ -107,10 +107,11 @@ function normalizeDeepSecStart(params: Readonly<{
   intentInput: unknown;
   fallbackInstructions: string;
   profileId: string;
+  agentId: string;
 }>): NormalizedDeepSecStart {
   const reviewInput = normalizeReviewStartInput(params);
   const scmScope = readScmReviewScope(reviewInput);
-  const engineConfig = readDeepSecEngineConfig(reviewInput);
+  const engineConfig = readDeepSecEngineConfig(reviewInput, params.agentId);
   const mode = readMode(engineConfig, reviewInput, params.profileId);
   const thinkingLevel = engineConfig.thinkingLevel;
   if (thinkingLevel !== undefined && !isDeepSecThinkingLevel(thinkingLevel)) {
@@ -417,6 +418,7 @@ function createRuntime(
         intentInput: request.input.structuredInput ?? {},
         fallbackInstructions: request.input.text,
         profileId: `${request.profile.pluginId}/${request.profile.localId}`,
+        agentId: context.agent.id,
       });
       const mode = await preflightDeepSecReviewScope({ cwd: request.cwd, mode: startInput.mode,
         scope: startInput.scmScope, actions: context.services.actions, signal });

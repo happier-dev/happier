@@ -26,12 +26,12 @@ function checkoutSnapshot(headOid: string): PluginActionResultById['scm.status.s
   } };
 }
 
-function request(options: Record<string, unknown> = {}, scope: Record<string, unknown> = {}): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
+function request(options: Record<string, unknown> = {}, scope: Record<string, unknown> = {}, engineId = 'coderabbit'): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   return { kind: 'create', runId: 'run-1', cwd: '/workspace',
     profile: { pluginId: 'happier.review.coderabbit', localId: 'review' },
     input: { text: 'Review this change.', structuredInput: {
-      reviewers: [{ kind: 'engine', engineId: 'coderabbit' }], instructions: 'Review this change.', changeType: 'uncommitted', base: { kind: 'none' },
-      engines: { coderabbit: options },
+      reviewers: [{ kind: 'engine', engineId }], instructions: 'Review this change.', changeType: 'uncommitted', base: { kind: 'none' },
+      engines: { [engineId]: options },
       scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scmBackendId: 'git', scmMode: '.git',
         repositoryRoot: '/workspace', worktreeRoot: '/workspace', baseRef: { source: 'unavailable', ref: null },
         selectedPaths: ['src/auth.ts'], committedPaths: [], uncommittedPaths: [], changedPaths: [],
@@ -40,11 +40,11 @@ function request(options: Record<string, unknown> = {}, scope: Record<string, un
   };
 }
 
-async function runFixture(params: { records: readonly unknown[]; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
+async function runFixture(params: { records: readonly unknown[]; engineId?: string; exitCode?: number; options?: Record<string, unknown>; scope?: Record<string, unknown>; cancel?: boolean; cancelPreflight?: 'reject' | 'result'; raw?: string; changeType?: 'committed' | 'uncommitted'; checkout?: PluginActionResultById['scm.status.snapshot'] }) {
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'coderabbit')?.factory;
   if (!factory) throw new Error('Expected CodeRabbit factory');
-  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'coderabbit' }, signal: new AbortController().signal });
+  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: params.engineId ?? 'coderabbit' }, signal: new AbortController().signal });
   const text = params.raw ?? params.records.map(value => JSON.stringify(value)).join('\r\n');
   const bytes = new TextEncoder().encode(text);
   let listener: ((chunk: PluginProcessOutput) => void) | undefined;
@@ -74,7 +74,7 @@ async function runFixture(params: { records: readonly unknown[]; exitCode?: numb
   });
   // The host process service is the genuine system boundary; plugin/runtime logic stays real.
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'coderabbit', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/coderabbit` },
-    surface: 'agent', signal: new AbortController().signal, agent: { id: 'coderabbit' },
+    surface: 'agent', signal: new AbortController().signal, agent: { id: params.engineId ?? 'coderabbit' },
     // SCM Actions cross the host transport boundary; the adapter's scope decision stays real.
     services: { availability: () => ({ status: 'available' }), actions: { execute: vi.fn(async (_action: 'scm.status.snapshot', _input: unknown, options?: { signal?: AbortSignal }) => {
       if (!params.cancelPreflight) return params.checkout ?? checkoutSnapshot('live-head');
@@ -89,7 +89,7 @@ async function runFixture(params: { records: readonly unknown[]; exitCode?: numb
         stdout: bytes, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false }),
     } },
   } as unknown as AgentRuntimeContext;
-  const openRequest = request(params.options, params.scope);
+  const openRequest = request(params.options, params.scope, params.engineId);
   const opened = await agent.executionRuns?.open({ ...openRequest, input: { ...openRequest.input,
     ...(params.changeType ? { structuredInput: { ...openRequest.input.structuredInput, changeType: params.changeType } } : {}),
   } }, context);
@@ -177,7 +177,7 @@ describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)'
   });
 
   it('preserves fix instructions, severity, Unicode and locations when gate exit 2 blocks', async () => {
-    const result = await runFixture({ records: [{ ...finding, title: 'Vérifier redirect' }, { ...complete, findings: 1, gate: { threshold: 'major', status: 'blocked', blockingFindings: 1 } }], exitCode: 2, options: { gate: 'major', configFiles: ['review.md', 'team.md'] } });
+    const result = await runFixture({ engineId: 'happier.review.coderabbit/coderabbit', records: [{ ...finding, title: 'Vérifier redirect' }, { ...complete, findings: 1, gate: { threshold: 'major', status: 'blocked', blockingFindings: 1 } }], exitCode: 2, options: { gate: 'major', configFiles: ['review.md', 'team.md'] } });
     expect(result.events.at(-1)?.kind).toBe('run-complete');
     expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [{ title: 'Vérifier redirect', severity: 'high', filePath: 'src/auth.ts', startLine: 10, endLine: 12, suggestion: finding.codegenInstructions }] });
     expect(result.output.overviewMarkdown).toContain('blocked');

@@ -1,4 +1,5 @@
-import { getBackendCatalogDefinition, legacyCustomAcpCompat } from '@happier-dev/agents';
+import { getBackendCatalogDefinition, legacyCustomAcpCompat, resolveAgentRoutingId, type AgentRoutingIdentityEntry } from '@happier-dev/agents';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { AgentExecutionTargetV1Schema, buildConfiguredAcpAgentSelectionV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { supportsAgentNativeFunctionTools } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { BackendTargetKeyV2Schema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -10,6 +11,7 @@ import { resolveContributedAgentRoutingId } from '@/plugins/projection/registry/
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 type ExecutionRunAgentCatalog = ReturnType<typeof readAgentCatalogSnapshot>;
+type ExecutionRunRoutingCatalog = Readonly<{ agentDefinitionsById: ReadonlyMap<string, AgentRoutingIdentityEntry> }>;
 
 function readRequestedAgentTarget(
   input: BackendTargetRefV1 | BackendTargetRefV2Input,
@@ -26,7 +28,7 @@ function readRequestedAgentTarget(
 
 function resolveExecutionRunCanonicalBackendTargetKey(
   input: BackendTargetRefV1 | BackendTargetRefV2Input,
-  catalog: ExecutionRunAgentCatalog,
+  catalog: ExecutionRunRoutingCatalog,
 ): string | null {
   const requestedAgentTarget = readRequestedAgentTarget(input);
 
@@ -57,7 +59,17 @@ function resolveExecutionRunCanonicalBackendTargetKey(
  */
 export function resolveExecutionRunRuntimeBackendTarget(
   backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
+  catalog?: ExecutionRunRoutingCatalog,
 ): BackendTargetRefV1 | null {
+  if (catalog) {
+    const key = resolveExecutionRunCanonicalBackendTargetKey(backendTarget, catalog);
+    const canonical = key ? readRequestedAgentTarget(key) : null;
+    if (canonical && !canonical.definitionId) {
+      const agentId = resolveAgentRoutingId(buildQualifiedPluginContributionKey(canonical.identity),
+        catalog.agentDefinitionsById.values());
+      if (agentId) return { kind: 'builtInAgent', agentId };
+    }
+  }
   const requestedAgentTarget = readRequestedAgentTarget(backendTarget);
   if (requestedAgentTarget) {
     try {

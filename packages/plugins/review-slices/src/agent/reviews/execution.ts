@@ -22,7 +22,7 @@ export function createSliceExecutionRunFactory(): AgentExecutionRunRuntimeFactor
             return { status: 'failed', diagnostic: { code: 'slices_scope_unsupported', severity: 'error', message: 'Slice reviews require an admitted repository scope.' } };
           }
           // Options have already crossed the host profile-schema boundary.
-          const options = (review.engines.slices ?? {}) as SliceReviewOptions;
+          const options = (review.engines[context.agent.id] ?? {}) as SliceReviewOptions;
           if (request.providerBinding || request.modelSelection?.providerConnectionId) {
             return { status: 'failed', diagnostic: { code: 'slices_provider_binding_unsupported', severity: 'error', message: 'The native slice reviewer cannot translate this Provider binding. Select its configured native model access.' } };
           }

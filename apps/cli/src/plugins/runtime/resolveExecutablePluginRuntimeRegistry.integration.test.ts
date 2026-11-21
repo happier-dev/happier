@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
     accountSettingsParse,
+    PluginManifestV2Schema,
     deriveBoxPublicKeyFromSeed,
     ProviderConnectionIdSchema,
     ProviderRuntimeBindingBasisV1Schema,
@@ -36,6 +37,8 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { PluginStateRecordSchema } from '@/plugins/store/state';
 import {
     readPluginRegistryCommitRecord,
     replacePluginRegistryCommitRecord,
@@ -2264,6 +2267,61 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         }
     });
 
+    it('reads a packaged prompt from an admitted development installation', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-development-prompt-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-development-prompt-source-'));
+        const pluginId = 'acme.development-prompt';
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
+        try {
+            await mkdir(join(pluginRoot, '.happier-plugin'));
+            const manifest = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({
+                id: pluginId,
+                entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' },
+                contributes: {
+                    agents: [{ id: 'reviewer', title: 'Reviewer', runtime: { kind: 'custom' }, primary: 'sessions',
+                        capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
+                    resources: [{ id: 'instructions', kind: 'prompt', path: './prompt.md', contentType: 'text/markdown' }],
+                    promptAssets: [{ id: 'review', kind: 'systemPrompt', resource: 'instructions',
+                        target: { kind: 'agent', agent: 'reviewer' } }],
+                },
+            }));
+            const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+            await writeFile(manifestPath, JSON.stringify(manifest));
+            await writeFile(join(pluginRoot, 'prompt.md'), 'Review the selected checkout.');
+            await writeFile(join(pluginRoot, 'daemon.mjs'), `export function activate(api) {
+                api.agents.register('reviewer', () => { throw new Error('Agent execution is not part of prompt preparation'); });
+            }`);
+            const distribution = await createLocalPathPluginDistributionIdentity(pluginRoot);
+            const trust = createPluginTrustRecord({ pluginId, distribution, approvedAtMs: 1 });
+            const store = createPluginRegistryStateStore({ happyHomeDir,
+                // No daemon process is running yet; start its real registry after durable admission.
+                runtimeLifecycle: { prepare: async () => ({ abort: async () => {}, adopt: async () => ({}) }) },
+            });
+            await store.initialize();
+            await expect(store.approveDevelopmentAuthorityWithResult({
+                pluginId, expectedRevision: (await store.readSnapshot()).revision,
+                approvedAuthorityManifest: manifest, trust, updatePolicy: 'allowed', optionalAccess: [],
+                catalogRecord: PluginStateRecordSchema.parse({
+                    source: { kind: 'path', locator: pluginRoot, resolvedPath: pluginRoot, manifestPath,
+                        trustPolicy: 'local_trusted', installPolicy: 'link', devWatch: true },
+                    compatibility: { status: 'compatible', diagnostics: [] },
+                    install: { mode: 'link', manifestVersion: manifest.version, installedPath: null },
+                    state: { enabled: true },
+                }),
+            })).resolves.toMatchObject({ transaction: { status: 'committed' } });
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, pluginIds: [pluginId] });
+            await runtime.activateContributionsOnDemand([{ pluginId, family: 'agents', localId: 'reviewer' }]);
+            await expect(runtime.resolvePromptAssetBlocks({ agentId: `${pluginId}/reviewer`,
+                selectedAsset: { pluginId, localId: 'review' } })).resolves.toEqual([{
+                id: `plugin_prompt_asset.${pluginId}/review`, scope: 'session', text: 'Review the selected checkout.',
+            }]);
+        } finally {
+            await runtime?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    });
+
     it('binds all five selected resource kinds through real prompt and external-action consumers', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-resource-runtime-home-'));
         const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-resource-runtime-source-'));
@@ -2643,32 +2701,18 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 code: 'plugin_resource_integrity_mismatch',
             });
             await writeFile(join(immutableRoot, 'resources', 'shared.txt'), promptBytes);
-            const currentCommit = await readPluginRegistryCommitRecord(paths);
-            if (!currentCommit) throw new Error('Expected current resource-action commit');
-            await replacePluginRegistryCommitRecord({
-                paths,
-                expectedCurrent: currentCommit,
-                next: {
-                    ...currentCommit,
-                    revision: currentCommit.revision + 1,
-                    transactionId: 'resource-runtime-replacement',
-                    baseRevision: currentCommit.revision,
-                    createdAtMs: 2,
-                    creator: { pid: 42, instanceId: 'daemon-a' },
-                    pluginOccurrenceIds: {},
-                },
-            });
+            // Registry adoption owns retirement; rewriting its durable projection
+            // alone does not retire an already-admitted runtime occurrence.
+            runtimeRegistry.retirePluginConsumers?.(['acme.resource.action']);
             await expect(runtimeRegistry.resolvePromptAssetBlocks({ agentId: 'acme.resource.action/novel-reviewer' }))
-                .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+                .rejects.toMatchObject({ code: 'PLUGIN_PROMPT_ASSET_RESOURCE_INVALID' });
             await expect(runtimeRegistry.targetActionInvocations?.invoke({
                 pluginId: 'acme.resource.action', localId: 'read-prompt', input: {}, surface: 'cli',
-            })).resolves.toEqual({
-                status: 'failed',
-                code: 'plugin_generation_stale',
-                message: 'Plugin occurrenceId is stale',
+            })).resolves.toMatchObject({
+                status: 'unavailable',
+                code: 'plugin_action_generation_retired',
                 actionHandlerInvocation: 'notStarted',
             });
-            runtimeRegistry.retirePluginConsumers?.(['acme.resource.action']);
         } finally {
             await runtimeRegistry.dispose();
         }

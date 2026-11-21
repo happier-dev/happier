@@ -41,7 +41,7 @@ function createRuntime(
       if (!preflight.ok) {
         return { status: 'failed', diagnostic: { code: 'coderabbit_scope_unsupported', severity: 'error', message: preflight.error } };
       }
-      const engineConfig = reviewInput.engines?.coderabbit;
+      const engineConfig = reviewInput.engines?.[context.agent.id];
       const args = ['review', '--agent', '--dir', request.cwd];
       if (preflight.changeType === 'committed') args.push('--committed');
       if (preflight.changeType === 'uncommitted') args.push('--uncommitted');

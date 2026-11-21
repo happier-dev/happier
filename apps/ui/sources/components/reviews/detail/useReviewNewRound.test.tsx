@@ -102,7 +102,8 @@ it.each([false, true])('opens the actual native New round with exact inventory a
   expect(inventoryInputs).toHaveLength(paid ? 2 : 1);
   run = ExecutionRunPublicStateSchema.parse({ ...run, finishedAtMs: 3 });
   const before = headerReads;
-  await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, machineId: 'selected-machine' }, { runId: run.runId }));
+  const runId = run.runId;
+  await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, machineId: 'selected-machine' }, { runId }));
   await vi.waitFor(() => expect(headerReads).toBeGreaterThan(before));
   await flushHookEffects();
   expect(inventoryInputs).toHaveLength(paid ? 2 : 1);

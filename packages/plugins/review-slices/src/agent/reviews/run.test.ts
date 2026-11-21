@@ -102,7 +102,7 @@ describe('native slice review', () => {
       if (!factory) throw new Error('Missing slice reviewer registration');
       const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'slices' }, signal: f.controller.signal });
       // Host OS/process services are the boundary; registered factory and finite flow remain real.
-      const context = { signal: f.controller.signal, services: {
+      const context = { agent: { id: 'slices' }, signal: f.controller.signal, services: {
         exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
       } } as unknown as AgentExecutionRunRuntimeContextV1;
       const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'native-write-policy', cwd: f.directory,
@@ -131,7 +131,7 @@ describe('native slice review', () => {
     let releaseReview = () => {};
     const reviewCompletion = new Promise<void>(resolve => { releaseReview = resolve; });
     const f = await fixture('success', reviewCompletion);
-    const context = { signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
+    const context = { agent: { id: 'slices' }, signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
     const runtime = await createSliceExecutionRunFactory().open({ kind: 'create', runId: 'live-progress', cwd: f.directory,
       profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Review the repository', structuredInput: {
         scope: 'repository', engines: { slices: { provider: 'mock' } }, scmReviewScope: {
@@ -164,19 +164,20 @@ describe('native slice review', () => {
     expect(ReviewFindingsV2Schema.parse(JSON.parse(output.text)).findings).toHaveLength(2);
   });
   it.each(['success', 'failed'] as const)('publishes substantive native findings for host normalization when the native result is %s', async mode => {
+    const engineId = mode === 'success' ? 'happier.review.slices/slices' : 'slices';
     const f = await fixture(mode);
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = activation.registration('agents', 'slices')?.factory;
     if (!factory) throw new Error('Missing slice reviewer registration');
-    const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'slices' }, signal: f.controller.signal });
+    const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: f.controller.signal });
     // Only host I/O services are substituted; the runtime, scope schema and adapter remain real.
-    const context = { signal: f.controller.signal, services: {
+    const context = { agent: { id: engineId }, signal: f.controller.signal, services: {
       exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
       managedServices: { dependencies: { ensure: async () => ({ state: 'ready', id: 'review-executable', version: '0.8.4', sourceId: 'test' }) } },
     } } as unknown as AgentExecutionRunRuntimeContextV1;
     const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'host-run', cwd: f.directory,
       profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Find lost writes', structuredInput: {
-        reviewers: [{ kind: 'engine', engineId: 'slices' }], instructions: 'Find lost writes', scope: 'repository', engines: { slices: { provider: 'mock' } },
+        reviewers: [{ kind: 'engine', engineId }], instructions: 'Find lost writes', scope: 'repository', engines: { [engineId]: { provider: 'mock' } },
         scmReviewScope: { kind: 'review_scm_scope.v1', scope: 'repository', status: 'supported', scmBackendId: 'git', scmMode: '.git',
           repositoryRoot: f.directory, worktreeRoot: f.directory, baseRef: { source: 'unavailable', ref: null },
           selectedPaths: [], committedPaths: [], uncommittedPaths: [], changedPaths: [], diagnostics: [],
@@ -196,6 +197,7 @@ describe('native slice review', () => {
       nativeFindingId: 'one', featureId: 'slice-a', confidence: 'high', reproduction: 'Run two concurrent writes.',
     });
     expect(f.commands.at(-1)).toContain('--prompt-file');
+    expect(f.commands.at(-1)).toEqual(expect.arrayContaining(['--provider', 'mock']));
     await runtime.dispose();
     const before = f.commands.length;
     const bound = await createSliceExecutionRunFactory().open({ ...request, providerBinding: {

@@ -40,6 +40,16 @@ describe('areExecutionRunBackendTargetsEqual', () => {
 });
 
 describe('resolveExecutionRunRuntimeBackendTarget', () => {
+  it('uses the admitted catalog routing id when an installed plugin replaces a bundled Agent', () => {
+    const identity = { pluginId: 'happier.review.deepsec', localId: 'deepsec' };
+    const catalog = { agentDefinitionsById: new Map([['happier.review.deepsec/deepsec', {
+      id: 'happier.review.deepsec/deepsec', identity,
+    }]]) };
+    expect(resolveExecutionRunRuntimeBackendTarget({ kind: 'agent', identity }, catalog))
+      .toEqual({ kind: 'builtInAgent', agentId: 'happier.review.deepsec/deepsec' });
+    expect(resolveExecutionRunRuntimeBackendTarget({ kind: 'builtInAgent', agentId: 'deepsec' }, catalog))
+      .toEqual({ kind: 'builtInAgent', agentId: 'happier.review.deepsec/deepsec' });
+  });
   it('resolves a canonical installed Agent identity to the retained runtime target', () => {
     expect(resolveExecutionRunRuntimeBackendTarget({
       kind: 'agent',

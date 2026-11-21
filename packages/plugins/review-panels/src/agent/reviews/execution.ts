@@ -19,7 +19,7 @@ export function createPanelExecutionRunFactory(): AgentExecutionRunRuntimeFactor
           // ReviewProfile owns input, scope and profile-options admission. This
           // adapter translates the admitted value; it does not re-parse it.
           const input = request.input.structuredInput as ReviewStartInput;
-          const options = input.engines.panels as PanelReviewOptions | undefined;
+          const options = input.engines[context.agent.id] as PanelReviewOptions | undefined;
           const scope = input.scmReviewScope;
           const comparison = scope?.comparison;
           const range = scope?.revisionRange;

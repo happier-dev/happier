@@ -126,7 +126,7 @@ import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPu
 import type { ExecutionRunSessionStateTarget } from './sessionStateDelivery';
 import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
-import { areExecutionRunBackendTargetsEqual, matchesExecutionRunLegacyBackendId, resolveExecutionRunRuntimeBackendId } from './backendTargets';
+import { areExecutionRunBackendTargetsEqual, matchesExecutionRunLegacyBackendId, resolveExecutionRunRuntimeBackendId, resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
 import {
   readExecutionRunPermissionResponseFromDispatch,
   observeExecutionRunPermissionStore,
@@ -294,7 +294,10 @@ async function prepareExecutionRunManagerStartParams(
   params: ExecutionRunManagerStartParams,
   cwd: string,
   profileCatalog: ExecutionRunProfileContributionCatalog,
+  engineRegistry?: ExecutionRunProfileCatalogResolution['engineRegistry'],
 ): Promise<ExecutionRunManagerStartParams> {
+  const runtimeTarget = resolveExecutionRunRuntimeBackendTarget(params.backendTarget, engineRegistry?.contributions);
+  if (runtimeTarget) params = { ...params, backendTarget: runtimeTarget };
   if (params.intent === 'review') {
     const selection = resolveExecutionRunProfileSelectionForAgent(profileCatalog, {
       intent: params.intent,
@@ -2438,6 +2441,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         params,
         params.cwd ?? this.cwd,
         resolution.profileCatalog,
+        resolution.engineRegistry,
       ).catch((error: unknown) => {
         throw markExecutionRunStartPreparationFailure(error, 'execution_run_profile_preparation_failed');
       });
