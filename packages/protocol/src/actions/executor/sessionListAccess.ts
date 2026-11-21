@@ -1,4 +1,4 @@
-import type { ActionId } from '../actionIds.js';
+import { SESSION_TURN_CANCEL_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { isSessionStateFieldActionId } from '../sessionStateFieldActions.js';
 import type { ActionContextualDefaults } from '../contextualDefaults.js';
@@ -110,7 +110,7 @@ export function resolveActionSessionListAccessFailure(
  * remain a convenience for unconstrained human/API callers. The Agent surface
  * is intrinsically bound to its current Session; other autonomous surfaces use
  * the host-only `sessionListAccess` fact to declare the same restricted corpus.
- * Reads, registered Session field setters and stop/archive/unarchive use the
+ * Reads, registered Session field setters and stop/archive/unarchive/turn cancel use the
  * same host Session caller and server-proved led subtree as start admission.
  * Headless Resume additionally requires the caller to be the target's direct manager.
  * Other mutations remain current-Session-only. A Workflow caller additionally
@@ -201,8 +201,10 @@ export async function resolveActionCurrentSessionScopeFailure(
     return refuse('current_session_only');
   }
   if (context.sessionListAccess === 'unavailable') return refuse('session_scope_unavailable');
+  // Turn cancel uses the same corpus at executor admission. The installed
+  // lifecycle HTTP predicate also selects native archive/unarchive routes.
   if (sideEffectClass !== 'read' && !isSessionStateFieldActionId(actionId)
-    && !ledLifecycleAction && !headlessResume) {
+    && !ledLifecycleAction && actionId !== SESSION_TURN_CANCEL_ACTION_ID_V1 && !headlessResume) {
     return refuse('action_scope_restricted');
   }
   const resolved = await resolveActionAgentStartContextV1(deps, context, undefined, { purpose: 'session_scope' });

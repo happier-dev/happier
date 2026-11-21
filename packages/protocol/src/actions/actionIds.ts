@@ -102,6 +102,7 @@ export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, 
   return rootActionId === DEPLOYMENT_PREPARE_ACTION_ID_V1 && effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
 }
 export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
+export const SESSION_TURN_CANCEL_ACTION_ID_V1 = 'session.turn.cancel' as const;
 import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
 export { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, isSessionWorkspaceReturnActionIdV1 } from './sessionWorkspaceReturnActionIdsV1.js';
 
@@ -565,7 +566,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.pending.markHandled',
     'session.pending.dismiss',
     'session.pending.sendAsNew',
-    'session.turn.cancel',
+    SESSION_TURN_CANCEL_ACTION_ID_V1,
     'session.compact',
     'session.stop',
     'session.exchange.control',

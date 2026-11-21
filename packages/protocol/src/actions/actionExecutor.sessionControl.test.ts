@@ -6,6 +6,7 @@ import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDe
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
 import { SessionSummarySchema } from '../sessions/control/listResult.js';
 import { SessionListQueryV1Schema } from '../sessions/listing/query.js';
+import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { encodeV2SessionListCursorV1 } from '../sessions/listing/cursor.js';
 import { bindHomeDomainActionHttpRequestV1, readHomeDomainActionErrorV1 } from './homeDomainActionFamily.js';
 import { ActionIdSchema, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from './actionIds.js';
@@ -1791,6 +1792,32 @@ describe('createActionExecutor (session control)', () => {
     expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionDecision: 'approved' }).success).toBe(false);
     expect(await createExecutor({ }).execute(id, { sessionId: 's1' }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+
+  it('lets an Agent cancel a proved led child turn and refuses targets outside its admitted scope', async () => {
+    const caller = AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 });
+    const context: ActionExecutorContext = {
+      surface: 'agent', defaultSessionId: 'parent', serverId: 'home-a',
+      authority: 'account_automation', actionCaller: caller, sessionListAccess: 'led_subtree',
+      agentStartContext: { caller, baseline: { machineId: 'machine', directory: '/repo' }, roles: {},
+        ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default' },
+    };
+    const cancelled: string[] = [];
+    const executor = createExecutor({
+      sessionRead: async ({ sessionIds, underSessionId }) =>
+        createSessionMembershipReadFixture(sessionIds, underSessionId === 'parent' ? ['child'] : []),
+      sessionTurnCancel: async ({ sessionId }) => { cancelled.push(sessionId); return { requested: true }; },
+    });
+
+    await expect(executor.execute('session.turn.cancel', { sessionId: 'parent' }, context))
+      .resolves.toMatchObject({ ok: true, result: { requested: true } });
+    await expect.soft(executor.execute('session.turn.cancel', { sessionId: 'child' }, context))
+      .resolves.toMatchObject({ ok: true, result: { requested: true } });
+    await expect.soft(executor.execute('session.turn.cancel', { sessionId: 'unrelated' }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'target_outside_led_subtree' } });
+    await expect(executor.execute('session.turn.cancel', { sessionId: 'child' }, { ...context, sessionListAccess: 'current_session' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'current_session_only' } });
+    expect(cancelled).toEqual(['parent', 'child']);
   });
 
   it.each([undefined, 'explicit_stop', 'lifecycle_control'] as const)('classifies session.stop intent at its public front door (%s)', async stopIntent => {
