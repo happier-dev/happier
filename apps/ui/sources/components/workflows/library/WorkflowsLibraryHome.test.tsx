@@ -956,6 +956,49 @@ describe('workflow library page anatomy', () => {
         expect(screen.findAll(node => node.props.accessibilityRole === 'checkbox'
             && !String(node.props.testID).includes('-quick-filter:'))).toHaveLength(0);
     });
+    it('lists Account workflows in the one Library section while saved workflows are still loading', async () => {
+        const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema }] = await Promise.all([
+            import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2')]);
+        const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const inlineDefinition = createWorkflowDefinitionFixture({
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+            blocks: [{ kind: 'step', id: 'first', document: { text: 'Morning digest', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }],
+        });
+        const detail = AutomationDefinitionDetailSchema.parse({ id: 'digest', name: 'Morning digest', description: null, enabled: true,
+            workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+            templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+            assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
+                triggerEvidence: null }),
+            triggers: [{ id: 't1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+                triggerDefinitionEnvelope: null, nextRunAt: null,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
+        });
+        const { executionRecipe: _privateRecipe, triggers, ...listItem } = detail;
+        const list = AutomationDefinitionListResponseSchema.parse({ automations: [{ ...listItem,
+            triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) }], nextCursor: null });
+        automationDefinitionResponse = async (url, init) => {
+            if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
+                const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+                const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
+                return Response.json({ automations: query.scope === 'account_saved' ? [] : [detail], nextCursor: null });
+            }
+            return url.pathname === '/v3/automations' ? Response.json(list)
+                : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
+        };
+        // The saved library's first page has not answered yet.
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return new Promise(() => {});
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
+        // The rows' own Library section is the only one: no second titled placeholder section above it.
+        expect(screen.findHostByTestId('workflows-home:loading')).toBeNull();
+    });
     it('keeps the workflow and stays quiet when the executor deletion confirmation is cancelled', async () => {
         const definitionId = '10000000-0000-4000-8000-000000000051';
         execute.mockImplementation(async (actionId: string) => {

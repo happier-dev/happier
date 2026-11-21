@@ -371,7 +371,9 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         </ListPresentationProvider>
     );
 
-    const libraryStateBesideRows = library.status !== 'loaded' && library.definitions.length === 0 && model.keys.length > 0;
+    // Account rows can land before the saved library: only its failure is said beside them. Its first load adds
+    // nothing, since the reserved rows bring their own Library title and the rows already stand under one.
+    const libraryStateBesideRows = library.status === 'failed' && library.definitions.length === 0 && model.keys.length > 0;
 
     // The page's scroller stands above the Collection, so the library's rows window in it (`page-virtualized`).
     return (

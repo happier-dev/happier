@@ -20,6 +20,9 @@ import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewSet
 import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
 import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_SETTLE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
 
+/** Change and base selection only apply when a Review reads changes, not the whole repository. */
+const REVIEW_SCOPE_IS_CHANGES = { op: 'not', predicate: { op: 'eq', path: 'scope', value: 'repository' } } as const;
+
 function resolveReviewExecutionPlacementForInput(input: unknown): 'machine' | 'session' {
   return readRecord(readRecord(input).target).kind === 'detached' ? 'machine' : 'session';
 }
@@ -213,6 +216,8 @@ function createReviewActionSpecs(): readonly [
           description: 'Which changes to review.',
           widget: 'select',
           required: true,
+          // A repository Review reads the whole tree, so it has no changes to choose.
+          visibleWhen: REVIEW_SCOPE_IS_CHANGES,
           options: [
             { value: 'committed', label: 'Committed' },
             { value: 'uncommitted', label: 'Uncommitted' },
@@ -225,6 +230,7 @@ function createReviewActionSpecs(): readonly [
           description: 'How to define the review base for engines that need it.',
           widget: 'select',
           required: true,
+          visibleWhen: REVIEW_SCOPE_IS_CHANGES,
           options: [
             { value: 'none', label: 'None' },
             { value: 'branch', label: 'Base branch' },
