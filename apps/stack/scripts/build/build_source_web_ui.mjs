@@ -148,6 +148,10 @@ function sourceWebBuildFingerprint({ inputIdentity, buildOptions }) {
   return createHash('sha256').update(inputIdentity).update(buildOptions).digest('hex');
 }
 
+function sourceWebRevisionBuildFingerprint({ revision, buildOptions }) {
+  return createHash('sha256').update(sourceRevisionKey(revision)).update(buildOptions).digest('hex');
+}
+
 function sourceWebCandidateKey({ repoDir, buildOptions }) {
   return `web-${createHash('sha256').update(JSON.stringify([repoDir, buildOptions])).digest('hex')}`;
 }
@@ -196,12 +200,11 @@ async function webOutputDigests(directory, prefix = '') {
 
 async function readReusableSourceWebUi({ repoDir, outputDir, record, buildOptions, env, inputIdentity, requireCurrentSource, sourceCapturedAfter, revision,
   candidate, uiInputDigest }) {
-  const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
   // The producer's revision export serves every Stack on that revision with the
   // producer's options; checkout-keyed exports still match the caller's options.
   if (record.component !== 'web' || (!revision && !uiInputDigest && record.buildOptions !== buildOptions)
     || (inputIdentity && record.inputIdentity !== inputIdentity)
-    || record.uiDir !== join(outputDir, 'web') || !record.outputDigests) return null;
+    || !record.outputDigests) return null;
   if (sourceCapturedAfter !== undefined && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)) return null;
   // A revision export matches by revision, never by the moving checkout, or by
   // the producer's alias for a later revision whose UI inputs are identical.
@@ -213,15 +216,28 @@ async function readReusableSourceWebUi({ repoDir, outputDir, record, buildOption
   // Only the repository producer's refresh compares authored inputs. QA
   // consumers adopt completed captures while the shared checkout keeps moving.
   if (!revision && requireCurrentSource && !inputIdentity && record.inputIdentity !== await sourceWebInputIdentity({ repoDir })) return null;
-  if (!buildInputDependencyIdentityMatches(record.dependencyPublication, dependencyPublication)) return null;
+  // A pinned revision-tree export reads its own installation at build time.
+  // Its completed static assets have no dependency on the moving checkout.
+  let dependencyPublication;
+  if (record.dependencyPublication) {
+    dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
+    if (!buildInputDependencyIdentityMatches(record.dependencyPublication, dependencyPublication)) return null;
+  } else {
+    const capture = record.sourceCapture;
+    if (!capture?.revision || capture.inputIdentity !== record.inputIdentity || typeof record.buildOptions !== 'string'
+      || record.reuseFingerprint !== sourceWebRevisionBuildFingerprint({ revision: capture, buildOptions: record.buildOptions })) return null;
+  }
+  const uiDir = join(outputDir, 'web');
   try {
-    await assertWebArtifactPayload({ payloadDir: record.uiDir, entrypoint: 'index.html' });
-    if (JSON.stringify(await webOutputDigests(record.uiDir)) !== JSON.stringify(record.outputDigests)) return null;
+    if (!(await lstat(uiDir)).isDirectory()) return null;
+    await assertWebArtifactPayload({ payloadDir: uiDir, entrypoint: 'index.html' });
+    if (JSON.stringify(await webOutputDigests(uiDir)) !== JSON.stringify(record.outputDigests)) return null;
   } catch (error) {
     if (error.code && !['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
     return null;
   }
-  return { outputDir, built: { uiDir: record.uiDir, entrypoint: 'index.html', runtimeMode: 'source', dependencyPublication,
+  return { outputDir, built: { uiDir, entrypoint: 'index.html', runtimeMode: 'source',
+    ...(dependencyPublication ? { dependencyPublication } : {}),
     ...(record.sourceCapture ? { sourceCapture: record.sourceCapture } : {}),
     ...(record.uiInputDigest ? { uiInputDigest: record.uiInputDigest } : {}), buildOptions: record.buildOptions } };
 }
@@ -240,7 +256,9 @@ async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, req
       const reusable = await readReusableSourceWebUi({ repoDir, record, outputDir, buildOptions, env,
         inputIdentity, requireCurrentSource, sourceCapturedAfter, revision, candidate, uiInputDigest });
       if (!reusable) return null;
-      await assertBuildInputDependencies({ sourceDir: repoDir, env, state: reusable.built.dependencyPublication });
+      if (reusable.built.dependencyPublication) {
+        await assertBuildInputDependencies({ sourceDir: repoDir, env, state: reusable.built.dependencyPublication });
+      }
       return reusable;
     },
     publish: async ({ built, outputDir, record }) => {
@@ -283,21 +301,10 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
   const cached = await adopt();
   if (cached) return cached;
-  // Owner 2026-11-13/11-14: one shared web export, built by the repository
-  // producer and adopted by every QA Stack. A consumer Stack never compiles its
-  // own; by default it adopts the producer's newest completed one, else the
-  // caller falls back to the live (borrowed) Expo server. An explicit export
-  // request for a revision (`--ui=export`) asks the producer for that
-  // revision's one shared export, which runs below as the producer.
-  if (context.consumerStackName !== context.producerStackName && !(revision && !reuseOnly)) {
-    // A revision request may adopt the shared export of another revision; the
-    // capture boundary and last-green requirements still apply.
-    const shared = revision ? await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
-      env: context.env, signal, sourceCapturedAfter, requireLastGreen }) : null;
-    if (shared) console.error(`[source-ui] adopted the shared export producer=${context.producerStackName} rev=${shared.sourceCapture?.revision ?? 'checkout'} capturedAt=${shared.sourceCapture?.capturedAt}${revision ? ` (requested rev ${sourceRevisionKey(revision)}; no export for it yet)` : ''}`);
-    return shared;
-  }
-  if (reuseOnly) return null;
+  // A revision request adopts only its matching publication or a producer-proven
+  // alias. Auto mode leaves a miss to the caller. Explicit revision exports
+  // may ask the repository producer to build the requested revision.
+  if (reuseOnly || (context.consumerStackName !== context.producerStackName && !revision)) return null;
   if (requireLastGreen && !revision) throw sourceRuntimeProducerUnavailable(sourceRuntimeCaptureUnavailable(), context);
   const built = await runSharedSourceWebExport({ repoDir, context, signal, inputs: { repoDir,
     baseDir: join(context.producerStackBaseDir, 'source-runtime'), stackBaseDir: context.producerStackBaseDir,
@@ -399,7 +406,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
     if (cached) return cached;
   }
   const fingerprint = revision
-    ? createHash('sha256').update(sourceRevisionKey(revision)).update(buildOptions).digest('hex')
+    ? sourceWebRevisionBuildFingerprint({ revision, buildOptions })
     : sourceWebBuildFingerprint({ inputIdentity, buildOptions });
   return await withWorkspaceBundleLock(async () => {
     await mkdir(bundleRoot, { recursive: true });

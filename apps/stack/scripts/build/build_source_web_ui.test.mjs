@@ -1,7 +1,7 @@
 // @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, access, chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -405,7 +405,7 @@ await writeFile(join(web,'app.js'),await readFile(join(process.cwd(),'sources/ap
     .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native?.launcher ?? fileURLToPath(new URL('../../bin/hstack-exec', sourceUrl)))),
   sourceUrl, new Map([['../utils/expo/command.mjs', pathToFileURL(commandBoundary)],
     ...(adapter ? [['../utils/proc/runSourceBuildCommand.mjs', pathToFileURL(adapter)]] : [])])));
-  const { exportSourceWebUi: exportShared, publishProducerSourceWebUi, readSourceWebRevisionInputDigest } = await import(pathToFileURL(publicOwner));
+  const { exportSourceWebUi: exportShared, prepareSourceQaWebUi, publishProducerSourceWebUi, readSourceWebRevisionInputDigest } = await import(pathToFileURL(publicOwner));
   const env = { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
     // The fixture borrows the host's installed dependencies; pnpm installation is outside this contract.
@@ -503,6 +503,22 @@ await writeFile(join(web,'app.js'),await readFile(join(process.cwd(),'sources/ap
   assert.match(await readFile(join(fromTree.uiDir, 'app.js'), 'utf8'), /tree-revision/, 'the export holds the revision tree bytes');
   assert.equal(fromTree.sourceCapture.revision, treeRevision);
   assert.equal(await exports(), 4, 'the moving checkout refuses nothing: one export for the revision');
+  const adoptTreeExport = async overlayDigest => {
+    const stackBaseDir = fixture.path(`stacks/tree-adopter-${pendings.length}`);
+    const pending = await beginPendingSourceStart({ stackBaseDir });
+    pendings.push(pending);
+    return await prepareSourceQaWebUi({ mode: 'auto', repoDir, stackBaseDir, pending,
+      baseDir: fixture.path(`adopter-state-${pendings.length}`), requireLastGreen: true,
+      revision: { revision: treeRevision, overlayDigest }, signal: cancellation.signal,
+      env: { ...env, HAPPIER_STACK_STACK: `tree-adopter-${pendings.length}` } });
+  };
+  const adoptedTree = await adoptTreeExport(null);
+  assert.equal(adoptedTree.mode, 'export', 'a second Stack adopts the completed pinned-tree export by default');
+  assert.equal(adoptedTree.built.uiDir, fromTree.uiDir, 'the consumer serves the producer directory');
+  assert.equal((await lstat(adoptedTree.built.uiDir)).mode & 0o222, 0, 'the published directory is read-only');
+  const differentOverlay = await adoptTreeExport('a'.repeat(64));
+  assert.deepEqual(differentOverlay, { mode: 'borrowed', built: null }, 'a different overlay cannot adopt the unoverlaid export');
+  assert.equal(await exports(), 4, 'neither adoption attempt starts a per-Stack export');
 });
 
 test('source stacks reuse completed web bytes while debug options and damaged exports require construction', async context => {
