@@ -1493,7 +1493,10 @@ the profile's exact Home connection descriptor and an unambiguous profile bindin
 names, URL equality and advisory descriptors cannot authorize it. Open and its
 private Sync source route retain the local profile for credentials and requester
 custody, while Workspace and Source addressing uses the admitted Home id. Current
-Machine admission and requester authorization remain required.
+Machine admission and requester authorization remain required. If the installed
+target refuses those checks before calling the Project handler, it returns
+`project_open_unavailable` with `effectAttempted: false`. An uncertain result
+after dispatch still uses `outcomeUnknown`.
 
 The Session Action owner stamps its authenticated requester Account into approval
 context. Project Open retains the approved Agent's exact Session requester bootstrap

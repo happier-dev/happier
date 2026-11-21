@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { Socket } from 'socket.io';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
@@ -43,6 +44,7 @@ vi.mock('@/daemon/controlServer', async importOriginal => ({ ...await importOrig
 
 it.each([
   { actor: 'owner', actionId: 'projects.open' },
+  { actor: 'owner-url-only', actionId: 'projects.open' },
   { actor: 'member', actionId: 'projects.open' },
   { actor: 'foreign-manager', actionId: 'projects.open' },
   { actor: 'owner', actionId: 'projects.inspect' },
@@ -54,7 +56,8 @@ it.each([
   const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 0,
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
     credentialProvenance: 'stored_session' as const };
-  const custodianAccountId = actor === 'owner' ? 'requester' : 'company';
+  const losesProfileIdentity = actor === 'owner-url-only';
+  const custodianAccountId = actor === 'owner' || losesProfileIdentity ? 'requester' : 'company';
   const role = actor === 'member' ? 'use' as const : 'manage' as const;
   const custodianCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: custodianAccountId, tokenEpoch: 0,
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
@@ -79,6 +82,25 @@ it.each([
     machineIdByServerId: { ...settings.machineIdByServerId, [serverId]: 'machine' },
     lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [serverId]: 'requester' } }));
   reloadConfiguration();
+  if (losesProfileIdentity) {
+    const transport = axios.request.bind(axios);
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+      if (new URL(String(config.url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: { v: 1, rows: [] } };
+      }
+      return transport(config);
+    });
+    const open = h.machine.callProjectOpen.bind(h.machine);
+    vi.spyOn(h.machine, 'callProjectOpen').mockImplementation(async request => {
+      // The profile can lose its exact descriptor between approval and native dispatch.
+      await updateSettings(settings => {
+        const { homeConnectionDescriptor: _descriptor, homeConnectionDescriptorAuthority: _authority,
+          ...urlOnly } = settings.servers[serverId]!;
+        return { ...settings, servers: { ...settings.servers, [serverId]: urlOnly } };
+      });
+      return open(request);
+    });
+  }
   const owner = h.daemon.externalActionIngressOwner;
   if (!owner) throw new Error('Missing installed external Action owner');
   Reflect.set(h.machine, 'token', custodianCredentials.token);
@@ -276,6 +298,14 @@ it.each([
     readCredentials: async () => personCredentials, onRequesterSessionCredentialDisclosure: async () => true,
   }).execute('approval.request.decide', { artifactId: artifact.id, decision: 'approve', serverIdentityId: homeId },
     { surface: 'cli', authority: 'present_user' });
+  if (losesProfileIdentity) {
+    expect(ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifact.id }))).toMatchObject({
+      status: 'failed',
+      execution: { ok: false, errorCode: 'project_open_unavailable', effectAttempted: false },
+    });
+    expect(rows).toHaveLength(0);
+    return;
+  }
   expect(ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifact.id })),
     JSON.stringify({ decided, receiverResults, roots, mintFailures, transportFailures, phases })).toMatchObject(actor === 'owner'
       ? { execution: { ok: true, result: { kind: 'opened', directory: h.cwd } } }

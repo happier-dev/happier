@@ -4713,7 +4713,8 @@ export class ApiMachineClient {
         const envelope = context.originalActionEnvelope;
         const installation = readInstallationIdentityIfExistsSync();
         const socket = this.socket;
-        const unavailable = () => Object.assign(new Error('Installed Project root authority is unavailable'), { code: 'peer_unavailable' });
+        // These checks run before the Project handler can attempt any effect.
+        const unavailable = () => ({ kind: 'refused', code: 'project_open_unavailable', effectAttempted: false } as const);
         if (!socket?.connected || !installation || !authorization || !requesterAuthorization || !admission || !envelope
             || requesterAuthorization.token !== authorization.token || !isDeepStrictEqual(requesterAuthorization.binding, authorization.binding)
             || !requesterAuthorization.requesterAccountProjection || !requesterAuthorization.requesterHttpProjection
@@ -4727,13 +4728,13 @@ export class ApiMachineClient {
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
                 { actionId: 'projects.open', machineId: this.machine.id, envelope })
             || envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)
-            || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) throw unavailable();
+            || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) return unavailable();
         const homeId = await this.readWorkspaceSyncHomeIdentity({ effectful: true, ...(context.signal ? { signal: context.signal } : {}) });
         if (homeId !== authorization.binding.serverIdentityId
             || !await isServerProfileHomeIdentity(this.machineRuntimeServerId, request.serverId)
             || this.socket !== socket || !socket.connected
             || configuration.activeServerId !== this.machineRuntimeServerId
-            || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+            || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) return unavailable();
         return OpenProjectResultV1Schema.parse(await this.rpcHandlerManager.invokeLocal(RPC_METHODS.PROJECTS_OPEN, request, {
             ...(context.signal ? { signal: context.signal } : {}), localActionContext: context,
             // This owner validated the exact admitted root above. Preserve that
