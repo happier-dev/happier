@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/reach/projectReachV1';
 import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import { selectMachineFleetFromRecord } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { useActiveServerAccountScope, useMachineDisplayById } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -65,7 +66,7 @@ export function useReachProjects(serverId?: string | null) {
 }
 
 /** The name inputs `resolveMachineDisplayNames` reads, for the whole fleet in id order. */
-function readNameSources(displays: Parameters<typeof selectMachineFleetFromRecord>[0]) {
+function readNameSources(displays: Readonly<Record<string, MachineDisplayRenderable>>) {
   return [...selectMachineFleetFromRecord(displays)].sort((left, right) => left.id.localeCompare(right.id))
     .map(machine => ({ id: machine.id,
       metadata: machine.metadata !== null ? { displayName: machine.metadata?.displayName ?? null, host: machine.metadata?.host ?? null } : null,
