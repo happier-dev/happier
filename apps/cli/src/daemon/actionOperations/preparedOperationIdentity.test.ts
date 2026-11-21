@@ -166,6 +166,46 @@ it('rejoins teardown through the original compact request after split retention'
   expect(execute).toHaveBeenCalledTimes(1);
 });
 
+it('returns the settled receipt when the original CLI teardown is retried after approval', async () => {
+  const compact = { ...authored, requestKey: 'teardown-reviewed', reason: 'manual' as const, removeEnvironment: true as const };
+  const prepared = { ...compact, expectedRevision: 1, expectedTargetLinkRevision: 1,
+    contentArtifactId: 'teardown-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
+  let stored: ApprovalRequestV2 | null = null;
+  const teardown = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async (_id, _input, ctx) => {
+    ctx.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: compact.serverId,
+      environmentId: compact.environmentId, deploymentId: receipt.deploymentId } });
+    return receipt;
+  });
+  const { executor } = fixture(teardown, {
+    prepareDeploymentTeardown: async () => ({ input: prepared, preview: { removeEnvironment: true } }),
+    approvalsCreate: async ({ request }) => {
+      stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+      return { artifactId: 'teardown-review' };
+    },
+    approvalsGet: async () => structuredClone(stored),
+    approvalsUpdate: async ({ request, expectedStatus }) => {
+      if (!stored) throw new Error('Missing teardown review');
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+      if (!transition.ok) return transition;
+      stored = structuredClone(next);
+      return { ok: true };
+    },
+    isApprovalExecutionOriginCurrent: async () => true,
+  });
+  const cli = { ...context('original-teardown-request'), surface: 'cli' as const, authority: 'account_automation' as const,
+    serverIdentityId: authored.serverId, defaultSessionMachineId: machineId };
+  expect(await executor.execute('deployments.teardown', compact, cli)).toMatchObject({ ok: true,
+    result: { kind: 'approval_request_created' } });
+  expect(await executor.execute('approval.request.decide', { artifactId: 'teardown-review', decision: 'approve' },
+    { ...cli, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true,
+      result: { status: 'executed', execution: { ok: true, result: receipt } } });
+  expect(await executor.execute('deployments.teardown', compact, cli)).toMatchObject({ ok: true, result: receipt });
+  expect(await executor.execute('deployments.teardown', { ...compact, reason: 'previewClosed' }, cli))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  expect(teardown).toHaveBeenCalledTimes(1);
+});
+
 it.each(['legacy', 'split'] as const)('reads the exact restore operand from a %s receipt after reopening storage', async format => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-restore-operand-'));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));

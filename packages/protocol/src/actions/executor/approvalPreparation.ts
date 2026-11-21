@@ -17,10 +17,11 @@ import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
 import { type ActionId } from '../actionIds.js';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
   DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema,
-  DeploymentDeployIntentInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteIntentInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+  DeploymentDeployIntentInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteIntentInputV1Schema,
+  DeploymentTeardownRequestInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1 } from '../../widgets/actionsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
@@ -268,6 +269,12 @@ export function readDeploymentRolloutSemanticInput(actionId: ActionId, input: un
   }
 }
 
+export function readDeploymentApprovalSemanticInput(actionId: ActionId, input: unknown) {
+  return actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
+    ? DeploymentTeardownRequestInputV1Schema.safeParse(input).data
+    : readDeploymentRolloutSemanticInput(actionId, input);
+}
+
 export async function prepareApprovalRequest(params: Readonly<{
   deps: ActionExecutorDeps;
   actionId: ActionId;
@@ -402,7 +409,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   // Observation callbacks stay host-private; review only the ordinary Action input.
   if (deployment && !('observePendingOperation' in deployment)) {
     if ('errorCode' in deployment) return deployment;
-    const rolloutInput = readDeploymentRolloutSemanticInput(params.actionId, params.semanticInput ?? params.input);
+    const originalInput = readDeploymentApprovalSemanticInput(params.actionId, params.semanticInput ?? params.input);
     const deferredCreate = params.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
       && typeof readRecord(deployment.preview).definitionCommitment === 'string';
     let displayArgs = deployment.input;
@@ -421,7 +428,7 @@ export async function prepareApprovalRequest(params: Readonly<{
       preview: { actionId: params.actionId, actionArgs: displayArgs,
       summary: appendTeamCredentialSourceSummary(buildApprovalSummary(spec, displayArgs, deployment.preview), teamCredentialSources),
       ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview: deployment.preview,
-      ...(rolloutInput === undefined ? {} : { deploymentRolloutSemanticInput: rolloutInput }),
+      ...(originalInput === undefined ? {} : { deploymentRolloutSemanticInput: originalInput }),
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
   if (params.actionId === 'localServices.launcher.start') {

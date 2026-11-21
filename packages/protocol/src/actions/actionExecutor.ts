@@ -77,7 +77,7 @@ import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToReso
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
 import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './executor/approvalResults.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
-import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
+import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentApprovalSemanticInput, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
@@ -2073,7 +2073,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       currentOrigin: origin?.success && originIsCurrent ? origin.data : undefined, context: args.ctx });
     const approvedPluginInstallReview = request.actionId === 'plugins.install'
       ? readPluginInstallApprovalPendingReview(request.preview) : null;
-    const deploymentRolloutSemanticInput = actionId === null ? undefined : readDeploymentRolloutSemanticInput(actionId,
+    const deploymentRolloutSemanticInput = actionId === null ? undefined : readDeploymentApprovalSemanticInput(actionId,
       readRecord(request.preview).deploymentRolloutSemanticInput);
     let executionContext: ActionExecutorContext = {
       approvalOrigin: request.origin ?? null,
