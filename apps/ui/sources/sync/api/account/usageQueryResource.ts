@@ -2113,7 +2113,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     };
     const readNeedsRecovery = (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => {
         const snapshot = owner.store.getEntry(reference).getSnapshot();
-        return snapshot.pending !== 'idle' || snapshot.value === undefined || !!snapshot.error;
+        if (snapshot.pending !== 'idle' || snapshot.value === undefined || snapshot.error) return true;
+        if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return false;
+        // The batch can settle successfully while accounting keeps a failed
+        // acquisition on an individual slice, including a retained stale value.
+        return decodeUsageQueryResource(snapshot.value).results.some(slice =>
+            slice.sources.some(source => source.source === 'accounting' && source.errorCode === 'usage_query_failed')
+            || slice.comparison?.source.errorCode === 'usage_query_failed');
     };
     // subscribe/refresh synchronously starts readResource. Only that start
     // captures this operation's caller; joining admitted work leaves no origin.

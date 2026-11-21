@@ -2168,6 +2168,45 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
+  it('recovers a settled accounting slice that failed before the Home reconnected', async () => {
+    let failed = true;
+    const captured = await context(request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      return Response.json({ v: 1, results: queries.map(query => failed
+        ? { query, error: 'usage_query_failed' }
+        : { query, value }) });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false,
+      includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+      includeWorkEvidence: false, includeComparison: false, includeInsights: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const slice = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const reads = () => home!.httpRequests.filter(row => row.path === '/v2/usage/query-batch').length;
+    try {
+      await entry.refresh({ supersede: false });
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(slice()?.sources).toContainEqual(expect.objectContaining({
+        source: 'accounting', status: 'error', errorCode: 'usage_query_failed',
+      }));
+      const before = reads();
+      failed = false;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, undefined,
+        { source: 'connected', changesCatchUp: true });
+      await expect.poll(() => slice()?.accounting?.totals.eventCount).toBe(value.totals.eventCount);
+      expect(reads() - before).toBe(1);
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, undefined,
+        { source: 'connected', changesCatchUp: true });
+      await flushHookEffects({ cycles: 20 });
+      expect(reads() - before).toBe(1);
+    } finally { release(); }
+  });
+
   it('lets Retry cancel the in-flight accounting body and issue exactly one replacement read', async () => {
     const held = createDeferred<void>();
     let revision = 1;
