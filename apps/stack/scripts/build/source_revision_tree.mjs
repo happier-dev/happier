@@ -5,7 +5,7 @@ import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, sym
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { captureBuildInputFiles, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
@@ -15,7 +15,7 @@ import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveS
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { cloneTree, extractRevision, isRevisionDependencyInput, prepareRevisionInstall, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
+import { cloneTree, extractRevision, isRevisionDependencyInput, mountRevisionWorkspaceDependencies, prepareRevisionInstall, readRevisionInstallWorkspaceLinks, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS, resolveColdAdmissionCpuCost } from '../utils/dev_targets/command_resources.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
@@ -145,6 +145,7 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   let archivePath;
   let install;
   let workspaceDirs;
+  let workspaceLinks;
   try {
     await mkdir(staging, { recursive: true });
     // Tracked bytes never come from a working tree: other lanes edit the shared
@@ -182,6 +183,17 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
     // shared checkout change (or refuse) a running tree.
     install = installIdentity ? { identity: installIdentity, dir: revisionInstallDir(dirname(baseDir), installIdentity) }
       : await prepareRevisionInstall({ repoDir, baseDir: staging, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
+    workspaceLinks = await readRevisionInstallWorkspaceLinks(install.dir);
+    // Executable links can point at ignored outputs shipped by their workspace.
+    // Capture those outputs under the same pinned-source rules as other inputs.
+    const workspaceOutputs = [...new Set(Object.values(workspaceLinks))].map(path => path.replaceAll('\\', '/'))
+      .filter(path => !existsSync(join(staging, path)) && !Object.hasOwn(descriptor.tree, path)
+        && !Object.hasOwn(descriptor.overlay, path) && !untracked.has(path));
+    if (workspaceOutputs.length) {
+      const shippedOutputs = await readDeclaredShippedPaths(staging, workspaceDirs);
+      await captureBuildInputFiles({ sourceDir: repoDir, captureDir: staging,
+        readPaths: async () => workspaceOutputs.filter(path => isRevisionKeptUntrackedPath(path, shippedOutputs)) });
+    }
     // Those generated inputs follow the revision's sources and its own tools
     // (its Prisma), never the checkout's.
     await deriveRevisionGeneratedInputs({ captureDir: staging, sourceDir: install.dir, env, signal });
@@ -196,7 +208,7 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   // Mount at the published path: dependency links are absolute (junctions on
   // Windows). Every workspace of the revision resolves inside the tree, so no
   // import reaches the moving checkout's packages.
-  await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
+  await mountRevisionWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs, workspaceLinks });
   // The base (and every clone) is exactly that installation: publish its identity,
   // replacing any captured or mounted marker, so no dependency refresh ever runs a
   // package manager inside a tree (a half-failed one left trees with unpatched Jiti).

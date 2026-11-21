@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { cp, link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { inspectDependencyRefresh, resolveDependencyInstallRoot } from '../utils/proc/dependency_refresh.mjs';
-import { CURRENT_GENERATION_LINK, createDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
+import { CURRENT_GENERATION_LINK, createDependencyGeneration, readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
 import { resolveServerGeneratedClients } from './server_generated_clients.mjs';
 
 /**
@@ -19,7 +19,7 @@ import { resolveServerGeneratedClients } from './server_generated_clients.mjs';
  * own lockfile pins different ones (2c8b5a872a: Prisma 6 schema, checkout Prisma 7, P1012).
  */
 export const INSTALLS = 'installs';
-/** Shared with the base marker name: existing published installations stay valid. */
+/** Shared with the base marker name. */
 const INSTALL_MARKER = '.happier-revision-tree.json';
 
 /** Host-wide root for revision bases and installations, beside the shared source bundles. */
@@ -88,19 +88,27 @@ export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, work
       // a request to install the moving checkout's dependency inputs. A dirty
       // manifest must never trigger its remote refresh while preparing a revision.
       const snapshotEnv = { ...env, HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1' };
+      const workspaceLinks = {};
+      const linkLayout = { staging, workspaceDirs, workspaceLinks };
       const snapshotted = await withBuildInputDependencies({ sourceDir: repoDir, env: snapshotEnv, signal }, async (_env, publication) => {
         if (publication.state.identity !== identity) return false;
+        const generation = readCurrentDependencyGeneration(repoDir);
+        const installedRoot = generation ? join(resolveDependencyGenerationContainer(repoDir), generation) : repoDir;
         for (const workspaceDir of ['', ...workspaceDirs]) {
           const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-          // A generation-managed root links each installed entry into its generation: copy what they name.
-          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed,
-            skip: ['@happier-dev', '.pnpm-task-run-state-v1', CURRENT_GENERATION_LINK], follow: resolveDependencyGenerationContainer(repoDir) });
+          if (!installed) continue;
+          const target = join(staging, workspaceDir, 'node_modules');
+          await cloneTree(installed, target, { base: installed, clone: target,
+            skip: ['@happier-dev', '.pnpm-task-run-state-v1', CURRENT_GENERATION_LINK],
+            projectedRoot: generation && workspaceDir === '' ? join(installedRoot, 'node_modules') : null,
+            rewriteLink: (from, to, value) => layRevisionInstallLink({ ...linkLayout, from, to, value, roots: [installedRoot, repoDir] }) });
         }
         await publication.assertCurrent();
         return true;
       });
-      if (!snapshotted) await installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal });
-      await writeFile(join(staging, INSTALL_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
+      if (!snapshotted) await installRevisionDependencies({ baseDir, ...linkLayout, env, signal });
+      await verifyRevisionInstallLinks(staging);
+      await writeFile(join(staging, INSTALL_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString(), workspaceLinks }));
       await rm(dir, { recursive: true, force: true });
       await rename(staging, dir);
     } catch (error) {
@@ -112,11 +120,44 @@ export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, work
   });
 }
 
+/** Workspace source paths belong to the selected tree. The installation retains only
+ * dependency files and relative paths for rebuilding workspace links at mount. */
+function layRevisionInstallLink({ staging, workspaceDirs, workspaceLinks, from, to, value, roots }) {
+  const named = resolve(dirname(from), value);
+  for (const root of roots) {
+    if (!isInsideDir(root, named)) continue;
+    const path = relative(root, named);
+    if (path.split(sep).includes('node_modules')) return relative(dirname(to), join(staging, path));
+    if (workspaceDirs.some(workspace => isInsideDir(join(root, workspace), named))) {
+      workspaceLinks[relative(staging, to)] = path;
+      return null;
+    }
+  }
+  return value;
+}
+
+async function visitRevisionInstallLinks(dir, visit) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isSymbolicLink()) await visit(path);
+    else if (entry.isDirectory()) await visitRevisionInstallLinks(path, visit);
+  }
+}
+
+async function verifyRevisionInstallLinks(staging) {
+  await visitRevisionInstallLinks(staging, async path => {
+    try { await stat(path); }
+    catch (cause) {
+      throw new Error(`[source-tree] revision install contains an unresolved link: ${relative(staging, path)} -> ${await readlink(path)}`, { cause });
+    }
+  });
+}
+
 /** Frozen install of the base's lockfile in a generation shadow (its project
  * paths real, every other entry linked to the base), then only the installed
  * trees stay: the shadow's source links and workspace links are dropped, so an
  * installation shared by bases never points into one base's sources. */
-async function installRevisionDependencies({ baseDir, staging, workspaceDirs, env, signal }) {
+async function installRevisionDependencies({ baseDir, staging, workspaceDirs, workspaceLinks, env, signal }) {
   const { projects } = await createDependencyGeneration(baseDir, { genRoot: staging });
   const { ensureUiPostinstallOutputs, installFrozenDependencies } = await import('../utils/proc/pm.mjs');
   // Lifecycle scripts (the CLI's unpack-tools) run from their real location in
@@ -151,6 +192,13 @@ async function installRevisionDependencies({ baseDir, staging, workspaceDirs, en
     }
   };
   await keepInstalledTrees(staging);
+  await visitRevisionInstallLinks(staging, async path => {
+    const value = await readlink(path);
+    const laid = layRevisionInstallLink({ staging, workspaceDirs, workspaceLinks, from: path, to: path, value, roots: [staging, baseDir] });
+    if (laid === value) return;
+    await rm(path);
+    if (laid !== null) await symlink(laid, path);
+  });
   // The UI's installed outputs (vendored WASM, worker bundles) are written by
   // tools that resolve their own real location: run from the shadow, whose
   // tools link into the base, they would write into the base and leave the
@@ -175,6 +223,31 @@ async function installRevisionDependencies({ baseDir, staging, workspaceDirs, en
       for (const name of await readdir(modules)) if (!kept.has(name)) await rm(join(modules, name), { recursive: true, force: true });
     }
   }
+}
+
+export async function readRevisionInstallWorkspaceLinks(dir) {
+  const marker = JSON.parse(await readFile(join(dir, INSTALL_MARKER), 'utf8'));
+  const links = marker.workspaceLinks ?? {};
+  for (const [link, target] of Object.entries(links)) {
+    if (typeof target !== 'string' || !isInsideDir(dir, resolve(dir, link)) || !isInsideDir(dir, resolve(dir, target))) {
+      throw new Error(`[source-tree] invalid revision workspace link in ${dir}: ${link} -> ${target}`);
+    }
+  }
+  return links;
+}
+
+/** Mount the revision's links at the base's actual depth before lending installed tools. */
+export async function mountRevisionWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs, workspaceLinks }) {
+  for (const [link, path] of Object.entries(workspaceLinks)) {
+    const target = resolve(captureDir, path);
+    const destination = resolve(captureDir, link);
+    const info = await stat(target).catch(cause => {
+      throw new Error(`[source-tree] revision workspace link target is unresolved: ${link} -> ${target}`, { cause });
+    });
+    await mkdir(dirname(destination), { recursive: true });
+    await symlink(target, destination, info.isDirectory() ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file');
+  }
+  await mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs });
 }
 
 /** Installation snapshots no remaining base names go with the base sweep (the newest is kept). */
@@ -215,25 +288,29 @@ export function withBaseLock(baseDir, signal, run) {
     errorLabel: 'source revision base lock' });
 }
 
-/** Hardlink files, recreate links; directories are the clone's own. A link into
- * `roots.follow` is cloned as what it names. */
+/** Hardlink files and recreate links in the clone's own directories. */
 export async function cloneTree(from, to, roots = { base: from, clone: to }) {
   await mkdir(to, { recursive: true });
   for (const entry of await readdir(from, { withFileTypes: true })) {
     if (roots.skip?.includes(entry.name) && from === roots.base) continue;
-    const source = join(from, entry.name);
+    let source = join(from, entry.name);
     const target = join(to, entry.name);
-    const named = entry.isSymbolicLink() && roots.follow ? resolve(from, await readlink(source)) : null;
-    if (named?.startsWith(roots.follow + sep)) {
-      if ((await lstat(named)).isDirectory()) await cloneTree(named, target, roots);
-      else await link(named, target);
-    } else if (entry.isSymbolicLink()) {
-      let link = await readlink(source);
-      // A workspace link into the base points at the clone's own copy instead.
-      if (isAbsolute(link) && link.startsWith(roots.base + sep)) link = join(roots.clone, relative(roots.base, link));
-      const info = await lstat(source);
-      await symlink(link, target, process.platform === 'win32' && info.isDirectory() ? 'junction' : undefined);
-    } else if (entry.isDirectory()) await cloneTree(source, target, roots);
+    let info = entry;
+    if (from === roots.base && roots.projectedRoot && entry.isSymbolicLink()) {
+      // A checkout projects the generation's root entries while retaining its
+      // own readiness files. Read a projected link at its original depth.
+      const projected = resolve(from, await readlink(source));
+      if (isInsideDir(roots.projectedRoot, projected)) {
+        source = projected;
+        info = await lstat(source);
+      }
+    }
+    if (info.isSymbolicLink()) {
+      let value = await readlink(source);
+      if (roots.rewriteLink) value = roots.rewriteLink(source, target, value);
+      else if (isAbsolute(value) && value.startsWith(roots.base + sep)) value = join(roots.clone, relative(roots.base, value));
+      if (value !== null) await symlink(value, target);
+    } else if (info.isDirectory()) await cloneTree(source, target, roots);
     else await link(source, target);
   }
 }
