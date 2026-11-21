@@ -10178,15 +10178,20 @@ Machine or Environment row) is Coordination's precedence change
 
 **Admission.** The executor binds `context.sessionApprovalConsents` once per
 admission from `deps.readSessionApprovalConsents` and replaces any
-caller-supplied value. On a CLI Session host, rows apply only when
-`actionCaller.kind === 'session'` names that host's own bound Session and the
-invocation Account equals the credential's Account. `defaultSessionId`, an
-origin or an input `sessionId` never selects rows. The owner's Session process
-holds the rows in memory, so an admission does one lookup and no network read. A
-consent Artifact change on the Account feed refreshes the held rows, and the
-next admission waits for that refresh. A requester's Session on another person's
-Machine reads its rows at each admission. A read failure applies no rows, so
-the ordinary Ask returns.
+caller-supplied value. Rows apply only for the host-stamped caller
+(`actionCaller.kind === 'session'`) and only when the invocation Account equals
+the credential's Account. A CLI Session host answers only its own bound Session.
+The daemon's Account-Action executor, which runs the Actions a Session runner
+forwards (account-, Machine- and lifecycle-placed ones such as `machines.list`),
+has no bound Session: it stamps the caller only after the turn witness matches
+the Session its runtime capability is bound to, and that caller's rows apply.
+`defaultSessionId`, an origin default or an input `sessionId` never selects rows.
+The owner's Session process and the daemon hold the rows in memory, so an
+admission does one lookup and no network read. A consent Artifact change on the
+Account feed (the runner's, or the daemon's `apiMachine` feed) refreshes the held
+rows, and the next admission waits for that refresh. A requester's Session on
+another person's Machine reads its rows at each admission. A read failure applies
+no rows, so the ordinary Ask returns.
 
 The stored approval request carries `approvalScope` (`{ kind: 'machine', machineId }`
 or `{ kind: 'environment', environmentId }`) when scope admission resolved one for
@@ -10196,9 +10201,9 @@ offers the "on this Machine or Environment in this Session" rung exactly when it
 present, and replay re-admits its own scope.
 
 The receiving Machine of a signed cross-Machine call runs its daemon-level
-executor, whose bound Session is not the caller's. Rows therefore never apply
-there, and the receiver's own Ask stands. A receiver-owned Ask is only used for
-the original CLI finite path, which has no Session caller.
+executor with the signed origin's caller. A Session caller's rows apply there
+only under the same Account equality; a receiver-owned Ask is only used for the
+original CLI finite path, which has no Session caller.
 
 **Eligibility (Q6).** Some Actions are decided elsewhere and are never eligible:
 approval controls and decisions, the per-plugin capture waiver, and approval-rule
