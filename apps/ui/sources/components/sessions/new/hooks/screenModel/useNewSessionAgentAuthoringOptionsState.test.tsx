@@ -28,7 +28,7 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
-    it('shows a Team draft choice only while the exact resource is entitled', async () => {
+    it('asks for a Team model when the saved draft choice is no longer in the current catalog', async () => {
         const agentTarget = AgentExecutionTargetV1Schema.parse({
             kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
         });
@@ -66,7 +66,18 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
             expect(hook.getCurrent().modelSelectionV2).toBeNull();
             expect(hook.getCurrent()).toMatchObject({ modelSelectionForPersistence: { ref: modelSelection.ref },
                 modelSelectionForAuthoring: { ref: modelSelection.ref }, teamCredentialModelIntent: selection,
-                teamCredentialModelRequirement: { ready: false, reason: t('session.startFailure.cause.team_credential_provider_selection_not_current') },
+                teamCredentialModelRequirement: { ready: false, reason: t('session.startFailure.cause.team_credential_model_selection_required') },
+            });
+            const revisedResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource,
+                resourceRevision: 4,
+                providerModels: resource.providerModels.map(row => ({ ...row,
+                    selection: { ...row.selection, expectedResourceRevision: 4 },
+                })),
+            });
+            await hook.rerender({ ...props, teamCredentialCatalog: { ...props.teamCredentialCatalog, resources: [revisedResource] } });
+            expect(hook.getCurrent()).toMatchObject({ modelSelectionV2: null,
+                modelSelectionForPersistence: { ref: modelSelection.ref },
+                teamCredentialModelRequirement: { ready: false, reason: t('session.startFailure.cause.team_credential_model_selection_required') },
             });
             await hook.rerender(props);
             expect(hook.getCurrent().teamCredentialModel).toEqual(selection);

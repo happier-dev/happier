@@ -27,15 +27,15 @@ export function resolveNewSessionTeamModelRequirement(input: Readonly<{
 }>): NewSessionCreateRequirement {
     const { selection, catalog, restoredAccess } = input;
     if (!selection || !catalog) return { ready: true, reason: null };
-    const unavailable = () => t('session.startFailure.cause.team_credential_provider_selection_not_current');
+    const chooseTeamModel = () => t('session.startFailure.cause.team_credential_model_selection_required');
     const key = `${selection.teamId}:${selection.resourceId}`;
     const status = catalog.resourceStatusByKey.get(key);
-    if (!status) return { ready: false, reason: catalog.condition ? teamsUnavailableHomeReason(catalog.condition) : unavailable() };
+    if (!status) return { ready: false, reason: catalog.condition ? teamsUnavailableHomeReason(catalog.condition) : chooseTeamModel() };
     if (status.kind !== 'current') return { ready: false, reason: teamCredentialCatalogStatusLabel(status) };
     const resource = catalog.resources.find(row => row.teamId === selection.teamId && row.id === selection.resourceId);
-    if (!resource) return { ready: false, reason: unavailable() };
+    if (!resource) return { ready: false, reason: chooseTeamModel() };
     if (!resourceHasAvailableTeamCredentialProviderModel(resource, selection)) {
-        return { ready: false, reason: teamCredentialUnavailableReason(resource, selection.deliveryMode) ?? unavailable() };
+        return { ready: false, reason: teamCredentialUnavailableReason(resource, selection.deliveryMode) ?? chooseTeamModel() };
     }
     if (restoredAccess) {
         const consequence = projectTeamCredentialSelectionConsequence(resource, selection.deliveryMode);
@@ -43,7 +43,7 @@ export function resolveNewSessionTeamModelRequirement(input: Readonly<{
         const teamVisibilityRequired = consequence.visibilityRequirement === 'team_visibility_required'
             && !restoredAccess.access?.grants.some(grant => grant.subject.kind === 'team' && grant.subject.teamId === selection.teamId);
         if (consequence.directDisclosure === 'required' || teamContextRequired || teamVisibilityRequired) {
-            return { ready: false, reason: t('session.startFailure.cause.team_credential_model_selection_required') };
+            return { ready: false, reason: chooseTeamModel() };
         }
     }
     return { ready: true, reason: null };
