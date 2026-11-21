@@ -11395,6 +11395,13 @@ strict development readers reject the added fields, so matching Protocol,
 daemon and UI readers refresh together. This changes no launch input,
 authority, persisted format or wire epoch and adds no compatibility adapter.
 
+Unreleased 0.3 Session creation preserves the Home's Team credential refusal
+through the daemon and the public Action. The HTTP response still carries the
+existing reason in `error`. A spawn Action that carries the refusal returns
+`session_team_credential_binding_rejected` with that reason. Matching development
+Protocol, daemon and Action clients reload together because older strict readers
+reject the added result variant. This changes no stored data or wire epoch.
+
 Unreleased 0.3 `doc.edit.propose` accepts a closed thread-addressed input
 (`discussionRef`, `localId`, `after`, optional `reason`) alongside the existing
 closed explicit-passage input. Nested routing and passage objects remain closed.

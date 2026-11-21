@@ -127,6 +127,35 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+  it.each(['team_context_required', 'team_visibility_required'] as const)(
+    'preserves the Home refusal %s through both Session creators and the spawn result', async reason => {
+      vi.stubGlobal('fetch', vi.fn(async () => serverFeaturesResponse({ encryption: {
+        storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain',
+      } })));
+      mockPost.mockImplementation(async (_url: string, _body: unknown, options: { validateStatus?: (status: number) => boolean }) => {
+        const response = { status: 400, data: { error: reason } };
+        if (options.validateStatus?.(response.status)) return response;
+        throw Object.assign(new Error('Request failed with status code 400'), { isAxiosError: true, response });
+      });
+      const credentials = { token: '', encryption: null };
+      const teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'selected-resource',
+        expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: 'selected-team' }] as const;
+      const committed = await commitDaemonLaunchSession({
+        api: await ApiClient.create(credentials), credentials, options: { directory: '/repo', teamCredentialBindings },
+        directory: '/repo', accountSettings: {},
+      });
+      if (committed.ok) throw new Error('Team credential refusal cannot create a Session');
+      const refused = { code: 'session_team_credential_binding_rejected', reason };
+      expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure(committed.result)))
+        .toMatchObject({ type: 'error', retryable: false, ...refused });
+      await expect(getOrCreateSessionByTag({
+        credentials, tag: 'credential-policy-refusal', metadata: { path: '/repo', host: 'test-host' },
+        agentState: null, teamCredentialBindings,
+      })).rejects.toMatchObject(refused);
+      expect(mockPost).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('retains the currentness timeout at the tagged HTTP creation boundary', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => serverFeaturesResponse({ encryption: {
       storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain',

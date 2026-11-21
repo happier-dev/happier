@@ -5,6 +5,7 @@ import { isSessionCreationCorrespondenceConflictError } from './sessionCreationC
 import {
   SessionInitialAccessServerError,
   SessionInitialAccessUpdateRequiredError,
+  SessionTeamCredentialBindingRejectedError,
 } from './sessionCreationInitialAccess';
 import { isSessionCreationPlacementError } from './sessionCreationPlacementError';
 import { SessionCreationInitialTriggerError } from './sessionCreationInitialTriggerError';
@@ -40,6 +41,10 @@ export function readSessionCreationTerminalSpawnErrorDetail(
   }
   if (error instanceof HttpStatusError && 'code' in error && error.code === SESSION_MANAGED_TARGET_BUSY_CODE) {
     return { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY, code: error.code };
+  }
+  if (error instanceof SessionTeamCredentialBindingRejectedError) {
+    return { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED,
+      code: error.code, reason: error.reason };
   }
   if (error instanceof SessionInitialAccessServerError) {
     return { kind: 'session_creation_access_refused', code: error.code };

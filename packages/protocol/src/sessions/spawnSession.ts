@@ -4,6 +4,7 @@ import { z as zMini } from '../zodRuntimePolicy.js';
 import { SessionAuthoringTerminalV1Schema } from './authoring/creationFieldsV1.js';
 import { OperationUpdateRequiredV1Schema } from '../compat/operationUpdateRequiredV1.js';
 import { SessionAccessErrorCodeV1Schema } from './access/sessionAccessOperationsV1.js';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '../teams/credentials/sessionBindingRejectionV1.js';
 
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
@@ -156,6 +157,7 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
    * Session sharing off). It carries the protocol-owned Session-access code only.
    */
   SESSION_CREATION_ACCESS_REFUSED: 'session_creation_access_refused',
+  SESSION_CREATION_TEAM_CREDENTIAL_REFUSED: 'session_creation_team_credential_refused',
   SESSION_CREATION_INITIAL_TRIGGER_REFUSED: 'session_creation_initial_trigger_refused',
   SESSION_CREATION_CURRENTNESS_UNAVAILABLE: 'session_creation_currentness_unavailable',
   /** A strict no-effect initial-access refusal requiring a newer server or daemon. */
@@ -248,6 +250,9 @@ export const SessionCreationTerminalSpawnErrorDetailSchema = lazyZodSchema(() =>
     code: z.literal(SESSION_MANAGED_TARGET_BUSY_CODE),
   }),
   SessionCreationAccessRefusedSpawnErrorDetailSchema,
+  z.extend(SessionTeamCredentialBindingMutationRejectionV1Schema, {
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED),
+  }),
   z.strictObject({
     kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED),
     code: z.enum(['invalid_input', 'target_unavailable', 'feature_disabled']),

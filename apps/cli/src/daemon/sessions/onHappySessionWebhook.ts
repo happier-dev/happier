@@ -276,6 +276,10 @@ export function buildSessionCreationTerminalSpawnErrorResult(
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
       errorMessage: 'The shared sandbox already has a Session', errorDetail };
   }
+  if (errorDetail.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED) {
+    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Team credential binding refused during Session creation', errorDetail };
+  }
   return {
     type: 'error',
     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,

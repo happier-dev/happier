@@ -1560,6 +1560,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           errorCode: code, errorMessage: readRecord(error).message,
           agentId: details.agentId ?? readRecord(details.spawnResponse).agentId,
           errorDetail: spawnErrorDetails.find(detail => detail?.kind === 'launch_error'
+            || detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED
             || detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_CURRENTNESS_UNAVAILABLE
             || detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_UX_DIAGNOSTIC),
         });

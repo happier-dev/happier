@@ -918,9 +918,13 @@ export class ApiClient {
         if (opts.signal?.aborted) {
           throw unresolvedCreationError ?? opts.signal.reason ?? error;
         }
+        const terminalCreationDetail = readSessionCreationTerminalSpawnErrorDetail(error);
         if (error instanceof SessionCreationCorrespondenceConflictError
-          || readSessionCreationTerminalSpawnErrorDetail(error)?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
+          || terminalCreationDetail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
           throw error;
+        }
+        if (terminalCreationDetail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED) {
+          throw unresolvedCreationError ?? error;
         }
         const upgradeRequired = readCliClientUpgradeRequired(error);
         if (

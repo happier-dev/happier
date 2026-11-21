@@ -20,7 +20,7 @@ import { resolveSessionStoredContentEncryptionMode } from '@/session/transport/e
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
 import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
+import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingRejectedError, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import type { SessionCreationAuthorizationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { buildManagedSessionBirthProofPayloadV1, MANAGED_SESSION_BIRTH_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -64,7 +64,13 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(params.body);
   const body = creationAuthorizationProof ? { ...params.body, creationAuthorizationProof } : params.body;
   const managedBirthHeader = readManagedSessionBirthHeader(params.localBirthMachineId, params.token, body);
-  const refuseConfirmedRollback = (status: number, data: unknown): void => {
+  const bindings = params.body.teamCredentialBindings;
+  const hasTeamCredentialBindings = Array.isArray(bindings) && bindings.length > 0;
+  const refuseConfirmedCreationFailure = (status: number, data: unknown): void => {
+    if (hasTeamCredentialBindings) {
+      const rejection = readSessionTeamCredentialBindingRejectedError(data, status);
+      if (rejection) throw rejection;
+    }
     if (status === 409 && readServerRefusalCode(data) === SESSION_MANAGED_TARGET_BUSY_CODE) {
       throw createHttpStatusError(status, 'The shared sandbox already has a Session', SESSION_MANAGED_TARGET_BUSY_CODE);
     }
@@ -89,7 +95,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
     // A response is handled by the existing refusal/rollback readers. Losing
     // the response after dispatch cannot prove that Session birth rolled back.
     if (axios.isAxiosError(cause) && cause.response) {
-      refuseConfirmedRollback(cause.response.status, cause.response.data);
+      refuseConfirmedCreationFailure(cause.response.status, cause.response.data);
     }
     if (readHttpStatus(cause) !== null || classifyHomeDomainHttpMutationFailureV1({
       error: cause, issued: true, aborted: params.signal?.aborted === true,
@@ -99,7 +105,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
       cause: { ...serializeAxiosErrorForLog(cause), code: readNormalizedConnectionErrorCode(cause) },
     });
   });
-  refuseConfirmedRollback(response.status, response.data);
+  refuseConfirmedCreationFailure(response.status, response.data);
   // Cancellation cannot undo a remote commit, but it cannot report success to
   // an invocation that has already retired either.
   params.signal?.throwIfAborted();

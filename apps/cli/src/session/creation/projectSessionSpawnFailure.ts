@@ -19,6 +19,10 @@ export function projectSessionSpawnFailure(input: Readonly<{
 }>): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
   const normalized = normalizeSpawnSessionNonceResolution({ status: 'error', ...input });
   const creationFailure = SessionCreationTerminalSpawnErrorDetailSchema.safeParse(input.errorDetail);
+  if (creationFailure.success && creationFailure.data.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED) {
+    const { code, reason } = creationFailure.data;
+    return { type: 'error', code, reason, retryable: false };
+  }
   if (creationFailure.success && creationFailure.data.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
     return { type: 'error', code: 'spawn_failed', retryable: true,
       launchError: { kind: 'launch_error', code: creationFailure.data.code,

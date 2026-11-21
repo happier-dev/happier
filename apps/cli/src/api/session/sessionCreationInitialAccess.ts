@@ -1,3 +1,4 @@
+import { SessionTeamCredentialBindingRejectionV1Schema, type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { SessionInitialAccessEnvelopeHostError, materializeSessionInitialAccessCreateFields as materializeSessionInitialAccessCreateFieldsV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1';
 export { SessionInitialAccessEnvelopeHostError, addSessionInitialAccessTeamShareStatement } from '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -278,6 +279,25 @@ export function readSessionTeamCredentialBindingUpdateRequiredError(body: unknow
     || parsed.data.component !== 'server'
   ) return null;
   return new SessionTeamCredentialBindingUpdateRequiredError(parsed.data.component);
+}
+
+/** The existing Session-birth HTTP route returns the bare, closed Team policy reason. */
+export class SessionTeamCredentialBindingRejectedError extends Error {
+  readonly code = 'session_team_credential_binding_rejected' as const;
+
+  constructor(readonly reason: SessionTeamCredentialBindingRejectionV1) {
+    super('Team credential binding refused during Session creation');
+  }
+}
+
+export function readSessionTeamCredentialBindingRejectedError(
+  body: unknown,
+  status: number,
+): SessionTeamCredentialBindingRejectedError | null {
+  if (status !== 400 && status !== 403 && status !== 409 && status !== 503) return null;
+  if (!body || typeof body !== 'object' || !('error' in body) || Object.keys(body).length !== 1) return null;
+  const parsed = SessionTeamCredentialBindingRejectionV1Schema.safeParse(body.error);
+  return parsed.success ? new SessionTeamCredentialBindingRejectedError(parsed.data) : null;
 }
 
 /** Preserve only the protocol-owned, secret-free Session access error code. */

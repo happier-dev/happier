@@ -7,6 +7,7 @@ import { TerminalHostUnavailableSpawnErrorDetailSchema } from '../spawnSession.j
 
 import { SessionInputAdmissionRejectionCodeV1Schema } from '../messages/sessionInputAdmissionRejectionV1.js';
 import { SessionAccessErrorCodeV1Schema } from '../access/sessionAccessOperationsV1.js';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '../../teams/credentials/sessionBindingRejectionV1.js';
 import {
   SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION,
 } from '../organization/constants.js';
@@ -227,6 +228,10 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     retryable: z.literal(false),
     details: OperationUpdateRequiredV1Schema,
   }),
+  z.extend(SessionTeamCredentialBindingMutationRejectionV1Schema, {
+    type: z.literal('error'),
+    retryable: z.literal(false),
+  }),
 ]));
 export type SessionSpawnNewResultV1 = z.infer<typeof SessionSpawnNewResultV1Schema>;
 
@@ -235,6 +240,7 @@ export const SessionSpawnNewActionResultV1Schema = lazyZodSchema(() => z.union([
   SessionSpawnNewResultV1Schema._zod.def.options[1],
   SessionSpawnNewResultV1Schema._zod.def.options[2],
   SessionSpawnNewResultV1Schema._zod.def.options[3],
+  SessionSpawnNewResultV1Schema._zod.def.options[4],
 ]));
 export type SessionSpawnNewActionResultV1 = z.infer<typeof SessionSpawnNewActionResultV1Schema>;
 
