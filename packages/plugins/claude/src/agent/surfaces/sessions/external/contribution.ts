@@ -18,13 +18,6 @@ import {
     getAgentExternalSessionsInvocationFailure as invocationFailure,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
-import {
-    ClaudeCandidateInvalidCursorError,
-    ClaudeCandidateResultBudgetTooSmallError,
-    ClaudeCandidateSourceChangedError,
-    listClaudeExternalSessionCandidates as listClaudeJsonlSessionCandidates,
-} from './candidates.js';
-import { readClaudeNativeAccounting } from '../../../usage/nativeAccounting.js';
 import { CLAUDE_ASSISTANT_USAGE_SOURCE } from '../../../usage/buildAssistantObservation.js';
 import { CLAUDE_SDK_RESULT_USAGE_SOURCE } from '../../../usage/buildSdkResultObservation.js';
 import { createHash } from 'node:crypto';
@@ -37,21 +30,9 @@ import {
     type ClaudeExternalSessionSource,
     resolveClaudeConfigDir,
 } from './source.js';
-import {
-    materializeClaudeExternalSessionTranscriptMedia,
-    ClaudeTranscriptInvalidCursorError,
-    ClaudeTranscriptResultBudgetTooSmallError,
+import type {
     pageClaudeExternalSessionTranscript as pageClaudeJsonlExternalSessionTranscript,
-    readAfterClaudeExternalSessionTranscript as readAfterClaudeJsonlExternalSessionTranscript,
 } from './transcript.js';
-
-export {
-    resolveClaudeJsonlSessionFile as resolveClaudeExternalSessionJsonlFile,
-} from './files.js';
-export {
-    readClaudeJsonlSessionTitle as readClaudeExternalSessionTitle,
-    readClaudeJsonlSessionWorkingDirectory as readClaudeExternalSessionWorkingDirectory,
-} from './metadata.js';
 
 function ok<T>(value: T): AgentExternalSessionsResult<T> {
     return { ok: true, value };
@@ -285,8 +266,12 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
             const env = readEnv();
             const validation = validateSource({ source: request.source, env });
             if (!validation.ok) return validation;
+            let transcript: typeof import('./transcript.js') | undefined;
             try {
-                await materializeClaudeExternalSessionTranscriptMedia({
+                transcript = await import('./transcript.js');
+                const beforeRead = invocationFailure(request);
+                if (beforeRead) return beforeRead;
+                await transcript.materializeClaudeExternalSessionTranscriptMedia({
                     ...request, source: validation.value.legacySource, env,
                     providerSessionId: request.remoteSessionId, maxBytes: request.maxSerializedBytes,
                 });
@@ -295,18 +280,20 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
             } catch (error) {
                 const after = invocationFailure(request);
                 if (after) return after;
-                if (error instanceof ClaudeTranscriptInvalidCursorError) {
+                if (transcript && error instanceof transcript.ClaudeTranscriptInvalidCursorError) {
                     return failed('invalid_request', 'external_sessions_transcript_cursor_invalid');
                 }
                 return failed('agent_error', 'external_sessions_transcript_media_failed', true);
             }
         },
-        readAccounting(request) {
+        async readAccounting(request) {
             const stopped = invocationFailure(request);
             if (stopped) return stopped;
             const env = readEnv();
             const validation = validateSource({ source: request.source, env });
-            return validation.ok ? readClaudeNativeAccounting(request, validation.value.legacySource, env) : validation;
+            if (!validation.ok) return validation;
+            const { readClaudeNativeAccounting } = await import('../../../usage/nativeAccounting.js');
+            return invocationFailure(request) ?? readClaudeNativeAccounting(request, validation.value.legacySource, env);
         },
         async resolveSource(request) {
             const stopped = invocationFailure(request);
@@ -334,8 +321,12 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
             const env = readEnv();
             const validation = validateSource({ source: request.source, env });
             if (!validation.ok) return validation;
+            let reader: typeof import('./candidates.js') | undefined;
             try {
-                const listed = await listClaudeJsonlSessionCandidates({
+                reader = await import('./candidates.js');
+                const beforeRead = invocationFailure(request);
+                if (beforeRead) return beforeRead;
+                const listed = await reader.listClaudeExternalSessionCandidates({
                     source: validation.value.legacySource,
                     env,
                     cursor: request.cursor,
@@ -386,13 +377,13 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (isPluginError(error) && error.code === 'JSONL_RECORD_TOO_LARGE') return failed('agent_error', error.message, false);
-                if (error instanceof ClaudeCandidateResultBudgetTooSmallError) {
+                if (reader && error instanceof reader.ClaudeCandidateResultBudgetTooSmallError) {
                     return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
-                if (error instanceof ClaudeCandidateInvalidCursorError) {
+                if (reader && error instanceof reader.ClaudeCandidateInvalidCursorError) {
                     return failed('invalid_request', error.message);
                 }
-                if (error instanceof ClaudeCandidateSourceChangedError) {
+                if (reader && error instanceof reader.ClaudeCandidateSourceChangedError) {
                     return failed('source_invalid', error.message, true);
                 }
                 return failed(
@@ -479,8 +470,12 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
             const env = readEnv();
             const validation = validateSource({ source: request.source, env });
             if (!validation.ok) return validation;
+            let transcript: typeof import('./transcript.js') | undefined;
             try {
-                const page = await pageClaudeJsonlExternalSessionTranscript({
+                transcript = await import('./transcript.js');
+                const beforeRead = invocationFailure(request);
+                if (beforeRead) return beforeRead;
+                const page = await transcript.pageClaudeExternalSessionTranscript({
                     source: validation.value.legacySource,
                     env,
                     providerSessionId: request.remoteSessionId,
@@ -511,10 +506,10 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (isPluginError(error) && error.code === 'JSONL_RECORD_TOO_LARGE') return failed('agent_error', error.message, false);
-                if (error instanceof ClaudeTranscriptInvalidCursorError) {
+                if (transcript && error instanceof transcript.ClaudeTranscriptInvalidCursorError) {
                     return failed('invalid_request', 'external_sessions_transcript_cursor_invalid');
                 }
-                if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
+                if (transcript && error instanceof transcript.ClaudeTranscriptResultBudgetTooSmallError) {
                     return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
                 return failed(
@@ -534,8 +529,12 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
             const env = readEnv();
             const validation = validateSource({ source: request.source, env });
             if (!validation.ok) return validation;
+            let transcript: typeof import('./transcript.js') | undefined;
             try {
-                const page = await readAfterClaudeJsonlExternalSessionTranscript({
+                transcript = await import('./transcript.js');
+                const beforeRead = invocationFailure(request);
+                if (beforeRead) return beforeRead;
+                const page = await transcript.readAfterClaudeExternalSessionTranscript({
                     source: validation.value.legacySource,
                     env,
                     providerSessionId: request.remoteSessionId,
@@ -565,7 +564,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (isPluginError(error) && error.code === 'JSONL_RECORD_TOO_LARGE') return failed('agent_error', error.message, false);
-                if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
+                if (transcript && error instanceof transcript.ClaudeTranscriptResultBudgetTooSmallError) {
                     return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
                 return ok({ outcome: 'read_failed' });

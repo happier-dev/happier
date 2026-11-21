@@ -8,6 +8,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -895,7 +896,8 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         agentId: agent.id,
         localAgentId: agent.identity.localId,
         sourceCustody: { kind: 'development', registeredRootId: source.sourceAuthority.registeredRootId },
-        locator: { module: './agent/runtime/factory', export: 'createClaudeAgentRuntime', runtimeApiVersion: 1 },
+        locator: { module: './agent/runtime/factory', export: 'createClaudeAgentRuntime', runtimeApiVersion: 1,
+          externalSessionsExport: 'claudeExternalSessionsContribution' },
         normalizedModulePath: 'src/agent/runtime/factory.ts',
         loadMode: 'source-ts',
       });
@@ -929,6 +931,32 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         provenance: agent.provenance,
         definition: agent.richDefinition.definition,
       });
+      // The production source loader shares Node's module cache. Constructing a native
+      // Session runtime does not need Claude's historical transcript or accounting readers.
+      const leaf = await loadRetainedAgentRuntimeLeaf({
+        paths: resolvePluginStorePaths({ happyHomeDir }),
+        binding,
+        developmentOccurrenceId: 'occurrence:real-source-claude',
+      });
+      try {
+        const runtime = await leaf.factory({
+          plugin: { id: binding.pluginId, version: binding.pluginVersion },
+          agent: { id: binding.localAgentId },
+          signal: new AbortController().signal,
+        });
+        expect(runtime.sessions?.open).toBeTypeOf('function');
+        expect(leaf.externalSessions?.readAfterTranscript).toBeTypeOf('function');
+        const cache = createRequire(import.meta.url).cache;
+        const root = source.sourceAuthority.registeredRootId;
+        const historyReaders = [
+          'src/agent/surfaces/sessions/external/candidates.ts',
+          'src/agent/surfaces/sessions/external/transcript.ts',
+          'src/agent/usage/nativeAccounting.ts',
+        ];
+        expect(historyReaders.filter(reader => cache[join(root, ...reader.split('/'))])).toEqual([]);
+      } finally {
+        await leaf.dispose();
+      }
     } finally {
       await serviceOwner?.owners.dispose();
       await rm(happyHomeDir, { recursive: true, force: true });
