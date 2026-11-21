@@ -501,8 +501,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           clients: snapshot?.status === 'ready'
             ? snapshot.features.capabilities.connectedServices.publicOAuthClients
             : undefined,
-          service: input.service,
-          modeId: input.modeId,
+          ...input,
         });
       },
       async replaceForControl(input: ConfigurationReplaceForControlInput) {

@@ -3,12 +3,15 @@ import { z } from '../../../zodRuntimePolicy.js';
 import { asProtocolZod } from '../../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../../../plugins/contributionIdentity.js';
 
+export const ConnectedAccountPublicOAuthScopesV1Schema = lazyZodSchema(() => z.array(z.string().check(z.regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/u))).check(z.minLength(1)));
+
 /** Public client metadata, not a credential or proof of provider operation rights. */
 export const ConnectedAccountPublicOAuthClientV1Schema = lazyZodSchema(() => z.object({
   service: asProtocolZod(PluginContributionIdentityV1Schema),
   clientId: z.string().check(z.trim(), z.minLength(1), z.refine(value => !/\p{Cc}/u.test(value))),
   scopesByMode: z.record(asProtocolZod(PluginContributionLocalIdSchema),
-    z.array(z.string().check(z.regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/u))).check(z.minLength(1))),
+    z.nullable(ConnectedAccountPublicOAuthScopesV1Schema))
+    .check(z.refine(modes => Object.keys(modes).length > 0)),
 }));
 
 export const DEFAULT_CONNECTED_SERVICES_CREDENTIAL_DELETE_CAPABILITIES = Object.freeze({

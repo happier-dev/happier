@@ -10977,16 +10977,21 @@ after the person submits the authentication form; recipe inputs and setup
 operations carry no authentication password. Purpose selection and the account
 completion callback retain their existing owners.
 
-Home public OAuth clients are deliberate non-secret `serverConfig` entries
-(`editable: 'home'`). Connected Services feature delivery carries optional
-qualified-service client IDs and mode-specific registered scopes. The existing
-daemon configuration owner exposes `getPublicOAuthClient()` only for its bound
-service/mode, returning null for absent, conflicting or unavailable metadata.
-Cloudflare selects it at begin and retains the ID/scopes in existing attempt
-and credential custody for callback, status, refresh and revoke; changed Home
-defaults cannot retarget an existing grant. BYO client configuration and scoped
-tokens remain available. The daemon owns PKCE and every token request; this
-adds no server exchange, credential resolver, polling or lifecycle owner.
+The Home operator sets public client bindings in
+`HAPPIER_CONNECTED_SERVICES_PUBLIC_OAUTH_CLIENTS`. Connected Services feature
+delivery carries the validated bindings for the declared plugin, service and mode
+identities. The existing Account configuration owner resolves those identities
+against the admitted declaration and selects the explicit registered scope IDs
+or the declared mode's `scopes` when the operator chose `null`.
+`getPublicOAuthClient()` returns null for unavailable, conflicting or missing
+bindings and for a default without valid declared scopes. Bundled and external
+plugins use the same declaration and binding. The feature endpoint publishes
+operator settings without consulting per-Account plugin availability.
+
+Cloudflare retains the selected client ID and registered API scopes in
+existing attempt and credential custody. Cold attempts use the current offer.
+Callback, refresh and revoke retain the original authorization client. The
+executing host owns PKCE and token requests.
 
 An OAuth mode can bind its own-client configuration with
 `clientConfiguration: { clientIdFieldId, scopesFieldId }`, referencing distinct

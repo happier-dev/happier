@@ -90,6 +90,12 @@ export const PLUGIN = definePlugin({
       account: { artifactId: 'account-runtime', exportName: 'activateAccount' },
       defaultModeId: 'oauth', modes: [{
         id: 'oauth', title: 'Sign in with DigitalOcean', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+        scopes: [
+            'account:read', 'actions:read', 'block_storage:read', 'block_storage:delete', 'block_storage_snapshot:read',
+            'droplet:read', 'droplet:create', 'droplet:update', 'droplet:delete', 'image:read', 'image:create',
+            'image:update', 'image:delete', 'regions:read', 'sizes:read', 'snapshot:read', 'snapshot:delete',
+            'tag:read', 'tag:create', 'vpc:read',
+        ],
       }, {
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
       browserReachability: 'unreachable',

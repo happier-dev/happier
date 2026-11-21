@@ -6,95 +6,36 @@ import { validateHomeSettingsWrite } from "@happier-dev/protocol/serverConfig/ho
 import { SERVER_CONFIG_REGISTRY_BASE } from "@happier-dev/protocol/serverConfig/registry";
 
 describe("resolveConnectedServicesFeature core contract", () => {
-    it("delivers the Home operator's public OAuth client through the real configuration and feature contracts", () => {
-        const values = {
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: ["account.read", "scripts.write", "ci.write", "pages.write"],
+    it("advertises operator-configured qualified OAuth clients for any plugin and drops malformed rows", () => {
+        const external = {
+            service: { pluginId: "example.connected.accounts", localId: "cloud" },
+            clientId: "external-public",
+            scopesByMode: { "sign-in": null },
         };
-        expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values })).toMatchObject({ ok: true, values });
-        const feature = resolveConnectedServicesFeature({
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: values.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID,
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "account.read,scripts.write,ci.write,pages.write",
-        });
-        const consumed = FeaturesResponseSchema.parse({ features: feature.features, capabilities: feature.capabilities });
-        expect(Reflect.get(consumed.capabilities.connectedServices, "publicOAuthClients")).toEqual([{
+        const cloudflare = {
             service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" },
-            clientId: "happier-public-client",
-            scopesByMode: {
-                oauth: ["account.read", "scripts.write", "ci.write", "pages.write"],
-            },
-        }]);
-        const absent = resolveConnectedServicesFeature({});
-        expect(Reflect.get(absent.capabilities?.connectedServices ?? {}, "publicOAuthClients")).toBeUndefined();
-    });
-
-    it("advertises the Vercel public client only when its client id is set, beside Cloudflare", () => {
-        const vercel = {
-            service: { pluginId: "happier.machine.vercel", localId: "vercel-account" },
-            clientId: "cl_vercel_public",
-            scopesByMode: { oauth: ["openid", "email", "profile", "offline_access"] },
+            clientId: "cloudflare-public",
+            scopesByMode: { oauth: ["account.read", "workers.write"] },
         };
-        const values = { HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId };
+        const values = { HAPPIER_CONNECTED_SERVICES_PUBLIC_OAUTH_CLIENTS: [external, cloudflare] };
         expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values })).toMatchObject({ ok: true, values });
-        const consumed = (env: NodeJS.ProcessEnv) => {
-            const feature = resolveConnectedServicesFeature(env);
-            const parsed = FeaturesResponseSchema.parse({ features: feature.features, capabilities: feature.capabilities });
-            return Reflect.get(parsed.capabilities.connectedServices, "publicOAuthClients");
-        };
-        expect(consumed({ HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: ` ${vercel.clientId} ` })).toEqual([vercel]);
-        expect(consumed({ HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: "  " })).toBeUndefined();
-        expect(consumed({
-            HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId,
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "account.read",
-        })).toEqual([
-            { service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" }, clientId: "happier-public-client", scopesByMode: { oauth: ["account.read"] } },
-            vercel,
-        ]);
-        // One operator's malformed Cloudflare scopes must not withdraw the Vercel client.
-        expect(consumed({
-            HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: vercel.clientId,
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "not an OAuth scope token",
-        })).toEqual([vercel]);
-    });
-
-    it("advertises Railway and DigitalOcean independently through the Home configuration", () => {
-        const values = {
-            HAPPIER_CONNECTED_SERVICES_RAILWAY_OAUTH_CLIENT_ID: "railway-public",
-            HAPPIER_CONNECTED_SERVICES_DIGITALOCEAN_OAUTH_CLIENT_ID: "digitalocean-public",
-        };
-        expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values })).toMatchObject({ ok: true, values });
-        const read = (env: NodeJS.ProcessEnv) => {
-            const feature = resolveConnectedServicesFeature(env);
+        const read = (clients: unknown) => {
+            const feature = resolveConnectedServicesFeature({
+                HAPPIER_CONNECTED_SERVICES_PUBLIC_OAUTH_CLIENTS: JSON.stringify(clients),
+            });
             return FeaturesResponseSchema.parse({
-                features: feature.features,
-                capabilities: feature.capabilities,
+                features: feature.features, capabilities: feature.capabilities,
             }).capabilities.connectedServices.publicOAuthClients;
         };
-        const railway = {
-            service: { pluginId: "happier.machine.railway", localId: "railway-account" },
-            clientId: "railway-public",
-            scopesByMode: { oauth: expect.arrayContaining(["openid", "offline_access", "project:member"]) },
-        };
-        const digitalocean = {
-            service: { pluginId: "happier.machine.digitalocean", localId: "digitalocean-account" },
-            clientId: "digitalocean-public",
-            scopesByMode: { oauth: expect.arrayContaining(["account:read", "droplet:create", "droplet:delete"]) },
-        };
-        expect(read(values)).toEqual([railway, digitalocean]);
-        expect(read({ ...values, HAPPIER_CONNECTED_SERVICES_RAILWAY_OAUTH_CLIENT_ID: "bad\nclient" })).toEqual([digitalocean]);
-        expect(read({ ...values, HAPPIER_CONNECTED_SERVICES_DIGITALOCEAN_OAUTH_CLIENT_ID: " " })).toEqual([railway]);
+        expect(read([external, cloudflare])).toEqual([external, cloudflare]);
+        expect(read([external, { ...cloudflare, scopesByMode: { oauth: ["not a scope token"] } }])).toEqual([external]);
+        expect(read([{ ...external, clientId: "bad\nclient" }, cloudflare])).toEqual([cloudflare]);
+        expect(read([])).toBeUndefined();
+        expect(read({})).toBeUndefined();
+        expect(read(undefined)).toBeUndefined();
     });
 
     it("defaults to connected services enabled (including quotas)", () => {
-        const malformed = resolveConnectedServicesFeature({
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
-            HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: "not an OAuth scope token",
-        });
-        const consumed = FeaturesResponseSchema.parse({ features: malformed.features, capabilities: malformed.capabilities });
-        expect(Reflect.get(consumed.capabilities.connectedServices, "publicOAuthClients")).toBeUndefined();
-        expect(consumed.capabilities.connectedServices.qualifiedAccounts).toEqual({ protocolVersion: 4 });
         const feature = resolveConnectedServicesFeature({} as NodeJS.ProcessEnv);
 
         expect(feature.features?.connectedServices).toEqual({

@@ -128,6 +128,19 @@ This relay does not make any vendor's OAuth integration available. A service
 still needs registration, permission and token-lifecycle validation; retain a
 manual-token mode wherever that proof is missing.
 
+### Home public OAuth clients
+
+An authorization-code mode can use a public client registered by the Home
+operator. Declare the mode on the plugin’s Connected Account service and put
+its default OAuth scope tokens in the mode’s `scopes` array. If the scope IDs
+depend on registration, ask the operator to supply them in their
+[Home setting](/self-hosting/env#public-oauth-clients).
+The host resolves the exact plugin ID, service ID and mode ID.
+Read the selected client ID and scopes through
+`context.configuration.getPublicOAuthClient({ signal })` when the attempt
+begins and retain the client in the attempt’s credential store for completion.
+The setting works for bundled and external plugins.
+
 ### Vercel deployment connections in development
 
 The shared Vercel connection in 0.3 development source accepts a

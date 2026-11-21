@@ -2,7 +2,6 @@ import type { DefinePluginInput } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_ACCOUNT_ID, cloudflareConnectedAccountRuntime } from './connectedAccounts/runtime.js';
-import { CLOUDFLARE_IDENTITY_SCOPES } from './connectedAccounts/oauth.js';
 import { cloudflarePortableAuthentication } from './connectedAccounts/portableAuthentication.js';
 import { cloudflareClientPermissionGuide, cloudflarePermissionGuide, cloudflareFeatureNames } from './connectedAccounts/permissions.js';
 import { tunnelActions } from './platform/tunnel.js';
@@ -238,7 +237,7 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
             checklist: ['Register an OAuth client in [Cloudflare]', 'Choose Authorization Code with PKCE and no client secret.',
               'Add the redirect URL below, grant the scopes below, then paste the client ID and scope IDs.'],
             permissions: cloudflareClientPermissionGuide },
-          scopes: CLOUDFLARE_IDENTITY_SCOPES, pkce: 'required', outcomeReconciliation: 'none', configuration: oauthConfiguration },
+          pkce: 'required', outcomeReconciliation: 'none', configuration: oauthConfiguration },
         { id: 'token', kind: 'manual', title: 'API token', credentialOrigin: 'authentication', outcomeReconciliation: 'none',
           credentialFieldKeys: { token: 'token' },
           browserReachability: 'unreachable',

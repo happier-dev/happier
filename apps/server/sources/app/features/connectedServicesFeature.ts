@@ -1,23 +1,15 @@
 import type { FeaturesPayloadDelta } from "./types";
 import { readConnectedServicesFeatureEnv } from "./catalog/readFeatureEnv";
 import { readServerConfig } from "@happier-dev/protocol/serverConfig/serverConfigCodec";
-import { CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
+import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
 import { ConnectedAccountPublicOAuthClientV1Schema } from "@happier-dev/protocol/features/payload/capabilities/connectedServicesCapabilities";
 
-/**
- * The Home's public OAuth clients, one row per Connected Account service. Each
- * client id is per Home because the callback is the Home's web origin. A row is
- * advertised only when its client id (and scopes) are configured and valid.
- */
 function readPublicOAuthClients(env: NodeJS.ProcessEnv) {
-    // Validate per row so one malformed setting cannot withdraw another provider.
-    return CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG.flatMap(entry => {
-        const { service, scopes } = entry;
-        const parsed = ConnectedAccountPublicOAuthClientV1Schema.safeParse({
-            service,
-            clientId: readServerConfig(env, entry),
-            scopesByMode: { oauth: 'key' in scopes ? readServerConfig(env, scopes) : scopes },
-        });
+    const rows: unknown = readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_PUBLIC_OAUTH_CLIENTS);
+    if (!Array.isArray(rows)) return [];
+    // A malformed operator row must not withdraw another service’s valid client.
+    return rows.flatMap((row: unknown) => {
+        const parsed = ConnectedAccountPublicOAuthClientV1Schema.safeParse(row);
         return parsed.success ? [parsed.data] : [];
     });
 }

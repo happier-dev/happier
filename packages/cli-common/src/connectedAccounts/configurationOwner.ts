@@ -1,3 +1,4 @@
+import { ConnectedAccountPublicOAuthScopesV1Schema } from '@happier-dev/protocol/features/payload/capabilities/connectedServicesCapabilities';
 import type { ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration } from './authenticationTypes.js';
 import type { PluginContributionRef, JsonValue } from '../plugins/registration/contracts.js';
 import type {
@@ -312,16 +313,24 @@ function sameService(left: PluginContributionRef, right: PluginContributionRef):
     return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-export function resolveConnectedAccountPublicOAuthClient(input: Readonly<{
-    clients: FeaturesResponse['capabilities']['connectedServices']['publicOAuthClients'];
+type PublicOAuthClientRequest = Readonly<{
     service: PluginContributionRef;
     modeId: string;
+    defaultScopes?: readonly string[];
+}>;
+
+export function resolveConnectedAccountPublicOAuthClient(input: PublicOAuthClientRequest & Readonly<{
+    clients: FeaturesResponse['capabilities']['connectedServices']['publicOAuthClients'];
 }>): Awaited<ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>> {
     const matches = input.clients?.filter(client => sameService(client.service, input.service)) ?? [];
     // Never guess among conflicting operator declarations or another mode.
     if (matches.length !== 1) return null;
     const client = matches[0]!;
-    const scopes = client.scopesByMode[input.modeId];
+    if (!Object.hasOwn(client.scopesByMode, input.modeId)) return null;
+    const configuredScopes = client.scopesByMode[input.modeId];
+    const scopes = configuredScopes === null
+        ? ConnectedAccountPublicOAuthScopesV1Schema.safeParse(input.defaultScopes).data
+        : configuredScopes;
     return scopes?.length
         ? Object.freeze({ clientId: client.clientId, scopes: Object.freeze([...scopes]) })
         : null;
@@ -540,7 +549,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
 export function createConnectedAccountConfigurationOwner(params: Readonly<{
     read(target: ConnectedAccountConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null>;
     readPublicOAuthClient?(
-        input: Readonly<{ service: PluginContributionRef; modeId: string }>,
+        input: PublicOAuthClientRequest,
         options?: Readonly<{ signal?: AbortSignal }>,
     ): ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>;
     replace(input: Readonly<{
@@ -682,7 +691,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         let publicOAuthClient: PublicOAuthClient | undefined;
         if (mode.kind !== 'manual' && mode.clientConfiguration && mode.configuration) {
             const selected = await params.readPublicOAuthClient?.({
-                service: serviceForTarget(target), modeId: target.modeId,
+                service: serviceForTarget(target), modeId: target.modeId, defaultScopes: mode.scopes,
             }) ?? null;
             publicOAuthClient = selected === null ? null : Object.freeze({
                 clientId: selected.clientId, scopes: Object.freeze([...selected.scopes]),
@@ -745,6 +754,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 }
                 const selected = input.publicOAuthClient !== undefined ? input.publicOAuthClient : await params.readPublicOAuthClient?.({
                     service: serviceForTarget(input.target), modeId: input.target.modeId,
+                    defaultScopes: input.mode.kind === 'manual' ? undefined : input.mode.scopes,
                 }, options) ?? null;
                 options?.signal?.throwIfAborted();
                 if (!await owner.isCurrent(snapshot)) {

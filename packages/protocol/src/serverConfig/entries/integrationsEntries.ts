@@ -2,67 +2,17 @@ import { CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_TOKEN_URL } from '../../providers/
 import { OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_TOKEN_URL } from '../../providers/codex/oauth.js';
 import { defineServerConfigRegistry } from '../serverConfigEntry.js';
 
-const cloudflareScopes = defineServerConfigRegistry({
-    HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES: {
-        type: 'list', default: [], sensitivity: 'plain', apply: 'live', editable: 'home',
-        section: 'server', group: 'connectedServices',
-        description: 'Exact registered API scope IDs for Cloudflare consent. Empty by default; include Account Settings Read and only the Workers, Pages, Tunnel or DNS permissions your client offers.',
-        docs: 'self-hosting/env#cloudflare-public-oauth-client',
-    },
-});
-
-const publicOAuthClientSettings = {
-    type: 'string', default: '', sensitivity: 'plain', apply: 'live', editable: 'home',
-    section: 'server', group: 'connectedServices', bounds: { noControlChars: true },
-} as const;
-
-const publicOAuthClientConfig = defineServerConfigRegistry({
-    HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: {
-        ...publicOAuthClientSettings,
-        description: 'Public Cloudflare OAuth client registered for Happier. Empty by default; people can still use their own client or scoped tokens.',
-        docs: 'self-hosting/env#cloudflare-public-oauth-client',
-        service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' },
-        scopes: cloudflareScopes.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES,
-    },
-    HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID: {
-        ...publicOAuthClientSettings,
-        description: 'Public Vercel app client ID for Sign in with Vercel. Its callback must be this Home\'s Connected Account callback. Empty by default; people can still connect with an access token.',
-        docs: 'self-hosting/env#vercel-public-oauth-client',
-        service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' },
-        // Vercel permissions are set on the app. Consent asks for identity and offline access.
-        scopes: ['openid', 'email', 'profile', 'offline_access'],
-    },
-    HAPPIER_CONNECTED_SERVICES_RAILWAY_OAUTH_CLIENT_ID: {
-        ...publicOAuthClientSettings,
-        description: 'Public Railway Native app client ID for Sign in with Railway. Register this Home’s Connected Account callback.',
-        docs: 'self-hosting/env#railway-public-oauth-client',
-        service: { pluginId: 'happier.machine.railway', localId: 'railway-account' },
-        // Workspace administration covers Deploy’s workspace-level create and teardown.
-        scopes: ['openid', 'email', 'profile', 'offline_access', 'workspace:admin', 'project:member'],
-    },
-    HAPPIER_CONNECTED_SERVICES_DIGITALOCEAN_OAUTH_CLIENT_ID: {
-        ...publicOAuthClientSettings,
-        description: 'Public DigitalOcean app client ID for Sign in with DigitalOcean. Register this Home’s Connected Account callback.',
-        docs: 'self-hosting/env#digitalocean-public-oauth-client',
-        service: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean-account' },
-        scopes: [
-            'account:read', 'actions:read', 'block_storage:read', 'block_storage:delete', 'block_storage_snapshot:read',
-            'droplet:read', 'droplet:create', 'droplet:update', 'droplet:delete', 'image:read', 'image:create',
-            'image:update', 'image:delete', 'regions:read', 'sizes:read', 'snapshot:read', 'snapshot:delete',
-            'tag:read', 'tag:create', 'vpc:read',
-        ],
-    },
-});
-
-export const CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG = Object.values(publicOAuthClientConfig);
-
 /**
  * Push, Live Activities, voice, billing, connected services, plugins and other integrations:
  * credentials of external services, their limits, and server-resource tuning.
  */
 export const INTEGRATIONS_SERVER_CONFIG = defineServerConfigRegistry({
-    ...cloudflareScopes,
-    ...publicOAuthClientConfig,
+    HAPPIER_CONNECTED_SERVICES_PUBLIC_OAUTH_CLIENTS: {
+        type: 'json', default: [], sensitivity: 'plain', apply: 'live', editable: 'home',
+        section: 'server', group: 'connectedServices',
+        description: 'Public OAuth client IDs keyed by qualified Connected Account service and authentication mode. Use null for a mode’s declared scopes, or provide the exact registered scope IDs.',
+        docs: 'self-hosting/env#public-oauth-clients',
+    },
     // Live Activity remote updates.
     HAPPIER_LIVE_ACTIVITY_REMOTE_UPDATES_ENABLED: {
         type: 'boolean',

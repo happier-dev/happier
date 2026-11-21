@@ -54,6 +54,8 @@ export const PLUGIN = definePlugin({
     declaration: { title: 'Railway account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
         id: 'oauth', title: 'Sign in with Railway', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+        // Workspace administration covers sandbox workspace-level create and teardown.
+        scopes: ['openid', 'email', 'profile', 'offline_access', 'workspace:admin', 'project:member'],
         postAuthenticationFieldIds: railwayOAuthFields.map(field => field.id),
         configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [...railwayOAuthFields] },
       }, {

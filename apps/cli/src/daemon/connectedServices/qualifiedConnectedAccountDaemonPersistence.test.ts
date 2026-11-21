@@ -231,7 +231,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     const features = (clients: readonly {
       service: { pluginId: string; localId: string };
       clientId: string;
-      scopesByMode: Readonly<Record<string, readonly string[]>>;
+      scopesByMode: Readonly<Record<string, readonly string[] | null>>;
     }[]) => FeaturesResponseSchema.parse({
       features: {}, capabilities: { connectedServices: { publicOAuthClients: clients } },
     });
@@ -254,6 +254,15 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(await read?.({ service, modeId: 'oauth' })).toEqual({ clientId: 'operator-client', scopes: ['profile.read'] });
     expect(await read?.({ service: { ...service, pluginId: 'other.plugin' }, modeId: 'oauth' })).toBeNull();
     expect(await read?.({ service, modeId: 'unknown' })).toBeNull();
+    expect(await read?.({ service, modeId: 'constructor' })).toBeNull();
+
+    current = features([{ ...selected, scopesByMode: { oauth: null } }]);
+    const declared = { service, modeId: 'oauth', defaultScopes: ['offline_access', 'openid'] };
+    expect(await read?.(declared)).toEqual({ clientId: 'operator-client', scopes: declared.defaultScopes });
+    expect(await read?.({ service, modeId: 'oauth' })).toBeNull();
+    expect(await read?.({ ...declared, modeId: 'unknown' })).toBeNull();
+    current = features([selected]);
+    expect(await read?.(declared)).toEqual({ clientId: 'operator-client', scopes: ['profile.read'] });
     current = features([selected, { ...selected, clientId: 'conflicting-client' }]);
     expect(await read?.({ service, modeId: 'oauth' })).toBeNull();
     current = features([]);
