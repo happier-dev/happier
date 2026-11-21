@@ -73,7 +73,7 @@ describe('approval profile application mode', () => {
               targetApproval: { actionId, databaseAgentLevel },
             }).settings;
             const expected = own === 'off' || shared === 'off' ? 'off'
-              : databaseAgentLevel === 'readWriteAsk' || own === 'ask_first' ? 'ask_first' : 'allowed';
+              : databaseAgentLevel === 'readWriteAsk' || own === 'ask_first' || shared === 'ask_first' ? 'ask_first' : 'allowed';
             expect(readActionAudiencePolicy(applied, actionId, 'agent').mode).toBe(expected);
           });
         }

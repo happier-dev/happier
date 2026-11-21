@@ -10246,9 +10246,10 @@ Action the profile names for a member-chosen profile. For a captured Team/Group
 or project default, it only adds Off and Ask requirements and retains the
 member's stricter choices. The applier then consumes any admitted database
 agent level supplied by the target owner: `readWriteAsk` requires Ask, while
-`readWriteNoApproval` may waive Ask unless the member explicitly chose Ask or
-Off. The existing database type owns this value; the applier performs no database
-access read. These are invocation-local `targetApproval` inputs, not profile-body
+`readWriteNoApproval` can waive the built-in Ask. It preserves the Account's
+Ask or Off and the effective profile's Ask. The existing database type owns
+this value. The applier performs no database access read.
+These are invocation-local `targetApproval` inputs, not profile-body
 fields or creation defaults. The ordinary evaluator decides on the resulting settings.
 A member-chosen profile can therefore ask, allow or turn an Action Off exactly where
 the Account screen could; it has no other waiver authority, and the egress,

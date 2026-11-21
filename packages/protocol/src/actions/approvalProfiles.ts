@@ -146,8 +146,10 @@ function applyAdmittedTargetApproval(account: ActionsSettingsV1, profiled: Actio
   // The same delegated-requester fact the database access decider admits agents by (SEC-1117 M1).
   if (!target || !surface || !isDelegatedActionRequesterV1(options.context ?? {})
     || (target.databaseAgentLevel !== 'readWriteAsk' && target.databaseAgentLevel !== 'readWriteNoApproval')) return profiled;
-  const ownAsk = readExplicitActionApprovalPreferenceFromSettingsV1(target.actionId, account, options.context, target.approvalScope) === true;
-  const required = target.databaseAgentLevel === 'readWriteAsk' || ownAsk;
+  const required = target.databaseAgentLevel === 'readWriteAsk'
+    || readExplicitActionApprovalPreferenceFromSettingsV1(target.actionId, account, options.context, target.approvalScope) === true
+    || profiled !== account
+      && readExplicitActionApprovalPreferenceFromSettingsV1(target.actionId, profiled, options.context, target.approvalScope) === true;
   // Project onto the same effective scope the preference reader consumes. This is
   // an invocation-local overlay; inherited template identity is never persisted
   // as part of a child preference.
