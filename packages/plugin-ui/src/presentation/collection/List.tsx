@@ -1312,7 +1312,7 @@ export function HappierListItem({
 
   return (
     <ListItemFrame
-      hoverEnabled={(collectionRow || navigationRow || hoverRevealRowActions) && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
+      hoverEnabled={Boolean((collectionRow || navigationRow || hoverRevealRowActions) && isInteractive && !(cardCornerAccessory !== null && precisePointer))}
       hoverFill={collectionRow && resolvedTheme && isInteractive && disabled !== true && selected !== true && !openRow
         ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover) : undefined}
       restingFill={collectionRow && resolvedTheme
