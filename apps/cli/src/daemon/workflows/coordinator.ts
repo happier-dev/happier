@@ -19,6 +19,8 @@ import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDe
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { projectMachineSetupAcceptedAppBlockIds } from '@/machines/setup/acceptedAppRuns';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -1998,6 +2000,8 @@ async function executeActionBlock(
     const invocationRecordId = row.recordId;
     const admittedStartDepth = readWorkflowAcceptedActionStartDepthV1({ machineId: actionWorkspace.machineId,
       workspaceTarget: { project: actionWorkspace }, workDepth: context.workDepth }, selected);
+    const machineSetupAppBlockIds = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+      ? projectMachineSetupAcceptedAppBlockIds(input, context.materializedLeaves) : undefined;
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
       source: context.source,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
@@ -2005,6 +2009,7 @@ async function executeActionBlock(
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,
+      ...(machineSetupAppBlockIds ? { machineSetupAppBlockIds } : {}),
       ...(admittedStartDepth === undefined ? {} : { agentStartWorkDepth: admittedStartDepth,
         ...(selected.role ? { agentStartWorkspaceWrites: selected.role.workspaceWrites } : {}) }) };
     // Qualified plugin Actions consume the same host front door and approval

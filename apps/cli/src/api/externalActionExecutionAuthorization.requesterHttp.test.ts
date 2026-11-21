@@ -317,6 +317,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_bob_home', accountId: 'bob',
       requestId: parent.binding.requestId, reviewedChild });
     const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      ...(origin === 'direct' ? { machineSetupAppBlockIds: ['reviewed-app-block'] } : {}),
       executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId, authorization: {
         principal: { kind: 'api', accountId: 'bob', principalId: 'bob', credentialId },
         admittedPermissionCeiling: 'default', externalActionExecutionAuthorization: parent, reviewedChild,
@@ -355,12 +356,13 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       delivered = true;
       const opening = { authorization: request.executionAuthorization, machineId: target.machineId,
         installationId: 'alice-installation', serverIdentityId: 'srv_bob_home', installationPrivateKey: keys.secretKey };
-      const codec = openManagedControllerActionCodecV1(opening);
-      expect(codec?.machineKey).toHaveLength(32);
+      const codec = openManagedControllerActionCodecV1({ ...opening, includeInvocation: true });
+      expect(codec?.material.machineKey).toHaveLength(32);
+      expect(codec?.machineSetupAppBlockIds).toEqual(origin === 'direct' ? ['reviewed-app-block'] : undefined);
       if (request.envelope.v === 2) expect(openExternalActionRequestV2({
         projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope,
         binding: { serverIdentityId: 'srv_bob_home', accountId: 'bob', credentialId,
-          actionId: 'machines.setup.apply', requestId, target }, material: codec!,
+          actionId: 'machines.setup.apply', requestId, target }, material: codec!.material,
       })?.input).toEqual(childInput);
       expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
       expect(request.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', principalId: 'bob',

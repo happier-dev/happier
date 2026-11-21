@@ -11893,6 +11893,13 @@ reason is a fixed, content-free predicate name. Matching development Protocol,
 daemon, CLI and UI readers must refresh together to retain this additional failure
 shape. It changes neither admission nor the native execution identity.
 
+In 0.3 development, signed native Setup Apply can carry optional
+`machineSetupAppBlockIds` in the installation-sealed controller codec. The IDs
+are ordered by the reviewed deployment children and resolved by the accepted
+Run host. They carry no Account credentials. Setup with Apps requires matching
+daemon publishers and recipients. The public Action request and operation
+schemas are unchanged.
+
 The same unreleased diagnostic preserves the native owner's optional non-secret
 `requiredFact` through private CHECK and elevation refusals. An unavailable
 firewall fact is `required_fact_unavailable`, with its fact name in the Domain

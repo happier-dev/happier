@@ -338,6 +338,7 @@ async function executeExternalActionRequest(input: Readonly<{
     && isManagedControllerCodecRootV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
   let controllerInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
+  let machineSetupAppBlockIds: ActionExecutorContext['machineSetupAppBlockIds'];
   let managedReviewedParent: HostReviewedParentV1 | undefined;
   let managedSessionCreationTag: ActionExecutorContext['managedContinuationSessionCreationTag'];
   // The opening target Home already proved for this root; an unchanged resolved
@@ -362,6 +363,7 @@ async function executeExternalActionRequest(input: Readonly<{
     }) : null;
     envelopeCodecMaterial = opened?.material ?? null;
     controllerInvocation = opened?.invocation;
+    machineSetupAppBlockIds = opened?.machineSetupAppBlockIds;
     if (!envelopeCodecMaterial) return { kind: 'invalid_request',
       errorCode: !current.ok && current.executionFailure ? current.executionFailure.errorCode
         : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
@@ -984,6 +986,7 @@ async function executeExternalActionRequest(input: Readonly<{
     // Session profile here would borrow the controller's Account credential.
     ...(approvedDelegatedAcquire ? { approvalProfileId: null } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
+    ...(machineSetupAppBlockIds ? { machineSetupAppBlockIds } : {}),
     ...(admittedAuthorization && originalRootCurrentness ? {
       verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },
       verifyMachineAdmissionCurrent: originalRootCurrentness,

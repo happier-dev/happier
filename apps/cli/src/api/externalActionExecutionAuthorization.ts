@@ -2076,6 +2076,7 @@ export async function prepareExternalActionRequesterAccountAuthorizationResult(i
   executionAuthorization?: ExternalActionExecutionAuthorizationV1;
   /** Per-invocation envelope codec, never Account material. */
   controllerCodecMaterial?: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }>;
+  machineSetupAppBlockIds?: readonly string[];
   /** Exact incumbent Session host, independently of the destination Machine. */
   sourceMachineId?: string;
   /** Accepted managed Session work rechecks current origin policy, not an ended turn. */
@@ -2258,6 +2259,7 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
   }
   const carried = input.controllerCodecMaterial ? sealManagedControllerActionCodecV1({
     authorization: minted.authorization, material: input.controllerCodecMaterial,
+    ...(input.machineSetupAppBlockIds ? { machineSetupAppBlockIds: input.machineSetupAppBlockIds } : {}),
     installationPublicKey: codecPublicKey ?? deriveEd25519KeyPair((typeof input.privateKey === 'string'
       ? decodeBase64(input.privateKey, 'base64url') : input.privateKey).slice(0, ED25519_PUBLIC_KEY_BYTES)).publicKey,
     randomBytes,

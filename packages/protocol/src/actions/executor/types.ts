@@ -661,6 +661,8 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** App blocks from the accepted Setup Run, private to the signed native invocation. */
+  machineSetupAppBlockIds?: readonly string[];
   /** Per-selection native launch projection decided by Agent admission; never Action/RPC input. */
   reviewReviewerLaunchInputs?: Readonly<Record<number, Readonly<Record<string, unknown>> & Readonly<{ intent?: import('../../execution/runs/runPrimitives.js').ExecutionRunIntent }>>>;
   /** Opened requester registry-read operand; never part of public Action input. */

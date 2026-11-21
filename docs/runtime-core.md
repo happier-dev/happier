@@ -5284,7 +5284,11 @@ process. Deployment admission failures retain the incumbent Action operation ID.
 
 Combined Setup retains its accepted Workflow Run as the recovery owner when
 the wait observer fails. The parent Action requires settled Run custody before
-projecting a terminal outcome. Recovery locates pre-acceptance native work by
+projecting a terminal outcome. The Run host resolves reviewed App blocks from
+the accepted snapshot and sends their addresses in the installation-sealed
+native Setup invocation. The target publishes those addresses on native
+settlement. The requester's Account continues to own reading App outcomes.
+Recovery locates pre-acceptance native work by
 its original Home, Account, Machine and Action request identity; cancellation
 uses that operation's existing abort path. Confirmed cancellation stops the
 interpreter's owned subprocess tree. An unverified stop retains native admission

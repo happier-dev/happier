@@ -1,9 +1,10 @@
-import { DeploymentTemplateInstantiateResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
+import { DeploymentTemplateInstantiateResultV1Schema, type ActionExecutorContext, type WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import {
   MachineSetupApplyInputV1Schema,
   type MachineSetupApplyTargetV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import {
   machineSetupSourceOriginKeyV1,
   type MachineSetupAcceptedAppRunV1,
@@ -56,13 +57,41 @@ async function readAccepted(runtime: ReadRuntime, runId: string): Promise<Workfl
 /** The combined setup producer emits singleton native leaves, not another parent envelope. */
 function nativeTargets(run: WorkflowRunGetResultV1, homeId: string, machineId: string): MachineSetupApplyTargetV1[] {
   return run.acceptedContext.materializedLeaves.flatMap(leaf => {
-    if (leaf.kind !== 'action' || leaf.actionId !== 'machines.setup.apply') return [];
+    if (leaf.kind !== 'action' || leaf.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1) return [];
     const parsed = MachineSetupApplyInputV1Schema.safeParse(leaf.actionInput);
     if (!parsed.success || parsed.data.homeId !== homeId || parsed.data.machineId !== machineId
       || parsed.data.targets.length !== 1) return [];
     const target = parsed.data.targets[0]!;
     return target.homeId === homeId && target.machineId === machineId ? [target] : [];
   });
+}
+
+function plannedAppChildren(target: MachineSetupApplyTargetV1) {
+  return (target.appChildren ?? []).filter(child =>
+    child.actionId === 'deployments.deploy' || child.actionId === 'deployments.templates.instantiate');
+}
+
+function acceptedAppLeaf(leaves: readonly WorkflowMaterializedLeafV1[], child: ReturnType<typeof plannedAppChildren>[number]) {
+  const matches = leaves.filter(leaf => leaf.kind === 'action'
+    && leaf.actionId === child.actionId && sameStrictJsonValue(leaf.actionInput, child.input));
+  const leaf = matches.length === 1 ? matches[0] : undefined;
+  // Combined Setup emits flat inline definitions.
+  return leaf?.sourceKey === '$root' ? leaf : undefined;
+}
+
+/** Project App block addresses from a native leaf of the accepted Setup Run. */
+export function projectMachineSetupAcceptedAppBlockIds(input: unknown, leaves: readonly WorkflowMaterializedLeafV1[]): string[] | undefined {
+  const parsed = MachineSetupApplyInputV1Schema.safeParse(input);
+  if (!parsed.success || parsed.data.targets.length !== 1) return undefined;
+  const children = plannedAppChildren(parsed.data.targets[0]!);
+  if (!children.length) return undefined;
+  const blockIds: string[] = [];
+  for (const child of children) {
+    const leaf = acceptedAppLeaf(leaves, child);
+    if (!leaf) return undefined;
+    blockIds.push(leaf.blockId);
+  }
+  return blockIds;
 }
 
 function setupSourceReader(localSources?: MachineSetupSourceV1) {
@@ -76,24 +105,17 @@ function setupSourceReader(localSources?: MachineSetupSourceV1) {
 
 /** Associations are accepted bytes, never reconstructed app-{sourceIndex}-{itemIndex} addresses. */
 function acceptedBinding(run: WorkflowRunGetResultV1, targets: readonly MachineSetupApplyTargetV1[], homeId: string,
-  app: App, readSource: ReturnType<typeof setupSourceReader>, exactTarget?: MachineSetupApplyTargetV1): AcceptedBinding | undefined {
+  app: App, readSource: ReturnType<typeof setupSourceReader>): AcceptedBinding | undefined {
   const identity = readMachineSetupAppIdentityV1({ kind: 'app', definition: app.intent,
     ...(app.authoredKey === undefined ? {} : { authoredKey: app.authoredKey }) });
   if (identity === undefined) return undefined;
   const candidates: AcceptedBinding[] = [];
   for (const target of targets) {
-    if (exactTarget && !sameStrictJsonValue(target, exactTarget)) continue;
-    for (const child of target.appChildren ?? []) {
-      if (child.actionId !== 'deployments.deploy' && child.actionId !== 'deployments.templates.instantiate') continue;
+    for (const child of plannedAppChildren(target)) {
       const item = readSource(target.sources[child.sourceIndex])?.setup.items?.[child.itemIndex];
       if (item?.kind !== 'app' || readMachineSetupAppIdentityV1(item) !== identity) continue;
-      const matches = run.acceptedContext.materializedLeaves.filter(leaf => leaf.kind === 'action'
-        && leaf.actionId === child.actionId && sameStrictJsonValue(leaf.actionInput, child.input));
-      if (matches.length !== 1) return undefined;
-      const leaf = matches[0]!;
-      // Current setup compositions are flat inline definitions. Other structures
-      // are unreadable here rather than guessed from positions or a Run summary.
-      if (leaf.sourceKey !== '$root') return undefined;
+      const leaf = acceptedAppLeaf(run.acceptedContext.materializedLeaves, child);
+      if (!leaf) return undefined;
       const reference = { intent: item.definition, ...(item.authoredKey === undefined ? {} : { authoredKey: item.authoredKey }),
         homeId, runId: run.run.id,
         sourceKey: leaf.sourceKey, blockId: leaf.blockId, actionId: child.actionId };
@@ -118,42 +140,29 @@ export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<MachineSetupSourceFactsMapV1 | null> {
   const facts: MachineSetupSourceFactsMapV1 = {};
-  const appChildren = params.input.appChildren?.filter(child => child.actionId !== 'machines.agents.install');
-  if (!appChildren?.length) return facts;
+  const appChildren = plannedAppChildren(params.input);
+  if (!appChildren.length) return facts;
   const authorization = params.context.externalActionExecutionAuthorization;
-  const account = authorization?.requesterAccountProjection;
-  const executor = authorization?.requesterAccountExecutor;
+  const blockIds = params.context.machineSetupAppBlockIds;
   const runId = readMachineSetupAcceptedRunId(params.context);
-  if (!authorization || !account || !executor || !runId
-    || authorization.binding.actionId !== 'machines.setup.apply'
+  if (!authorization || !runId || blockIds?.length !== appChildren.length
+    || authorization.binding.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1
     || authorization.binding.serverIdentityId !== params.input.homeId
-    || authorization.binding.machineId !== params.input.machineId
-    || account.accountId !== authorization.binding.accountId) return null;
-  const runtime: ReadRuntime = { homeId: params.input.homeId, machineId: params.input.machineId,
-    execute: (actionId, input, context) => executor.execute(actionId, input, context),
-    isCurrent: params.isCurrent,
-    ...(params.signal ? { signal: params.signal } : {}) };
+    || authorization.binding.machineId !== params.input.machineId) return null;
   try {
-    const run = await readAccepted(runtime, runId);
-    if (!run) return null;
-    const targets = nativeTargets(run, runtime.homeId, runtime.machineId);
     const readSource = setupSourceReader(params.localSources);
-    // One authenticated Run read covers every reviewed app in this settlement.
-    // Native stage preparation already rejects duplicate canonical app intents.
-    for (const child of appChildren) {
+    for (const [index, child] of appChildren.entries()) {
       const source = readSource(params.input.sources[child.sourceIndex]);
       const item = source?.setup.items?.[child.itemIndex];
-      if (item?.kind !== 'app') return null;
-      const binding = acceptedBinding(run, targets, runtime.homeId, { intent: item.definition,
-        ...(item.authoredKey === undefined ? {} : { authoredKey: item.authoredKey }) }, readSource, params.input);
-      const reference = binding?.reference;
-      if (!reference || reference.actionId !== child.actionId) return null;
-      if (!source) return null;
+      if (!source || item?.kind !== 'app') return null;
       const origin = machineSetupSourceOriginKeyV1(source);
       const prior = facts[origin]?.acceptedAppRuns ?? [];
-      facts[origin] = { acceptedAppRuns: [...prior, reference] };
+      facts[origin] = { acceptedAppRuns: [...prior, {
+        intent: item.definition, ...(item.authoredKey === undefined ? {} : { authoredKey: item.authoredKey }),
+        homeId: params.input.homeId, runId, sourceKey: '$root', blockId: blockIds[index]!, actionId: child.actionId,
+      }] };
     }
-    return params.signal?.aborted || !await runtime.isCurrent() ? null : facts;
+    return params.signal?.aborted || !await params.isCurrent() ? null : facts;
   } catch {
     return null;
   }

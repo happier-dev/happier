@@ -177,11 +177,15 @@ describe('requester bootstrap installation confidentiality', () => {
           role, inputDigest: 'b'.repeat(43) } } : {}) },
     } });
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(22) };
-    const sealed = bootstrap.sealManagedControllerActionCodecV1({ authorization, material,
-      installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
+    const sealInput = { authorization, material, installationPublicKey: receiver.publicKey,
+      randomBytes: tweetnacl.randomBytes, ...(role ? { machineSetupAppBlockIds: ['app-0-0'] } : {}) };
+    const sealed = bootstrap.sealManagedControllerActionCodecV1(sealInput);
     const input = { authorization: sealed, machineId: target.machineId, installationId: 'installation',
       serverIdentityId: 'home', installationPrivateKey: receiver.secretKey };
     expect(bootstrap.openManagedControllerActionCodecV1(input)).toEqual(material);
+    expect(bootstrap.openManagedControllerActionCodecV1({ ...input, includeInvocation: true })).toEqual({
+      material, ...(role ? { machineSetupAppBlockIds: ['app-0-0'] } : {}),
+    });
     expect(bootstrap.openExternalActionRequesterAccountContextV1({ ...input, purpose: { kind: 'external_action' } })).toBeNull();
     expect(bootstrap.openManagedControllerActionCodecV1({ ...input, authorization: { ...sealed,
       binding: { ...sealed.binding, admittedMachineRole: 'use' } } })).toBeNull();

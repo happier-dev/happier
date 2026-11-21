@@ -251,7 +251,10 @@ const ManagedControllerCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObje
   ...installationContextRootShape(), purpose: z.strictObject({ kind: z.literal('managed_controller_codec') }),
   codec: z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) }),
   invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
-}));
+  machineSetupAppBlockIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
+}).check(z.refine(plaintext => plaintext.machineSetupAppBlockIds === undefined
+  || (plaintext.authorization.binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+    && plaintext.authorization.binding.workflowActionOrigin !== undefined))));
 const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
   ...installationContextRootShape(),
   invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
@@ -518,6 +521,7 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   material: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
   invocation?: ExternalActionRequesterInvocationV1;
+  machineSetupAppBlockIds?: readonly string[];
   installationPublicKey: Uint8Array;
   /** Required for an E2EE Environment collector read; see isTelemetryCollectorKeyPinRequiredV1. */
   collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[];
@@ -533,6 +537,7 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
     authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
     purpose: { kind: 'managed_controller_codec' }, codec: { machineKey: encodeBase64(input.material.machineKey) },
+    ...(input.machineSetupAppBlockIds ? { machineSetupAppBlockIds: input.machineSetupAppBlockIds } : {}),
     ...(input.invocation ? { invocation: input.invocation } : {}) });
   return { ...authorization, requesterAccountContext: sealInstallationContext({ ...input, plaintext,
     installationId: authorization.binding.installationId }) };
@@ -625,7 +630,8 @@ export function openExternalActionRequesterAccountContextV1(input: OpenRequester
 /** No Account credentials or requester execution context can be recovered from this purpose. */
 type ManagedControllerCodecMaterial = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation: true }>):
-  Readonly<{ material: ManagedControllerCodecMaterial; invocation?: ExternalActionRequesterInvocationV1 }> | null;
+  Readonly<{ material: ManagedControllerCodecMaterial; invocation?: ExternalActionRequesterInvocationV1;
+    machineSetupAppBlockIds?: string[] }> | null;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'>): ManagedControllerCodecMaterial | null;
 export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAccountContextInput, 'purpose'> & Readonly<{ includeInvocation?: boolean }>) {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
@@ -636,6 +642,7 @@ export function openManagedControllerActionCodecV1(input: Omit<OpenRequesterAcco
   if (!plaintext || !hasManagedCodecPurpose(plaintext, 'managed_controller_codec')) return null;
   const material: ManagedControllerCodecMaterial = { type: 'dataKey', machineKey: decodeBase64(plaintext.codec.machineKey) };
   return input.includeInvocation ? { material,
+    ...(plaintext.machineSetupAppBlockIds ? { machineSetupAppBlockIds: plaintext.machineSetupAppBlockIds } : {}),
     ...('invocation' in plaintext && plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : material;
 }
 

@@ -48,8 +48,8 @@ import { AccountSettingsSchema, FeaturesResponseSchema, WorkflowDefinitionV1Sche
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { readMachineSetupAcceptedAppRuns, prepareMachineSetupAcceptedAppRuns } from '@/machines/setup/acceptedAppRuns';
-import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { readMachineSetupAcceptedAppRuns, prepareMachineSetupAcceptedAppRuns, projectMachineSetupAcceptedAppBlockIds } from '@/machines/setup/acceptedAppRuns';
+import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { sealWorkflowProgressStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
@@ -569,23 +569,17 @@ describe('ApiMachine own Session Account read custody', () => {
         const requesterRuntime = await client.resolveOwnSessionRuntime({ ...context, signal: setupLifetime.signal });
         if (!requesterRuntime?.isCurrent) throw new Error('Requester runtime custody missing');
         readCurrent = requesterRuntime.isCurrent;
-        const projected = await projectRequesterAccountActionAuthorization({ authorization, serverIdentityId: input.homeId,
-          bootstrap: { credentials: osStore.credentials!, serverHttpBaseUrl: 'https://machine-home.example.test',
-            attribution: { serverId: configuration.activeServerId, accountId: actor, machineId: machine.id,
-              installationId: osStore.identity.installationId }, isCurrent: requesterRuntime.isCurrent } });
-        if (!projected) throw new Error('Requester read custody missing');
-        const requesterAuthorization = { ...projected, requesterAccountProjection: projected.requesterAccountProjection,
-          requesterAccountExecutor: requesterExecutor };
-        if (directSetupApp) {
-          context = { ...context, ...buildWorkflowActionContext({ runId, authorization: {
-            principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
-            externalActionExecutionAuthorization: requesterAuthorization,
-          } }), actionRequestId: `${runId}/native-setup/0` };
-        } else {
-          context = { ...context, externalActionExecutionAuthorization: { ...requesterAuthorization,
-            binding: { ...projected.binding, workflowActionOrigin: { runId, requestId: projected.binding.requestId } } } };
-        }
-        refuseRunRead = scenario === 'accepted-app-run-unreadable';
+        const accepted = WorkflowRunGetResultV1Schema.parse(acceptedRunRead.result).acceptedContext.materializedLeaves;
+        const machineSetupAppBlockIds = projectMachineSetupAcceptedAppBlockIds(input,
+          scenario === 'accepted-app-run-unreadable'
+            ? accepted.filter(leaf => leaf.kind !== 'action' || leaf.actionId !== templateChild.actionId) : accepted);
+        // The native recipient gets only the signed Run origin and sealed block IDs.
+        const actionRequestId = `${runId}/native-setup/0`;
+        const receivingAuthorization = { ...authorization, binding: { ...authorization.binding,
+          requestId: actionRequestId, workflowActionOrigin: { runId, requestId: actionRequestId } } };
+        context = { ...context, actionRequestId, externalActionExecutionAuthorization: receivingAuthorization,
+          ...(machineSetupAppBlockIds ? { machineSetupAppBlockIds } : {}) };
+        refuseRunRead = true;
       }
       if (scenario === 'managed-plan') {
         const plan = createMachineSetupPlanAction({ apiMachine: client, machineId: machine.id, homeId: input.homeId,
@@ -753,6 +747,7 @@ describe('ApiMachine own Session Account read custody', () => {
       expect(resolves).toBe(scenario === 'new-preset' ? 1 : 0);
       expect(originReads).toBe(1);
       if (acceptedApp) {
+        refuseRunRead = false;
         expect(await client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {
           sources, sourceFacts: { direct: { acceptedAppRuns: [
             { intent: appIntent, ...(appIntent.definition.from === 'compose' ? { authoredKey: 'authored-compose-app' } : {}),

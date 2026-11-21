@@ -112,6 +112,7 @@ export async function dispatchInstalledWorkflowNativeSetupAction(input: Paramete
     executionAuthorization: parent, workflowActionOrigin: { runId: caller.runId, requestId: input.requestId,
       ...(reviewedChild ? { reviewedChild } : {}) },
     material, controllerCodecMaterial: material, serverId: context.serverId ?? input.serverIdentityId!,
+    ...(context.machineSetupAppBlockIds ? { machineSetupAppBlockIds: context.machineSetupAppBlockIds } : {}),
     serverIdentityId: input.serverIdentityId!, serverHttpBaseUrl: input.serverHttpBaseUrl,
     installationId: installed.installationId, privateKey: installed.privateKey, isCurrent,
     ...(input.signal ? { signal: input.signal } : {}) });
