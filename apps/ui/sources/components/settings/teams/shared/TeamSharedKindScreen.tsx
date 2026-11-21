@@ -12,6 +12,9 @@ import {
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { useTeamSharedArtifacts } from '@/components/artifacts/useTeamSharedArtifacts';
+import { reviewRowFact, ReviewRowFactText } from '@/components/reviews/list/reviewRowFact';
+import { useReviewList } from '@/components/reviews/useReviewList';
+import { workflowReferenceHeaderTitle } from '@/components/workflows/presentation/workflowReferenceHeaderTitles';
 import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
 import { useTeamSharedDiscussions } from '@/components/discussions/useTeamSharedDiscussions';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -36,6 +39,7 @@ import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecre
 import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { TeamSection, TeamSectionPageHeader } from '../TeamSection';
@@ -52,7 +56,7 @@ const PAGE_SIZE = 50;
 type KindRow = Readonly<{
   key: string;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   detail?: string;
   href: string | null;
   /** Opens a record whose owner is not a route (a plugin's declared reader). */
@@ -416,26 +420,38 @@ function ArtifactsList({
     enabled: true,
     pageSize: PAGE_SIZE,
   });
-  const serverId = context.address.serverId;
-  const rows = React.useMemo(
-    () =>
-      list.rows.map((row): KindRow => {
-        const title =
-          typeof row.header.title === 'string' && row.header.title.trim()
-            ? row.header.title
-            : t('teams.overview.shared.untitled');
-        return {
-          key: row.artifactId,
-          title,
-          subtitle: scopeLine(row.sharedWithTeamScope),
-          href:
-            kind === 'workflows'
-              ? createWorkflowDefinitionRoute(row.artifactId, serverId)
-              : artifactViewRoute(row.artifactId),
-        };
-      }),
-    [kind, list.rows, serverId],
+  // A shared Review reads as it does in Reviews: its fact from the Review list owner, the same Team filter.
+  const reviews = useReviewList(
+    { sharedWithTeamId: context.address.teamId, limit: PAGE_SIZE },
+    { scope: context.scope, enabled: kind === 'reviews' },
   );
+  const reviewItems = reviews.items;
+  const serverId = context.address.serverId;
+  const rows = React.useMemo(() => {
+    const reviewById = new Map(reviewItems?.map((item) => [item.reviewId, item]) ?? []);
+    const now = Date.now();
+    return list.rows.map((row): KindRow => {
+      // A workflow's name is authored in its definition metadata; other kinds carry a header title.
+      const authored = kind === 'workflows'
+        ? workflowReferenceHeaderTitle(row.header)
+        : typeof row.header.title === 'string' ? row.header.title : null;
+      const title = authored?.trim() ? authored : t('teams.overview.shared.untitled');
+      const scope = scopeLine(row.sharedWithTeamScope);
+      const review = kind === 'reviews' ? reviewById.get(row.artifactId) : undefined;
+      return {
+        key: row.artifactId,
+        title,
+        subtitle: review && reviewRowFact(review)
+          ? <ReviewRowFactText item={review} suffix={scope} />
+          : scope,
+        ...(kind === 'reviews' ? { detail: formatShortRelativeTimeAt(row.createdAt, now) } : {}),
+        href:
+          kind === 'workflows'
+            ? createWorkflowDefinitionRoute(row.artifactId, serverId)
+            : artifactViewRoute(row.artifactId),
+      };
+    });
+  }, [kind, list.rows, reviewItems, serverId]);
   return <KindList icon={icon} state={pagedState(list, rows)} />;
 }
 

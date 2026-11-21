@@ -21,9 +21,10 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
+import { COLLECTION_SPACE_KIND_PRESENTATION } from '@/components/settings/session/collectionSpaceKindPresentation';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 
 import {
   CollectionSpaceForm,
@@ -49,6 +50,8 @@ const SPACE_MEMBERSHIP_FOR: SpaceMembershipFor = {
   // A Review space's manual members are Account-scoped associations (P02), not tags on its definition.
   review: (mode) => (mode ? { create: { mode }, edit: { mode } } : NO_MEMBERSHIP),
 };
+
+type CollectionSpaceKindMembershipKeys = Readonly<{ smart: TranslationKeyNoParams; manual: TranslationKeyNoParams }>;
 
 type SpaceForm = Readonly<{
   mode: 'create' | 'edit';
@@ -206,6 +209,9 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
     [invoke],
   );
 
+  const presentation = COLLECTION_SPACE_KIND_PRESENTATION[entityKind];
+  const membershipKeys: CollectionSpaceKindMembershipKeys | undefined =
+    'membershipKeys' in presentation ? presentation.membershipKeys : undefined;
   const formNode =
     form === null ? null : (
       <CollectionSpaceForm
@@ -227,6 +233,8 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
         }
         suggestedIcons={[input.suggestion.icon]}
         summary={input.summary}
+        {...(membershipKeys ? { membershipDescriptions: {
+          smart: t(membershipKeys.smart), manual: t(membershipKeys.manual) } } : {})}
         busy={form.busy}
         error={form.error}
         // Definitions live in an Account's settings: without one there is nowhere to save (P6 §7.2).

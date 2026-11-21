@@ -38,6 +38,18 @@ import { CollectionSpaceSwipeTitle, CollectionSpaceSwipeZone, useCollectionSpace
 import { CollectionSpaceTitle } from './CollectionSpaceTitle';
 import { useCollectionSpaceEditing } from './useCollectionSpaceEditing';
 import { useSetCollectionSpacesEnabled } from './useSetCollectionSpacesEnabled';
+import { COLLECTION_SPACE_GLYPHS } from './collectionSpaceGlyphs';
+
+/**
+ * A new space's glyph: the list's own, unless a space on the strip already wears it (the default space usually does),
+ * then the first space glyph nobody wears, so two tabs never look alike (U8 NS2). Needs you's hand stays with its condition.
+ */
+function unwornSpaceIcon(preferred: CollectionSpaceIconV1, spaces: readonly Readonly<{ icon: CollectionSpaceIconV1 }>[]): CollectionSpaceIconV1 {
+  const worn = new Set(spaces.flatMap((space) => (space.icon.kind === 'icon' ? [space.icon.name] : [])));
+  if (preferred.kind !== 'icon' || !worn.has(preferred.name)) return preferred;
+  const free = COLLECTION_SPACE_GLYPHS.find((name) => name !== 'attention' && !worn.has(name));
+  return free ? { kind: 'icon', name: free } : preferred;
+}
 
 /** What a mounted entity list hands its header: the space binding and its own typed filter writer. */
 export type CollectionSpaceHeaderView<K extends CollectionEntityKindV1> =
@@ -116,9 +128,9 @@ export function useCollectionSpaceHeader<
       name: summary.join(' · ').trim() || t('sessionsList.spacesNew'),
       icon: model.rows.some((row) => row.fieldId === 'attention')
         ? ({ kind: 'icon', name: 'attention' } as const)
-        : input.defaultIcon,
+        : unwornSpaceIcon(input.defaultIcon, view.spaces),
     }),
-    [input.defaultIcon, model.rows, summary],
+    [input.defaultIcon, model.rows, summary, view.spaces],
   );
 
   const editing = useCollectionSpaceEditing({

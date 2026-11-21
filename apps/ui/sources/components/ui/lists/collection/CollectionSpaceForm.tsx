@@ -23,7 +23,7 @@ export type CollectionSpaceFormValue = Readonly<{
   name: string;
   icon: CollectionSpaceIconV1;
   includeNeedsYouEverywhere: boolean;
-  /** Present only for Session spaces; the catalog owner retains the qualified tag associations. */
+  /** Present only for spaces that take members; the catalog owner retains the qualified associations. */
   membershipMode?: SessionSpaceMembershipV1['mode'];
 }>;
 
@@ -38,6 +38,8 @@ export type CollectionSpaceFormProps = Readonly<{
   suggestedIcons: readonly CollectionSpaceIconV1[];
   /** What the space keeps, one short phrase per condition. */
   summary: readonly string[];
+  /** What each membership mode keeps, in the list's own noun (the kind presentation owner); with `membershipMode`. */
+  membershipDescriptions?: Readonly<{ smart: string; manual: string }>;
   busy?: boolean;
   error?: string | null;
   /** Why nothing can be saved here (no Account to hold the space); the form stays readable and submits nothing. */
@@ -251,7 +253,7 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
           );
         })}
       </View>
-      {membershipMode ? (
+      {membershipMode && props.membershipDescriptions ? (
         <View style={styles.switchText}>
           <Text style={styles.switchTitle}>{t('sessionsList.spacesMembershipTitle')}</Text>
           <SegmentedTabBar
@@ -268,8 +270,8 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
           />
           <Text style={styles.switchDescription}>
             {membershipMode === 'manual_only'
-              ? t('sessionsList.spacesMembershipManualDescription')
-              : t('sessionsList.spacesMembershipSmartDescription')}
+              ? props.membershipDescriptions.manual
+              : props.membershipDescriptions.smart}
           </Text>
         </View>
       ) : null}

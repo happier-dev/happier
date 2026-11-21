@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HostCollection as Collection, Text as UiText, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
-import { HAPPIER_PAGE_METRICS, type HappierCollectionGrouping, type HappierCollectionWindow, type HappierTone } from '@happier-dev/plugin-ui/presentation';
+import { HostCollection as Collection, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS, type HappierCollectionGrouping, type HappierCollectionWindow } from '@happier-dev/plugin-ui/presentation';
 import type { ReviewListItemV1, ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -37,6 +37,7 @@ import {
     useReviewsSpaceHeader,
     type ReviewsCollectionView,
 } from './list/useReviewsCollectionView';
+import { reviewRowFact, ReviewRowFactText } from './list/reviewRowFact';
 
 const keyOf = (item: ReviewListItemV1) => item.reviewId;
 const passThrough = (children: React.ReactNode) => children;
@@ -47,20 +48,9 @@ const EMPTY_ITEMS: readonly ReviewRow[] = Object.freeze([]);
  * collection one press away (U8 G2). It matches the other short Home lists' preview length.
  */
 const HOME_REVIEWS_PREVIEW_ROWS = 5;
+/** The Reviews destination's glyph (its rail entry), so the empty page reads as Reviews rather than an Inbox. */
+const REVIEWS_GLYPH = 'check-square';
 
-/**
- * A row's one fact (lab list-home): what needs the person, else how the Review came out. A running or failed Review
- * says so in its state word, so it adds nothing here. Amber only when the person is needed.
- */
-export function reviewRowFact(item: ReviewRow): Readonly<{ label: string; tone: HappierTone }> | null {
-    if (item.counts.needsDecision > 0) {
-        return { label: t('reviewWalkthrough.detail.glanceToDecide', { count: item.counts.needsDecision }), tone: 'attention' };
-    }
-    if (item.needsYou.requestedVerdict) return { label: t('reviewWalkthrough.detail.requestedFromYou'), tone: 'attention' };
-    if (item.state !== 'completed' && item.state !== 'partial') return null;
-    return { label: item.counts.total === 0 ? t('reviewWalkthrough.detail.glanceNoFindings')
-        : t('reviewWalkthrough.detail.glanceAllDecided'), tone: 'secondary' };
-}
 
 /**
  * The Reviews collection (plan 04 U3, lab list-strip / list-search / list-drag): the page's one toolbar owns the
@@ -125,10 +115,8 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const anatomy = React.useMemo((): CollectionAnatomy<ReviewRow> => {
         const titleOf = (item: ReviewRow) => view.titles.get(item.reviewId) || reviewLabel;
         const ageOf = (item: ReviewRow) => formatShortRelativeTimeAt(item.createdAt, Date.now());
-        const factOf = (item: ReviewRow) => {
-            const fact = reviewRowFact(item);
-            return fact ? <UiText variant="meta" tone={fact.tone} value={fact.label} numberOfLines={1} /> : null;
-        };
+        // No fact, no lead: an empty lead would still draw its separator.
+        const factOf = (item: ReviewRow) => reviewRowFact(item) ? <ReviewRowFactText item={item} /> : null;
         const bylineOf = (item: ReviewRow) => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state)].join(' · ');
         return {
             wrapItem: (item, children) => <WorkspaceDestinationRow href={artifactViewRoute(item.reviewId)} existingMenu
@@ -155,7 +143,10 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
         empty={failure ?? (searching ? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />
             : overview && list.items?.length ? <SurfaceStateCard kind="empty"
                 title={t('reviewWalkthrough.collection.caughtUp')} replacesContent />
-            : <SurfaceStateCard testID="reviews:empty" kind="empty" title={t('reviewWalkthrough.detail.emptyTitle')}
+            // The column beside the page says one line; the page owns the invitation and its Start a review (lab list-empty).
+            : surface === 'column' ? <SurfaceStateCard testID="reviews:empty" kind="empty" size="line" layout="inline"
+                title={t('reviewWalkthrough.collection.columnEmpty')} />
+            : <SurfaceStateCard testID="reviews:empty" kind="empty" iconName={REVIEWS_GLYPH} title={t('reviewWalkthrough.detail.emptyTitle')}
                 reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
                 action={scope ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
                     onPress: startReview } : undefined} />)} /></ReviewRowActionsContext.Provider>;

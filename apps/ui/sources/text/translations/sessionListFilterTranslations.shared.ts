@@ -58,6 +58,8 @@ export const en = {
     spacesMembershipManual: "Only added",
     spacesMembershipSmartDescription: "Sessions that match the filter, and sessions you add.",
     spacesMembershipManualDescription: "Only sessions you add.",
+    spacesMembershipSmartDescriptionReviews: "Reviews that match the filter, and reviews you add.",
+    spacesMembershipManualDescriptionReviews: "Only reviews you add.",
     spacesMembershipAddTo: "Add to space",
     spacesMembershipMoveTo: "Move to space",
     spacesMembershipRemoveFrom: "Remove from space",

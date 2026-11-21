@@ -62,3 +62,36 @@ it.each([true, false])('keeps the Save as space form visible and interactive wit
         container.remove();
     }
 });
+
+it('prefills a new space with a glyph no space on the strip already wears', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(100, 120, 340, 250));
+    const base = createDefaultCollectionSpaceV1('review');
+    const pinned = { ...base, id: 'pinned', name: 'Pinned', icon: { kind: 'icon', name: 'review' } as const };
+    function Header() {
+        const [filters, setFilters] = React.useState<ReviewListFilterV1>({ needsDecision: true });
+        // The list's own glyph is the default space's: a new space must not repeat it, nor another space's.
+        const header = useCollectionSpaceHeader({ entityKind: 'review', testIDPrefix: 'review-space', defaultName: 'Reviews',
+            view: { spaces: [base, pinned], selectedSpaceId: base.id, selectedSpace: base, activeSpace: base,
+                spacesEnabled: true, spacesReady: true, spaceSettingsScope: { serverId: 'home', accountId: 'alice' },
+                filters, setFilters: next => { setFilters(next); return true; } },
+            registry: reviewListFilterFieldsV1, bindings: {}, defaultIcon: base.icon });
+        return <>{header.titleControl}{header.strip}{header.conditionRow}{header.overlays}</>;
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => root.render(<HappierUiPlatformProvider platform={{ platform: 'web', colorScheme: 'light' }}><Header /></HappierUiPlatformProvider>));
+        await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="review-space-filter-tokens-save"]')!.click(); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+        const checked = [...document.querySelectorAll<HTMLElement>('[data-testid^="review-space-icon:"][aria-checked="true"]')]
+            .map(tile => tile.getAttribute('data-testid'));
+        expect(checked).toHaveLength(1);
+        expect(checked).not.toContain('review-space-icon:icon:list');
+        expect(checked).not.toContain('review-space-icon:icon:review');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});

@@ -12,14 +12,18 @@ type CollectionSpaceKindPresentation = Readonly<{
     listRoute: string;
     listTitleKey: TranslationKeyNoParams;
     settingsPageId: 'session' | 'settings';
+    /** What "Matches and added" and "Only added" keep, in the list's own noun; only lists whose spaces take members. */
+    membershipKeys?: Readonly<{ smart: TranslationKeyNoParams; manual: TranslationKeyNoParams }>;
 }>;
 
 /** What each saved-space list is called and where it lives; a new list kind fails to compile until it is named here. */
 export const COLLECTION_SPACE_KIND_PRESENTATION = {
     sessionWork: { defaultNameKey: 'sessionsList.filtersMyWork', manageTitleKey: 'sessionsList.spacesManageSessions',
-        listRoute: '/', listTitleKey: 'sessionsList.filtersTitle', settingsPageId: 'session' },
+        listRoute: '/', listTitleKey: 'sessionsList.filtersTitle', settingsPageId: 'session',
+        membershipKeys: { smart: 'sessionsList.spacesMembershipSmartDescription', manual: 'sessionsList.spacesMembershipManualDescription' } },
     review: { defaultNameKey: 'sessionsList.spacesAllReviews', manageTitleKey: 'sessionsList.spacesTitle',
-        listRoute: '/reviews', listTitleKey: 'detailsSurface.review.title', settingsPageId: 'settings' },
+        listRoute: '/reviews', listTitleKey: 'detailsSurface.review.title', settingsPageId: 'settings',
+        membershipKeys: { smart: 'sessionsList.spacesMembershipSmartDescriptionReviews', manual: 'sessionsList.spacesMembershipManualDescriptionReviews' } },
     workflow: { defaultNameKey: 'sessionsList.spacesAllWorkflows', manageTitleKey: 'sessionsList.spacesManageWorkflows',
         listRoute: '/workflows', listTitleKey: 'workflows.title', settingsPageId: 'settings' },
     workflowRun: { defaultNameKey: 'workflows.destination.allRuns', manageTitleKey: 'workflows.destination.display.runSpaces',

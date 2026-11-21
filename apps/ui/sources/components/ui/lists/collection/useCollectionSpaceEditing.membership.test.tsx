@@ -82,3 +82,28 @@ describe('Session space membership form', () => {
         });
     });
 });
+
+describe('Review space membership form', () => {
+    it('says what each mode keeps in the Reviews noun, from the collection kind owner', async () => {
+        const { t } = await import('@/text');
+        const review = createDefaultCollectionSpaceV1('review');
+        function ReviewHost() {
+            const reviewEditing = useCollectionSpaceEditing({
+                entityKind: 'review', testIDPrefix: 'space', scope: { serverId: 'server', accountId: 'account' },
+                spaces: [review], selectedSpace: null, currentFilter: review.filter,
+                suggestion: { name: 'Release', icon: { kind: 'icon', name: 'pin' } }, summary: [], anchorRef,
+            });
+            openReviewSaveAs = reviewEditing.openSaveAs;
+            return reviewEditing.formOverlay;
+        }
+        let openReviewSaveAs = () => {};
+        const screen = await renderScreen(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <ReviewHost />
+            </HappierUiPlatformProvider>,
+        );
+        await act(() => openReviewSaveAs());
+        expect(screen.getTextContent()).toContain(t('sessionsList.spacesMembershipSmartDescriptionReviews'));
+        expect(screen.getTextContent()).not.toContain(t('sessionsList.spacesMembershipSmartDescription'));
+    });
+});

@@ -20,7 +20,8 @@ import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/revie
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
-import { ReviewsListHost, reviewRowFact } from './ReviewsListHost';
+import { ReviewsListHost } from './ReviewsListHost';
+import { reviewRowFact } from './list/reviewRowFact';
 import { findHomeHubBuiltinSection } from '@/components/hub/homeHubSections';
 import { HOME_HUB_BUILTIN_DEFINITIONS, getHomeHubDefaultLayoutV1, resolveHomeHubLayout } from '@/components/hub/layout/homeHubLayout';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
@@ -394,6 +395,28 @@ describe('/reviews live host', () => {
             await screen.unmount();
             storage.setState({ profileScope: previousScope });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
+
+    it('keeps the empty column to its one-line hint: the page beside it owns Start a review', async () => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
+        const serverId = await homes.addHome({ serverUrl: 'https://reviews-column.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previousScope = storage.getState().profileScope;
+        storage.setState({ profileScope: { serverId, accountId: 'alice' } });
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => ({ body: { items: [], cursor: null } }) });
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://reviews-column.example', accountId: 'alice', request: homes.request });
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
+            <ReviewsListHost surface="column" />
+        </PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('reviews:empty')).not.toBeNull());
+            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.columnEmpty'));
+            expect(screen.findByTestId('reviews:empty:start')).toBeNull();
+        } finally {
+            await screen.unmount();
+            await connection.dispose();
+            storage.setState({ profileScope: previousScope });
         }
     });
 
