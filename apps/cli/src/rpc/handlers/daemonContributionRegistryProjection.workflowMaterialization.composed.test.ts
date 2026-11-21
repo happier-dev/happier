@@ -23,6 +23,7 @@ import { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } fro
 
 const pluginId = 'acme.workflow-isolation';
 const actionId = `${pluginId}/read`;
+const reviewActionId = `${pluginId}/review`;
 const machineId = 'workflow-machine';
 
 describe('external Settings declarations and Workflow materialization', () => {
@@ -31,7 +32,10 @@ describe('external Settings declarations and Workflow materialization', () => {
         const manifest = createPluginManifestV2Fixture({ id: pluginId, contributes: {
                 actions: [{ id: 'read', title: 'Read', dangerLevel: 'safe', scopes: ['global'],
                     execution: { target: 'daemon' }, surfaces: ['cli', 'agent'],
-                    inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'string' } }],
+                    inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'string' } },
+                { id: 'review', title: 'Review', dangerLevel: 'safe', scopes: ['global'],
+                    execution: { target: 'daemon' }, surfaces: ['cli', 'agent'],
+                    inputSchema: { type: 'object', additionalProperties: false } }],
                 settings: [{ id: 'ambiguous', title: 'Ambiguous', target: { kind: 'plugin' }, scope: 'daemon',
                     fields: [{ id: 'limit', title: 'Limit', schema: { anyOf: [{ type: 'integer' }, { type: 'null' }] }, default: null }] },
                 { id: 'invalid-default', title: 'Invalid default', target: { kind: 'plugin' }, scope: 'daemon',
@@ -54,6 +58,7 @@ describe('external Settings declarations and Workflow materialization', () => {
                     if (await settings.get('enabled-0') !== false) throw new Error('Settings roundtrip failed');
                     return 'ready';
                 });
+                api.actions.register('review', async () => 'reviewed');
             }` },
         }],
         });
@@ -101,7 +106,7 @@ describe('external Settings declarations and Workflow materialization', () => {
                 expect(client).not.toBeNull();
                 const details = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(client!.projection).pluginProjectionById[pluginId];
                 expect(details.editableSettingsGroups).toHaveLength(100);
-                expect(details.actions).toHaveLength(1);
+                expect(details.actions).toHaveLength(2);
                 expect(details.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
                     code: 'PLUGIN_SETTINGS_PROJECTION_INVALID', contribution: { pluginId, localId: 'ambiguous' },
                 })]));
@@ -217,10 +222,10 @@ describe('external Settings declarations and Workflow materialization', () => {
                 inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'string' },
             } }] } });
         expect(selections).toEqual(['workflowMaterialization']);
-        expect(projectedCounts).toEqual([1]);
+        expect(projectedCounts).toEqual([2]);
     });
 
-    it('asks again for a newly attached contributed Action after an invocation-scoped Skip', async () => {
+    it('asks again for a newly attached contributed Action without a result schema after Skip', async () => {
         const routes = handlers();
         const schemaReads: unknown[] = [];
         let occurrenceId: string | undefined;
@@ -229,12 +234,15 @@ describe('external Settings declarations and Workflow materialization', () => {
             readRoleSelection: async () => ({}), readLaunchProfile: async () => null, readWorkflowDefinition: async () => null,
             callMachineAction: async ({ machineId: target, method, request }) => {
                 expect(target).toBe(machineId);
-                if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) schemaReads.push(request);
                 const handler = routes.get(method);
                 if (!handler) throw new Error(`Unexpected Machine method: ${method}`);
                 const response = await handler(request);
                 if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
-                    occurrenceId = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(response).projection.actionsById[actionId]?.occurrenceId;
+                    occurrenceId = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(response).projection.actionsById[reviewActionId]?.occurrenceId;
+                } else if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+                    schemaReads.push(request);
+                    expect(response).toMatchObject({ ok: true, inputSchema: { type: 'object', additionalProperties: false } });
+                    expect(response).not.toHaveProperty('outputSchema');
                 }
                 return response;
             },
@@ -245,7 +253,7 @@ describe('external Settings declarations and Workflow materialization', () => {
             blocks: [{ kind: 'step', id: 'review', document: { text, references: [], attachments: [] } }],
         });
         const child = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'plugin-review',
-            actionId: formatQualifiedPluginActionId({ pluginId, localId: 'read' }), input: {} }] });
+            actionId: formatQualifiedPluginActionId({ pluginId, localId: 'review' }), input: {} }] });
         let root = rootWithPrompt('Review the command.');
         let revision = 1;
         let stored: AutomationDefinitionDetail | null = null;
@@ -274,7 +282,14 @@ describe('external Settings declarations and Workflow materialization', () => {
                             id: item.triggerId, revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null })) };
                     return stored;
                 },
-                reconcile: async () => { throw new Error('Skip and changed steps must retain the existing consent row'); },
+                reconcile: async (id, input) => {
+                    if (!stored || stored.id !== id || stored.templateVersion !== input.expectedTemplateVersion) {
+                        throw new Error('Expected the existing consent row');
+                    }
+                    stored = { ...stored, templateVersion: stored.templateVersion + 1, executionRecipe: input.executionRecipe,
+                        triggers: stored.triggers.map(trigger => ({ ...trigger, revision: trigger.revision + 1 })) };
+                    return stored;
+                },
                 delete: async () => ({ ok: true }),
             },
         });
@@ -290,14 +305,18 @@ describe('external Settings declarations and Workflow materialization', () => {
         const saved = await consent.allowConsent({ selection: { ...source, subject, consent: { status: 'missing' } },
             context: caller, executionContext: admit, decisionInput: { artifactId: 'first', decision: 'approve',
                 triggerConsent: { ...consentTarget, decision: 'allow' } } });
-        const select = (context: typeof admit) => createActionAutomationPortV1({ accountId: 'actor',
+        const admissionPort = () => createActionAutomationPortV1({ accountId: 'actor',
             seed: async () => ({ v: 1, rows: [{ ...source, workflowRevision: revision }, saved] }), settle: async () => {},
-        }).select({ actionId: source.actionIds[0]!, input: { command: 'printf checked' }, context, resolveConsent: consent.resolveConsent });
+            allowConsent: consent.allowConsent,
+        });
+        const select = (port: ReturnType<typeof admissionPort>, context: typeof admit) => port.select({
+            actionId: source.actionIds[0]!, input: { command: 'printf checked' },
+            context, resolveConsent: consent.resolveConsent });
 
         root = rootWithPrompt('Inspect the command carefully.');
         revision = 2;
         const skipContext = { ...admit, actionRequestId: 'skip' };
-        const review = createApprovalAutomaticChecksV1(await select(skipContext), false);
+        const review = createApprovalAutomaticChecksV1(await select(admissionPort(), skipContext), false);
         expect(review.consents).toEqual([expect.objectContaining({ decision: 'pending', review: { reason: 'steps',
             changedSteps: [{ sourceKey: '$root', blockId: 'review' }] } })]);
         const skipped = await answerApprovalAutomaticConsentV1({ artifactId: 'skip', checks: review,
@@ -310,12 +329,22 @@ describe('external Settings declarations and Workflow materialization', () => {
         root = WorkflowDefinitionV1Schema.parse({ ...root, blocks: [...root.blocks, { kind: 'workflow', id: 'child', workflowRef: childRef }] });
         revision = 3;
         workflowReads.length = 0;
-        const next = createApprovalAutomaticChecksV1(await select({ ...admit, actionRequestId: 'renewed' }), false);
+        const renewedContext = { ...admit, actionRequestId: 'renewed' };
+        const port = admissionPort();
+        const next = createApprovalAutomaticChecksV1(await select(port, renewedContext), false);
         expect(next).toMatchObject({ phase: 'consent', consents: [{ ...consentTarget, decision: 'pending', review: {
             reason: 'steps', changedSteps: [{ sourceKey: childRef, blockId: 'plugin-review' }, { sourceKey: '$root', blockId: 'review' }],
         } }] });
         expect(workflowReads).toEqual(['root', childRef]);
         expect(occurrenceId).toEqual(expect.any(String));
-        expect(schemaReads).toEqual([{ machineId, qualifiedActionId: actionId, expectedOccurrenceId: occurrenceId }]);
+        expect(schemaReads).toEqual([{ machineId, qualifiedActionId: reviewActionId, expectedOccurrenceId: occurrenceId }]);
+
+        const allowed = await answerApprovalAutomaticConsentV1({ artifactId: 'renewed', checks: next,
+            answer: { ...consentTarget, decision: 'allow' }, context: caller, executionContext: renewedContext, port });
+        if ('ok' in allowed) throw new Error(allowed.errorCode);
+        expect(readApprovalAutomaticSelectionV1({ automaticChecks: allowed })?.before).toEqual([
+            expect.objectContaining({ ...consentTarget, consent: expect.objectContaining({ status: 'current',
+                row: expect.objectContaining({ workflowRevision: 3 }) }) }),
+        ]);
     });
 });

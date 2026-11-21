@@ -153,6 +153,8 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
         throwIfAborted(target.signal);
         const schemas = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
         return schemas.success && schemas.data.ok ? freezeWorkflowActionContractV1({ ...schemas.data,
+          // An exact contributed declaration can omit its result schema.
+          outputSchema: schemas.data.outputSchema ?? {},
           inputHints: contributed.inputHints }) : null;
       } catch (error) {
         throwIfAborted(target.signal);
