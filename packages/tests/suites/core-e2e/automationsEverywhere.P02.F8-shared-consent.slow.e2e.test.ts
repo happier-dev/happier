@@ -10,7 +10,7 @@ import type { MachineAccessGrantSetInputV1 } from '@happier-dev/protocol/machine
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionEditResultV1Schema, WorkflowRunListResultV1Schema,
   WorkflowRunGetResultV1Schema, WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AccountApiTokensCreateActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -282,13 +282,11 @@ describe('AE.P02.F8-shared-consent', () => {
     expect(createdRole.ok, JSON.stringify(createdRole)).toBe(true);
     if (!createdRole.ok) throw new Error(createdRole.errorCode);
     const role = RoleActionOutputSchemasV1['roles.create'].parse(createdRole.result);
-    expect(await actor.executeAsPerson('actions.policy.set', { actionId: 'approval.request.decide', audience: 'mcp', mode: 'allowed' }))
+    expect(await actor.executeAsPerson('actions.policy.set', { actionId: 'approval.request.decide', audience: 'agent', mode: 'allowed' }))
       .toMatchObject({ ok: true, result: { mode: 'allowed' } });
-    const waivedAgentDecision = { authority: 'account_automation' as const, surface: 'mcp' as const,
+    const decidingCaller = { authority: 'account_automation' as const, surface: 'agent' as const,
       defaultSessionId: decidingSession.sessionId,
-      actionCaller: { kind: 'session' as const, sessionId: decidingSession.sessionId, starterDepth: 0, turnDepth: 0 },
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
-        approvalWaivedSurfaces: { 'approval.request.decide': ['mcp'] } }) };
+      actionCaller: { kind: 'session' as const, sessionId: decidingSession.sessionId, starterDepth: 0, turnDepth: 0 } };
     const created = await author.executeAsPerson('workflow.definition.create', { definitionId: randomUUID(),
       metadata: { title: 'Shared command check' }, definition: { version: 1,
         defaults: { roleId: role.roleId }, blocks: [
@@ -403,6 +401,22 @@ describe('AE.P02.F8-shared-consent', () => {
       await waitFor(async () => (await readApproval(artifactId)).execution !== undefined,
         { context: 'Shared check and original command settlement', failFast: true });
       expect(await readApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
+    };
+    const settleActorCommand = async (artifactId: string) => {
+      const receipt = await readApproval(artifactId);
+      const checks = receipt.automaticChecks;
+      expect(checks?.consents.filter(consent => consent.decision === 'pending') ?? []).toEqual([]);
+      if (receipt.status === 'open' && checks?.humanApprovalRequired && !checks.humanDecision) {
+        const decided = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+        if (!decided.ok) {
+          const settled = await readApproval(artifactId);
+          throw new Error(JSON.stringify({ code: decided.errorCode, error: decided.error,
+            approvalStatus: settled.status, executionError: settled.execution?.errorCode,
+            originSurface: settled.v === 2 ? settled.executionOriginV1.surface : undefined,
+            originCaller: settled.v === 2 ? settled.executionOriginV1.caller.kind : undefined }));
+        }
+      }
+      await waitExecuted(artifactId);
     };
     const settleWithoutConsent = async (result: Awaited<ReturnType<typeof invoke>>) => {
       expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -529,7 +543,7 @@ describe('AE.P02.F8-shared-consent', () => {
         phase: 'consent', consents: [expect.objectContaining({ automationId: shared.set.automationId, triggerId: shared.triggerId })],
       } } } });
     expect(await actor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve', triggerConsent },
-      waivedAgentDecision)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      decidingCaller)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(await consentRows()).toEqual([]);
     const tokenId = randomUUID();
     const label = await prepareCliPrivateLabel({ endpoint: fixture.server.baseUrl, token: actor.credentials.token,
@@ -550,21 +564,24 @@ describe('AE.P02.F8-shared-consent', () => {
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(await consentRows()).toEqual([]);
     const profileCreated = await actor.executeAsPerson('actions.policy.set', { profileChange: { kind: 'create', profile: {
-      name: 'Waived Session decisions', actions: {}, approvalWaivedSurfaces: { 'approval.request.decide': ['mcp'] },
+      name: 'Waived Session decisions', actions: {}, approvalWaivedSurfaces: { 'approval.request.decide': ['agent'] },
     } } });
-    expect(profileCreated.ok).toBe(true);
-    if (!profileCreated.ok || !profileCreated.result || typeof profileCreated.result !== 'object') throw new Error('Missing created profile');
-    const profileChange: unknown = Reflect.get(profileCreated.result, 'profileChange');
-    const profileId: unknown = profileChange && typeof profileChange === 'object' ? Reflect.get(profileChange, 'id') : undefined;
-    if (typeof profileId !== 'string') throw new Error('Missing created profile identity');
+    expect(profileCreated.ok, JSON.stringify(profileCreated)).toBe(true);
+    if (!profileCreated.ok) throw new Error(profileCreated.errorCode);
+    const profile = ActionPolicyOutputSchemas['actions.policy.set'].parse(profileCreated.result);
+    if (!('profileChange' in profile) || profile.profileChange.kind !== 'create') throw new Error('Missing created profile identity');
     const decidingSessionRow = await fetchSessionV2(fixture.server.baseUrl, actor.credentials.token, decidingSession.sessionId);
     expect(await actor.executeAsPerson('session.approval_profile.set', { sessionId: decidingSession.sessionId,
-      serverId: fixture.serverId, expectedMetadataRevision: decidingSessionRow.metadataVersion, approvalProfileId: profileId }))
+      serverId: fixture.serverId, expectedMetadataRevision: decidingSessionRow.metadataVersion,
+      approvalProfileId: profile.profileChange.id }))
       .toMatchObject({ ok: true });
-    expect(await actor.executeAsPerson('actions.policy.reset', { actionId: 'approval.request.decide', audience: 'mcp' }))
+    expect(await actor.executeAsPerson('actions.policy.reset', { actionId: 'approval.request.decide', audience: 'agent' }))
       .toMatchObject({ ok: true });
-    const { actionsSettings: _accountWaiver, ...profileDecision } = waivedAgentDecision;
-    expect(await actor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve', triggerConsent }, profileDecision))
+    expect(await actor.execute('actions.policy.get', { actionId: 'approval.request.decide', audience: 'agent' }))
+      .toMatchObject({ ok: true, result: { mode: 'default' } });
+    const decideWithProfile = (artifactId: string, consent: typeof triggerConsent) => actor.execute('approval.request.decide',
+      { artifactId, decision: 'approve', triggerConsent: consent }, decidingCaller);
+    expect(await decideWithProfile(approval.artifactId, triggerConsent))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(await consentRows()).toEqual([]);
     expect(await author.executeAsPerson('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve', triggerConsent }))
@@ -682,10 +699,9 @@ describe('AE.P02.F8-shared-consent', () => {
     const editedAgentExecutions = async () => (await readFakeClaudeLogEvents(agentLogPath))
       .filter(event => event.type === 'sdk_stdin' && typeof event.userText === 'string' && event.userText.includes(editedAgentSentinel));
     expect(await editedAgentExecutions()).toEqual([]);
-    expect(await actor.execute('approval.request.decide', { artifactId: changedApproval.artifactId, decision: 'approve',
-      triggerConsent: { ...triggerConsent, decision: 'skip' } }, waivedAgentDecision))
-      .toMatchObject({ ok: true });
-    await waitExecuted(changedApproval.artifactId);
+    const skipped = await decideWithProfile(changedApproval.artifactId, { ...triggerConsent, decision: 'skip' });
+    expect(skipped.ok, JSON.stringify(skipped)).toBe(true);
+    await settleActorCommand(changedApproval.artifactId);
     expect(await readApproval(changedApproval.artifactId)).toMatchObject({ automaticChecks: {
       consents: expect.arrayContaining([expect.objectContaining({ ...triggerConsent, decision: 'skip' })]),
       notices: expect.arrayContaining([expect.objectContaining({ code: 'action_automation_skipped', reason: 'consentSkipped',
