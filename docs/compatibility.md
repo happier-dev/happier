@@ -14168,6 +14168,12 @@ JSON shape when the guest lacks the diagnostic collector and returns
 `guest_cli_incompatible` at `guest_capability`; malformed collector output still
 returns `invalid_action_output`. No wire or persisted shape changes are involved.
 
+For a signed workspace attachment, Home can return `provider_unavailable`
+while the controller's provisioner declaration is missing, even after native
+preparation succeeds. The same attachment can be admitted after the declaration
+arrives. Malformed attachment selections retain `invalid_request`. Both codes
+use the existing HTTP 409 refusal shape.
+
 Each enrolled managed Machine keeps its own Account, Team and Group grants.
 Manage on a controller also supplies Manage on its guests, including nested
 guests; Can use on a controller supplies no guest authority. Cyclic controller

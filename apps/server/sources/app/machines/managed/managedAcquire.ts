@@ -254,7 +254,11 @@ export async function admitManagedAcquire(params: Readonly<{
             const qualified = attaching ? attachmentDeclaration
                 : (await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
                     { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts, projection?.declarationBodies)).declaration;
-            if (!qualified || qualified.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError('invalid_request');
+            if (!qualified) {
+                // Native preparation can finish before the controller's declaration claim reaches Home.
+                throw new ManagedMachineError(attaching ? 'provider_unavailable' : 'invalid_request');
+            }
+            if (qualified.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError('invalid_request');
             declaration = qualified;
             if (attaching !== isMachineProvisionerWorkspaceAttachmentV1(declaration.provisioner, launch.choices)) {
                 throw new ManagedMachineError('invalid_request');

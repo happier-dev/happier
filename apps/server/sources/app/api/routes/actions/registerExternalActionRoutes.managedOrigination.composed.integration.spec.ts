@@ -53,6 +53,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { resolveMachineAccess, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
@@ -1341,6 +1342,10 @@ describe('composed CLI managed Action origination', () => {
 
     it('binds a probed workspace only from its exact signed installed controller before retention', async () => {
         const selected = await fixture(true, 'plain', false, false, true);
+        // The daemon has reported its installed occurrence, and its asynchronous declaration claim is pending.
+        await db.accountPluginIntent.delete({ where: { accountId_pluginId: {
+            accountId: selected.account.id, pluginId: selected.input.selection.launch.provider.pluginId,
+        } } });
         const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
         const input = { ...selected.input, selection: { ...selected.input.selection, attachWorkspace: true as const,
             retention: { kind: 'unused' as const, afterMs: 60_000, effect: 'delete' as const }, wakeOnAcceptedMessage: true } };
@@ -1372,7 +1377,12 @@ describe('composed CLI managed Action origination', () => {
                 launch: { ...input.selection.launch, choices: { image: 'different' } } } } })).statusCode).toBe(403);
             expect((await post({ requestId: envelope.requestId, input,
                 continuationPresent: false, originalActionEnvelope: envelope })).statusCode).toBe(403);
+            const pending = await post(body);
+            expect(pending.statusCode, pending.body).toBe(409);
+            expect(pending.json()).toEqual({ code: 'provider_unavailable' });
             expect(await rows()).toBe(0);
+            await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: selected.account.id,
+                input: { manifest: selected.manifest }, publisher: selected.controller });
             const bound = await post(body);
             expect(bound.statusCode, bound.body).toBe(200);
             const accepted = ManagedAdmissionOutputV1Schema.parse(bound.json());
