@@ -261,21 +261,33 @@ describe('plugin notification Account Artifact custody', () => {
           ...host, categories: [{ pluginId: 'happier.triage', definition: { id: 'source-attention', kind: 'plugin', title: 'Attention', eventIds: [] } }],
         });
         const attentionContext = { signal: seed.signal, services: { notifications: attentionService } };
-        const entryRef = { source: { pluginId: 'happier.sentry', localId: 'sentry-issues' }, kindId: 'error-issue', collisionScope: 'deployment-and-organization', entryId: '1284' };
-        const attentionInput = { entryRef, reason: 'assignment', notice: { clientRequestId: 'attention-first', categoryId: 'source-attention',
-          title: 'Assigned issue', type: 'update' as const, resolved: false,
+        const entryRef = { source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
+          kindId: 'pull-request', collisionScope: 'github:1106004210', entryId: '12' };
+        const attentionInput = { entryRef, reason: 'reviewRequested', notice: { clientRequestId: 'attention-first', categoryId: 'source-attention',
+          title: 'Synthetic qa-f-synthetic/gh-native issue 12', type: 'decision' as const, resolved: false,
           page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1(entryRef) } } };
         const attentionResult = await publishTriageAttentionV1(attentionContext, attentionInput);
         expect(attentionResult.notice?.opened).toBe(true);
-        await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: { ...attentionInput.notice, clientRequestId: 'attention-second', title: 'Updated issue' } });
-        expect(rows.size).toBe(1);
         const attentionArtifactId = [...rows.keys()][0]!;
         expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!)).toMatchObject({
-          source: { kind: 'plugin', pluginId: 'happier.triage' }, type: 'update', resolved: false, page: attentionInput.notice.page,
+          source: { kind: 'plugin', pluginId: 'happier.triage', itemId: attentionResult.itemId },
+          type: 'decision', title: attentionInput.notice.title, resolved: false, page: attentionInput.notice.page,
         });
-        await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: { ...attentionInput.notice, clientRequestId: 'attention-resolved', resolved: true } });
+        const renamedNotice = { ...attentionInput.notice, clientRequestId: 'attention-second',
+          title: 'TRIAGE READY242 G2 controlled review updated' };
+        const renamed = await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: renamedNotice });
+        expect(renamed).toMatchObject({
+          itemId: attentionResult.itemId, notice: { artifactId: attentionArtifactId, changed: true, opened: false },
+        });
         expect(rows.size).toBe(1);
-        expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!)).toMatchObject({ resolved: true });
+        expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!))
+          .toMatchObject({ title: renamedNotice.title, resolved: false, page: attentionInput.notice.page });
+        await publishTriageAttentionV1(attentionContext, {
+          ...attentionInput, notice: { ...renamedNotice, clientRequestId: 'attention-resolved', resolved: true },
+        });
+        expect(rows.size).toBe(1);
+        expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!))
+          .toMatchObject({ title: renamedNotice.title, resolved: true });
         const reviewEntry = { source: { pluginId: 'happier.triage', localId: 'reviews' },
           kindId: 'review', collisionScope: 'reviews', entryId: 'requested-review' };
         const reviewAttention = { requestedVerdict: true, subjectKind: 'repository' as const };
