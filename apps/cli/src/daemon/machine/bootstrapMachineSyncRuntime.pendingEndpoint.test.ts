@@ -17,6 +17,7 @@ import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '.
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt, type BootstrapMachineSyncRuntimeParams } from './bootstrapMachineSyncRuntime';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 
 describe('Pending recovery after Machine endpoint publication', () => {
   it.each([
@@ -179,6 +180,8 @@ describe('Pending recovery after Machine endpoint publication', () => {
       const endpointEntered = createDeferred<void>();
       const metadataAck = createDeferred<void>();
       let metadataEntered = false;
+      let publishedInstallationKey: string | undefined;
+      const installation = await readOrCreateInstallationIdentity();
       const unrelatedStartup = createDeferred<void>();
       const unrelatedStartupEntered = createDeferred<void>();
       let endpointPublished = false;
@@ -194,7 +197,12 @@ describe('Pending recovery after Machine endpoint publication', () => {
         updateDaemonState: async () => { endpointEntered.resolve(); await endpointAck.promise;
           if (publicationOutcome === 'failed') throw new Error('Endpoint publication failed');
           endpointPublished = publicationOutcome !== 'suppressed'; return publicationOutcome; },
-        updateMachineMetadata: async () => { metadataEntered = true; await metadataAck.promise; return 'published' as const; },
+        updateMachineMetadata: async (reduce: Parameters<MachineClient['updateMachineMetadata']>[0]) => {
+          metadataEntered = true;
+          publishedInstallationKey = reduce(null).installationPublicKey;
+          await metadataAck.promise;
+          return 'published' as const;
+        },
         emitExternalSessionTranscriptUpdate: () => {}, sendMachineTransferEnvelope: () => {},
         sendTransferRelayV2Envelope: () => {}, sendMachineLiveStreamRelayEnvelope: () => {},
         getPeerMediationMachineRpcHandlerManager: () => ({ invokeLocal: async () => ({ ok: true }) }),
@@ -241,6 +249,9 @@ describe('Pending recovery after Machine endpoint publication', () => {
         if (pending !== 'none') await vi.waitFor(() => expect(attempts).toBe(1));
         expect(running).toBe(pending === 'independent');
         expect(failedActivations).toEqual([]);
+        if (pending === 'independent') {
+          await vi.waitFor(() => expect(publishedInstallationKey).toBe(installation.publicKey));
+        }
         endpointAck.resolve();
         if (pending === 'broker-blocked' && (publicationOutcome === 'published' || publicationOutcome === 'unchanged')) {
           // Metadata and another Session's physical startup remain held.

@@ -2391,12 +2391,12 @@ export async function bootstrapMachineSyncRuntime(
       const pendingRecovery = params.isShuttingDown() ? undefined : recoverPendingWithEndpointRetry(endpointPublication);
       await Promise.all([
         endpointPublication,
+        refreshMachineMetadataPublication(),
         (async () => {
           await catchUpAutomationWorkAfterConnect();
           await refreshMachineConnectionPublications();
         })(),
       ]);
-      await refreshMachineMetadataPublication();
       if (params.isShuttingDown()) return;
       await Promise.all([
         pendingRecovery,
@@ -2420,15 +2420,14 @@ export async function bootstrapMachineSyncRuntime(
       void refreshAccountSettingsAfterConnect();
       const pendingRecovery = recoverPendingWithEndpointRetry(endpointPublication);
       await Promise.all([
+        endpointPublication,
+        // Requesters need the installation key independently of the peer endpoint.
+        refreshMachineMetadataPublication(),
         // Local Pending admission owns target and runner readiness. Unrelated
         // Automation and Machine publications must not hold requester recovery.
         (async () => {
           await catchUpAutomationWorkAfterConnect();
           await refreshMachineConnectionPublications();
-        })(),
-        (async () => {
-          await endpointPublication;
-          await refreshMachineMetadataPublication();
         })(),
         pendingRecovery,
         params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: {} }).catch(error => {

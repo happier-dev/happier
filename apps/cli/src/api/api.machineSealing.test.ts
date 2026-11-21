@@ -28,6 +28,7 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
   let modeReads = 0;
   let identityReads = 0;
   let writes = 0;
+  let registered = true;
   let machineReplacement: unknown;
   let registrationBody: unknown;
   let registrationRefusal: string | undefined;
@@ -45,10 +46,22 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
     modeReads++;
     return revoked ? reply.code(401).send({ error: 'unauthorized' }) : { mode, updatedAt: 1 };
   });
-  app.get('/v1/machines/machine', async () => { afterMachine(); return { machine: row }; });
+  app.get('/v1/machines/machine', async (_request, reply) => {
+    afterMachine();
+    return registered ? { machine: row } : reply.code(404).send({ error: 'not-found' });
+  });
   app.post('/v1/machines', async (request, reply) => {
     registrationBody = request.body; writes++;
     if (registrationRefusal) return reply.code(400).send({ error: 'invalid-params', reason: registrationRefusal });
+    if (!registered) {
+      const { metadata, dataEncryptionKey } = request.body as { metadata?: unknown; dataEncryptionKey?: unknown };
+      if (typeof metadata !== 'string' || (dataEncryptionKey != null && typeof dataEncryptionKey !== 'string')) {
+        return reply.code(400).send({ error: 'invalid-params' });
+      }
+      row.metadata = metadata;
+      row.dataEncryptionKey = dataEncryptionKey ?? null;
+      registered = true;
+    }
     return { machine: row, ...(machineReplacement === undefined ? {} : { machineReplacement }) };
   });
   app.post('/v1/machines/machine/content-key/transition', async () => {
@@ -65,6 +78,7 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
     run: <T>(action: () => T) => runWithServerHttpBaseUrl(serverBaseUrl, action),
     afterMachine(action: () => void) { afterMachine = action; },
     replacement(value: unknown) { machineReplacement = value; },
+    markUnregistered() { registered = false; },
     registration: () => registrationBody,
     publish(value: Record<string, unknown>) { Object.assign(row, value); },
     refuseRegistration(reason: string) { registrationRefusal = reason; },
@@ -72,6 +86,15 @@ async function fixture(initialMode: 'plain' | 'e2ee' = 'e2ee') {
     counts: () => ({ modeReads, identityReads, writes }),
   };
 }
+
+it('publishes the registered installation key in the first encrypted Machine row', async () => {
+  const f = await fixture();
+  f.markUnregistered();
+  const machine = await f.run(() => f.api.getOrCreateMachine({ machineId: 'machine', metadata: f.metadata }));
+  expect(f.registration()).toMatchObject({ installationPublicKey: expect.any(String) });
+  expect(machine.metadata).toMatchObject({ ...f.metadata,
+    installationPublicKey: (f.registration() as { installationPublicKey: string }).installationPublicKey });
+});
 
 it.each(['content_public_key_mismatch', 'content_public_key_fingerprint_mismatch'])(
   'preserves a reachable registration content refusal as its typed reason (%s)', async reason => {

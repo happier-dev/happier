@@ -1395,9 +1395,11 @@ export class ApiClient {
     const registrationIdentity = opts.registrationIdentity
       ? MachineRegistrationIdentitySchema.parse(opts.registrationIdentity)
       : await this.resolveMachineRegistrationIdentity(opts.machineId, machineStorageMode);
-    const metadata = devcontainerChild
-      ? parseMachinePublishedMetadataV1({ ...(incumbent?.metadata ?? opts.metadata), devcontainerChild })
-      : parseMachinePublishedMetadataV1(opts.metadata);
+    const initialMetadata = devcontainerChild ? { ...(incumbent?.metadata ?? opts.metadata), devcontainerChild } : opts.metadata;
+    const metadata = parseMachinePublishedMetadataV1({
+      ...initialMetadata,
+      ...(registrationIdentity ? { installationPublicKey: registrationIdentity.installationPublicKey } : {}),
+    });
     const machinesUrl = `${resolveServerHttpBaseUrl()}/v1/machines`;
 
     // Create machine
