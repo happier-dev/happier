@@ -26,12 +26,13 @@ function importedSpecifiers(source: string): string[] {
 }
 
 /** Only these exact neutral bindings may cross an admitted presentation leaf. */
-function importsOnlyNeutralPresentationContract(source: string, contract: 'field' | 'picker' | 'boardPreview' | 'dropPreview' | 'markdownReview' | 'conditionModel' | 'conditionEditor' | 'conditionJson' = 'field'): boolean {
+function importsOnlyNeutralPresentationContract(source: string, contract: 'field' | 'picker' | 'boardPreview' | 'dropPreview' | 'markdownReview' | 'conditionModel' | 'conditionEditor' | 'conditionJson' | 'themeSurface' | 'themeBinding' = 'field'): boolean {
   if ((contract === 'conditionModel' || contract === 'conditionEditor')
     && !importsOnlyNeutralPresentationContract(source, 'conditionJson')) return false;
   const specifier = contract === 'dropPreview' || contract === 'conditionJson' ? '@happier-dev/plugin-sdk'
     : contract === 'markdownReview' ? '@happier-dev/plugin-sdk/reviews'
       : contract === 'boardPreview' || contract === 'conditionModel' || contract === 'conditionEditor'
+        || contract === 'themeSurface' || contract === 'themeBinding'
         ? '@happier-dev/plugin-sdk/ui' : '@happier-dev/plugin-sdk/actions';
   const syntax = ts.createSourceFile('actionInputFields.ts', source, ts.ScriptTarget.Latest, true);
   const imports = syntax.statements.filter((statement): statement is ts.ImportDeclaration =>
@@ -57,8 +58,11 @@ function importsOnlyNeutralPresentationContract(source: string, contract: 'field
       : contract === 'conditionModel' ? { EntityFilterEvaluatorV1: true,
         EntityFilterFieldKindV1: true, EntityFilterRegistryV1: true, EntityFilterConditionOperatorV1: true }
         : contract === 'conditionEditor' ? { EntityListFilterResultV1: true, EntityFilterConditionOperatorV1: true }
+      : contract === 'themeSurface' ? { PluginUiThemeV1: true, SurfaceAddress: true }
+      : contract === 'themeBinding'
+        ? { THEME_SURFACE_REGISTRY: false, SurfaceAddress: true, SurfaceId: true, ThemeSurfaceState: true }
       : contract === 'boardPreview' ? { WorkBoardPreviewLayoutV1: true }
-        : contract === 'markdownReview' ? { ReviewFinding: true } : { EntityDropPreviewV1: true };
+      : contract === 'markdownReview' ? { ReviewFinding: true } : { EntityDropPreviewV1: true };
   return bindings.length === Object.keys(allowedBindings).length
     && new Set(bindings.map(binding => binding.name)).size === bindings.length
     && bindings.every(binding => Object.hasOwn(allowedBindings, binding.name)
@@ -132,8 +136,14 @@ describe('author package boundary', () => {
         && importsOnlyNeutralPresentationContract(source, 'conditionModel')
         || /presentation[\\/]collection[\\/]CollectionConditionEditor\.tsx$/u.test(filePath)
         && importsOnlyNeutralPresentationContract(source, 'conditionEditor');
+      // The theme binding consumes one pure registry; its other SDK bindings are erased types.
+      const isCanonicalThemeContract = filePath === join(presentationRoot, 'themeSurface.ts')
+        && importsOnlyNeutralPresentationContract(source, 'themeSurface')
+        || filePath === join(presentationRoot, 'themeSurfaceBinding.ts')
+        && importsOnlyNeutralPresentationContract(source, 'themeBinding');
       return importedSpecifiers(source)
         .filter((specifier) => !allowedPresentationSpecifier(specifier))
+        .filter((specifier) => !(isCanonicalThemeContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isTypeOnlyEnvironmentContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalIconContract && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalRenderableImageContract && specifier === '@happier-dev/plugin-sdk/ui'))
@@ -356,6 +366,20 @@ describe('author package boundary', () => {
         });
         continue;
       }
+      if (specifier === './presentation/codeEditor') {
+        expect(packageJson.exports[specifier]).toEqual({
+          'happier-source': './src/presentation/content/CodeEditor.ts',
+          types: './dist/presentation/content/CodeEditor.d.ts',
+          default: './dist/presentation/content/CodeEditor.js',
+        });
+        const source = readFileSync(join(packageRoot, packageJson.exports[specifier]['happier-source']), 'utf8');
+        const syntax = ts.createSourceFile('CodeEditor.ts', source, ts.ScriptTarget.Latest, true);
+        const typeImports = syntax.statements.filter((statement): statement is ts.ImportDeclaration =>
+          ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly === true);
+        expect(typeImports.map(statement => statement.moduleSpecifier.getText(syntax).slice(1, -1)))
+          .toEqual(importedSpecifiers(source));
+        continue;
+      }
       if (specifier === './presentation/formatBytes') {
         expect(packageJson.exports[specifier]).toEqual({
           'happier-source': './src/presentation/data/formatBytes.ts',
@@ -407,10 +431,24 @@ describe('author package boundary', () => {
         // Host interaction retention shares Collection's renderer outside the author barrel.
         ...(specifier === '.' ? [{ from: './components/Collection.js', names: ['HostCollection', 'HostCollectionProps'], typeOnly: false }] : []),
         // This host leaf must evaluate before the public presentation graph's import cycle.
-        ...(specifier === './presentation' ? [{ from: './layout/widgetGroupLayout.js', names: ['orderWidgetGroupCellsForStack'], typeOnly: false }] : []),
+        ...(specifier === './presentation' ? [
+          { from: './layout/widgetGroupLayout.js', names: ['orderWidgetGroupCellsForStack'], typeOnly: false },
+          { from: './themeSurfaceBinding.js', names: ['HappierThemeSurfaceScope', 'useHappierThemeSurfaceOverridesEnabled', 'useThemeSurfaceBinder', 'useThemeSurfaceBinding', 'useThemeSurfaceInspectionBinding', 'resolveThemeSurfaceState', 'resolveThemeSurfaceAddress', 'ThemeSurfaceStateFacts'], typeOnly: false },
+          { from: './themeSurface.js', names: ['resolveHappierThemeSurfaceStyle'], typeOnly: false },
+          { from: './themeSurfaceInspection.js', names: ['beginThemeSurfaceInspection', 'createThemeSurfaceInspectionBinding'], typeOnly: false },
+        ] : []),
         { from: './index.public.js', names: '*', typeOnly: false },
-        // The roving tab-stop rule, for the app composites that bind their own focus targets (the Agent rail).
-        ...(specifier === './presentation' ? [{ from: './collection/semantics.js', names: ['resolveHappierRovingTabStop'], typeOnly: false }] : []),
+        ...(specifier === './presentation' ? [
+          { from: './media/gestureMapping.js', names: ['fillViewTransform'], typeOnly: false },
+          { from: './layout/PageCountLine.js', names: ['formatHappierPageCount', 'HappierPageCountLine', 'HappierPageCountLineTextRender', 'HappierPageCountPart', 'HappierPageCountTone'], typeOnly: false },
+          { from: './collection/CollectionList.js', names: ['HappierListRowFollowedContext', 'HappierListRowPrecedesSelectedContext', 'HappierListRowRule', 'resolveHappierCollectionRowTextStartPx', 'resolveHappierListRowRuleShown'], typeOnly: false },
+          { from: './collection/searchDisclosure.js', names: ['useHappierSearchDisclosure', 'HappierSearchDisclosure'], typeOnly: false },
+          { from: './state/InfoState.js', names: ['HappierSurfaceStateFit'], typeOnly: false },
+          { from: './navigation/tabSelection.js', names: ['useHappierTabSelection'], typeOnly: false },
+          { from: './layout/Surface.js', names: ['HappierMaterialPlaneTransfer', 'useContainingHappierMaterialPlane'], typeOnly: false },
+          { from: './collection/semantics.js', names: ['resolveHappierRovingTabStop'], typeOnly: false },
+          { from: './content/CollapsibleBody.js', names: ['HappierCollapsibleBody', 'HappierCollapsibleBodyActionProps'], typeOnly: false },
+        ] : []),
       ]);
     }
   });
@@ -516,11 +554,13 @@ describe('author package boundary', () => {
       '@happier-dev/plugin-ui/environment',
       '@happier-dev/plugin-ui/advanced',
       '@happier-dev/plugin-sdk/protocol',
+      // The host shares the RN-loadable Protocol graph across artifact realms.
+      '@happier-dev/protocol',
       'zod', 'zod/mini', 'zod/v4/core', 'zod/v4/locales/en.js',
     ]) {
       expect(PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS).toContain(specifier);
     }
-    for (const forbidden of ['@happier-dev/plugin-ui/presentation', '@happier-dev/plugin-ui/presentation/typeScale', '@happier-dev/protocol', 'ajv', 'semver']) {
+    for (const forbidden of ['@happier-dev/plugin-ui/presentation', '@happier-dev/plugin-ui/presentation/typeScale', 'ajv', 'semver']) {
       expect(PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS).not.toContain(forbidden);
     }
   });

@@ -1,4 +1,4 @@
-import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import type { SurfaceAddress } from './themeSurface.js';
 
 type InspectionListener = (address: SurfaceAddress, host: unknown) => void;
 let activeInspection: InspectionListener | null = null;

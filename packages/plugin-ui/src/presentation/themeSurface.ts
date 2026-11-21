@@ -1,5 +1,7 @@
 import type { PluginUiThemeV1, SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 
+export type { SurfaceAddress };
+
 /** Explicit addresses for the existing selection anatomy; callers choose its semantic surface. */
 export type ThemeSelectionSurfaceBinding = Readonly<{
   root: SurfaceAddress;

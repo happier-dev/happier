@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '../themeSurface.js';
 import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import { useCallback, useContext, type ReactNode, type Ref } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
@@ -35,14 +36,14 @@ export function HappierSearchFieldBox(props: Readonly<{
    * beside a search field own their own hit areas.
    */
   hitReach?: HappierHitReach;
-  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
+  themeSurface?: SurfaceAddress;
   onFocusInput: () => void;
   leading?: ReactNode;
   trailing?: ReactNode;
   children: ReactNode;
   style?: HappierStyleProp;
   /** A floating capsule can bind its material body without replacing this field's focus/hit owner. */
-  renderSurface?: (input: Readonly<{ style: HappierStyleProp; children: ReactNode; themeSurface: import('@happier-dev/plugin-sdk/ui').SurfaceAddress }>) => ReactNode;
+  renderSurface?: (input: Readonly<{ style: HappierStyleProp; children: ReactNode; themeSurface: SurfaceAddress }>) => ReactNode;
 }>) {
   const surfaceBinding = useThemeSurfaceBinding(props.themeSurface ?? { surface: 'input', part: 'root' });
   const metrics = HAPPIER_SEARCH_FIELD_METRICS;
@@ -326,7 +327,7 @@ export function resolveHappierFieldTextInputMetrics(input: Readonly<{
 }
 
 export type HappierFieldTextBoxProps = Readonly<{
-  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
+  themeSurface?: SurfaceAddress;
   colors: Pick<HappierFieldBoxColors, 'borderColor' | 'backgroundColor' | 'edge'>;
   multiline?: boolean;
   /** The adapter's text input, styled with {@link resolveHappierFieldTextInputMetrics}. */

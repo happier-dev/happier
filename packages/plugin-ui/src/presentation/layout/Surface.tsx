@@ -1,5 +1,5 @@
 import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
-import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
+import type { SurfaceAddress } from '../themeSurface.js';
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 

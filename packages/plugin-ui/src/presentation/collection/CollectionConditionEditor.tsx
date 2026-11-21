@@ -21,8 +21,7 @@ import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
-import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
-import type { ThemeSelectionSurfaceBinding } from '../themeSurface.js';
+import type { SurfaceAddress, ThemeSelectionSurfaceBinding } from '../themeSurface.js';
 import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import type {
   CollectionConditionEdit,

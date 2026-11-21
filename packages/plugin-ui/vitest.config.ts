@@ -47,6 +47,8 @@ const sharedExclude = [
   ...resolveVitestFeatureTestExcludeGlobs(),
 ];
 
+const reactNativeWebAlias = { find: /^react-native$/u, replacement: requireUiDependency.resolve('react-native-web/dist/index.js') };
+
 /**
  * The React copy every module in a project must agree on.
  *
@@ -57,6 +59,8 @@ const sharedExclude = [
  * preference — is why this package runs two projects out of one config.
  */
 const packageLocalReactAliases = [
+  // Host barrels can reach presentation. Native unit tests supply their own platform mocks.
+  reactNativeWebAlias,
   { find: /^react$/u, replacement: requirePackageDependency.resolve('react') },
   { find: /^react\/jsx-runtime$/u, replacement: requirePackageDependency.resolve('react/jsx-runtime') },
   { find: /^react\/jsx-dev-runtime$/u, replacement: requirePackageDependency.resolve('react/jsx-dev-runtime') },
@@ -79,7 +83,7 @@ const reactNativeWebAliases = [
   { find: /^react\/jsx-dev-runtime$/u, replacement: requireUiDependency.resolve('react/jsx-dev-runtime') },
   { find: /^react-dom\/client$/u, replacement: requireUiDependency.resolve('react-dom/client') },
   { find: /^react-dom$/u, replacement: requireUiDependency.resolve('react-dom') },
-  { find: /^react-native$/u, replacement: requireUiDependency.resolve('react-native-web/dist/index.js') },
+  reactNativeWebAlias,
   // Native/Metro chooses this web implementation by platform extension; Vite does not.
   { find: /^react-native-svg$/u, replacement: requireUiDependency.resolve('react-native-svg/lib/module/elements.web.js') },
   // The same external author proof also has a source-only inner loop; package preparation

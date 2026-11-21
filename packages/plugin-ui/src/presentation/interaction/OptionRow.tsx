@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '../themeSurface.js';
 import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import * as React from 'react';
 import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -61,7 +62,7 @@ export type HappierOptionRowProps = Readonly<{
     /** The incumbent adapter supplies exact themed styles; this anatomy does not choose another density. */
     styles: HappierOptionRowStyles;
     rowStyle: (pressed: boolean) => HappierStyleProp;
-    themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
+    themeSurface?: SurfaceAddress;
     splitPressOpacity: number;
     /** A host can retain its text binding; unhosted presentation uses the public text owner. */
     textComponent?: React.ComponentType<Pick<HappierTextHostProps, 'children' | 'style' | 'numberOfLines'>>;

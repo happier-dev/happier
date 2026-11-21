@@ -1,3 +1,4 @@
+import type { SurfaceAddress } from '../themeSurface.js';
 import { resolveThemeSurfaceAddress, useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -187,7 +188,7 @@ export type HappierPressableProps = Readonly<{
    */
   hitReach?: HappierHitReach;
   testID?: string;
-  themeSurface?: import('@happier-dev/plugin-sdk/ui').SurfaceAddress;
+  themeSurface?: SurfaceAddress;
   /** Stable host data attributes, including the public theme surface address. */
   dataSet?: Readonly<Record<string, string>>;
   /** Internal composite-widget focus registration; disabled controls report no target. */
