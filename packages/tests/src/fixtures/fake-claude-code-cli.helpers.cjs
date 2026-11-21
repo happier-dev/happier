@@ -67,19 +67,47 @@ function findArgValue(argv, name) {
   return null;
 }
 
+// Recognize only the generated argv shape. Never hand the configured command to a shell.
+function generatedSessionStartPattern(word) {
+  return new RegExp(`^${word} ${word} '(\\d+)' 'SessionStart'(?: '--secret-file' ${word})?$`);
+}
+
+const posixSessionStartPattern = generatedSessionStartPattern(String.raw`'((?:[^'\0]|'\\'')+)'`);
+const powerShellSessionStartPattern = generatedSessionStartPattern(String.raw`'((?:[^'\0]|'')+)'`);
+const encodedPowerShellPattern = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/]+={0,2})$/;
+
 function parseHookCommandString(cmd) {
   if (typeof cmd !== 'string' || cmd.length === 0) return null;
-  // Expected: node "<forwarderScript>" <port> ["HookEventName"] [--secret-file "<path>"]
-  // or: "<runtimeExecutable>" "<forwarderScript>" <port> ["HookEventName"] [--secret-file "<path>"]
-  const m = cmd.match(/^(node|"([^"]+)")\s+"([^"]+)"\s+(\d+)(?:\s+"([^"]+)")?(?:\s+--secret-file\s+"([^"]+)")?\s*$/);
-  if (!m) return { type: 'raw', command: cmd };
+
+  const encodedPowerShell = cmd.match(encodedPowerShellPattern)?.[1];
+  const powerShell = encodedPowerShell && Buffer.from(encodedPowerShell, 'base64').toString('utf16le');
+  const generated = powerShell?.startsWith('& ')
+    ? powerShell.slice(2).match(powerShellSessionStartPattern)
+    : cmd.match(posixSessionStartPattern);
+  if (generated) {
+    const [, runtime, script, port, secret] = generated;
+    const escapedQuote = powerShell ? "''" : String.raw`'\''`;
+    return {
+      type: 'node',
+      runtimeExecutable: runtime.replaceAll(escapedQuote, "'"),
+      scriptPath: script.replaceAll(escapedQuote, "'"),
+      port: Number(port),
+      hookEventName: 'SessionStart',
+      ...(secret ? { secretFile: secret.replaceAll(escapedQuote, "'") } : {}),
+    };
+  }
+
+  // Historical fixture settings used double quotes and an optional hook event.
+  const legacy = cmd.match(/^(node|"([^"]+)")\s+"([^"]+)"\s+(\d+)(?:\s+"([^"]+)")?(?:\s+--secret-file\s+"([^"]+)")?\s*$/);
+  if (!legacy) return { type: 'raw', command: cmd };
+  const [, , runtime, scriptPath, port, hookEventName, secretFile] = legacy;
   return {
     type: 'node',
-    runtimeExecutable: typeof m[2] === 'string' && m[2].length > 0 ? m[2] : 'node',
-    scriptPath: m[3],
-    port: Number(m[4]),
-    ...(typeof m[5] === 'string' && m[5].length > 0 ? { hookEventName: m[5] } : {}),
-    ...(typeof m[6] === 'string' && m[6].length > 0 ? { secretFile: m[6] } : {}),
+    runtimeExecutable: runtime ?? 'node',
+    scriptPath,
+    port: Number(port),
+    ...(hookEventName ? { hookEventName } : {}),
+    ...(secretFile ? { secretFile } : {}),
   };
 }
 
@@ -95,9 +123,16 @@ function parseHookForwarderCommandFromFile(filePath) {
   }
 }
 
-function parseHookForwarderCommand(settingsPath, pluginDir) {
-  const pluginHooksPath = pluginDir ? path.join(pluginDir, 'hooks', 'hooks.json') : null;
-  return parseHookForwarderCommandFromFile(pluginHooksPath) ?? parseHookForwarderCommandFromFile(settingsPath);
+function parseHookForwarderCommand(argv) {
+  for (let index = 0; index < argv.length - 1; index++) {
+    if (argv[index] !== '--plugin-dir') continue;
+    const pluginDir = argv[index + 1];
+    if (!pluginDir || pluginDir.startsWith('--')) continue;
+    const hook = parseHookForwarderCommandFromFile(path.join(pluginDir, 'hooks', 'hooks.json'));
+    if (hook) return hook;
+    index++;
+  }
+  return parseHookForwarderCommandFromFile(findArgValue(argv, '--settings'));
 }
 
 async function runHookForwarder(params) {

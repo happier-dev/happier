@@ -7,6 +7,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it } from 'vitest';
 
 import { activate as activateClaudePlugin } from '../../../plugins/claude/src/activate';
+import { buildClaudeHookPluginHooks } from '../../../plugins/claude/src/agent/hooks/settings';
 import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '../../../plugins/claude/src/manifest';
 
 import {
@@ -79,7 +80,7 @@ describe('fake Claude fixture helpers', () => {
         'utf8',
       );
 
-      const hook = parseHookForwarderCommand(settingsPath);
+      const hook = parseHookForwarderCommand(['--settings', settingsPath]);
       expect(hook).toEqual({ type: 'node', runtimeExecutable: 'node', scriptPath, port: 7123 });
     });
   });
@@ -97,7 +98,7 @@ describe('fake Claude fixture helpers', () => {
         'utf8',
       );
 
-      const hook = parseHookForwarderCommand(settingsPath);
+      const hook = parseHookForwarderCommand(['--settings', settingsPath]);
       expect(hook).toEqual({ type: 'node', runtimeExecutable: runtimePath, scriptPath, port: 7123 });
     });
   });
@@ -124,7 +125,7 @@ describe('fake Claude fixture helpers', () => {
         'utf8',
       );
 
-      const hook = parseHookForwarderCommand(settingsPath, pluginDir);
+      const hook = parseHookForwarderCommand(['--settings', settingsPath, '--plugin-dir', pluginDir]);
       expect(hook).toEqual({ type: 'node', runtimeExecutable: 'node', scriptPath, port: 7123, hookEventName: 'SessionStart' });
     });
   });
@@ -149,7 +150,7 @@ describe('fake Claude fixture helpers', () => {
         'utf8',
       );
 
-      const hook = parseHookForwarderCommand(settingsPath);
+      const hook = parseHookForwarderCommand(['--settings', settingsPath]);
       expect(hook).toEqual({
         type: 'node',
         runtimeExecutable: runtimePath,
@@ -161,11 +162,21 @@ describe('fake Claude fixture helpers', () => {
     });
   });
 
-  it('records skipped raw hook commands', async () => {
+  it('skips a generated SessionStart command with a trailing shell operation', async () => {
     await withTempDir({ prefix: 'fake-claude-fixture-' }, async ({ path: dir }) => {
+      const settingsPath = join(dir, 'settings.json');
       const logPath = join(dir, 'fixture-log.jsonl');
+      const { hooks } = buildClaudeHookPluginHooks({
+        transport: 'sdk',
+        platform: 'darwin',
+        port: 7123,
+        nodeExecutable: process.execPath,
+        sessionForwarderScript: join(dir, 'forwarder.cjs'),
+      });
+      const command = `${hooks.SessionStart![0]!.hooks[0]!.command}; echo unsafe`;
+      await writeFile(settingsPath, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ command }] }] } }));
       await runHookForwarder({
-        hook: { type: 'raw', command: 'echo unsafe' },
+        hook: parseHookForwarderCommand(['--settings', settingsPath]),
         payload: { ok: true },
         logPath,
         invocationId: 'inv-1',
@@ -181,7 +192,7 @@ describe('fake Claude fixture helpers', () => {
         type: 'hook_skipped',
         invocationId: 'inv-1',
         reason: 'unparseable_command',
-        command: 'echo unsafe',
+        command,
       });
     });
   });
@@ -227,14 +238,17 @@ describe('fake Claude fixture helpers', () => {
     }]);
   });
 
-  it('reads SessionStart hooks from --plugin-dir in the fake Claude executable', async () => {
+  it.each(['darwin', 'win32'] as const)('delivers the generated %s SDK SessionStart hook after a skills plugin', async (platform) => {
     await withTempDir({ prefix: 'fake-claude-fixture-' }, async ({ path: dir }) => {
-      const pluginDir = join(dir, 'plugin');
+      const pluginDir = join(dir, 'hook-plugin');
+      const skillsDir = join(dir, 'skills-plugin');
       const hooksDir = join(pluginDir, 'hooks');
-      const forwarderPath = join(dir, 'capture-forwarder.cjs');
+      const forwarderPath = join(dir, "Claude's startup forwarder.cjs");
       const capturePath = join(dir, 'forwarder-capture.json');
-      const secretPath = join(dir, 'session-hook-secret');
+      const logPath = join(dir, 'fixture-log.jsonl');
+      const secretPath = join(dir, "Claude's hook secret");
       await mkdir(hooksDir, { recursive: true });
+      await mkdir(skillsDir);
       await writeFile(secretPath, 'fixture-secret', 'utf8');
       await writeFile(
         forwarderPath,
@@ -252,24 +266,21 @@ describe('fake Claude fixture helpers', () => {
         ].join('\n'),
         'utf8',
       );
-      await writeFile(
-        join(hooksDir, 'hooks.json'),
-        JSON.stringify({
-          hooks: {
-            SessionStart: [{
-              hooks: [{
-                command: `node "${forwarderPath}" 8123 "SessionStart" --secret-file "${secretPath}"`,
-              }],
-            }],
-          },
-        }),
-        'utf8',
-      );
+      await writeFile(join(hooksDir, 'hooks.json'), JSON.stringify(buildClaudeHookPluginHooks({
+        transport: 'sdk',
+        platform,
+        port: 8123,
+        nodeExecutable: process.execPath,
+        sessionForwarderScript: forwarderPath,
+        sessionHookSecretFile: secretPath,
+      })));
 
       await execFileAsync(
         process.execPath,
         [
           fakeClaudeFixturePath(),
+          '--plugin-dir',
+          skillsDir,
           '--plugin-dir',
           pluginDir,
           '--output-format',
@@ -281,12 +292,14 @@ describe('fake Claude fixture helpers', () => {
             ...process.env,
             CLAUDE_CONFIG_DIR: join(dir, 'claude-config'),
             FORWARDER_CAPTURE_PATH: capturePath,
+            HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
             HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'fake-session-plugin-hooks',
             HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: 'fake-invocation-plugin-hooks',
           },
         },
       );
 
+      expect(await readFile(logPath, 'utf8')).not.toContain('"type":"hook_skipped"');
       const capture = await readJsonFileEventually(capturePath);
       expect(capture).toEqual({
         argv: ['8123', 'SessionStart', '--secret-file', secretPath],

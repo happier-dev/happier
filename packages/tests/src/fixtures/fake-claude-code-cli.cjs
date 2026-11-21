@@ -235,9 +235,7 @@ safeAppendTranscriptJsonl({
   timestamp: new Date().toISOString(),
 });
 
-const settingsPath = findArgValue(argv, '--settings');
-const hookPluginDir = findArgValue(argv, '--plugin-dir');
-const hook = parseHookForwarderCommand(settingsPath, hookPluginDir);
+const hook = parseHookForwarderCommand(argv);
 void runHookForwarder({
   hook,
   payload: {
