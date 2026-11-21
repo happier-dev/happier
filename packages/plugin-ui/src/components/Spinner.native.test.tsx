@@ -77,8 +77,8 @@ describe('native HappierSpinner presentation', () => {
     const initial = createSurfaceContext({ platform: 'ios', reducedMotion: true });
     const context = { ...initial, theme: { ...initial.theme, spinner: { style: 'hWave', speed: 'fast', pause: 'long' } } };
     const hostApi = createHostApiStub(context);
-    const renderSpinner = (presentationActive: boolean) => (
-      <PluginUiProviderInternal hostApi={hostApi} context={context} surfaceActivity={{ active: true }} presentationActive={presentationActive}>
+    const renderSpinner = (presentationActive: boolean, reducedMotion = true) => (
+      <PluginUiProviderInternal hostApi={hostApi} context={{ ...context, reducedMotion }} surfaceActivity={{ active: true }} presentationActive={presentationActive}>
         <Spinner testID="preferred-spinner" />
       </PluginUiProviderInternal>
     );
@@ -88,9 +88,12 @@ describe('native HappierSpinner presentation', () => {
 
     await act(async () => { renderer!.update(renderSpinner(true)); });
     expect(dotOpacities()).toEqual(Array(7).fill(0.85));
+    expect(running()).toBe(0);
+
+    await act(async () => { renderer!.update(renderSpinner(true, false)); });
     expect(running()).toBe(1);
 
-    await act(async () => { renderer!.update(renderSpinner(false)); });
+    await act(async () => { renderer!.update(renderSpinner(false, false)); });
     expect(dotOpacities()).toEqual(Array(7).fill(0.85));
     expect(running()).toBe(0);
   });

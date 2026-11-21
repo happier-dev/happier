@@ -148,7 +148,7 @@ describe('native BrandMark presentation', () => {
       expect(resolveImageWithoutSegmenter('👩🏽‍💻Z')).toBe('?');
       expect(resolveImageWithoutSegmenter('क्‍षA')).toBe('?');
       expect(resolveImageWithoutSegmenter('\r\nA')).toBe('?');
-      expect(resolveImageWithoutSegmenter('??')).toBe('?');
+      expect(resolveImageWithoutSegmenter('ABC')).toBe('AB');
     } finally {
       if (segmenterDescriptor) {
         Object.defineProperty(Intl, 'Segmenter', segmenterDescriptor);
