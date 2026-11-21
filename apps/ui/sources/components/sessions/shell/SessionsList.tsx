@@ -1104,12 +1104,13 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         } as any);
     }, [rememberLastProjectSessionSelections, router]);
 
-    const handleCreateSessionFromFolder = React.useCallback((folder: { workspace?: unknown }) => {
+    const handleCreateSessionFromFolder = React.useCallback((folder: { folderId?: unknown; workspace?: unknown }) => {
         const workspace = folder.workspace;
         if (!workspace || typeof workspace !== 'object' || (workspace as { t?: unknown }).t !== 'workspaceScope') {
             return;
         }
         const scope = workspace as { serverId?: string | null; machineId: string; rootPath: string };
+        const folderId = typeof folder.folderId === 'string' ? folder.folderId.trim() : '';
         const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
@@ -1118,6 +1119,10 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 machineId: scope.machineId,
                 directory: scope.rootPath,
                 targetServerId: scope.serverId,
+                targetFolderId: folderId || null,
+                targetFolderMachineId: folderId ? scope.machineId : null,
+                targetFolderRootPath: folderId ? scope.rootPath : null,
+                targetFolderServerId: folderId ? scope.serverId : null,
             }),
         } as any);
     }, [router]);
