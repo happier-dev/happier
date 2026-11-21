@@ -457,7 +457,7 @@ describe('Item mode prop', () => {
         expect(hoverOutSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps option semantics and activates the row once from Space or Enter without stopping propagation', async () => {
+    it('keeps option semantics and activates once when the web Pressable releases Enter', async () => {
         const onPress = vi.fn();
         const { Item } = await import('../Item');
         const screen = await renderScreen(
@@ -479,17 +479,14 @@ describe('Item mode prop', () => {
         expect(row.props['aria-selected']).toBe(true);
         expect(row.props.tabIndex).toBe(0);
 
-        for (const key of [' ', 'Enter']) {
-            const event = {
-                key,
-                nativeEvent: { key },
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            };
-            await act(async () => row.props.onKeyDown(event));
-            expect(event.preventDefault).toHaveBeenCalledOnce();
-            expect(event.stopPropagation).not.toHaveBeenCalled();
-        }
+        const space = { key: ' ', preventDefault: vi.fn(), stopPropagation: vi.fn() };
+        await act(async () => row.props.onKeyDown(space));
+        expect(space.preventDefault).toHaveBeenCalledOnce();
+        expect(onPress).toHaveBeenCalledOnce();
+
+        const enter = { key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() };
+        await act(async () => row.props.onKeyDown(enter));
+        await screen.pressByTestIdAsync('model-option');
         expect(onPress).toHaveBeenCalledTimes(2);
     });
 });

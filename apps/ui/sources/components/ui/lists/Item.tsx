@@ -1130,14 +1130,13 @@ function ItemRow(props: ItemProps & Readonly<{
             event?.stopPropagation?.();
             return;
         }
-        if (isGroupedRadio && key === 'Enter') return;
-        if (key !== ' ' && key !== 'Spacebar' && key !== 'Enter') return;
+        // On web Pressable handles Enter on release. This layer supplies Space for semantic rows.
+        if (key !== ' ' && key !== 'Spacebar') return;
         event?.preventDefault?.();
         handlePress(event);
     }, [
         disabled,
         handlePress,
-        isGroupedRadio,
         isKeyboardActivatableRole,
         isCheckboxRole,
         isWeb,

@@ -72,6 +72,7 @@ describe('Item (row accessibility actions)', () => {
                 await act(async () => invokeTestInstanceHandler(header(), 'onKeyDown', {
                     key, preventDefault: vi.fn(), stopPropagation: vi.fn(),
                 }));
+                if (key === 'Enter') await screen.pressByTestIdAsync('web-disclosure-header');
                 expect(header().props['aria-expanded']).toBe(expanded);
             }
             expect(header().props.role).toBe('button');
