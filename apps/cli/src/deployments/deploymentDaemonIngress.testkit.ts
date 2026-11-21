@@ -17,6 +17,7 @@ import { createDaemonExternalActionContributedInvoker } from '@/daemon/externalA
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { registerExternalActionRpcHandler, type ExternalActionRpcRegistrationOptions, type ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
+import type { DaemonExternalActionExecutorFactory } from '@/daemon/externalActions/execution';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { APPROVAL_RPC_SCOPES, collectActionSpecRpcMethodsForScopes } from '@/rpc/handlers/actionSpecRpcRegistration';
@@ -90,6 +91,12 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         'deploymentAction' | 'deploymentTelemetrySet' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'>;
     projectManagedServices?: NonNullable<NonNullable<Parameters<typeof registerDaemonLocalServicesMachineRpcHandlers>[1]>['projectManagedServices']>;
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+    createExternalActionExecutor?(input: Readonly<{
+        credentials: ReturnType<typeof readS0ControllerCredentials>;
+        controllerCredentials: ReturnType<typeof readS0ControllerCredentials>;
+        requester: RequesterAccountActionContext | undefined;
+        ingress: Pick<ExternalActionIngressOwner, 'prepareRequesterAccountContext' | 'resolveEncryption' | 'resolveTarget'>;
+    }>): ReturnType<DaemonExternalActionExecutorFactory>;
     machineServiceAction?: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport']>['machineServiceAction'];
     resolveDeploymentRequesterIdentity?: DeploymentSourceRequesterIdentityResolver;
     nativeBoundary?: EnrollmentJourneyNativeBoundary;
@@ -162,7 +169,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     }
     const createExecutor = (scopedCredentials: typeof credentials, requester?: RequesterAccountActionContext) => {
         const deployment = input.createDeploymentActionDeps?.(requester, actionOperations);
-        return createCliActionExecutorFromCredentials({
+        const executor = createCliActionExecutorFromCredentials({
             credentials: scopedCredentials, readCredentials: async () => scopedCredentials,
             pluginActionExecutionOwner: 'current_process',
             invokeContributedAction,
@@ -194,16 +201,22 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
                 ...(input.machineServiceAction ? { machineServiceAction: input.machineServiceAction } : {}),
                 invoke: (method, request, options) => rpc.invokeLocal(method, request, options) },
         });
+        const installed = input.createExternalActionExecutor?.({
+            credentials: scopedCredentials, controllerCredentials: credentials, requester,
+            ingress: { prepareRequesterAccountContext, resolveEncryption, resolveTarget },
+        });
+        return installed ? { ...executor, ...installed } : executor;
     };
     const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
         serverUrl: home.baseUrl, resolveCurrentMachineId: () => home.machineId,
         resolveCurrentServerIdentityId: () => home.serverId,
     });
-    const executor = createExecutor(credentials);
     const resolveEncryption: NonNullable<ExternalActionRpcRegistrationOptions['resolveEncryption']> = async () =>
         home.encryptionMode === 'e2ee' && home.encryption
             ? { serverIdentityId: home.serverId, material: home.encryption }
             : null;
+    const resolveTarget = createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: home.baseUrl });
+    const executor = createExecutor(credentials);
     const machineContent = home.encryptionMode === 'e2ee' && home.machineEncryptionKey
         ? { encryptionMode: 'e2ee' as const, encryptionKey: home.machineEncryptionKey, encryptionVariant: 'dataKey' as const }
         : { encryptionMode: 'plain' as const };
@@ -227,7 +240,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({
             ...request, installationId: home.installationId, privateKey: home.keys.secretKey, serverHttpBaseUrl: home.baseUrl,
         }),
-        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: home.baseUrl }),
+        resolveTarget,
         prepareRequesterAccountContext,
         resolveEncryption, executor, externalActionMachineRequestPrivateKey: home.keys.secretKey,
     });
@@ -409,7 +422,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         return { actionOperations, executor, publishDaemonState: daemonStatePublication,
             externalActionIngressOwner: { currentServerId: home.serverId, currentServerHttpBaseUrl: home.baseUrl,
                 prepareRequesterAccountContext, resolveEncryption, executor,
-                resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: home.baseUrl }),
+                resolveTarget,
                 externalActionMachineRequestPrivateKey: home.keys.secretKey },
             machineActionDirectTargetTransport: { machineId: home.machineId,
                 invoke: (method: string, request: unknown, options?: Readonly<{ signal?: AbortSignal }>) => rpc.invokeLocal(method, request, options) },

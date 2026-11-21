@@ -164,6 +164,7 @@ serverBaseUrl: string;
 runtimeActionExecute?: RuntimeActionExecute;
 acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
 managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
+readManagedMachinePolicyCurrent?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['readPolicyCurrent'];
 executeTeamCredentialBrokerAction?: import('@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission').ExecuteTeamCredentialBrokerAction;
 restoreManagedWorkflowWorkspaceSource?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['restoreManagedWorkflowWorkspaceSource'];
 workflowAcceptedAuthorizationCurrentness?: Parameters<
@@ -1083,6 +1084,7 @@ resolveServerFeaturesSnapshot?: () =>
           installationIdentity: externalActionInstallationIdentity,
           managedProviderOperationAuthority:
             params.managedProviderOperationAuthority,
+          readPolicyCurrent: params.readManagedMachinePolicyCurrent,
           acquireRuntimeRegistryLease:
             acquireDaemonPluginRuntimeRegistryLease,
         });

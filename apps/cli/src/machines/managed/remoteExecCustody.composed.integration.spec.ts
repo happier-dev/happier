@@ -31,6 +31,11 @@ import { auth } from '../../../../server/sources/app/auth/auth';
 import { db } from '../../../../server/sources/storage/db';
 import { inTx } from '../../../../server/sources/storage/inTx';
 import { logger as homeLogger } from '../../../../server/sources/utils/logging/log';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity, type DaemonExternalActionExecutorFactory } from '@/daemon/externalActions/execution';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createDaemonShutdownCancellationDomains } from '@/daemon/startup/shutdownCancellationDomains';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { mintExternalActionExecutionAuthorization } from '@/api/externalActionAuthorizationHttp';
@@ -42,7 +47,7 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from '@/deployments/deploymentDaemonIngress.testkit';
 import * as installationStore from '@/daemon/identity/store';
-import { decodeStoredCredentials, encodeStoredCredentials, updateSettings, type StoredCredentials } from '@/persistence';
+import { decodeStoredCredentials, encodeStoredCredentials, updateSettings, writeCredentialsDataKey, type StoredCredentials } from '@/persistence';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { fixture as createNativeProvisioner } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -50,7 +55,12 @@ import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/de
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { logger as daemonLogger } from '@/ui/logger';
 
-async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running') {
+function unmounted<T>(name: string): T {
+    const unexpected = () => { throw new Error(`Unexpected fixture capability: ${name}`); };
+    return new Proxy(unexpected, { get: unexpected }) as T;
+}
+
+async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running', installedReceiver = false) {
     const directory = await createTempDir('composed-managed-exec-');
     onTestFinished(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration(); await removeTempDir(directory); });
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
@@ -77,10 +87,10 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
     vi.spyOn(stream, 'write').mockImplementation(message => { homeLogs.push(message); return writeHomeLog(message); });
     const daemonLogs = (['debug', 'info', 'warn', 'error'] as const).map(method => vi.spyOn(daemonLogger, method));
     const credentials = readS0ControllerCredentials(home);
-    const serverId = configuration.activeServerId;
+    const serverId = installedReceiver ? home.serverId : configuration.activeServerId;
     const controller = { machineId: home.machineId, installationId: home.installationId };
     const target = { kind: 'machine' as const, machineId: home.machineId };
-    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [serverId]: {
+    await updateSettings(settings => ({ ...settings, ...(installedReceiver ? { activeServerId: serverId } : {}), servers: { ...settings.servers, [serverId]: {
         id: serverId, name: 'Managed command Home', serverUrl: home.baseUrl, webappUrl: home.baseUrl,
         homeConnectionDescriptorAuthority: 'exact',
         homeConnectionDescriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
@@ -170,15 +180,78 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
         managedId, target, signal,
     });
     const readTargetCensus = (managedId: string, requester: ManagedTargetRequesterV1) => readCensus(managedId, undefined, requester);
+    const resolveOrigin = async () => ({ serverIdentityId: home.serverId, machineId: home.machineId });
+    const readManagedMachinePolicyCurrent = async (managedId: string, signal?: AbortSignal) =>
+        (await readCensus(managedId, signal)).machines[0] ?? null;
+    const acquireRegistry = async () => ({
+        registry: provisioner.runtimeRegistry, source: 'active' as const, durableRevision: 1, release: async () => {},
+    });
     const driver = createDaemonManagedMachineActionAdapter({ credentials, controllerCredentials: credentials,
         machineId: home.machineId, serverId: home.serverId, serverBaseUrl: home.baseUrl,
         installationIdentity: { installationId: home.installationId, privateKey: home.keys.secretKey },
         managedProviderOperationAuthority: providerAuthority,
-        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home.serverId, machineId: home.machineId }),
-        readPolicyCurrent: async (managedId, signal) => (await readCensus(managedId, signal)).machines[0] ?? null,
-        acquireRuntimeRegistryLease: async () => ({ registry: provisioner.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
+        resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+        readPolicyCurrent: readManagedMachinePolicyCurrent,
+        acquireRuntimeRegistryLease: acquireRegistry,
     });
+    if (installedReceiver) {
+        vi.stubEnv('HAPPIER_ACTIVE_SERVER_ID', serverId);
+        vi.stubEnv('HAPPIER_SERVER_URL', home.baseUrl);
+        vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', home.baseUrl);
+        vi.stubEnv('HAPPIER_LOCAL_SERVER_URL', home.baseUrl);
+        reloadConfiguration();
+        expect(configuration.activeServerId).toBe(serverId);
+        if (credentials.encryption?.type !== 'dataKey') throw new Error('Expected enrolled controller credentials');
+        await writeCredentialsDataKey({ token: credentials.token, ...credentials.encryption });
+    }
+    const installedIdentity = readS0Installation(home);
+    const shutdown = createDaemonShutdownCancellationDomains();
+    const installedMachine = installedReceiver ? runWithServerHttpBaseUrl(home.baseUrl, () =>
+        new ApiMachineClient(credentials.token, { id: home.machineId, encryptionMode: 'e2ee',
+            encryptionVariant: 'dataKey', encryptionKey: home.machineEncryptionKey!,
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        }, undefined, { resolveCurrentServerIdentityId: () => home.serverId })) : undefined;
+    onTestFinished(async () => { shutdown.beginShutdown(); await installedMachine?.shutdown(); });
     const daemon = await createS0DeploymentDaemonIngress({ home, managedMachineAction: driver,
+        ...(installedReceiver ? { createExternalActionExecutor: ({ credentials, controllerCredentials, requester, ingress }) => {
+            const machine = installedMachine!;
+            const params = { machineId: home.machineId, serverId: home.serverId, serverBaseUrl: home.baseUrl,
+                credentials: controllerCredentials, getApiMachineForSessions: () => machine,
+                resolveCurrentMachineExecutionOriginContext: resolveOrigin, readManagedMachinePolicyCurrent,
+                managedProviderOperationAuthority: providerAuthority };
+            const createExternal: DaemonExternalActionExecutorFactory = createDaemonExternalActionExecution({
+                params, requiresPortableSessionSpawnServerIdentity,
+                requesterAccountOperationContext: createRequesterAccountOperationContext({ machineId: home.machineId,
+                    custodianAccountId: home.accountId, installationIdentity: installedIdentity }),
+                acquireDaemonPluginRuntimeRegistryLease: acquireRegistry,
+                shutdownCancellationDomains: shutdown,
+                isSessionCallerCurrent: async () => false,
+                externalActionApprovalExecutionOriginCurrentness: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+                    credentials: controllerCredentials, machineId: home.machineId, serverId: home.serverId, serverApiUrl: home.baseUrl,
+                    resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+                }),
+                externalActionIngressOwner: {
+                    ...ingress, currentServerId: home.serverId, currentServerHttpBaseUrl: home.baseUrl,
+                    get executor() { return createExternal(controllerCredentials); },
+                },
+                externalActionInstallationIdentity: installedIdentity,
+                externalActionContributedApprovalReplay: null,
+                externalActionContributedInvoker: null,
+                externalActionContributedDefinitionLister: null,
+                externalActionTranscriptFollowLeaseRegistry: null,
+                observeContributedPluginExecution: request => machine.observePluginActionExecution(request),
+                relayDiscussionAgentPublication: unmounted('discussion'),
+                ownerRemainder: unmounted('process remainder'),
+                isRuntimePublicationQuiescing: () => false,
+                pluginRuntimeController: unmounted('plugin reload'),
+                connectedAccountRequestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
+                requireConnectedAccountRequestAuthHttpPort: unmounted('request auth HTTP port'),
+                localServicesActionFeatureGate: unmounted('local services feature'),
+                localServicesRuntimeActionRoutes: unmounted('local services routes'),
+                localServicesRuntime: unmounted('local services'),
+            });
+            return createExternal(credentials, undefined, undefined, undefined, undefined, undefined, requester);
+        } } : {}),
         observeReceivedRequest: async request => { wire.push(request.params); },
         observeOperationPublication: content => { wire.push(content); } });
     onTestFinished(() => daemon.close());
@@ -190,7 +263,9 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
         externalActionTarget: target, actionRequestId: randomUUID() });
     const owner = cliFor(credentials);
     const scope = { serverId: home.serverId, machineId: home.machineId };
-    expect(await owner.execute(ACTION_OPERATION_LIST_ACTION_ID_V1, scope, context())).toMatchObject({ ok: true, result: { items: [] } });
+    if (!installedReceiver) {
+        expect(await owner.execute(ACTION_OPERATION_LIST_ACTION_ID_V1, scope, context())).toMatchObject({ ok: true, result: { items: [] } });
+    }
 
     const guestKey = nacl.randomBytes(32);
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: home.accountId, active: false,
@@ -257,9 +332,9 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
         providerAccount, wire, homeLogs, daemonLogs, providerLogs };
 }
 
-it.runIf(process.platform === 'linux')('asks before a guest Manage CLI command and refuses guest Use before Ask', async () => {
-    const { home, target, input, requester, use, context, cliFor, nativeCalls, providerReads, providerAccount } =
-        await createManagedExecFixture();
+it.runIf(process.platform === 'linux')('runs an approved custodian CLI command through the installed controller and refuses guest Use before Ask', async () => {
+    const { home, credentials, target, input, requester, use, context, cliFor, nativeCalls, providerReads, providerAccount } =
+        await createManagedExecFixture('running', true);
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
     // Home receives an opaque envelope; both probes carry the same exact target projection.
     const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
@@ -288,10 +363,10 @@ it.runIf(process.platform === 'linux')('asks before a guest Manage CLI command a
         expect(providerReads).toHaveLength(0);
         return await decide('approve');
     });
-    const execution = await cliFor(requester.credentials, presenter).execute(MANAGED_EXEC_ACTION_ID_V1, input, context());
+    const execution = await cliFor(credentials, presenter).execute(MANAGED_EXEC_ACTION_ID_V1, input, context());
     expect.soft(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { exitCode: 3 } });
     expect.soft(presenter).toHaveBeenCalledTimes(1);
-    expect.soft(askOwners).toEqual([{ accountId: requester.accountId }]);
+    expect.soft(askOwners).toEqual([{ accountId: home.accountId }]);
     expect.soft(nativeCalls).toHaveLength(1);
     expect(providerReads).toEqual([providerAccount.accountId]);
 }, 120_000);
