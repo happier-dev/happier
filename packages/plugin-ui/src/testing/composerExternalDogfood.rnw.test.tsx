@@ -280,10 +280,10 @@ describe('external Composer dogfood surface', () => {
     expect(admittedManifest.contributes.composerControls.find(({ id }) => id === 'issue-control'))
       .toMatchObject({ defaultPlacement: 'pinned' });
     const defaultOverflowControl = admittedManifest.contributes.composerControls
-      .find(({ id }) => id === 'inspect');
+      .find(({ id }) => id === 'discussion-helper');
     const inspectAction = admittedManifest.contributes.actions.find(({ id }) => id === 'inspect');
     expect(defaultOverflowControl).toMatchObject({
-      id: 'inspect',
+      id: 'discussion-helper',
       label: 'Discussion helper',
       scopes: ['discussion'],
       interaction: {

@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/plugin-sdk/testing';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
-import { invokeInputTypePicker, readInputTypeOptions, type InputTypePickerHostV1, type ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
+import { invokeInputTypePicker, resolveInputTypeOptions, type InputTypePickerHostV1, type ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -131,9 +131,20 @@ describe('public authoring Project Companion activity surface', () => {
     const host: InputTypePickerHostV1 = {
       resolveType: async () => type,
       resolveOptions: async () => {
-        const content = await resource.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } }));
-        return readInputTypeOptions(type, JSON.parse(typeof content === 'string' ? content : new TextDecoder().decode(content)))
-          ?? { errorCode: 'input_type_options_invalid' };
+        const result = await resolveInputTypeOptions({
+          identity: repositoryInputTypeRef,
+          ctx: {},
+          deps: {
+            resolveInputType: async () => type,
+            readInputTypeResource: async () => {
+              const invocation = createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } });
+              const content = await resource.read(invocation);
+              return JSON.parse(typeof content === 'string' ? content : new TextDecoder().decode(content));
+            },
+          },
+          readFailure: () => null,
+        });
+        return result.ok ? result.result : { errorCode: result.errorCode };
       },
       openPicker: async request => {
         expect(request.picker).toEqual({ pluginId: repositoryInputTypeRef.pluginId, localId: 'review-native' });
