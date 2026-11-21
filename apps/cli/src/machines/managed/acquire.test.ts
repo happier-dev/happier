@@ -1,4 +1,5 @@
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { logger } from '@/ui/logger';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import fastify from 'fastify';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -4741,6 +4742,13 @@ describe('managed acquisition durable custody', () => {
         // Admission is a real request boundary. A refused admission settles
         // without invoking a provider or retrying an admitted native role.
         const server = createServer((request, response) => {
+            if (request.url?.endsWith('/actions/list')) {
+                response.writeHead(200, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ machines: [{ ...retained,
+                    resource: { ...retained.resource, 'private-retained-field': 'private-schema-token' },
+                }] }));
+                return;
+            }
             if (request.url?.endsWith('/context')) {
                 failedReads++;
                 if (category === 'transport') { request.socket.destroy(); return; }
@@ -4749,7 +4757,7 @@ describe('managed acquisition durable custody', () => {
                 response.writeHead(category === 'status' ? 500 : 200, { 'Content-Type': 'application/json' });
                 response.end(JSON.stringify(category === 'status'
                     ? { code: 'P2024', message: 'private database diagnostic', token: 'private-server-token' }
-                    : { machine: { token: 'private-schema-token' } }));
+                    : { machine: { ...retained, allocation: 'private-schema-token' }, requestId: 'retained-creation' }));
                 return;
             }
             response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -4773,6 +4781,13 @@ describe('managed acquisition durable custody', () => {
                 context });
         } } as ActionExecutorDeps);
         try {
+            if (category === 'schema') {
+                await expect(recovery.execute('machines.managed.list', { homeId }, { requestId: 'managed-list' }))
+                    .rejects.toMatchObject({ name: 'ManagedMachineControllerError', details: {
+                        path: '/v1/machines/managed/actions/list', category: 'schema', status: 200,
+                        schemaIssuePath: ['machines', 0, 'resource'],
+                    } });
+            }
             await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry,
                 actionRequestId: 'fresh-retry', execute: async context => {
                     return await executor.execute('machines.managed.bootstrap.retry', retry, { ...context, surface: 'cli', authority: 'present_user',
@@ -4784,7 +4799,7 @@ describe('managed acquisition durable custody', () => {
                     : category === 'oversized-headers' ? 'request_headers_too_large' : 'managed_controller_request_failed',
                 details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/context',
                     category: category === 'oversized-headers' ? 'status' : category,
-                    ...(category === 'status' ? { status: 500, code: 'P2024' } : category === 'schema' ? { status: 200 }
+                    ...(category === 'status' ? { status: 500, code: 'P2024' } : category === 'schema' ? { status: 200, schemaIssuePath: ['machine', 'allocation'] }
                         : category === 'oversized-headers' ? { status: 431, code: 'request_headers_too_large' } : { code: 'ECONNRESET' }) },
             } } });
             expect(JSON.stringify(result)).not.toMatch(/private-|database diagnostic/);
@@ -4796,6 +4811,7 @@ describe('managed acquisition durable custody', () => {
                 httpStatus: category === 'transport' ? null : category === 'status' ? 500 : category === 'oversized-headers' ? 431 : 200,
                 code: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET'
                     : category === 'oversized-headers' ? 'request_headers_too_large' : null,
+                ...(category === 'schema' ? { schemaIssuePath: ['machine', 'allocation'] } : {}),
                 requestId: 'fresh-retry',
             });
             expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private-|database diagnostic/);

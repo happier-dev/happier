@@ -853,7 +853,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             || configurationFacts.setup !== undefined)) throw new ManagedMachineError('invalid_request');
         // Reporting adds presentation facts only. Home's existing declaration and
         // signed admission remain the authority for roles, setup and native effects.
-        const factsUpdate = configurationFacts ? { reviewedFacts: { ...configurationFacts, provisioner: declaration } } : {};
+        const factsUpdate = configurationFacts ? { reviewedFacts: { ...configurationFacts, provisioner: declaration.provisioner } } : {};
         if (canonical.result.kind === "bound") {
             if (row.allocation !== "may-exist" && row.allocation !== "bound") throw new ManagedMachineError("intent_changed");
             const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });

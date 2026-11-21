@@ -7,7 +7,7 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import { expect, vi } from 'vitest';
 import * as ed25519 from '@happier-dev/protocol/crypto/ed25519';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { ManagedAdmissionOutputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedMachineReadV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedListOutputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedMachineReadV1Schema, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { db } from '@/storage/db';
@@ -260,7 +260,27 @@ export async function exerciseManagedProjectionVolume() {
     });
     registerManagedMachineRoutes(app);
     try {
-        const rows: StoredManagedMachine[] = [];
+        const declarationInput = { homeId, custodianAccountId: account.id, controller, provider: launch.provider };
+        const declaration = (input = declarationInput) => inReadSnapshot(tx => resolveManagedDeclarationInTx(tx, input));
+        const retainedDeclaration = await declaration();
+        if (!retainedDeclaration) throw new Error('Lima declaration unavailable');
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}' } });
+        const { memoryGiB, diskGiB, ...nativeChoices } = launch.choices;
+        const resource = { contributionRef: launch.provider, schemaVersion: 1, origin: 'created',
+            value: { ...nativeChoices, instance: 'happier-volume-guest', memoryBytes: memoryGiB * 1024 ** 3, diskBytes: diskGiB * 1024 ** 3 } };
+        const retention = { kind: 'until-delete' };
+        const enrolled = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: account.id,
+                computeInput: { enrollmentIdentity: { kind: 'dedicatedDaemonUser', role: 'deployTarget',
+                    username: 'happier', serviceMode: 'user', adminAccessAtCreation: 'none' } }, bootstrapInstalled: true },
+            launch, allocation: 'bound', enrolledMachineId: guest.id, resource, retention, wakeOnAcceptedMessage: false,
+            reviewedFacts: { launch, controller, optionStatus: 'current', billing: retainedDeclaration.billing,
+                prerequisites: [], retentionCapabilities: retainedDeclaration.retention, retention, wakeOnAcceptedMessage: false,
+                // Existing bound reports stored the server's lookup wrapper, including the admitted declaration.
+                provisioner: retainedDeclaration },
+        } });
+        const rows: StoredManagedMachine[] = [enrolled];
         const lists: Array<{ count: number; value: Awaited<ReturnType<typeof app.inject>>; queries: QueryMeasurement[];
             checks: { storedRows: number; wireRows: number; signatures: number } }> = [];
         for (const count of [1, 4, 16]) {
@@ -290,13 +310,18 @@ export async function exerciseManagedProjectionVolume() {
             requestId: 'volume-create', continuationPresent: false,
         } }));
         const cancel = await measure('cancel', () => app.inject({ method: 'POST', url: '/v1/machines/managed/actions/cancel', payload: {
-            homeId, managedId: rows[0].id, expectedIntentRevision: 0,
+            homeId, managedId: rows[1].id, expectedIntentRevision: 0,
         } }));
         for (const list of lists) {
             expect(list.value.statusCode, list.value.body).toBe(200);
-            expect(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(list.value.json()).machines).toHaveLength(list.count);
-            expect(list.queries.filter(query => query.model === 'managedMachine').reduce((sum, query) => sum + query.rows, 0))
-                .toBe(list.count);
+            const { machines } = ManagedListOutputV1Schema.parse(list.value.json());
+            expect(machines).toHaveLength(list.count);
+            expect(machines.map(unwrapManagedMachineReadV1).find(row => row.id === enrolled.id)).toMatchObject({
+                allocation: 'bound', enrolledMachineId: guest.id, resource, reviewedFacts: { provisioner: retainedDeclaration.provisioner },
+            });
+            // Candidate access expands the one enrolled guest, then inventory reads the requested rows.
+            expect(list.queries.filter(query => query.model === 'managedMachine').map(query => query.rows))
+                .toEqual([1, list.count]);
         }
         expect(lists.map(({ count, checks }) => ({ count, ...checks }))).toEqual(lists.map(({ count }) => ({
             count, storedRows: 0, wireRows: 0, signatures: 0,
@@ -306,9 +331,9 @@ export async function exerciseManagedProjectionVolume() {
             machine: { allocation: 'unsubmitted', launch } });
         expect(cancel.value.statusCode, cancel.value.body).toBe(200);
         expect(ManagedMachineActionOutputSchemasV1['machines.managed.cancel'].parse(cancel.value.json()))
-            .toMatchObject({ machine: { id: rows[0].id, creationState: 'canceled', allocation: 'confirmed-absent' } });
+            .toMatchObject({ machine: { id: rows[1].id, creationState: 'canceled', allocation: 'confirmed-absent' } });
         expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(17);
-        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: rows[0].id } }))
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: rows[1].id } }))
             .toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent', intentRevision: 1 });
         // Observable resource contract: unrelated plugin manifests must never enter a managed projection.
         // This distinguishes query pushdown from merely discarding unrelated results after loading them.
@@ -336,8 +361,6 @@ export async function exerciseManagedProjectionVolume() {
         expect(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(retained.json()).machines.find(row => row.id === orphan.id))
             .toMatchObject({ launch: { choices: { retainedOldInstallation: true } } });
         // Filtering and request-local reuse must retain installation, intent and trust currentness.
-        const declarationInput = { homeId, custodianAccountId: account.id, controller, provider: launch.provider };
-        const declaration = (input = declarationInput) => inReadSnapshot(tx => resolveManagedDeclarationInTx(tx, input));
         expect(await declaration()).toMatchObject({ schemaVersion: 1 });
         expect(await declaration({ ...declarationInput, controller: { ...controller, installationId: randomUUID() } })).toBeNull();
         await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId: manifest.id } }, data: { enabled: false } });

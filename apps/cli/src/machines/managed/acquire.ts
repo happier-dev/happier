@@ -29,6 +29,8 @@ import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataCo
 import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { invalidActionOutputFailure, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { core } from 'zod/mini';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1, isManagedCreationCleanupV1,
     ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1, type ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -253,6 +255,26 @@ export type ManagedMachineExecutionOptions = Readonly<{
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
 }>;
 
+type ManagedResponseSchema<T> = core.$ZodType<T> & { parse(data: unknown): T };
+
+/** Keep schema-owned fields and array positions. Record keys and arbitrary JSON are response content. */
+function declaredIssuePathLength(schema: core.$ZodType, path: readonly (string | number)[], offset = 0): number {
+    if (offset === path.length) return offset;
+    const segment = path[offset];
+    const def = (schema as core.$ZodTypes)._zod.def;
+    switch (def.type) {
+        case 'object': return typeof segment === 'string' && Object.hasOwn(def.shape, segment)
+            ? declaredIssuePathLength(def.shape[segment], path, offset + 1) : offset;
+        case 'array': return typeof segment === 'number'
+            ? declaredIssuePathLength(def.element, path, offset + 1) : offset;
+        case 'optional': case 'nullable': case 'default': case 'prefault': case 'readonly': case 'catch':
+            return declaredIssuePathLength(def.innerType, path, offset);
+        case 'lazy': return declaredIssuePathLength((schema as core.$ZodLazy)._zod.innerType, path, offset);
+        case 'union': return def.options.reduce((length, option) => Math.max(length, declaredIssuePathLength(option, path, offset)), offset);
+        default: return offset;
+    }
+}
+
 /** The controller transport consumes the server's row/currentness authority. */
 export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput, options: ManagedMachineExecutionOptions,
     action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator = createManagedPresetHydrator(input)) {
@@ -285,8 +307,10 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         return body && typeof body === 'object' && 'managedId' in body && typeof body.managedId === 'string'
             ? body.managedId : undefined;
     }
-    function requestFailure(path: string, category: ManagedControllerRequestFailureDetailsV1['category'], status?: number, failureCode?: string, managedId?: string) {
-        const base = { kind: 'managedControllerRequest' as const, path, category, ...(status === undefined ? {} : { status }) };
+    function requestFailure(path: string, category: ManagedControllerRequestFailureDetailsV1['category'], status?: number,
+        failureCode?: string, managedId?: string, schemaIssuePath?: ManagedControllerRequestFailureDetailsV1['schemaIssuePath']) {
+        const base = { kind: 'managedControllerRequest' as const, path, category,
+            ...(status === undefined ? {} : { status }), ...(schemaIssuePath === undefined ? {} : { schemaIssuePath }) };
         const withCode = ManagedControllerRequestFailureDetailsV1Schema.safeParse({ ...base, code: failureCode });
         const details = withCode.success ? withCode.data : ManagedControllerRequestFailureDetailsV1Schema.parse(base);
         const operationId = options.context?.operationAcceptance?.operationId;
@@ -297,6 +321,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             category: details.category,
             httpStatus: details.status ?? null,
             code: details.code ?? null,
+            ...(details.schemaIssuePath === undefined ? {} : { schemaIssuePath: details.schemaIssuePath }),
             requestId: options.requestId,
         });
         const code = details.code ?? 'managed_controller_request_failed';
@@ -305,7 +330,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             errorClass: 'ManagedMachineControllerError', errorCode: code, httpStatus: status ?? null,
         }));
     }
-    async function request<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
+    async function request<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: ManagedResponseSchema<T>, signal?: AbortSignal | null): Promise<T> {
         const run = () => requestOnce(path, body, headers, schema, signal);
         try { return await run(); }
         catch (error) {
@@ -325,7 +350,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 () => requestOnce(path, body, headers, schema, options.signal));
         }
     }
-    async function requestOnce<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
+    async function requestOnce<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: ManagedResponseSchema<T>, signal?: AbortSignal | null): Promise<T> {
         const managedId = readManagedId(body);
         const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}${path}`, body, {
             headers: { ...headers, 'Content-Type': 'application/json' },
@@ -352,9 +377,16 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             throw requestFailure(path, 'status', response.status, failure.success ? failure.data.code : serverCode, managedId);
         }
         try { return schema.parse(response.data); }
-        catch { throw requestFailure(path, 'schema', response.status, undefined, managedId); }
+        catch (error) {
+            const issues = error instanceof core.$ZodError
+                ? readActionOutputDiagnostic(invalidActionOutputFailure(error, path))?.issues : undefined;
+            const issue = issues?.find(entry => entry.code === 'unrecognized_keys')
+                ?? issues?.find(entry => entry.code !== 'invalid_union') ?? issues?.[0];
+            const schemaIssuePath = issue?.path.slice(0, declaredIssuePathLength(schema, issue.path));
+            throw requestFailure(path, 'schema', response.status, undefined, managedId, schemaIssuePath);
+        }
     }
-    async function post<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined = options.signal,
+    async function post<T>(path: string, body: unknown, schema: ManagedResponseSchema<T>, signal: AbortSignal | null | undefined = options.signal,
         effectOverride?: typeof SESSION_SPAWN_NEW_ACTION_ID_V1): Promise<T> {
         const prepared = path === '/v1/machines/managed/controller/report'
             ? await hydrator.prepareControllerReport('report', body, signal ?? undefined)
@@ -367,7 +399,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         return path === '/v1/machines/managed/controller/current' && homeRetry
             ? await retryHomeOperation({ ...homeRetry, signal: signal ?? homeRetry.signal }, run) : await run();
     }
-    async function postOnce<T>(path: string, body: unknown, schema: { parse(data: unknown): T }, signal: AbortSignal | null | undefined,
+    async function postOnce<T>(path: string, body: unknown, schema: ManagedResponseSchema<T>, signal: AbortSignal | null | undefined,
         effectOverride?: typeof SESSION_SPAWN_NEW_ACTION_ID_V1): Promise<T> {
         try {
             // A preparatory row read belongs to the admitted root. Home checks

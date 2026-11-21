@@ -190,6 +190,7 @@ export const ManagedControllerRequestFailureDetailsV1Schema = lazyZodSchema(() =
   category: z.enum(['transport', 'status', 'schema', 'currentness']),
   status: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
   code: z.optional(z.string().check(z.regex(/^[a-z][a-z0-9_-]*$/i), z.maxLength(ACTION_OPERATION_ERROR_CODE_MAX_LENGTH_V1))),
+  schemaIssuePath: z.optional(z.array(z.union([z.string(), z.int().check(z.gte(0))]))),
 }));
 export type ManagedControllerRequestFailureDetailsV1 = Readonly<z.infer<typeof ManagedControllerRequestFailureDetailsV1Schema>>;
 export const ManagedNativeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({

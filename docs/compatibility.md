@@ -13078,12 +13078,15 @@ Agent selection and need a fresh review to admit an Agent install. No retained
 storage format changes.
 
 Managed controller failures in the current development V2 read retain a strict
-`managedControllerRequest` diagnostic: the static request path, failure category,
+`managedControllerRequest` diagnostic with the static request path, failure category,
 observed HTTP status when available, and safe machine-readable code when supplied.
-The controller request owner validates responses before returning them; enrollment
-and Action execution preserve that observation through the terminal operation.
-Response bodies, messages, headers, credentials and schema issue values are never
-part of this diagnostic. V1 continues projecting only `errorCode` and `error`.
+Schema failures can also include `schemaIssuePath` with declared field names and
+array positions. The controller request owner validates responses and enrollment
+and Action execution preserve the diagnostic through the terminal operation.
+Response bodies, dynamic object keys, messages, headers, credentials and schema
+issue values stay private. Updated readers accept earlier diagnostics without the
+path. Earlier strict V2 development readers require matching Protocol sources to
+read failures with the path. V1 continues projecting only `errorCode` and `error`.
 
 Dedicated managed bootstrap failures in the same development V2 read carry a
 closed `managedBootstrap` detail: interpreter phase (`check` or `apply`), observed

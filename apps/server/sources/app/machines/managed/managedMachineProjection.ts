@@ -4,7 +4,7 @@ import { ManagedMachineFullV1Schema, ManagedOpaqueMachineSetupStateV1Schema, Man
 import { ManagedOpaquePresetObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachinePresetEnvelopeV1Schema, type ManagedMachinePresetEnvelopeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import type { StoredManagedAdmission, StoredManagedMachine } from './managedRows';
+import type { ManagedDeclaration, StoredManagedAdmission, StoredManagedMachine } from './managedRows';
 
 /**
  * The outer mode is the author-admitted persistence binding.  The inner tag is
@@ -158,6 +158,14 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
 /** Compose a raw snapshot. The owning Account's admitted one-off inventory can use it directly. */
 export function projectManagedMachineFull(row: StoredManagedMachine, admission?: 'owned-inventory'): ManagedMachineFullV1 {
     const { structural, enrollmentIdentity, workspaceAttachment } = projectManagedMachineStructural(row);
+    const reviewedFacts = row.reviewedFacts as (Omit<NonNullable<ManagedMachineFullV1['reviewedFacts']>, 'provisioner'> & {
+        provisioner?: ManagedDeclaration['provisioner'] | ManagedDeclaration;
+    }) | null;
+    const declaration = reviewedFacts?.provisioner;
+    // Older bound reports stored the server's lookup wrapper alongside the admitted declaration.
+    const publicReviewedFacts = declaration && 'provisioner' in declaration
+        ? { ...reviewedFacts, provisioner: declaration.provisioner }
+        : reviewedFacts;
     const resource = row.resource === null ? undefined : row.resource as ManagedMachineFullV1['resource'];
     const controller = structural.controller;
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
@@ -173,7 +181,7 @@ export function projectManagedMachineFull(row: StoredManagedMachine, admission?:
         ...(row.recovery !== null ? { recovery: row.recovery } : {}),
         ...(row.observation !== null ? { observation: row.observation } : {}),
         launch: row.launch,
-        ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
+        ...(publicReviewedFacts !== null ? { reviewedFacts: publicReviewedFacts } : {}),
         ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
     };
     return admission === 'owned-inventory' ? projection as ManagedMachineFullV1
