@@ -14,6 +14,8 @@ export type ReviewWalkthroughTranslations = {
     tailDescription: string;
     inContext: string;
     fromReviewAt: (params: Readonly<{ time: string }>) => string;
+    /** An opened finding's earlier appearance: the earlier Review by name when known, and how long ago. */
+    alsoInReview: (params: Readonly<{ title: string | null; time: string }>) => string;
     reviewLabel: string;
     enginesOf: (params: Readonly<{ count: number; total: number }>) => string;
     enginesFinished: (params: Count) => string;
@@ -131,6 +133,8 @@ export type ReviewWalkthroughTranslations = {
         tabActivity: string;
         historyEarlierRuns: (params: Count) => string;
         seenBefore: string;
+        /** Where an opened finding sits in the Review ("3 of 6"), on its pushed phone page. */
+        findingPosition: (params: Readonly<{ index: number; total: number }>) => string;
         historyEmpty: string;
         newInRound: (params: Readonly<{ round: number }>) => string;
         stillThere: string;
@@ -230,6 +234,7 @@ export const en: ReviewWalkthroughTranslations = {
     tailDescription: 'Kept here so nothing disappears when its lines can’t be placed.',
     inContext: 'in context',
     fromReviewAt: ({ time }) => `from the ${time} review`,
+    alsoInReview: ({ title, time }) => (title ? `Also in ${title} · ${time} ago` : `Also in an earlier review · ${time} ago`),
     reviewLabel: 'Review:',
     enginesOf: ({ count, total }) => `${count} of ${total}`,
     enginesFinished: ({ count }) => count === 1 ? 'engine finished' : 'engines finished',
@@ -352,6 +357,7 @@ export const en: ReviewWalkthroughTranslations = {
         tabActivity: 'Activity',
         historyEarlierRuns: ({ count }) => count === 1 ? 'Also in 1 earlier run' : `Also in ${count} earlier runs`,
         seenBefore: 'Seen before',
+        findingPosition: ({ index, total }) => `${index} of ${total}`,
         historyEmpty: 'No earlier findings to show',
         newInRound: ({ round }) => `New in round ${round}`,
         stillThere: 'Still there',
@@ -410,7 +416,7 @@ export const en: ReviewWalkthroughTranslations = {
         workflowRun: 'Workflow run',
         reviewerRun: ({ count }) => `Reviewer ${count}`,
         noMachineTitle: 'Open the full changes on a Machine you can use',
-        noMachineReason: 'Each finding keeps its code excerpt on the Findings tab.',
+        noMachineReason: 'These changes are on a Machine that isn’t shared with you. Each finding’s code excerpt is below.',
     },
     generated: {
         continues: ({ model }) => `${model} · continues the review`,

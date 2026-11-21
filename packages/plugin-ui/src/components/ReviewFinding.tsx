@@ -144,11 +144,12 @@ export function HappierReviewFindingBody(props: HappierReviewFindingBodyProps) {
       </View> : null}
       {props.extensions}
       {props.seenBefore}
-      <View testID={`review-finding-conversation:${rowId}`} style={styles.section}>
+      {/* A finding nobody can talk about yet (no reviewers named, no thread, nowhere to ask) draws no empty heading. */}
+      {props.reviewers || props.conversation ? <View testID={`review-finding-conversation:${rowId}`} style={styles.section}>
         {heading(props.labels.conversation)}
         {props.reviewers}
         {props.conversation}
-      </View>
+      </View> : null}
     </View>
   );
 }

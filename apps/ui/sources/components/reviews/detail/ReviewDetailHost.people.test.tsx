@@ -32,9 +32,11 @@ describe('Review page people', () => {
     const round2 = projectPeople({ human, round: 2, names: null, viewerAccountId: 'me' });
     expect(round2?.participants.map(person => [person.id, person.state, person.qualifier ?? null])).toEqual([
       ['mika-2', 'reviewWalkthrough.detail.askedAgain', null],
-      ['me-2', 'reviewWalkthrough.detail.requestedFromYou', 'reviewWalkthrough.detail.optional'],
+      // The row's "Waiting for you" says it once; the viewer's own entry does not repeat it.
+      ['me-2', null, 'reviewWalkthrough.detail.optional'],
     ]);
     expect(round2?.status).toBe('waiting');
+    expect(round2?.detail).toBe('reviewWalkthrough.detail.waitingForYou');
   });
 
   it('has no people row for a round nobody was asked to review', () => {

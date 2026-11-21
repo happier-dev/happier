@@ -90,7 +90,8 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
     if (excerpts.length === 0) return null;
     return <View testID="review-changes-sealed-excerpts" style={excerptStyles.list}>
         {excerpts.map(({ comment, snapshot }) => {
-            const title = splitReviewCommentBody(resolveReviewCommentBodyText(comment.body, labels)).title;
+            // A finding's own title names its excerpt; a plain comment falls back to its body's title line.
+            const title = comment.finding?.title ?? splitReviewCommentBody(resolveReviewCommentBodyText(comment.body, labels)).title;
             const path = 'filePath' in comment.anchor ? comment.anchor.filePath : null;
             const line = 'startLine' in comment.anchor ? comment.anchor.startLine : null;
             return <View key={comment.id} style={excerptStyles.item}>
@@ -116,7 +117,7 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
 }
 
 /** The round's changes are on a Machine this viewer can't reach: say where to open them, then the excerpts. */
-function ReviewChangesUnavailable(props: Pick<ReviewChangesHostProps, 'comments' | 'onOpenComment'> & Readonly<{ reason: string | null }>) {
+export function ReviewChangesUnavailable(props: Pick<ReviewChangesHostProps, 'comments' | 'onOpenComment'> & Readonly<{ reason: string | null }>) {
     return <View style={[excerptStyles.list, excerptStyles.inset]}>
         <SurfaceStateCard testID="review-changes-unavailable" kind="empty" layout="inline"
             title={t('reviewWalkthrough.detail.noMachineTitle')}

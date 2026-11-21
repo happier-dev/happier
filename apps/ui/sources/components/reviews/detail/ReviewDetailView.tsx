@@ -10,6 +10,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   PageHeader,
+  PageHeaderPlaceholder,
   type PageHeaderMetaFact,
   type PageHeaderPrimaryAction,
 } from '@/components/ui/layout/PageHeader';
@@ -148,14 +149,17 @@ export function ReviewDetailView(
       />
       <PageContentColumn style={styles.column}>
         {props.glance || props.quality || props.notice ? (
-          // The glance and its notice stand on the sections' sheet edge, not the column's.
+          // The glance stands on the sections' sheet edge; the notice line brings that edge itself, so both glyphs align.
           <View style={styles.lead}>
-            {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
-            {props.quality ? <ReviewQualityLines quality={props.quality} /> : null}
+            {props.glance || props.quality ? <View style={styles.leadInset}>
+              {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
+              {props.quality ? <ReviewQualityLines quality={props.quality} /> : null}
+            </View> : null}
             {props.notice ?? null}
           </View>
         ) : null}
-        {round ? (
+        {/* A round with nobody to name yet (no reviewers, no people) draws no empty section. */}
+        {round && round.groups.length > 0 ? (
           <ReviewDetailRoundSection
             round={round}
             rounds={props.rounds}
@@ -180,11 +184,6 @@ export function ReviewDetailView(
       </PageContentColumn>
     </ItemList>
   );
-}
-
-/** Page content that is not a section (a button, a state line) standing on the sections' sheet edge. */
-export function ReviewDetailInset(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
-  return <View style={styles.inset}>{props.children}</View>;
 }
 
 /** One verdict sentence, then its facts on one quiet line (lab glance; no stat strip). */
@@ -328,8 +327,14 @@ export function ReviewDetailState(
     reason?: string;
   }>,
 ): React.ReactElement {
+  // Loading keeps the page's header geometry (pending title), so it never reads as a Review with no findings.
   if (props.kind === 'loading')
-    return <View testID="review-detail:loading" style={styles.loading} />;
+    return (
+      <ItemList testID="review-detail:loading" pageColumn="wide">
+        <PageHeaderPlaceholder testID="review-detail:loading:header" />
+        <View style={styles.loading} />
+      </ItemList>
+    );
   return (
     <SurfaceStateCard
       testID={`review-detail:${props.kind}`}
@@ -355,13 +360,13 @@ const CONTENT_INSET_PX = resolveItemGroupContentHorizontalInsetPx();
 
 const styles = StyleSheet.create((theme) => ({
     column: { gap: theme.space.s16, paddingBottom: theme.space.s32 },
-    lead: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX, paddingTop: theme.space.s16 },
+    lead: { gap: theme.space.s8, paddingTop: theme.space.s16 },
+    leadInset: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX },
     quality: { gap: theme.space.s4 },
     qualityLine: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap' },
     qualityReviewer: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, minWidth: 0 },
     qualityReviewerScore: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'], flexShrink: 0 },
     qualityReviewerReason: { color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
-    inset: { paddingHorizontal: CONTENT_INSET_PX, alignItems: 'flex-start' },
     groupDetail: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
     participants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
     participant: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0 },

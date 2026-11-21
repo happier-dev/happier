@@ -7,6 +7,8 @@ import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding'
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { reviewFindingDecisionGlyph, type ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { Text } from '@/components/ui/text/Text';
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { Typography } from '@/constants/Typography';
@@ -23,6 +25,10 @@ export type ReviewSummaryRow = Readonly<{
   title: string;
   /** Who reported it, as the row's reviewer words ("Claude and Codex"). */
   reviewer: string;
+  /** Where it is ("SettingsModal.tsx:142"). */
+  location?: string | null;
+  /** Its decision, drawn as the row's status glyph like the Review page's rows. */
+  decision?: ReviewFindingDecision | 'undecided' | null;
   /** The transcript Find owner supplies stable block identities when this row is embedded there. */
   findBlockPrefix?: string;
 }>;
@@ -63,15 +69,21 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
   const rows = React.useMemo((): readonly HappierReviewSummaryRow[] => props.rows.map((row) => {
     const severityLabel = reviewSeverityLabel(row.severity);
     const find = row.findBlockPrefix;
+    const glyph = row.decision === undefined ? undefined
+      : <Icon name={reviewFindingDecisionGlyph(row.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
+    const place = row.location ? { location: find
+      ? <StructuredFindText blockId={`${find}:location`} text={row.location} numberOfLines={1} style={styles.rowLocation} />
+      : <Text numberOfLines={1} style={styles.rowLocation}>{row.location}</Text> } : {};
     // In a transcript the Find owner names each run of text, so a search can land on it.
     return find ? {
       rowId: row.rowId, severity: row.severity, accessibilityLabel: `${severityLabel}: ${row.title}`,
       severityLabel: <StructuredFindText blockId={`${find}:severity`} text={severityLabel} />,
       title: <StructuredFindText blockId={`${find}:title`} text={row.title} numberOfLines={1} style={styles.rowTitle} />,
       reviewer: <StructuredFindText blockId={`${find}:reviewer`} text={row.reviewer} numberOfLines={1} style={styles.rowReviewer} />,
+      glyph, ...place,
     } : { rowId: row.rowId, severity: row.severity, severityLabel, title: row.title, reviewer: row.reviewer,
-      accessibilityLabel: `${severityLabel}: ${row.title}` };
-  }), [props.rows]);
+      accessibilityLabel: `${severityLabel}: ${row.title}`, glyph, ...place };
+  }), [props.rows, theme.colors.text.secondary]);
   return (
     <HappierReviewSummary
       testID={props.testID ?? 'review-summary'}
@@ -96,7 +108,7 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
             <RoundButton testID="review-summary:implement" size="small" title={props.implement.label}
               loading={props.implement.busy} disabled={props.implement.busy} onPress={props.implement.onPress} />
           ) : null}
-          <TextLinkButton testID="review-summary:open" size="row" label={t('reviewWalkthrough.detail.openReview')}
+          <TextLinkButton testID="review-summary:open" size="row" tone="strong" label={t('reviewWalkthrough.detail.openReview')}
             onPress={props.onOpenReview} />
         </>
       )}
@@ -107,4 +119,5 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
 const styles = StyleSheet.create((theme) => ({
   rowTitle: { ...Typography.variant('body'), color: theme.colors.text.primary },
   rowReviewer: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
+  rowLocation: { ...Typography.variant('meta'), ...Typography.mono(), color: theme.colors.text.secondary, flexShrink: 1 },
 }));

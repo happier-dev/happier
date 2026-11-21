@@ -24,6 +24,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useWorkTheme } from '@/components/work/map/WorkMapView';
 import { Typography } from '@/constants/Typography';
 import type { ReviewHistorySnapshot } from '@/sync/store/domains/reviews/history';
+import { useArtifact } from '@/sync/store/hooks';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -77,7 +78,7 @@ export function ReviewFindingBody(
         textStyle={role === 'cause' ? finding.whyItMatters ? styles.cause : styles.impact : styles.prose} />}
       renderWhere={() => <ReviewFindingWhere finding={finding} rowId={props.rowId} />}
       notice={props.notice}
-      reviewers={<ReviewFindingReviewers reviewers={props.reviewers} />}
+      reviewers={props.reviewers.length > 0 ? <ReviewFindingReviewers reviewers={props.reviewers} /> : null}
       extensions={props.reviewContext && finding.extensions
         ? <ReviewFindingPluginContent {...props.reviewContext} extensions={finding.extensions} /> : null}
       seenBefore={props.seenBefore ? <ReviewFindingSeenBeforeHistory rowId={props.rowId} {...props.seenBefore} /> : null}
@@ -113,11 +114,16 @@ function ReviewFindingSeenBeforeHistory(props: ReviewFindingSeenBefore & Readonl
       style={{ height: Math.min(height, history.data.matches.length * PAGE_ROW_TOUCH_MIN_HEIGHT_PX) }}
       estimatedItemSize={PAGE_ROW_TOUCH_MIN_HEIGHT_PX}
       keyExtractor={match => `${match.reviewId}:${match.commentId}`}
-      renderItem={({ item: match }) => <Link testID={`review-finding-seen-link:${rowId}:${match.commentId}`}
-        href={props.href(match) as never} style={styles.cause}>
-        {t('reviewWalkthrough.fromReviewAt', { time: formatShortRelativeTime(match.createdAt) })}
-      </Link>} /> : null}
+      renderItem={({ item: match }) => <ReviewFindingSeenBeforeLink rowId={rowId} match={match} href={props.href(match)} />} /> : null}
   </View>;
+}
+
+/** One earlier appearance, named by its Review ("Also in Fix settings modal remount · 1d ago") when this device holds it. */
+function ReviewFindingSeenBeforeLink(props: Readonly<{ rowId: string; match: Readonly<{ reviewId: string; commentId: string; createdAt: number }>; href: string }>) {
+  const title = useArtifact(props.match.reviewId)?.title?.trim() || null;
+  return <Link testID={`review-finding-seen-link:${props.rowId}:${props.match.commentId}`} href={props.href as never} style={styles.cause}>
+    {t('reviewWalkthrough.alsoInReview', { title, time: formatShortRelativeTime(props.match.createdAt) })}
+  </Link>;
 }
 
 /** Where: the flagged lines with the suggested fix applied, or the place alone when no fix came with it. */

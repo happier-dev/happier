@@ -31,6 +31,7 @@ import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/s
 import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewSeverityLabel } from '@/components/sessions/reviews/findings/ReviewSeverity';
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
@@ -151,11 +152,24 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     ) : null;
 
     if (props.density === 'page') {
+        // The opened page row keeps its rare actions (Create task) behind one "…" beside the decision control,
+        // never in the body under the conversation (lab `detail-finding`).
+        const onCreateTask = props.onCreateTask;
+        const actions = onCreateTask ? (
+            <>
+                {props.taskScope ? <ReviewFindingTaskProjectionDemand scope={props.taskScope} /> : null}
+                <ItemRowActions title={finding.title} overflowOnly overflowTriggerTestID={`review-finding-actions:${rowId}`}
+                    actions={[{ id: `review-finding-task:${rowId}`, title: t('runPage.review.createTask'), icon: 'check-square',
+                        onPress: () => { void onCreateTask(rowId); } }]} />
+            </>
+        ) : null;
         return (
             <ReviewFindingPageRow
                 {...props}
-                decisionControl={decisionControl}
-                taskControl={taskControl}
+                decisionControl={actions ? (
+                    <View style={styles.pageControls}>{decisionControl}{actions}</View>
+                ) : decisionControl}
+                taskControl={null}
                 ask={ask}
             />
         );
@@ -246,7 +260,7 @@ function ReviewFindingUpdatedNotice(props: Readonly<{ rowId: string; finding: Re
     );
 }
 
-function decisionGlyph(decision: ReviewFindingDecision | 'undecided' | null) {
+export function reviewFindingDecisionGlyph(decision: ReviewFindingDecision | 'undecided' | null) {
     switch (decision) {
         case 'accept': return 'check-circle' as const;
         case 'reject': return 'minus-circle' as const;
@@ -280,14 +294,14 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
             askContext={props.askContext}
             onAsk={props.ask}
         />
-    ) : (
+    ) : props.threadEntries.length > 0 || (followUp !== null && !followUp.available) ? (
         <>
             {props.threadEntries.length > 0 ? <ReviewFindingThreadHistory entries={props.threadEntries} /> : null}
             {followUp !== null && !followUp.available ? (
                 <Text testID={`review-finding-ask-unavailable:${rowId}`} style={styles.note}>{followUp.reason}</Text>
             ) : null}
         </>
-    );
+    ) : null;
 
     return (
         <HappierReviewFinding
@@ -306,7 +320,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
             decision={props.decision === null ? null : { value: props.decision, label: reviewFindingDecisionLabel(props.decision) }}
             decisionEditable={props.decisionEditable}
             decisionControl={props.decisionControl}
-            decisionGlyph={<Icon name={decisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+            decisionGlyph={<Icon name={reviewFindingDecisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
             expanded={props.expanded}
             onToggleExpanded={onToggleExpanded}
             divided={props.divided}
@@ -430,6 +444,13 @@ const styles = StyleSheet.create((theme) => ({
     metaText: {
         color: theme.colors.text.secondary,
         ...Typography.variant('meta'),
+    },
+    pageControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        gap: theme.space.s8,
+        maxWidth: '100%',
     },
     decisionOpened: {
         alignSelf: 'flex-start',

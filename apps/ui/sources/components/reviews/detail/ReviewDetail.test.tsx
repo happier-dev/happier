@@ -90,7 +90,7 @@ describe('ReviewFindingsList', () => {
           const next = new Set(current);
           if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
           return next;
-        }) }} />;
+        }), active: true, onStart: () => {} }} />;
     }
     const screen = await renderScreen(<SelectedFindings />);
     try {

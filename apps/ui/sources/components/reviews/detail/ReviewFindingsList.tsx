@@ -25,6 +25,7 @@ import { t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
 export type ReviewFindingsListRow = Readonly<{
   rowId: string;
@@ -54,7 +55,12 @@ export function ReviewFindingsList(
   props: Readonly<{
     rows: readonly ReviewFindingsListRow[];
     renderRow: (rowId: string, divided: boolean) => React.ReactNode;
-    selection?: Readonly<{ selectedRowIds: ReadonlySet<string>; onToggle: (rowId: string) => void; disabled?: boolean }>;
+    /**
+     * Bulk selection (lab `detail-bulk`): at rest each row shows its status glyph only and the filter line carries
+     * "Select"; once `active`, each row gains its checkbox. The host owns the mode so its action bar can end it.
+     */
+    selection?: Readonly<{ selectedRowIds: ReadonlySet<string>; onToggle: (rowId: string) => void; disabled?: boolean;
+      active: boolean; onStart: () => void }>;
     /** Above the groups: the reviewers' open questions (structured answer cards). */
     before?: React.ReactNode;
     /** Below the groups: what the reviewers took as given, and anything not shown. */
@@ -112,7 +118,7 @@ export function ReviewFindingsList(
         REVIEW_SEVERITY_RANK[left] - REVIEW_SEVERITY_RANK[right],
     );
   }, [active, props.rows]);
-  const renderRow = (row: ReviewFindingsListRow, divided: boolean) => props.selection ? (
+  const renderRow = (row: ReviewFindingsListRow, divided: boolean) => props.selection?.active ? (
     <View style={styles.selectableRow}>
       <Pressable testID={`review-findings:select:${row.rowId}`} accessibilityRole="checkbox"
         accessibilityLabel={row.title ?? t('runPage.review.findings')} disabled={props.selection.disabled}
@@ -129,6 +135,7 @@ export function ReviewFindingsList(
   return (
     <View testID={props.testID ?? 'review-findings'} style={styles.list}>
       <View style={styles.filters}>
+      <View style={styles.filterTabs}>
       <SegmentedTabBar<DecisionFilter>
         role="radiogroup"
         presentation="pills"
@@ -139,6 +146,9 @@ export function ReviewFindingsList(
         testIDPrefix="review-findings:filters"
         accessibilityLabel={t('runPage.review.findings')}
       />
+      </View>
+      {props.selection && !props.selection.active ? <TextLinkButton testID="review-findings:select-mode" tone="strong"
+        label={t('sessionsList.selectionSelect')} onPress={props.selection.onStart} /> : null}
       </View>
       {props.before ?? null}
       <CorePluginUiPresentationScope>
@@ -162,9 +172,12 @@ export function ReviewFindingsList(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  list: { gap: theme.space.s16 },
-  // The filters stand on the sheets' edge, like the page lines above them.
-  filters: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
+  // The severity sections bring their own page section gap; the list adds none on top of it.
+  list: {},
+  // The filters stand on the sheets' edge, like the page lines above them; Select sits at the line's end.
+  filters: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', gap: theme.space.s12 },
+  filterTabs: { flexShrink: 1, minWidth: 0 },
   rows: { paddingHorizontal: theme.space.s16 },
   selectableRow: { flexDirection: 'row', alignItems: 'flex-start' },
   selectedContent: { flex: 1, minWidth: 0 },

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { ReviewFindingRow } from './ReviewFindingRow';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -21,8 +22,15 @@ it.each(['card', 'page'] as const)('offers the selected saved finding to Tasks f
         onAsk: async () => false,
         onCreateTask: async (rowId: string) => { selected.push(rowId); },
     };
+    const restoreGlobals = withPopoverWebGlobals();
     const screen = await renderScreen(<ReviewFindingRow {...props} />);
     try {
+        // A page row keeps Create task in its decision area's "…", never under the conversation.
+        if (density === 'page') {
+            expect(screen.findHostByTestId('review-finding-task:canonical-comment')).toBeNull();
+            await screen.pressByTestIdAsync('review-finding-actions:canonical-comment');
+            await act(async () => { reportPopoverContentLayout(screen, { width: 260, height: 120 }); });
+        }
         const create = screen.findAll(node => node.props.testID === 'review-finding-task:canonical-comment'
             && typeof node.props.onPress === 'function')[0];
         expect(create).toBeDefined();
@@ -34,5 +42,5 @@ it.each(['card', 'page'] as const)('offers the selected saved finding to Tasks f
         }
         await screen.update(<ReviewFindingRow {...props} onCreateTask={undefined} />);
         expect(screen.findHostByTestId('review-finding-task:canonical-comment')).toBeNull();
-    } finally { await screen.unmount(); }
+    } finally { await screen.unmount(); restoreGlobals(); }
 });

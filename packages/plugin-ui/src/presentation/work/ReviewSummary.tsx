@@ -3,11 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
-import {
-  HAPPIER_REVIEW_SEVERITY_METRICS,
-  HappierReviewSeveritySign,
-  type HappierReviewSeverity,
-} from '../status/ReviewSeverity.js';
+import type { HappierReviewSeverity } from '../status/ReviewSeverity.js';
 import { HappierFactLine } from './FactLine.js';
 import { resolveHappierWorkStatusWordColor } from './workStatus.js';
 import {
@@ -33,7 +29,9 @@ export function projectHappierReviewGlance(
   review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }> }> | null,
   words: Readonly<{
     running: string; failed: string; noFindings: string; allDecided: string;
-    toDecide: (count: number) => string; findingsCount: (count: number) => string;
+    toDecide: (count: number) => string;
+    /** The total as a fact; omitted where the counts live elsewhere (the Review page's filter chips). */
+    findingsCount?: (count: number) => string;
   }>,
 ): HappierReviewGlance | null {
   const state = round?.state ?? review?.state;
@@ -44,9 +42,10 @@ export function projectHappierReviewGlance(
   const { total, needsDecision } = review.counts;
   const facts = round?.summary ? [round.summary] : [];
   if (total === 0) return { sentence: words.noFindings, tone: 'quiet', facts };
+  // The total is a fact only when it says something the sentence does not ("1 to decide" of 1 is one fact).
   if (needsDecision > 0) return { sentence: words.toDecide(needsDecision), tone: 'attention',
-    facts: [words.findingsCount(total), ...facts] };
-  return { sentence: words.allDecided, tone: 'quiet', facts: [words.findingsCount(total), ...facts] };
+    facts: [...(words.findingsCount && total !== needsDecision ? [words.findingsCount(total)] : []), ...facts] };
+  return { sentence: words.allDecided, tone: 'quiet', facts: [...(words.findingsCount ? [words.findingsCount(total)] : []), ...facts] };
 }
 
 export type HappierReviewSummaryRow = Readonly<{
@@ -58,6 +57,10 @@ export type HappierReviewSummaryRow = Readonly<{
   title: ReactNode;
   /** Who reported it ("Claude and Codex"); a string or the host's own text. */
   reviewer: ReactNode;
+  /** Where it is ("SettingsModal.tsx:142"), drawn in the row's facts after the severity word. */
+  location?: ReactNode;
+  /** The row's decision glyph (the host's ink icon), in the leading column like the Review page's rows. */
+  glyph?: ReactNode;
   /** The row's name for assistive technology when `title` is a node. */
   accessibilityLabel?: string;
 }>;
@@ -93,11 +96,12 @@ const styles = StyleSheet.create({
   status: { marginLeft: 'auto' },
   sentence: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  rows: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, gap: 4 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minWidth: 0 },
-  severity: { width: HAPPIER_REVIEW_SEVERITY_METRICS.columnPx, flexShrink: 0 },
-  rowTitle: { flex: 1, minWidth: 0 },
-  rowReviewer: { flexShrink: 0, maxWidth: '35%' },
+  rows: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, gap: HAPPIER_PAGE_METRICS.rowCompactGapPx },
+  // Two lines like the Review page's rows (lab `session-card`): the title, then severity · place · who found it.
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 },
+  glyph: { paddingTop: 2, flexShrink: 0 },
+  rowBody: { flex: 1, minWidth: 0, gap: 2 },
+  rowFacts: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 2, minWidth: 0 },
   foot: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -215,24 +219,21 @@ export const HappierReviewSummary = memo(function HappierReviewSummary(
       {props.rows.length > 0 ? (
         <View style={[styles.rows, { borderTopColor: theme.colors.border }]}>
           {props.rows.map((row) => {
+            // The severity word stays ink (colour means state, DESIGN): the row's facts, not a red sign.
+            const fact = (value: ReactNode) => typeof value === 'string'
+              ? <Text role="rowLine" numberOfLines={1} style={{ color: theme.colors.secondaryText }}>{value}</Text> : value;
             const content = (
               <>
-                <View style={styles.severity}>
-                  <HappierReviewSeveritySign
-                    severity={row.severity}
-                    label={row.severityLabel}
-                    theme={theme.base}
-                  />
-                </View>
-                <View style={styles.rowTitle}>
+                {row.glyph ? <View style={styles.glyph}>{row.glyph}</View> : null}
+                <View style={styles.rowBody}>
                   {typeof row.title === 'string' ? (
                     <Text role="rowTitle" numberOfLines={1} style={{ color: theme.colors.text }}>{row.title}</Text>
                   ) : row.title}
-                </View>
-                <View style={styles.rowReviewer}>
-                  {typeof row.reviewer === 'string' ? (
-                    <Text role="rowLine" numberOfLines={1} style={{ color: theme.colors.secondaryText }}>{row.reviewer}</Text>
-                  ) : row.reviewer}
+                  <View style={styles.rowFacts}>
+                    {fact(row.severityLabel)}
+                    {row.location ? fact(row.location) : null}
+                    {fact(row.reviewer)}
+                  </View>
                 </View>
               </>
             );

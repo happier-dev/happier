@@ -5,7 +5,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ReviewVerdictKindV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import {
@@ -116,10 +115,13 @@ export function ReviewSubmitPanel(
           ) : (
             <View style={styles.grow} />
           )}
-          <TextLinkButton
+          {/* The secondary beside the primary, as the dialog footers draw it: one height, one baseline. */}
+          <RoundButton
             testID="review-submit:cancel"
-            size="meta"
-            label={t('common.cancel')}
+            size="small"
+            display="inverted"
+            title={t('common.cancel')}
+            disabled={busy}
             onPress={props.onCancel}
           />
           <RoundButton
@@ -141,7 +143,7 @@ export function ReviewSubmitPanel(
 const styles = StyleSheet.create((theme) => ({
   round: { color: theme.colors.text.secondary },
   body: { padding: theme.space.s16, gap: theme.space.s12 },
-  foot: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s16 },
+  foot: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   caption: { flex: 1, color: theme.colors.text.secondary },
   grow: { flex: 1 },
 }));

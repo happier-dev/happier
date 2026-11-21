@@ -70,6 +70,40 @@ it('mounts semantic finding selection, filter, tab and open commands against the
   } finally { await screen.unmount(); }
 });
 
+it('leads with one Implement primary while findings await, and keeps selection behind Select', async () => {
+  const reviewId = 'one-primary-review';
+  const pending = buildReviewCommentFixture({ id: 'pending-root', threadId: 'pending-root', reviewId,
+    accountId: 'alice', state: 'open', roundOrdinal: 1, findingIdentity: '6'.repeat(64),
+    finding: { id: 'pending-finding', title: 'Pending finding', summary: 'Waiting for a decision', severity: 'high', category: 'correctness' } });
+  const accepted = buildReviewCommentFixture({ id: 'accepted-root', threadId: 'accepted-root', reviewId,
+    accountId: 'alice', state: 'open', reviewTriageStatus: 'accept', roundOrdinal: 1, findingIdentity: '7'.repeat(64),
+    finding: { id: 'accepted-finding', title: 'Accepted finding', summary: 'To implement', severity: 'high', category: 'correctness' } });
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://one-primary-review.test', request: async url => {
+    if (new URL(String(url)).pathname === '/v1/reviews/comments') return Response.json({ items: [pending, accepted].map(storePlainReviewCommentFixture), cursor: null });
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'One primary', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'One primary' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { ReviewFindingRow } = await import('@/components/sessions/reviews/findings/ReviewFindingRow');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  try {
+    await vi.waitFor(() => expect(screen.findAllByType(ReviewFindingRow)).toHaveLength(2));
+    // One primary: the header names the fixes; no second Implement inside the tab, New round waits in "…".
+    expect(screen.findByType(ReviewDetailView).props.primaryAction?.title).toBe(t('runPage.review.implementFixes', { count: 1 }));
+    expect(screen.findHostByTestId('review-detail:implement')).toBeNull();
+    // At rest each finding shows its status glyph only; Select reveals the checkboxes.
+    expect(screen.findHostByTestId('review-findings:select:pending-root')).toBeNull();
+    await screen.pressByTestIdAsync('review-findings:select-mode');
+    expect(screen.findHostByTestId('review-findings:select:pending-root')?.props.accessibilityState.checked).toBe(false);
+  } finally { await screen.unmount(); }
+});
+
 it.each([
   { decision: 'needs_refinement', expected: 'undecided' },
   { decision: 'defer', expected: 'defer' },
@@ -116,6 +150,7 @@ it.each([
   const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
   try {
     await vi.waitFor(() => expect(screen.findAllByType(ReviewFindingRow)).toHaveLength(2));
+    await screen.pressByTestIdAsync('review-findings:select-mode');
     await screen.pressByTestIdAsync('review-findings:select:selected');
     await screen.pressByTestIdAsync(`review-detail:bulk:${decision}`);
     await vi.waitFor(() => expect(stored.get('selected')!.structural.state).toBe('open'));

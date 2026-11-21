@@ -33,7 +33,6 @@ import { useReviewQuestionRuns } from './useReviewQuestionRuns';
 import { ReviewFindingsList } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -47,6 +46,9 @@ import { reviewSubjectLabel } from '../list/useReviewsCollectionView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -59,7 +61,6 @@ import { ReviewPagePluginContent } from '../plugins/ReviewPluginContent';
 import type { PluginReviewPageSelection } from '@/components/plugins/pages/pluginPageRoute';
 
 import {
-  ReviewDetailInset,
   ReviewDetailState,
   ReviewDetailView,
   type ReviewDetailParticipant,
@@ -165,8 +166,9 @@ export function projectPeople(input: Readonly<{
     const verdict = accountId ? verdicts.find(item => item.accountId === accountId) : undefined;
     const earlier = accountId ? input.human.verdicts.some(item => item.accountId === accountId && item.roundOrdinal < input.round) : false;
     const isViewer = accountId !== null && accountId === input.viewerAccountId;
+    // A viewer the round waits for reads it once, on the row ("Waiting for you"), not again beside "You".
     const state = verdict ? t(VERDICT_KEYS[verdict.verdict])
-      : isViewer && waitingForViewer ? t('reviewWalkthrough.detail.requestedFromYou')
+      : isViewer && waitingForViewer ? null
         : earlier ? t('reviewWalkthrough.detail.askedAgain') : null;
     return {
       id: request.id,
@@ -175,7 +177,7 @@ export function projectPeople(input: Readonly<{
         request.needsAccess ? t('reviewWalkthrough.detail.needsAccess') : null) || null,
       body: verdict?.body,
       state,
-      tone: (verdict?.verdict === 'request_changes' || (isViewer && waitingForViewer && !verdict)) ? 'attention' : null,
+      tone: verdict?.verdict === 'request_changes' ? 'attention' : null,
     };
   });
   for (const verdict of verdicts) {
@@ -240,6 +242,9 @@ export function ReviewDetailHost(props: Readonly<{
   const [selection, setSelection] = React.useState<Readonly<{ key: string; ids: ReadonlySet<string> }>>({ key: selectionKey, ids: NO_SELECTED_FINDINGS });
   const selectedFindingIds = selection.key === selectionKey ? selection.ids : NO_SELECTED_FINDINGS;
   const selectedRowIds = React.useMemo(() => [...selectedFindingIds], [selectedFindingIds]);
+  // Selection is a mode behind Select (lab `detail-bulk`): rows show only their status glyph until it starts.
+  const [selectingKey, setSelectingKey] = React.useState<string | null>(null);
+  const selecting = selectingKey === selectionKey || selectedRowIds.length > 0;
   const principals = React.useMemo(() => humanPrincipals(human), [human]);
   const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, scope?.serverId ?? null);
   const humanActions = useReviewHumanActions(scope, human);
@@ -345,13 +350,23 @@ export function ReviewDetailHost(props: Readonly<{
     if (destination?.kind === 'existingSession') findings.implement.runInSession(destination.sessionId);
     else if (destination?.kind === 'newSession') await findings.implement.runInNewSession();
   }, [findings.implement, scope]);
-  const toggleFinding = React.useCallback((commentId: string) => { void viewCommands.invoke('review.detail.open_finding', { commentId: openFinding === commentId ? null : commentId }); }, [openFinding, viewCommands]);
+  // A phone pushes an opened finding as its own page (lab `detail-finding-390`: back to the Review, "High · 3 of 6");
+  // wider layouts open it in place. On the pushed page the row stays open, and Back is the way out.
+  const phone = useDeviceType() === 'phone';
+  const pushedFindingId = phone && props.focusThreadId && findingById.has(props.focusThreadId) ? props.focusThreadId : null;
+  const toggleFinding = React.useCallback((commentId: string) => {
+    if (pushedFindingId === commentId) return;
+    if (phone && openFinding !== commentId) { router.push(artifactViewRoute(artifact.id, { thread: commentId }) as never); return; }
+    void viewCommands.invoke('review.detail.open_finding', { commentId: openFinding === commentId ? null : commentId });
+  }, [artifact.id, openFinding, phone, pushedFindingId, router, viewCommands]);
   const changeSelection = React.useCallback((rowIds: readonly string[]) => { void viewCommands.invoke('review.detail.selection', { rowIds: [...rowIds] }); }, [viewCommands]);
   const toggleSelection = React.useCallback((id: string) => {
     const next = new Set(selectedFindingIds);
     if (next.has(id)) next.delete(id); else next.add(id);
     changeSelection([...next]);
   }, [changeSelection, selectedFindingIds]);
+  const startSelecting = React.useCallback(() => setSelectingKey(selectionKey), [selectionKey]);
+  const endSelecting = React.useCallback(() => { setSelectingKey(null); changeSelection([]); }, [changeSelection]);
   const bulkDecide = React.useCallback(async (decision: ReviewTriageStatus) => {
     await findings.onDecideMany(selectedRowIds, decision);
   }, [findings.onDecideMany, selectedRowIds]);
@@ -378,6 +393,39 @@ export function ReviewDetailHost(props: Readonly<{
 
   const canSubmit = Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
   const canEditPeople = canEdit && human?.roundOrdinal === selectedRound && setReviewers !== undefined;
+  // One primary (lab `detail-findings`): Submit review when the Review asks it of you; otherwise, until the round is
+  // settled (nothing left to decide or implement), "Implement N fixes"; New round leads only once it is settled.
+  const implementAction = canEdit && (findings.implement.count > 0 || findings.rows.some(row => row.decision === 'undecided')) ? {
+    title: t('runPage.review.implementFixes', { count: findings.implement.count }), testID: 'review-detail:implement-primary',
+    disabled: findings.implement.destinationDisabled, loading: findings.implement.busy, onPress: implementFindings } : null;
+  const newRoundAction = newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null;
+  const primaryAction = canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
+    : implementAction ?? newRoundAction;
+  const renderFindingRow = (rowId: string, divided: boolean) => {
+    const row = findingById.get(rowId);
+    return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
+      reviewContext={scope ? { reviewId: record.reviewId, commentId: row.rowId, serverId: scope.serverId } : undefined}
+      seenBefore={openFinding === row.rowId ? { history: seenBefore, onRetry: () => void seenBefore.refresh(),
+        href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
+      attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
+      decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
+      onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
+      expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
+      onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
+      facts={reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound,
+        scopeAttribution: commentById.get(row.rowId)?.scopeAttribution })} /> : null;
+  };
+  if (pushedFindingId) {
+    const index = findings.rows.findIndex(row => row.rowId === pushedFindingId);
+    return (
+      <ItemList testID="review-detail:finding-page" pageColumn="wide">
+        <PageHeader title={record.title || t('detailsSurface.review.title')} testID="review-detail:finding-page:header"
+          meta={[{ key: 'position', text: t('reviewWalkthrough.detail.findingPosition', { index: index + 1, total: findings.rows.length }) }]} />
+        {/* The finding stands on the page's edge, without a sheet; its own row already names the severity. */}
+        <ItemGroup header="none" surface="none">{renderFindingRow(pushedFindingId, false)}</ItemGroup>
+      </ItemList>
+    );
+  }
   const meta = [
     ...(review ? [{ key: 'subject', text: reviewSubjectLabel(review.subjectKind) }] : []),
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
@@ -390,8 +438,7 @@ export function ReviewDetailHost(props: Readonly<{
     <ReviewDetailView
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
-      primaryAction={canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
-        : newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null}
+      primaryAction={primaryAction}
       notice={scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
         || (humanActions.approval.approvalPending && humanActions.approval.approvalId)) ? <>{newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
@@ -399,13 +446,15 @@ export function ReviewDetailHost(props: Readonly<{
         {humanActions.approval.approvalPending && humanActions.approval.approvalId && scope ? <ActionApprovalPendingNotice
           testID="review-detail:people-approval" message={t('approvals.title')}
           onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(humanActions.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}</> : null}
-      menu={[...(canSubmit && newRound.available ? [{ id: 'new-round', testID: 'review-detail:new-round',
-        title: t('reviewWalkthrough.detail.newRound'), onSelect: newRound.open }] : []),
+      menu={[...(canSubmit && implementAction ? [{ id: 'implement', testID: 'review-detail:implement-menu', title: implementAction.title,
+        disabled: implementAction.disabled, onSelect: implementFindings }] : []),
+        ...(newRoundAction && primaryAction !== newRoundAction ? [{ id: 'new-round', testID: 'review-detail:new-round',
+        title: newRoundAction.title, onSelect: newRound.open }] : []),
         ...(canEditPeople ? [{ id: 'edit-reviewers', testID: 'review-detail:edit-reviewers', title: t('reviewWalkthrough.detail.people'),
           disabled: !humanActions.ready, onSelect: () => setPeopleOpen(true) }] : []),
         { id: 'copy-fix-prompt', testID: 'review-detail:copy-fix-prompt', title: t('reviewWalkthrough.detail.copyFixPrompt'),
         disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } }, ...menu]}
-      glance={projectReviewGlance(round, review)}
+      glance={projectReviewGlance(round, review, { countsOnChips: true })}
       quality={projectReviewRoundQualityV1(round, qualityAggregation)}
       rounds={rounds}
       selectedRound={selectedRound}
@@ -422,27 +471,11 @@ export function ReviewDetailHost(props: Readonly<{
           .map(request => ({ principal: request.principal, required: request.required }))}
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
-        {canEdit && findings.rows.length > 0 && selectedRowIds.length === 0 ? <ReviewDetailInset><RoundButton testID="review-detail:implement" size="small"
-          title={t('runPage.review.implementFixes', { count: findings.implement.count })}
-          disabled={findings.implement.destinationDisabled} loading={findings.implement.busy}
-          onPress={implementFindings} /></ReviewDetailInset> : null}
         {comments.status === 'idle' || comments.status === 'loading' ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
           : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findings.rows.map(row => ({ rowId: row.rowId, title: row.finding.title, severity: row.finding.severity, decision: row.decision }))}
-              selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy } : undefined}
-              renderRow={(rowId, divided) => {
-                const row = findingById.get(rowId);
-                return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
-                  reviewContext={scope ? { reviewId: record.reviewId, commentId: row.rowId, serverId: scope.serverId } : undefined}
-                  seenBefore={openFinding === row.rowId ? { history: seenBefore, onRetry: () => void seenBefore.refresh(),
-                    href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
-                  attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
-                  decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
-                  onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
-                  expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
-                  onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
-                  facts={reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound,
-                    scopeAttribution: commentById.get(row.rowId)?.scopeAttribution })} /> : null;
-              }} /> : null}
+              selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
+                active: selecting, onStart: startSelecting } : undefined}
+              renderRow={renderFindingRow} /> : null}
         {findings.unavailableFindings.map(comment => <SurfaceStateCard key={comment.id}
           testID={`review-detail:unavailable-finding:${comment.id}`} kind="warning" size="line"
           title={t(comment.flags.redacted || comment.tombstone ? 'files.reviewComments.durable.redacted' : 'files.reviewComments.durable.contentUnavailable')} />)}
@@ -450,19 +483,19 @@ export function ReviewDetailHost(props: Readonly<{
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}
           label={t(comments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')} onPress={() => void comments.loadMore()} /> : null}
-        {canEdit ? <SelectionActionBar testID="review-detail:selection" visible={selectedRowIds.length > 0}
+        {canEdit ? <SelectionActionBar testID="review-detail:selection" visible={selecting}
           label={t('sessionsList.selectionSelectedCount', { count: selectedRowIds.length })}
-          dismiss={{ label: t('common.cancel'), presentation: 'glyph', disabled: bulkBusy, onPress: () => changeSelection([]) }}
+          dismiss={{ label: t('common.cancel'), presentation: 'glyph', disabled: bulkBusy, onPress: endSelecting }}
           actions={[
             { id: 'implement', label: t('runPage.review.implementFixes', { count: findings.implement.count }), emphasis: 'primary',
               testID: 'review-detail:bulk:implement', disabled: bulkBusy || findings.implement.destinationDisabled,
               busy: findings.implement.busy, onPress: () => { void implementFindings(); } },
             ...REVIEW_FINDING_DECISIONS.map(decision => ({ id: decision, label: reviewFindingDecisionLabel(decision), emphasis: 'secondary' as const,
-              testID: `review-detail:bulk:${decision}`, disabled: bulkBusy, onPress: () => { void bulkDecide(decision); } })),
+              testID: `review-detail:bulk:${decision}`, disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide(decision); } })),
             { id: 'needs_refinement', label: reviewFindingDecisionLabel('undecided'), emphasis: 'secondary',
-              testID: 'review-detail:bulk:needs_refinement', disabled: bulkBusy, onPress: () => { void bulkDecide('needs_refinement'); } },
+              testID: 'review-detail:bulk:needs_refinement', disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide('needs_refinement'); } },
             { id: 'create-task', label: t('runPage.review.createTask'), emphasis: 'secondary', placement: 'menu',
-              testID: 'review-detail:bulk:create-task', disabled: bulkBusy,
+              testID: 'review-detail:bulk:create-task', disabled: bulkBusy || selectedRowIds.length === 0,
               onPress: () => { void findings.createTask(selectedRowIds); } },
           ]} /> : null}
         {questionRuns.state.kind === 'loading' && questionRuns.members.length === 0
@@ -506,7 +539,7 @@ export function ReviewDetailHost(props: Readonly<{
 }
 
 /** The round's runs, each opening its own result page (where its findings are decided today). */
-function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scope: ServerAccountScope | null }>) {
+export function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scope: ServerAccountScope | null }>) {
   const router = useRouter();
   const { scope } = props;
   if (props.round.runs.length === 0) {

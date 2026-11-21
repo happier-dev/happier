@@ -587,7 +587,7 @@ describe('Artifact composed view reads', () => {
         const screen = await renderScreen(<ArtifactView artifactId={reviewId}
             artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />);
         try {
-            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.requestedFromYou'));
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.waitingForYou'));
             expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.verdictApproved');
             expect(screen.getTextContent()).not.toContain('The original round is ready to merge.');
             expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
@@ -597,12 +597,12 @@ describe('Artifact composed view reads', () => {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('review-detail:group:people')).not.toBeNull());
             expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.you');
             expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.verdictApproved');
-            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.requestedFromYou');
+            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.waitingForYou');
             expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.optional');
             expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
                 .not.toBe('reviewWalkthrough.detail.submitReview');
             await screen.pressByTestIdAsync('review-detail:round:3');
-            expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.requestedFromYou');
+            expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.waitingForYou');
             expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.verdictApproved');
             expect(screen.getTextContent()).not.toContain('The original round is ready to merge.');
             expect(served.requests.filter(request => request.method !== 'GET' && request.path.includes('/verdict'))).toEqual([]);
@@ -872,8 +872,8 @@ describe('Artifact composed view reads', () => {
         await screen.unmount();
     });
     it.each([
-        { state: 'completed', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceToDecide(count=2)', countFact: true },
-        { state: 'completed', total: 7, needsDecision: 0, sentence: 'reviewWalkthrough.detail.glanceAllDecided', countFact: true },
+        { state: 'completed', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceToDecide(count=2)', countFact: false },
+        { state: 'completed', total: 7, needsDecision: 0, sentence: 'reviewWalkthrough.detail.glanceAllDecided', countFact: false },
         { state: 'completed', total: 0, needsDecision: 0, sentence: 'reviewWalkthrough.detail.glanceNoFindings', countFact: false },
         { state: 'running', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceRunning', countFact: false },
         { state: 'failed', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceFailed', countFact: false },
@@ -997,9 +997,11 @@ describe('Artifact composed view reads', () => {
             await waitForHomeGovernance(() => expect(transitions).toHaveLength(1));
             expect(transitions[0]).toMatchObject({ reviewId, expectedServerRevision: 1, reviewTriageStatus: 'accept' });
             expect(served.requests.filter(request => request.path.includes('/execution-runs'))).toHaveLength(0);
-            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:implement')?.props.disabled).toBe(false));
+            // Implement fixes is the page's one primary (header), not a second button inside the tab.
+            const implement = () => screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction;
+            await waitForHomeGovernance(() => expect(implement()).toMatchObject({ testID: 'review-detail:implement-primary', disabled: false }));
             vi.mocked(Modal.show).mockReturnValue('native-fix-destination');
-            await screen.pressByTestIdAsync('review-detail:implement');
+            await act(async () => { await implement().onPress(); });
             const chooser = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
             const chooserProps = chooser?.props;
             if (!chooserProps || !('onResolve' in chooserProps) || typeof chooserProps.onResolve !== 'function') throw new Error('Missing Session chooser');
@@ -1011,7 +1013,7 @@ describe('Artifact composed view reads', () => {
                 ]));
             expect(await loadPendingOutboxForSession('run-native', scope)).toEqual([]);
             reviewDestinationNavigation.push.mockClear();
-            await screen.pressByTestIdAsync('review-detail:implement');
+            await act(async () => { await implement().onPress(); });
             const newChooserProps = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props;
             if (!newChooserProps || !('onResolve' in newChooserProps) || typeof newChooserProps.onResolve !== 'function') throw new Error('Missing New Session chooser');
             const resolveNewDestination = newChooserProps.onResolve;

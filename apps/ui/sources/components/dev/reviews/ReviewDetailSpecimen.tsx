@@ -3,7 +3,10 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
-import type { ReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewArtifactV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewRoundRuns } from '@/components/reviews/detail/ReviewDetailHost';
+import { ReviewChangesUnavailable } from '@/components/reviews/ReviewChangesHost';
+import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import {
@@ -13,6 +16,7 @@ import {
   type ReviewDetailTabId,
 } from '@/components/reviews/detail/ReviewDetailView';
 import { ReviewFindingsList } from '@/components/reviews/detail/ReviewFindingsList';
+import { formatReviewFindingLocation } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { showReviewNewRoundDialog } from '@/components/reviews/detail/ReviewNewRoundDialog';
 import { ReviewSubmitPanel } from '@/components/reviews/detail/ReviewSubmitPanel';
 import { ReviewSummary } from '@/components/reviews/summary/ReviewSummary';
@@ -158,19 +162,6 @@ const FIXTURES: readonly Fixture[] = [
   },
 ];
 
-/** The Host's combined score as it reaches the page (`quality-lowest`, `quality-median`); fixture copy is the lab's. */
-const QUALITY_SCENES: Readonly<Record<string, ReviewRoundQualityV1>> = {
-  'quality-lowest': { aggregation: 'lowest', score: 3, reviewers: [
-    { reviewerId: 'claude', score: 4, rationale: 'Clean backoff with a cap and a give-up path; tests cover the main cases.' },
-    { reviewerId: 'codex', score: 3, rationale: 'The backoff is sound; the jitter clamp is untested and can push the first retry past 2 s.' },
-  ] },
-  'quality-median': { aggregation: 'median', score: 3, reviewers: [
-    { reviewerId: 'claude', score: 4, rationale: 'Clean backoff with a cap and a give-up path; tests cover the main cases.' },
-    { reviewerId: 'codex', score: 3, rationale: 'The backoff is sound; the jitter clamp is untested and can push the first retry past 2 s.' },
-    { reviewerId: 'deepsec', score: 2, rationale: 'The retry loop has no upper bound when the clock jumps backwards.' },
-  ] },
-};
-
 function agentMark(agentId: string) {
   return <AgentIcon agentId={agentId} size={ICON_SIZE.sm} />;
 }
@@ -219,7 +210,6 @@ function roundOf(
         id: 'agents',
         title: 'Step 2 · Agents double-check findings',
         status: 'done',
-        detail: 'Verified 4 of 6',
         participants: [
           {
             id: 'claude',
@@ -266,9 +256,8 @@ function roundOf(
             mark: personMark('you', 'LB'),
             state:
               people === 'waiting'
-                ? t('reviewWalkthrough.detail.requestedFromYou')
+                ? null
                 : t('reviewWalkthrough.detail.verdictApproved'),
-            tone: people === 'waiting' ? 'attention' : null,
           },
           {
             id: 'ari',
@@ -282,6 +271,38 @@ function roundOf(
     ],
   };
 }
+
+function sealedExcerpt(input: Readonly<{ id: string; title: string; severity: ReviewFinding['severity']; filePath: string;
+  line: number; before: string[]; selected: string[]; after: string[] }>) {
+  return buildReviewCommentFixture({
+    id: input.id, reviewId: 'specimen-review', roundOrdinal: 1, findingSeverity: input.severity,
+    body: input.title,
+    finding: { id: input.id, title: input.title, summary: input.title, severity: input.severity, category: 'correctness' },
+    anchor: { kind: 'range', filePath: input.filePath, startLine: input.line, endLine: input.line },
+    snapshot: { kind: 'text', selectedLines: input.selected, beforeContext: input.before, afterContext: input.after,
+      selectedLinesHash: 'h', contextWindowHash: 'h', capturedAt: 1, fileLength: 200, source: 'committed', isUncommitted: false },
+  });
+}
+
+/** Each finding's sealed excerpt, as the round's comments keep it when its Machine isn't shared (lab `detail-nomachine`). */
+const NO_MACHINE_COMMENTS = [
+  sealedExcerpt({ id: 'f1', title: 'Settings modal remounts on every tab switch', severity: 'blocker',
+    filePath: 'components/settings/SettingsModal.tsx', line: 142, before: ['    <SettingsSheet'],
+    selected: ['      key={`${route}-${activeTab}`}'], after: ['      tab={activeTab}'] }),
+  sealedExcerpt({ id: 'f2', title: 'Unsaved draft is lost when the modal closes during save', severity: 'blocker',
+    filePath: 'components/settings/useSettingsDraft.ts', line: 58, before: ['  if (closing) {'],
+    selected: ['    setDraft(null);'], after: ['  }'] }),
+];
+
+/** The round's runs as the record keeps them: the Runs tab and its count read the same list. */
+const SPECIMEN_RUNS_ROUND: ReviewArtifactV1['rounds'][number] = {
+  ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['claude', 'codex', 'coderabbit'],
+  runs: [
+    { kind: 'execution', runId: 'run-claude', machineId: 'machine-1', sessionId: 'session-1' },
+    { kind: 'execution', runId: 'run-codex', machineId: 'machine-1', sessionId: 'session-1' },
+    { kind: 'workflow', runId: 'run-workflow' },
+  ],
+};
 
 export function ReviewDetailSpecimen(
   props: Readonly<{ scene: string | null }>,
@@ -301,6 +322,7 @@ export function ReviewDetailSpecimen(
     ),
   );
   const [submitOpen, setSubmitOpen] = React.useState(scene === 'submit');
+  const [selectedIds, setSelectedIds] = React.useState<ReadonlySet<string> | null>(null);
   const rounds = React.useMemo(
     () =>
       scene === 'round2'
@@ -403,11 +425,12 @@ export function ReviewDetailSpecimen(
               title: t('reviewWalkthrough.detail.submitReview'),
               onPress: () => setSubmitOpen(true),
             }
-          : {
-              title: t('reviewWalkthrough.detail.newRound'),
-              onPress: openNewRound,
-              presentation: 'secondary',
-            }
+          : pending > 0 || accepted > 0
+            ? {
+                title: t('runPage.review.implementFixes', { count: accepted }),
+                onPress: () => undefined,
+              }
+            : { title: t('reviewWalkthrough.detail.newRound'), onPress: openNewRound }
       }
       menu={[
         {
@@ -419,20 +442,15 @@ export function ReviewDetailSpecimen(
       glance={{
         sentence: '2 blockers found',
         tone: 'attention',
-        facts: [
-          `${pending} pending of ${rows.length}`,
-          `${accepted} to implement`,
-          'Verified 4 of 6 by the double-check',
-        ],
+        // Plan C: the counts live on the filter chips; the facts line carries verification only.
+        facts: ['Verified 4 of 6 by the double-check'],
       }}
-      quality={QUALITY_SCENES[scene] ?? null}
       notice={
         scene === 'round2' ? null : (
           <SurfaceStateCard
             kind="warning"
             size="line"
-            title="CodeRabbit didn’t finish"
-            reason="Its rate limit was reached at 14:08; Claude and Codex covered every file."
+            title="CodeRabbit didn’t finish. Its rate limit was reached at 14:08; Claude and Codex covered every file."
             action={{ label: 'Retry CodeRabbit', onPress: () => undefined }}
           />
         )
@@ -457,7 +475,7 @@ export function ReviewDetailSpecimen(
       tabs={[
         { id: 'findings', count: rows.length },
         { id: 'changes', count: 9 },
-        { id: 'runs', count: 7 },
+        { id: 'runs', count: SPECIMEN_RUNS_ROUND.runs.length },
         { id: 'activity' },
       ]}
       activeTab={tab}
@@ -466,6 +484,18 @@ export function ReviewDetailSpecimen(
       {tab === 'findings' ? (
         <ReviewFindingsList
           rows={rows}
+          selection={{
+            selectedRowIds: selectedIds ?? new Set(),
+            active: selectedIds !== null,
+            onStart: () => setSelectedIds(new Set()),
+            onToggle: (id) =>
+              setSelectedIds((current) => {
+                const next = new Set(current);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              }),
+          }}
           renderRow={(rowId, divided) => {
             const fixture = byId.get(rowId)!;
             return (
@@ -504,14 +534,16 @@ export function ReviewDetailSpecimen(
           }}
         />
       ) : tab === 'changes' ? (
-        <SurfaceStateCard
-          testID="review-detail:changes:no-machine"
-          kind="empty"
-          layout="inline"
-          title={t('reviewWalkthrough.detail.noMachineTitle')}
-          reason={t('reviewWalkthrough.detail.noMachineReason')}
-          action={{ label: t('common.retry'), onPress: () => undefined }}
+        <ReviewChangesUnavailable
+          reason={null}
+          comments={NO_MACHINE_COMMENTS}
+          onOpenComment={(id) => {
+            setTab('findings');
+            setOpenRowId(id);
+          }}
         />
+      ) : tab === 'runs' ? (
+        <ReviewRoundRuns round={SPECIMEN_RUNS_ROUND} scope={null} />
       ) : (
         <View style={styles.placeholder} />
       )}
@@ -542,6 +574,8 @@ function ReviewSummaryScene() {
             severity: fixture.finding.severity,
             title: fixture.finding.title,
             reviewer: fixture.reviewers.map((reviewer) => reviewer.label).join(' and '),
+            location: formatReviewFindingLocation(fixture.finding),
+            decision: fixture.decision,
           }))}
           more={{ label: '4 more findings and 1 question · Show', onPress: () => undefined }}
           reviewers={[{ label: 'Claude', backendId: 'claude' }, { label: 'Codex', backendId: 'codex' }]}

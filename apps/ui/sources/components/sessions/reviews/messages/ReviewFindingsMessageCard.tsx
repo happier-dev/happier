@@ -21,6 +21,7 @@ import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/
 import { ReviewFindingRow, type ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import { ReviewQuestions, ReviewFollowUpDock } from '@/components/reviews/finding/ReviewQuestions';
 import {
+    formatReviewFindingLocation,
     formatReviewFindingsHeadline,
     isHighReviewSeverity,
 } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
@@ -285,7 +286,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         const summaryProps = {
             subject: null,
             rows: compactRows.map(row => ({ rowId: row.rowId, severity: row.finding.severity, title: row.finding.title,
-                findBlockPrefix: `structured-review-finding:${row.rowId}`,
+                findBlockPrefix: `structured-review-finding:${row.rowId}`, location: formatReviewFindingLocation(row.finding),
+                decision: row.decision,
                 reviewer: row.reviewers.map(reviewer => reviewer.label).join(t('reviewWalkthrough.and')) })),
             more: rows.length > compactRows.length ? { label: findDisplay.more?.text ?? '', onPress: open } : null,
             reviewers: members.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
