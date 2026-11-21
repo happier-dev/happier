@@ -326,6 +326,60 @@ describe('waitForSessionInputResult', () => {
     expect(observed.ok && observed.replyOutcome).toEqual(outcome);
   });
 
+  it('returns the fulfilled exact Run reply from its own sidechain', async () => {
+    const { httpGet } = await arrange({ rowsAfterInput: () => [] });
+    const previousGet = httpGet.getMockImplementation()!;
+    const outcome = { kind: 'answer' as const, result: { sessionId, messageId: 'run-answer' } };
+    httpGet.mockImplementation(async (url, config) => {
+      if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
+        v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'run-turn', outcome,
+      } } };
+      if (url.includes('/messages/by-local-id/')) {
+        const original = await previousGet(url, config);
+        return { ...original, data: { message: { ...original.data.message, sidechainId: 'run-sidechain' } } };
+      }
+      if (url.includes('/messages?') && new URL(url).searchParams.get('sidechainId') === 'run-sidechain') {
+        return { status: 200, data: { hasMore: false, messages: [{
+          id: 'run-answer', localId: 'native-answer', seq: 8, createdAt: 101, updatedAt: 101, sidechainId: 'run-sidechain',
+          content: { t: 'plain', v: rawAssistantText('Exact answer') },
+        }] } };
+      }
+      return previousGet(url, config);
+    });
+    const observed = await waitForSessionInputResult({ credentials: { token: 'token', encryption: null },
+      serverId: session.serverId, idOrPrefix: sessionId, localId: 'automation:run:run-1', observeReply: true,
+      observation: { kind: 'snapshot', atMs: Date.now() } });
+    expect(observed.ok && observed.result.kind).toBe('final_text');
+    expect(observed.ok && observed.replyOutcome).toEqual(outcome);
+  });
+
+  it('returns a typed refusal for the accepted Run Ask with no Home outcome', async () => {
+    const { httpGet } = await arrange({ rowsAfterInput: () => [] });
+    const previousGet = httpGet.getMockImplementation()!;
+    const localId = 'automation:run:run-1';
+    httpGet.mockImplementation(async (url, config) => {
+      if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
+        v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'run-turn',
+      } } };
+      if (url.includes('/messages/by-local-id/')) {
+        const original = await previousGet(url, config);
+        const message = original.data.message;
+        return { ...original, data: { message: url.endsWith(encodeURIComponent('run-turn:task_complete'))
+          ? { ...message, id: 'run-terminal', seq: 8, messageRole: 'event', localId: 'run-turn:task_complete', sidechainId: 'run-sidechain',
+            content: { t: 'plain', v: { ...rawLifecycle('task_complete'), meta: {
+              happierExecutionRunInputTurnV1: { turnId: 'run-turn', inputIds: [localId], state: 'completed' },
+              happierExecutionRunReplyRefusalsV1: { [localId]: { v: 1, ok: false, error: 'conflict' } },
+            } } } }
+          : { ...message, sidechainId: 'run-sidechain' } } };
+      }
+      return previousGet(url, config);
+    });
+    const observed = await waitForSessionInputResult({ credentials: { token: 'token', encryption: null },
+      serverId: session.serverId, idOrPrefix: sessionId, localId, observeReply: true,
+      observation: { kind: 'snapshot', atMs: Date.now() } });
+    expect(observed).toEqual({ ok: false, code: 'conflict' });
+  });
+
   it('returns owner-reported turn usage with the exact completed input', async () => {
     const { wait } = await arrange({
       rowsAfterInput: () => [

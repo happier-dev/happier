@@ -65,6 +65,8 @@ function buildFlushSummary(params: {
   expectedState: (segment: SegmentRuntime) => SegmentState;
 }): StreamedTranscriptFlushSummary {
   const segments: StreamedTranscriptSegmentFlushSummary[] = params.flushedSegments.map((segment) => ({
+    localId: segment.segmentLocalId,
+    meta: segment.meta,
     kind: segment.kind,
     sidechainId: segment.sidechainId,
     sawText: segment.accumulatedText.length > 0 || segment.sourceMessageId !== undefined,

@@ -174,7 +174,7 @@ import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerpri
 import { createExecutionRunProjectSetup, createExecutionRunProjectSetupOperationOwner } from './executionRunProjectSetup';
 import type { ExecutionRunProjectLaunchContext } from '@/agent/runtime/registry/engineRegistryTypes';
 import { appendExecutionRunControllerHostBarrier, readExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
-import { fulfillExecutionRunInputReply, isExecutionRunCommittedAssistantResult, observeExecutionRunCommittedReply } from './messages/sessionMessageReply';
+import { EXECUTION_RUN_REPLY_REFUSALS_META_KEY, fulfillExecutionRunInputReply, isExecutionRunCommittedAssistantResult, observeExecutionRunCommittedReply } from './messages/sessionMessageReply';
 
 type ExecutionRunProfileCatalogResolution = Readonly<{
   profileCatalog: ExecutionRunProfileContributionCatalog;
@@ -663,7 +663,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
    * durable transcript writer onto this Run's sidechain. Detached Runs and Runs
    * without parent Session custody receive no scope at all.
    */
-  private createSessionOwnedRunScope(runId: string): ExecutionRunHostRunScopeBinding | null {
+  private createSessionOwnedRunScope(runId: string, completingController?: ExecutionRunBackendController): ExecutionRunHostRunScopeBinding | null {
     const host = this.sessionInteractionHost;
     const run = this.runs.get(runId);
     if (!host || !run || typeof run.sessionId !== 'string' || run.sessionId.trim().length === 0) {
@@ -725,7 +725,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             if (body.type === 'task_complete' || body.type === 'turn_failed' || body.type === 'turn_cancelled') {
               // Host structured completion must reach durable custody before the
               // native terminal fact selects the exact visible reply result.
-              await controller.pendingHostBarrier;
+              if (completingController !== controller) await controller.pendingHostBarrier;
             }
             const profile = resolveExecutionRunIntentProfileFromCatalog(this.readRunProfileCatalog(runId),
               currentRun.intent, currentRun.profileId, currentRun.profileSourceCustody);
@@ -770,11 +770,17 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
               signal: runScopedOpts.admission?.signal ?? controller.backend.getRuntimeLifetimeSignal(),
               requireDelivery: true,
             } } : runScopedOpts;
-            const result = await projected(provider, body, publicationOptions);
-            if (result.persisted && (!requiresDeliveredResult || result.delivered)) await observeExecutionRunCommittedReply({
-              controller, runId, session: parentSession, sidechainId, body, options: runScopedOpts,
-              isCurrent: () => isExecutionRunControllerCurrent({ runId, controller, controllers: this.controllers }),
-            });
+            const replyObservation = { controller, runId, session: parentSession, sidechainId, body, options: runScopedOpts,
+              isCurrent: () => isExecutionRunControllerCurrent({ runId, controller, controllers: this.controllers }) };
+            // The accepted input and its committed answer are the Home's fulfillment
+            // witnesses. The terminal row carries a refusal if Home cannot settle it.
+            const refusals = body.type === 'task_complete' ? await observeExecutionRunCommittedReply(replyObservation) : undefined;
+            const result = await projected(provider, body, refusals ? {
+              ...publicationOptions, meta: { ...publicationOptions.meta, [EXECUTION_RUN_REPLY_REFUSALS_META_KEY]: refusals },
+            } : publicationOptions);
+            if (body.type !== 'task_complete' && result.persisted && (!requiresDeliveredResult || result.delivered)) {
+              await observeExecutionRunCommittedReply(replyObservation);
+            }
             return result;
           },
         };
@@ -919,6 +925,26 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             ? { status: result.status, code: result.code } : { status: 'accepted' };
         },
       });
+      if (turn.diagnostic || !turn.inputIds?.length || !isCurrent()) return;
+      const completedInput = controller.lastInputTurn;
+      if (completedInput?.turnId !== turn.turnId || completedInput.state !== 'completed') return;
+      const flushed = await controller.streamWriter?.flushAll({ reason: 'turn-end' });
+      if (!isCurrent()) return;
+      const currentInput = controller.lastInputTurn;
+      if (currentInput?.turnId !== turn.turnId) return;
+      const answer = flushed?.segments.findLast(segment => segment.kind === 'assistant'
+        && segment.sidechainId === sidechainId && segment.didDeliver && segment.sawText
+        && segment.meta?.runtimeTurnId === turn.turnId);
+      if (answer && !currentInput.committedResultLocalId) {
+        controller.lastInputTurn = { ...currentInput, committedResultLocalId: answer.localId };
+      }
+      const transcript = this.createSessionOwnedRunScope(runId, controller)?.projectRunTranscriptSession();
+      const terminal = await transcript?.enqueueAgentMessageCommitted(this.parentProvider, { type: 'task_complete', id: turn.turnId }, {
+        localId: `${turn.turnId}:task_complete`, createdAt: turn.finishedAtMs,
+        meta: { source: 'runtime', runtimeEventKind: 'turn-complete', runtimeTurnId: turn.turnId },
+        provenance: { kind: 'non_dependent', source: 'external' },
+      });
+      if (!terminal?.persisted || !terminal.delivered) throw createExecutionRunTranscriptCustodyError();
     };
     const runInput = createRetainedExecutionRunInputDelivery({
       runId,

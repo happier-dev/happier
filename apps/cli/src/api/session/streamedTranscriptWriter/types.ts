@@ -29,6 +29,8 @@ export type StreamedTranscriptWriter = Readonly<{
 }>;
 
 export type StreamedTranscriptSegmentFlushSummary = Readonly<{
+  localId: string;
+  meta?: Readonly<Record<string, unknown>>;
   kind: StreamedTranscriptSegmentKind;
   sidechainId: string | null;
   sawText: boolean;

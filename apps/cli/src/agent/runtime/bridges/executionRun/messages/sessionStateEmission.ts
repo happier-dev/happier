@@ -282,7 +282,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
     }
   }
 
-  const publishMessage: AgentMessageHandler = (msg) => {
+  const publishMessage = (msg: Parameters<AgentMessageHandler>[0], inputTurn: ExecutionRunBackendController['currentInputTurn']): void => {
     if (msg.type === 'event' && msg.name === 'runtime.descriptor') {
       // The provider-owned descriptor stays opaque to the generic run bridge.
       forwarder.forward(msg);
@@ -520,7 +520,6 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
         if (nextStreamText.startsWith(prevStreamText)) {
           const delta = nextStreamText.slice(prevStreamText.length);
           if (delta.length > 0) {
-            const inputTurn = args.ctrl.currentInputTurn;
             streamWriter.appendAssistantDelta(delta, { sidechainId: args.sidechainId,
               ...(inputTurn ? { meta: { runtimeTurnId: inputTurn.turnId,
                 happierExecutionRunInputTurnV1: projectExecutionRunInputTurn(inputTurn) } } : {}),
@@ -537,15 +536,16 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
   };
   return (message) => {
     if (args.ctrl.delegatedTurn) return;
+    const inputTurn = args.ctrl.currentInputTurn;
     const acceptance = args.ctrl.pendingInputAcceptance;
     if (!acceptance) {
-      publishMessage(message);
+      publishMessage(message, inputTurn);
       return;
     }
     args.ctrl.pendingHostBarrier = appendExecutionRunControllerHostBarrier(
       args.ctrl,
       async () => {
-        if (await acceptance === 'accepted') publishMessage(message);
+        if (await acceptance === 'accepted') publishMessage(message, inputTurn);
       },
       () => args.onPublicStateUpdated?.(args.runId),
     );

@@ -642,6 +642,7 @@ export function createCliMessageActionDeps(
           const { waitForSessionInputResult } = await import("@/session/services/sendSessionMessage");
           const observed = await waitForSessionInputResult({ credentials: replyCredentials,
             idOrPrefix: sent.sessionId, localId: admission.localId, observeReply: true,
+            ...(recipient?.kind === 'execution_run' ? { recipient } : {}),
             ...(accountPending ? { scope: 'user' as const } : {}),
             ...((serverId ?? params.serverId) ? { serverId: serverId ?? params.serverId } : {}),
             ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),

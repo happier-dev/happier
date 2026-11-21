@@ -2,7 +2,7 @@ import type { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from './executionRunFinishRun';
-import { settleExecutionRunController } from './settleExecutionRunController';
+import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { readExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurn, projectExecutionRunInputTurns } from './runOccurrenceWitness';
 
@@ -20,6 +20,14 @@ export async function stopExecutionRun(args: Readonly<{
   if (run.status !== 'running') return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
   const ctrl = args.controllers.get(args.runId);
   if (ctrl) {
+    if (ctrl.kind === 'backend' && ctrl.hostWorkPending && !ctrl.turnInFlight && ctrl.lastInputTurn?.state === 'completed') {
+      // Completed input publication still owns the transcript until the existing
+      // host barrier drains. The Stop cleanup below still handles barrier failure.
+      await readExecutionRunControllerHostBarrier(ctrl)?.catch(() => undefined);
+      if (!isExecutionRunControllerCurrent({ runId: args.runId, controller: ctrl, controllers: args.controllers })) {
+        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      }
+    }
     // Read the exact-input occurrence before cancellation revokes a retained
     // Run's live witness; it labels the cancelled turn retained below.
     const occurrenceId = projectExecutionRunInputTurns({

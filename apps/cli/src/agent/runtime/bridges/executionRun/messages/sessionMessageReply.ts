@@ -1,9 +1,22 @@
-import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol';
+import {
+    SessionMessageReplyMutationResultV1Schema,
+    type SessionMessageReplyMutationResultV1,
+    type SessionMessageReplyOutcomeV1,
+} from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { CommittedTranscriptMessageOptions } from '@/api/session/transcriptPort';
 import type { NativeAgentSessionInteractionHostBinding } from '@/agent/runtime/registry/engineRegistryTypes';
+
+type ReplyRefusal = Extract<SessionMessageReplyMutationResultV1, { ok: false }>;
+
+export const EXECUTION_RUN_REPLY_REFUSALS_META_KEY = 'happierExecutionRunReplyRefusalsV1';
+
+export function readExecutionRunReplyRefusal(value: unknown): ReplyRefusal | undefined {
+    const parsed = SessionMessageReplyMutationResultV1Schema.safeParse(value);
+    return parsed.success && !parsed.data.ok ? parsed.data : undefined;
+}
 
 export function isExecutionRunCommittedAssistantResult(body: ACPMessageData, options: CommittedTranscriptMessageOptions): boolean {
     if (body.type !== 'message') return false;
@@ -23,7 +36,7 @@ export async function observeExecutionRunCommittedReply(args: Readonly<{
     /** Only the canonical host completion publisher can supply this process-local fact. */
     source?: 'host_structured_completion';
     isCurrent(): boolean;
-}>): Promise<void> {
+}>): Promise<Readonly<Record<string, ReplyRefusal>> | undefined> {
     const { controller, session, body, options } = args;
     const turnId = options.meta?.runtimeTurnId;
     if (typeof turnId !== 'string' || !args.isCurrent()) return;
@@ -44,7 +57,7 @@ export async function observeExecutionRunCommittedReply(args: Readonly<{
         : body.type === 'turn_cancelled' ? 'cancelled' : 'terminal_no_result' };
     const localId = body.type === 'task_complete' ? turn.committedResultLocalId
         : body.type === 'turn_cancelled' ? turn.committedPartialResultLocalId : undefined;
-    await fulfillExecutionRunInputReply({ session, turnId, inputIds: turn.inputIds, outcome,
+    return fulfillExecutionRunInputReply({ session, turnId, inputIds: turn.inputIds, outcome,
         ...(localId ? { nativeResult: { runId: args.runId, sidechainId: args.sidechainId, localId } } : {}), isCurrent: args.isCurrent });
 }
 
@@ -56,7 +69,7 @@ export async function fulfillExecutionRunInputReply(args: Readonly<{
     outcome: SessionMessageReplyOutcomeV1 | undefined;
     nativeResult?: Readonly<{ runId: string; sidechainId: string; localId: string }>;
     isCurrent(): boolean;
-}>): Promise<void> {
+}>): Promise<Readonly<Record<string, ReplyRefusal>> | undefined> {
     const { session, turnId, nativeResult } = args;
     let outcome = args.outcome;
     if (nativeResult) {
@@ -72,13 +85,20 @@ export async function fulfillExecutionRunInputReply(args: Readonly<{
                 return args.outcome?.kind === 'cancelled' ? { kind: 'cancelled' as const, result } : { kind: 'answer' as const, result };
             })() : undefined;
     }
+    const refusals: [string, ReplyRefusal][] = [];
     for (const localId of args.inputIds) {
         if (!args.isCurrent()) return;
         try {
-            if (outcome) await session.mutateSessionMessageReply?.({ requestSessionId: session.sessionId, requestLocalId: localId,
-                operation: { kind: 'fulfill', turnId, outcome, ...(nativeResult ? { nativeResult } : {}) } });
+            if (outcome && session.mutateSessionMessageReply) {
+                const result = await session.mutateSessionMessageReply({ requestSessionId: session.sessionId, requestLocalId: localId,
+                    operation: { kind: 'fulfill', turnId, outcome, ...(nativeResult ? { nativeResult } : {}) } });
+                if (!result.ok) refusals.push([localId, result]);
+            }
+        } catch {
+            refusals.push([localId, { v: 1, ok: false, error: 'unavailable' }]);
         } finally {
             if (args.isCurrent()) await session.releaseSessionMessageReplySourceTurn?.({ sourceTurnId: turnId, sourceInputId: localId });
         }
     }
+    return refusals.length ? Object.fromEntries(refusals) : undefined;
 }

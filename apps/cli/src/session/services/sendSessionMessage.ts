@@ -32,7 +32,8 @@ import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, sanitizeSessionInputForgeEvid
 import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
-import type { SessionMessageReplyOutcomeV1, SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { EXECUTION_RUN_REPLY_REFUSALS_META_KEY, readExecutionRunReplyRefusal } from '@/agent/runtime/bridges/executionRun/messages/sessionMessageReply';
+import type { SessionMessageReplyMutationResultV1, SessionMessageReplyOutcomeV1, SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
 import {
   readSessionExplicitStopV1FromMetadata,
@@ -163,6 +164,7 @@ export type WaitForSessionInputResult =
         | 'cancelled'
         | 'permission_mode_not_granted'
         | 'session_reply_timeout'
+        | Extract<SessionMessageReplyMutationResultV1, { ok: false }>['error']
         | 'result_read_failed';
       candidates?: string[];
     }>;
@@ -199,6 +201,7 @@ export type WaitForSessionInputResultParams = Readonly<{
   observeReply?: boolean;
   /** Account Pending admits the submitting Account, including shared Session recipients. */
   scope?: 'user';
+  recipient?: Extract<ParticipantRecipientV1, { kind: 'execution_run' }>;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
   /** Workflow custody may close while this exact input waits for host dispatch. */
   beforeInputObservation?: () => Promise<void>;
@@ -796,6 +799,7 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
   precedingTurnEndSeq?: number;
   /** Immutable original reply custody may select an explicit committed publication. */
   resultMessageId?: string;
+  sidechainId?: string;
   ctx: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
@@ -848,6 +852,7 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
       sessionId: params.sessionId,
       afterSeq,
       limit: ASSISTANT_TURN_SCAN_PAGE_LIMIT,
+      ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
@@ -949,6 +954,7 @@ async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
   signal?: AbortSignal;
   materializedContent?: TranscriptMessageLookupResult['content'];
   resultMessageId?: string;
+  sidechainId?: string;
   /** Original input custody, never supplied by transcript content. */
   acceptedTurnId?: string;
   /** Exact admitted server snapshot, never a message-authored turn claim. */
@@ -1031,6 +1037,7 @@ type AssistantCompletionObservationParams = Readonly<{
   scope?: 'user';
   materializedSeq: number;
   materializedContent?: TranscriptMessageLookupResult['content'];
+  sidechainId?: string;
   ctx: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
@@ -1042,13 +1049,14 @@ type AssistantCompletionObservationParams = Readonly<{
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   onAttentionRequired?: (required: boolean) => Promise<void>;
 }>;
+type RunReplyRefusal = NonNullable<ReturnType<typeof readExecutionRunReplyRefusal>>;
 type ReplyObservation = Readonly<{
   credentials: StoredCredentials;
   onRead: (original: Awaited<ReturnType<typeof readOriginalReply>>) => void;
 }>;
-function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation>;
+function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation | RunReplyRefusal>;
 function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams): Promise<AssistantTurnOutcome>;
-async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply?: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation> {
+async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply?: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation | RunReplyRefusal> {
   const attention = params.onAttentionRequired
     ? createSessionInputAttentionObserver({ ...params, onAttentionRequired: params.onAttentionRequired }) : undefined;
   const events = openSessionEventSource({ ...params, ...(attention ? {
@@ -1075,11 +1083,28 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           publishedDiscussionAnswer = original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress);
           acceptedTurnId = original.status === 'available' && (!replyOutcome || replyOutcome.kind === 'failed' || publishedDiscussionAnswer)
             ? original.progress.acceptedTurnId : undefined;
+          if (params.sidechainId && acceptedTurnId && !replyOutcome) {
+            const marker = await findTranscriptEncryptedMessageByLocalId({ ...params, localId: `${acceptedTurnId}:task_complete` });
+            if (marker?.sidechainId === params.sidechainId && marker.seq > params.materializedSeq
+              && marker.messageRole === 'event') {
+              const content = decryptTranscriptRowContent({ content: marker.content, ctx: params.ctx });
+              const meta = asRecord(asRecord(content)?.meta);
+              const refusals = asRecord(meta?.[EXECUTION_RUN_REPLY_REFUSALS_META_KEY]);
+              const turn = createStoredReadSchema(ExecutionRunInputTurnV1Schema).safeParse(meta?.happierExecutionRunInputTurnV1);
+              const refusal = turn.success && turn.data.turnId === acceptedTurnId && turn.data.inputIds.includes(params.localId)
+                && detectSessionTurnLifecycleEvent(content) === 'task_complete'
+                ? readExecutionRunReplyRefusal(refusals?.[params.localId]) : undefined;
+              if (refusal) return refusal;
+            }
+          }
           if (replyOutcome && !('result' in replyOutcome) && replyOutcome.kind !== 'failed' && !publishedDiscussionAnswer) {
             return { kind: 'fulfilled', outcome: replyOutcome };
           }
         }
-        const outcome = await readAssistantTurnOutcomeAfterCurrentUserTurn({ ...params,
+        // A Run has no primary Session Turn. Its unsettled original is resolved
+        // by Home or the exact refusal marker checked above.
+        const awaitingRunReply = params.reply && params.sidechainId && !replyOutcome && !originalHasNoReply;
+        const outcome = awaitingRunReply ? { kind: 'missing' } as const : await readAssistantTurnOutcomeAfterCurrentUserTurn({ ...params,
           ...(acceptedTurnId ? { acceptedTurnId } : {}),
           ...(replyOutcome && 'result' in replyOutcome
             && replyOutcome.result.sessionId === params.sessionId
@@ -1475,6 +1500,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       localId,
       deadlineMs,
       scope: params.scope,
+      ...(params.recipient ? { recipient: params.recipient } : {}),
       ...(params.beforeInputObservation ? { beforeInputObservation: params.beforeInputObservation } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -1526,6 +1552,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       localId,
       materializedSeq: promptDelivery.message.seq,
       materializedContent: promptDelivery.message.content,
+      ...(params.observeReply && promptDelivery.message.sidechainId ? { sidechainId: promptDelivery.message.sidechainId } : {}),
       ctx: sessionTarget.ctx,
       deadlineMs: acceptedDeadlineMs,
       scope: params.scope,
@@ -1540,6 +1567,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       ? await waitForAssistantCompletionAfterCurrentUserTurn({ ...completionParams,
           reply: { credentials: params.credentials, onRead: value => { originalReply = value; } } })
       : await waitForAssistantCompletionAfterCurrentUserTurn(completionParams);
+    if ('ok' in outcome) return { ok: false, code: outcome.error };
     const replyOutcome = originalReply?.status === 'available' ? originalReply.progress.outcome : undefined;
     if (outcome.kind === 'missing') {
       if (params.signal?.aborted) return { ok: false, code: 'cancelled' };

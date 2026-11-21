@@ -22,6 +22,7 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import type { RegisterExecutionRunOccurrence } from './runOccurrenceWitness';
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { SessionMessageReplyMutationV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { CommittedTranscriptMessageOptions } from '@/api/session/transcriptPort';
@@ -45,11 +46,11 @@ import { projectExecutionRunSessionUpdateState } from './publicState';
 
 const TEST_BACKEND_ID = `${'test'}.${'agent'}` as never;
 
-vi.mock('node:fs', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
-    return createBundledPluginPublicationFsFixture(actual);
-});
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(
+    () => import('@/plugins/projection/registry/builtIn/locators.testkit'),
+);
+vi.mock('node:fs', async (importOriginal) =>
+    createBundledPluginPublicationFsFixture(await importOriginal<typeof import('node:fs')>()));
 beforeEach(() => {
     vi.stubEnv('HAPPIER_CLAUDE_PATH', process.execPath);
     vi.stubEnv('HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED', '0');
@@ -76,6 +77,8 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
     }>) {
     const admittedParts: { text: string; localId: string }[] = [];
     const replyMutations: unknown[] = [];
+    let replyRefusal: 'conflict' | undefined;
+    let beforeCommittedResultRead: (() => Promise<void>) | undefined;
     const releasedSourceTurns: unknown[] = [];
     const committedResultLookups: string[] = [];
     const transcriptPublications: { body: ACPMessageData; meta?: Record<string, unknown>; localId?: string }[] = [];
@@ -152,6 +155,7 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
                 }),
                 readCommittedTranscriptMessageByLocalId: async (localId: string) => {
                     committedResultLookups.push(localId);
+                    await beforeCommittedResultRead?.();
                     return { type: 'found', message: { id: `committed:${localId}`, localId, sidechainId: committedResultSidechainId,
                         seq: 1, createdAt: 1, updatedAt: 1, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Committed result' } } } } };
                 },
@@ -160,6 +164,7 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
                         ...(typeof input === 'object' && input !== null ? input : {}) });
                     replyMutations.push(input);
                     if (replyTransportUnavailable) throw new Error('reply transport unavailable');
+                    if (replyRefusal) return { v: 1, ok: false, error: replyRefusal } as const;
                     return { v: 1, ok: true, progress: { v: 1, mode: 'wait', disposition: 'observing' } } as const;
                 },
                 releaseSessionMessageReplySourceTurn: async (input: unknown) => { releasedSourceTurns.push(input); return { v: 1, ok: true }; },
@@ -230,7 +235,9 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
             inputIds: [localId], delivery: { kind: 'newTurn', turnId } });
     };
     return { manager, internals, attachment, emitRuntimeEvent, acceptInput, prepareScmInput, runtimeLifetime, admittedParts,
-        replyMutations, releasedSourceTurns, committedResultLookups, transcriptPublications };
+        replyMutations, releasedSourceTurns, committedResultLookups, transcriptPublications,
+        refuseReply: () => { replyRefusal = 'conflict'; },
+        beforeCommittedResultRead: (hook: () => Promise<void>) => { beforeCommittedResultRead = hook; } };
 }
 
 describe('ExecutionRunHostBridge retained exact input observation', () => {
@@ -619,6 +626,102 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             expect(releasedSourceTurns).toEqual([{ sourceTurnId: 'native-turn', sourceInputId: 'original-ask' }]);
             expect(internals.runs.get('run-1')?.status).toBe('running');
         } finally { await attachment.release(); }
+    });
+
+    it('settles the accepted reply on native completion before a normal Run Stop', async () => {
+        const { manager, internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications, replyMutations } = composeRetainedRun();
+        try {
+            await acceptInput('original-ask', 'native-turn');
+            const transcript = internals.createSessionOwnedRunScope('run-1')!.projectRunTranscriptSession();
+            await projectRuntimeTranscriptEvent({ session: transcript, provider: 'test.agent', event: {
+                kind: 'transcript-message-committed', sessionId: 'session-1', sequence: 2, emittedAtMs: 2,
+                turnId: 'native-turn', messageId: 'native-answer', role: 'assistant', text: 'Exact answer',
+            } });
+            emitRuntimeEvent({ kind: 'turn-complete', sessionId: 'session-1', sequence: 3, emittedAtMs: 3, turnId: 'native-turn' });
+            await internals.controllers.get('run-1')!.pendingHostBarrier;
+            expect(transcriptPublications.filter(item => item.body.type === 'task_complete').map(item => item.localId))
+                .toEqual(['native-turn:task_complete']);
+            const wanted = [{ requestSessionId: 'session-1', requestLocalId: 'original-ask', operation: {
+                kind: 'fulfill', turnId: 'native-turn', outcome: { kind: 'answer', result: { sessionId: 'session-1', messageId: 'committed:native-answer' } },
+                nativeResult: { runId: 'run-1', sidechainId: 'sidechain-1', localId: 'native-answer' },
+            } }];
+            expect(replyMutations).toEqual(wanted);
+            await manager.stop('run-1');
+            expect(manager.getPublic('run-1')?.inputTurns?.last?.state).toBe('completed');
+            expect(replyMutations).toEqual(wanted);
+        } finally { await attachment.release(); }
+    });
+
+    it('does not fulfill another Ask when the completion has no accepted input identity', async () => {
+        const { internals, attachment, acceptInput, emitRuntimeEvent, replyMutations } = composeRetainedRun();
+        try {
+            await acceptInput('original-ask', 'another-turn');
+            emitRuntimeEvent({ kind: 'turn-start', turnId: 'unaddressed-turn', emittedAtMs: 2 });
+            emitRuntimeEvent({ kind: 'turn-complete', turnId: 'unaddressed-turn', emittedAtMs: 3 });
+            await internals.controllers.get('run-1')!.pendingHostBarrier;
+            expect(replyMutations).toEqual([]);
+        } finally { await attachment.release(); }
+    });
+
+    it('preserves completed Ask settlement if Stop arrives during its committed result lookup', async () => {
+        const { manager, internals, attachment, acceptInput, emitRuntimeEvent, beforeCommittedResultRead, replyMutations } = composeRetainedRun();
+        let readStarted!: () => void;
+        const reading = new Promise<void>(resolve => { readStarted = resolve; });
+        let finishRead!: () => void;
+        const readGate = new Promise<void>(resolve => { finishRead = resolve; });
+        beforeCommittedResultRead(async () => { readStarted(); await readGate; });
+        try {
+            await acceptInput('original-ask', 'native-turn');
+            const transcript = internals.createSessionOwnedRunScope('run-1')!.projectRunTranscriptSession();
+            await projectRuntimeTranscriptEvent({ session: transcript, provider: 'test.agent', event: {
+                kind: 'transcript-message-committed', sessionId: 'session-1', sequence: 2, emittedAtMs: 2,
+                turnId: 'native-turn', messageId: 'native-answer', role: 'assistant', text: 'Exact answer',
+            } });
+            emitRuntimeEvent({ kind: 'turn-complete', sessionId: 'session-1', sequence: 3, emittedAtMs: 3, turnId: 'native-turn' });
+            await reading;
+            const stopping = stopExecutionRun({ runId: 'run-1', runs: internals.runs, controllers: internals.controllers,
+                voiceAgentManager: internals.voiceAgentManager, getNowMs: () => 4, finishRun: internals.finishRun.bind(manager) });
+            finishRead();
+            expect(await stopping).toMatchObject({ ok: true });
+            expect(replyMutations).toMatchObject([{ requestLocalId: 'original-ask', operation: { outcome: { kind: 'answer' } } }]);
+        } finally { finishRead(); await attachment.release(); }
+    });
+
+    it('publishes Home’s typed refusal on the completed exact input', async () => {
+        const { internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications, refuseReply } = composeRetainedRun();
+        try {
+            await acceptInput('original-ask', 'native-turn');
+            refuseReply();
+            emitRuntimeEvent({ kind: 'turn-complete', sessionId: 'session-1', sequence: 3, emittedAtMs: 3, turnId: 'native-turn' });
+            await internals.controllers.get('run-1')!.pendingHostBarrier;
+            expect(transcriptPublications.find(item => item.localId === 'native-turn:task_complete')?.meta
+                ?.happierExecutionRunReplyRefusalsV1).toEqual({ 'original-ask': { v: 1, ok: false, error: 'conflict' } });
+        } finally { await attachment.release(); }
+    });
+
+    it('uses the existing Run stream row as the native answer when the Turn completes', async () => {
+        const { internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications, replyMutations } = composeRetainedRun();
+        const controller = internals.controllers.get('run-1')!;
+        const writer = createStreamedTranscriptWriter({ provider: 'test.agent', makeLocalId: () => 'streamed-answer', session: {
+            async enqueueAgentMessageCommitted(_provider, body, options) {
+                transcriptPublications.push({ body, localId: options.localId, meta: options.meta });
+                return { persisted: true, delivered: true };
+            },
+        } });
+        controller.streamWriter = writer;
+        try {
+            await acceptInput('original-ask', 'native-turn');
+            writer.appendAssistantDelta('Exact answer', { sidechainId: 'sidechain-1', meta: { runtimeTurnId: 'native-turn' } });
+            emitRuntimeEvent({ kind: 'turn-complete', sessionId: 'session-1', sequence: 3, emittedAtMs: 3, turnId: 'native-turn' });
+            await controller.pendingHostBarrier;
+            expect(replyMutations).toEqual([{ requestSessionId: 'session-1', requestLocalId: 'original-ask', operation: {
+                kind: 'fulfill', turnId: 'native-turn', outcome: { kind: 'answer', result: { sessionId: 'session-1', messageId: 'committed:streamed-answer' } },
+                nativeResult: { runId: 'run-1', sidechainId: 'sidechain-1', localId: 'streamed-answer' },
+            } }]);
+            const answerWrites = transcriptPublications.filter(item => item.body.type === 'message');
+            expect(new Set(answerWrites.map(item => item.localId))).toEqual(new Set(['streamed-answer']));
+            expect(answerWrites.at(-1)?.meta).toMatchObject({ happierStreamSegmentV1: { segmentState: 'complete' } });
+        } finally { writer.discard(); await attachment.release(); }
     });
 
     it('selects the actual unnamed streamed row after native finalization, preserving its checkpoint identity', async () => {
