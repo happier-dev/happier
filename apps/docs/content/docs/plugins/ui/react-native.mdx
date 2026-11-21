@@ -1612,6 +1612,13 @@ still owns its viewport memory. An adapter does not expose native refs or
 grant data/query authority. `Collection.virtualizer` covers its row and card
 Lists; page-scrolling rows continue to use the page's scroller.
 
+In 0.3 development source, when two pages in the same plugin show the same
+logical list in a Collection with its own scroller, give `useHappierCollection` the same
+`retainedViewport: { scope, key }` on both pages. Read `scope` with
+`usePluginUiEphemeralSharedScope()` and choose a stable `key` for the logical
+view. Collection remembers its scroll position by presentation and column for
+that plugin occurrence. Ordinary Collections keep scroll state within their mount.
+
 For a declared Resource, use `usePluginResource` from
 `@happier-dev/plugin-ui`. Use `useLivePluginResource` only when the
 surface needs dynamic invalidation: it reads through the same host owner and,

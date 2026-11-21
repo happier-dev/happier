@@ -394,6 +394,7 @@ function sameTriageSourceFailureFacts(a: TriageSourceFailureV1 | undefined, b: T
 
 export function TriageListShell(props: TriageListShellProps = {}): React.ReactElement {
   const hostApi = usePluginHostApi();
+  const sharedScope = usePluginUiEphemeralSharedScope();
   const surfaceContext = useSurfaceContext();
   const surfaceActivity = usePluginSurfaceActivity();
   const text = usePluginTranslation();
@@ -1517,9 +1518,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     groupOf: readTriageListItemStatusGroup,
     retainEmpty: true,
   }, [collectionView, groupAxis, quietNeedsYou, quietNeedsYouStatement]);
+  const mount = surfaceContext.mount;
+  const viewportScopeKey = taskAudience !== undefined && mount.kind === 'destination' && mount.container === 'appPage'
+    ? `tasks:${taskAudience}` : undefined;
   const collection = useHappierCollection({
     items,
     keyOf: readTriageListItemKey,
+    ...(viewportScopeKey === undefined ? {} : { retainedViewport: { scope: sharedScope, key: viewportScopeKey } }),
     groups: collectionGroups,
     window: collectionWindow,
     // Open is the reducer's selection, whether or not the window still lists it: an entry that left the window
@@ -1564,7 +1569,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         session.sessionId === sessions[index]?.sessionId && session.displayTitle === sessions[index]?.displayTitle)
       ? previous : { key: selectedKey, sessions, loadMore });
   }, [selectedKey]);
-  const sharedScope = usePluginUiEphemeralSharedScope();
   const mountId = React.useId();
   const viewsUnreachable = savedViews.unavailableReason !== null;
   const pinsUnreachable = marks.unavailableReason !== null;

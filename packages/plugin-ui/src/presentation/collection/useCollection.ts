@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { I18nManager, Platform } from 'react-native';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
+import type { PluginUiEphemeralSharedScope } from '../../hostApi/ephemeralSharedScope.public.js';
 import { createCollectionExpansion } from './expansion.js';
 import {
   HAPPIER_COLLECTION_WINDOW_COMPLETE,
@@ -68,6 +69,8 @@ export type HappierCollectionModelInput<Item> = Readonly<{
    * never a guess.
    */
   initialSelection?: Readonly<{ memory: HappierCollectionVisitMemory<HappierCollectionKey>; ready?: boolean }>;
+  /** Stable logical view shared by sibling surfaces of this plugin occurrence. Omit for mount-local scroll. */
+  retainedViewport?: Readonly<{ scope: PluginUiEphemeralSharedScope | null; key: string }>;
   /** The draft being added, while its route is open. */
   draft?: HappierCollectionDraftInput | null;
 }>;
@@ -77,6 +80,8 @@ export type HappierCollectionViewport = Readonly<{
   horizontalOffsetRef: { current: number };
   anchorRef: { current: HappierCollectionKey | null };
 }>;
+
+type CollectionViewports = Map<HappierCollectionPresentation, Map<string | undefined, HappierCollectionViewport>>;
 
 export type HappierCollectionActions = Readonly<{
   focus: (key: HappierCollectionKey, viewport?: HappierCollectionViewport) => void;
@@ -118,7 +123,7 @@ export type HappierCollectionModel<Item> = Readonly<{
   /** New request identity means a physical move; observing focus does not create a request. */
   focusRequest: Readonly<{ key: string }> | null;
   boardColumnKey: string | null;
-  /** Mount-lifetime viewport facts; columns have separate anchors without a second logical cursor. */
+  /** Viewport facts by presentation and column, held by the Collection's viewport owner. */
   viewport: (view: HappierCollectionPresentation, columnKey?: string) => HappierCollectionViewport;
   selection: HappierListMultiSelectionSnapshot | null;
   selectionStore: HappierListMultiSelectionStore | null;
@@ -163,6 +168,28 @@ export function useHappierCollectionVisit<Visit>(
 const noopSubscribe = () => () => {};
 const readInertSnapshot = () => HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT;
 
+function useCollectionViewports(retention: HappierCollectionModelInput<unknown>['retainedViewport']): CollectionViewports {
+  const scope = retention?.scope ?? null;
+  const key = retention?.key;
+  const [local] = useState<CollectionViewports>(() => new Map());
+  const [retained, setRetained] = useState<Readonly<{
+    scope: PluginUiEphemeralSharedScope; key: string; viewports: CollectionViewports;
+  }> | null>(null);
+  useLayoutEffect(() => {
+    if (scope === null || key === undefined) {
+      setRetained(null);
+      return;
+    }
+    const lease = scope.acquire(`@happier-dev/plugin-ui/collection-viewport/v1/${key}`, () => {
+      const value: CollectionViewports = new Map();
+      return { value, retainWhenIdle: true, dispose: () => value.clear() };
+    });
+    setRetained(lease === null ? null : { scope, key, viewports: lease.value });
+    return lease?.release;
+  }, [scope, key]);
+  return retained !== null && retained.scope === scope && retained.key === key ? retained.viewports : local;
+}
+
 /**
  * The headless Collection model (COLLECTION.md §2). It owns the Collection's facts — sections,
  * window, focus, selection, the expanded set, the open item and the layout — and nothing about how a
@@ -203,17 +230,17 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
   const [focusKey, setFocusKey] = useState<HappierCollectionKey | null>(null);
   const [focusRequest, setFocusRequest] = useState<Readonly<{ key: string }> | null>(null);
   const [boardColumnKey, showColumn] = useState<string | null>(null);
-  const viewports = useRef(new Map<HappierCollectionPresentation, Map<string | undefined, HappierCollectionViewport>>());
+  const viewports = useCollectionViewports(input.retainedViewport);
   const viewport = useCallback((view: HappierCollectionPresentation, columnKey?: string) => {
-    let columns = viewports.current.get(view);
-    if (columns === undefined) { columns = new Map(); viewports.current.set(view, columns); }
+    let columns = viewports.get(view);
+    if (columns === undefined) { columns = new Map(); viewports.set(view, columns); }
     let current = columns.get(columnKey);
     if (current === undefined) {
       current = { offsetRef: { current: 0 }, horizontalOffsetRef: { current: 0 }, anchorRef: { current: null } };
       columns.set(columnKey, current);
     }
     return current;
-  }, []);
+  }, [viewports]);
   const [expansion] = useState(createCollectionExpansion);
   const expanded = useSyncExternalStore(expansion.subscribe, expansion.getSnapshot, expansion.getSnapshot);
   const [openBranches, setOpenBranches] = useState<ReadonlySet<HappierCollectionKey>>(

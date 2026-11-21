@@ -15,6 +15,12 @@ acknowledgement; callers retain catalog acquisition, held facts and admitted Act
 
 A Collection presents keyed items through one headless model, shared list/table/board/grid anatomy and responsive detail composition. The caller owns the data, route, actions and view preference. The presentation layer owns how those facts fit together.
 
+For a Collection with its own scroller, viewport offsets normally live with
+the mounted model. Sibling plugin pages that represent the same logical list
+can supply the same `retainedViewport` key and the host's ephemeral scope to
+retain those offsets by presentation and column in that plugin occurrence.
+The caller still owns the route and data.
+
 In 0.3 development source, a custom-rendered `List` can use `pageLayout` to
 window its rows in the containing physical page. Its `estimatedRowHeight` comes
 from the existing row presentation owner; the shared virtualizer measures the

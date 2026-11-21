@@ -98,6 +98,8 @@ import type { ReactElement } from 'react';
 import { Text, View } from 'react-native';
 
 import { SURFACE_CONTEXT_THEME_FIXTURE } from '@happier-dev/plugin-sdk/testing';
+import { usePluginUiEphemeralSharedScope } from '../hostApi/context.js';
+import type { PluginUiEphemeralSharedScope } from '../hostApi/ephemeralSharedScope.public.js';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import {
@@ -381,6 +383,7 @@ function presentationHost(
 }
 
 type HarnessOptions = Readonly<{
+  viewportScopeKey?: string;
   retainedRowKeys?: readonly string[];
   presentation?: 'table' | 'list' | 'board' | 'grid';
   items?: readonly Entry[];
@@ -437,8 +440,10 @@ type HarnessProps = HarnessOptions &
   }>;
 
 function Harness(props: HarnessProps): ReactElement {
+  const sharedScope = usePluginUiEphemeralSharedScope();
   const model = useHappierCollection({
     items: props.items ?? entries,
+    ...(props.viewportScopeKey === undefined ? {} : { retainedViewport: { scope: sharedScope, key: props.viewportScopeKey } }),
     keyOf,
     ...(props.grouped === false ? {} : { groups: props.grouping ?? groups }),
     openKey: props.openKey,
@@ -529,6 +534,7 @@ function mount(
     scrollTracker?: PluginUiScrollActivityTracker;
     pageChrome?: import('../presentation/layout/pageChrome.js').HappierPageChromeInternal;
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
+    ephemeralSharedScope?: PluginUiEphemeralSharedScope;
     /** The page edge the host's column already draws around the surface (a plugin page's gutter). */
     columnEdgePx?: number;
     /** The collection sits in a page section's sheet, after these rows (a notice above the table). */
@@ -567,6 +573,7 @@ function mount(
         hostApi={hostApi}
         context={context}
         presentationHost={host}
+        {...(options.ephemeralSharedScope === undefined ? {} : { ephemeralSharedScope: options.ephemeralSharedScope })}
       >
         <PluginUiSurfaceNoticeContext.Provider value={options.surfaceNotice ?? null}>
         <PluginUiScrollActivityProvider tracker={options.scrollTracker ?? null}>
@@ -1316,6 +1323,40 @@ describe('Collection table', () => {
     await view.update({ presentation: 'list' });
     expect(scrollCapture.offsets.slice(before)).toContain(231);
     view.unmount();
+  });
+  it('restores a logical Collection viewport when returning through another page mount', async () => {
+    // Separate page mounts borrow from the same host-owned plugin occurrence.
+    const retainedValues = new Map<string, unknown>();
+    const ephemeralSharedScope: PluginUiEphemeralSharedScope = {
+      acquire<T>(key: string, create: () => Readonly<{ value: T; retainWhenIdle?: true }>) {
+        const retained = retainedValues.get(key) as T | undefined;
+        if (retained !== undefined) return { value: retained, release() {} };
+        const created = create();
+        return { value: created.value, release() {
+          if (created.retainWhenIdle) retainedValues.set(key, created.value);
+        } };
+      },
+    };
+    const options = { presentation: 'list' as const, detail: 'none' as const, ephemeralSharedScope };
+    const standalone = mount({ ...options, viewportScopeKey: 'tasks:mine' });
+    try {
+      standalone.measure(1440);
+      act(() => scrollCapture.observe!({ nativeEvent: { contentOffset: { y: 350 } } }));
+    } finally {
+      standalone.unmount();
+    }
+    const beforeReviews = scrollCapture.offsets.length;
+    const canonical = mount({ ...options, viewportScopeKey: 'reviews' });
+    try {
+      canonical.measure(1440);
+      expect(scrollCapture.offsets.slice(beforeReviews)).not.toContain(350);
+      act(() => scrollCapture.observe!({ nativeEvent: { contentOffset: { y: 17 } } }));
+      const before = scrollCapture.offsets.length;
+      await canonical.update({ viewportScopeKey: 'tasks:mine' });
+      expect(scrollCapture.offsets.slice(before)).toContain(350);
+    } finally {
+      canonical.unmount();
+    }
   });
   it.each(['board', 'grid'] as const)(
     'shares the complete multi-selection inventory across %s cells and view switches',
