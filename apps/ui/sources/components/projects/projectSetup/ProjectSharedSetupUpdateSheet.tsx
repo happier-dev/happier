@@ -141,8 +141,9 @@ function ProjectSharedSetupUpdateBody(
   const snapshot = review.snapshot;
   const request = snapshot?.kind === 'ready' ? snapshot.request : null;
   const rows = React.useMemo(() => readProjectSharedSetupUpdateRows(snapshot), [snapshot]);
-  useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, rows.length > 0, props.pending),
-    [props.sourceName, rows.length, props.pending]));
+  const changed = snapshot?.kind === 'ready' && snapshot.change.kind === 'changed';
+  useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, changed, props.pending),
+    [props.sourceName, changed, props.pending]));
   const { decide, onClose } = props;
   const choose = React.useCallback(
     async (decision: ProjectSharedSetupUpdateDecision) => {
@@ -231,7 +232,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
         }}
       />
     );
-  } else if (change?.kind === 'current' || rows.length === 0) {
+  } else if (change?.kind === 'current') {
     content = (
       <ItemGroup surface="none">
         <Item
@@ -245,18 +246,20 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   } else {
     content = (
       <>
-        <ItemGroup
-          title={props.pending ? t('projects.scripts.sharedUpdate.pendingAdds') : t('projects.scripts.sharedUpdate.whatChanged')}
-          testID="project-shared-setup-update.changes"
-        >
-          {rows.map((entry, index) => (
-            <ChangeRow
-              key={`${entry.entry}:${entry.key}`}
-              entry={entry}
-              showDivider={index < rows.length - 1}
-            />
-          ))}
-        </ItemGroup>
+        {rows.length > 0 ? (
+          <ItemGroup
+            title={props.pending ? t('projects.scripts.sharedUpdate.pendingAdds') : t('projects.scripts.sharedUpdate.whatChanged')}
+            testID="project-shared-setup-update.changes"
+          >
+            {rows.map((entry, index) => (
+              <ChangeRow
+                key={`${entry.entry}:${entry.key}`}
+                entry={entry}
+                showDivider={index < rows.length - 1}
+              />
+            ))}
+          </ItemGroup>
+        ) : null}
         <ItemGroup
           surface="none"
           title={props.pending ? t('projects.scripts.sharedUpdate.pendingRuns') : t('projects.scripts.sharedUpdate.after')}
@@ -285,7 +288,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
       </>
     );
   }
-  const decidable = Boolean(request) && rows.length > 0;
+  const decidable = request !== null;
   return (
     <View style={styles.body}>
       {/* The lab draws the sheet's sections with page anatomy (as Share setup): description above, hairline rows. */}

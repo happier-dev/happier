@@ -5,6 +5,9 @@ import nacl from 'tweetnacl';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import { resolveProjectDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { reviewProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import {
@@ -2844,5 +2847,39 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     expect(show).toHaveBeenCalledWith(expect.objectContaining({
       props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
       chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));
+  });
+  it('keeps a pending shared setup review actionable when personal setup masks its effective edits', async () => {
+    isolateManifestDrafts();
+    const selection = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash };
+    const manifest: ProjectManifestV1 = { version: 1,
+      workspace: { setup: [{ kind: 'command', command: './bootstrap.sh' }] },
+      environmentVariables: [{ name: 'ACME_ENV', kind: 'config', required: false }],
+    };
+    const acceptedSetup = { kind: 'ready', setupOverrides: manifest } as const;
+    const offer = reviewProjectSharedSetupChangeV1({ repositoryManifest: null, acceptedSetup,
+      publication: { ...selection, manifest } });
+    if (offer.kind !== 'changed') throw new Error('The fixture has no accepted Source yet');
+    shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection, importCandidates: [],
+      effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: null, ...acceptedSetup, pendingSharedSetup: {
+        source: { id: 'src-acme-web', name: 'Acme web' }, setup: selection, manifest,
+      } }),
+      sharedSetupChange: { ...offer, setupReadiness: { kind: 'notRequired', reviewedEffectDigest: hash } },
+    };
+    const screen = await render('page', 'scripts.pendingShared');
+    expect(textOf(screen, 'scripts.pendingShared')).toContain('projects.scripts.pendingShared.line');
+    const reviewReads = () => shared.calls.filter(call => call.actionId === 'projects.inspect'
+      && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined);
+    expect(reviewReads()).toHaveLength(0);
+    await act(async () => { await screen.pressByTestIdAsync('scripts.pendingShared.review'); });
+    expect(showModal).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
+      chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));
+    const [dialog] = showModal.mock.lastCall!;
+    const review = await renderScreen(<dialog.component {...dialog.props} onClose={() => {}} />);
+    await vi.waitFor(() => {
+      expect(review.findByTestId('project-shared-setup-update.use'), review.getTextContent()).not.toBeNull();
+    });
+    expect(review.findByTestId('project-shared-setup-update.current')).toBeNull();
+    expect(reviewReads()).toHaveLength(1);
   });
 });
