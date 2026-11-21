@@ -15,7 +15,6 @@ export async function runActionSessionFanout(args: Readonly<{
   deps: ActionExecutorDeps;
   execute: (target: ActionSessionAddress, position: number, machineId: string | null) => Promise<ActionExecuteResult>;
 }>) {
-  const groups = new Map<string, number[]>();
   const machines = await Promise.all(args.targets.map(async target => {
     if (args.targets.length === 1 || args.context.signal?.aborted || !args.deps.sessionStatusGet) return null;
     try {
@@ -32,20 +31,29 @@ export async function runActionSessionFanout(args: Readonly<{
     }
   }));
   const unknownPlacementHomes = new Set(args.targets.filter((_, position) => machines[position] === null).map(target => target.serverId));
+  const sequentialHomes = new Map<string, number[]>();
+  const parallelPositions: number[] = [];
   for (const [position, target] of args.targets.entries()) {
-    const key = JSON.stringify([target.serverId, unknownPlacementHomes.has(target.serverId) ? null : machines[position]]);
-    const group = groups.get(key);
+    if (!unknownPlacementHomes.has(target.serverId)) {
+      parallelPositions.push(position);
+      continue;
+    }
+    const group = sequentialHomes.get(target.serverId);
     if (group) group.push(position);
-    else groups.set(key, [position]);
+    else sequentialHomes.set(target.serverId, [position]);
   }
   const results: Array<{ target: ActionSessionAddress; result: ActionExecuteResult }> = new Array(args.targets.length);
-  await Promise.all([...groups.values()].map(async positions => {
-    for (const position of positions) {
-      const target = args.targets[position];
-      const result = await args.execute(target, position, machines[position]);
-      results[position] = { target, result };
-      args.context.onSessionTargetResult?.({ actionId: args.actionId, position, target, result });
-    }
-  }));
+  async function runTarget(position: number) {
+    const target = args.targets[position];
+    const result = await args.execute(target, position, machines[position]);
+    results[position] = { target, result };
+    args.context.onSessionTargetResult?.({ actionId: args.actionId, position, target, result });
+  }
+  await Promise.all([
+    ...parallelPositions.map(runTarget),
+    ...[...sequentialHomes.values()].map(async positions => {
+      for (const position of positions) await runTarget(position);
+    }),
+  ]);
   return results;
 }

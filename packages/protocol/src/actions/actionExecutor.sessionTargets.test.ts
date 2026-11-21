@@ -175,7 +175,7 @@ describe('SessionTarget at the Actions front door', () => {
     expect(h.effects.map(row => row.sessionId)).toEqual(['a']);
   });
 
-  it('starts different Machines together, sequences one Machine, and delivers positional progress and child ids', async () => {
+  it('starts targets together on the same and different Machines and preserves positional results', async () => {
     const h = harness();
     h.setWorkers(['a', 'b', 'c']);
     const events: string[] = [];
@@ -203,10 +203,9 @@ describe('SessionTarget at the Actions front door', () => {
     const beforeRelease = [...events];
     release();
     const result = await pending;
-    expect(beforeRelease).toEqual(['start:a', 'start:c', 'finish:c']);
-    expect(events.indexOf('start:b')).toBeGreaterThan(events.indexOf('finish:a'));
-    expect(progress).toEqual(['2:c', '0:a', '1:b']);
-    expect(ids).toEqual([0, 2, 1].map(position => deriveActionChildRequestIdV1({
+    expect(beforeRelease).toEqual(['start:a', 'start:b', 'finish:b', 'start:c', 'finish:c']);
+    expect(progress).toEqual(['1:b', '2:c', '0:a']);
+    expect(ids).toEqual([0, 1, 2].map(position => deriveActionChildRequestIdV1({
       parentRequestId: context.actionRequestId!, parentActionId: 'session.message.send', childActionId: 'session.message.send', position })));
     expect(result).toMatchObject({ ok: true, result: { kind: 'fanout', results:
       ['a', 'b', 'c'].map(sessionId => ({ target: { sessionId }, result: { ok: true } })) } });
