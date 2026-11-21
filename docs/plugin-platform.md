@@ -3261,15 +3261,19 @@ byte budget applies only to native logs. Retention-declared plugin databases opt
 into a Machine allocation resolved once at preparation. On daemon cold startup,
 the registry publishes its declarations for Machine registration. These databases
 prepare after the Machine resource policy loads and before plugin background
-services start. The owner adds retained
-plugin database bytes to the measured free bytes on that exact filesystem,
+services start. The owner adds retained plugin database bytes to the measured
+free bytes on that exact filesystem,
 subtracting any explicit fixed-byte disk threshold from the free bytes and
 clamping the resulting growth allowance to zero. Percentage thresholds govern
 disk alerts. At or below the fixed floor, attempts to grow the database report
 `daemon_database_quota_exceeded`. Prepared stores still serve reads and
 non-growth deletion. Unknown policy or capacity yields
-`daemon_database_policy_unavailable`. The next preparation re-resolves allocation;
-there is no per-statement filesystem probe or new timer. `logRetentionDays` governs
+`daemon_database_policy_unavailable`. When the Machine resource policy or
+volume availability changes, or the Machine reconnects, the daemon asks the
+existing runtime reload owner to prepare affected plugins again. A successful
+allocation makes their database and background services available without a
+daemon restart. Preparation reads capacity on the database filesystem, with no
+per-statement probe or separate timer. `logRetentionDays` governs
 occupancy through the existing pruner, without a predictive bytes-per-day estimate.
 Machine capability detection reads the serving plugin registry and leaves
 Account census recovery and database preparation to their existing owners.

@@ -1099,6 +1099,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             : { scopedPluginIds: scopedActivationPluginIds }),
         retainedLeases: retainedActivationRegistryLeases,
         preparedLeases: params?.preparedActivationRegistryLeases,
+        readDaemonDatabaseCapability: daemonDatabaseHost.readCapability,
         disposeInvocationServices: async () => await disposeInvocationServiceOwners(),
     });
     const activatedRegistry = activationAssembly.activatedRegistry;
@@ -7023,7 +7024,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return daemonDatabaseHost.readPreparedContracts(pluginId);
         },
         readDaemonDatabaseCapability(pluginId) {
-            return daemonDatabaseHost.readCapability(pluginId);
+            // Unchanged serving occurrences keep their existing invocation and database owners.
+            const retained = params?.servingPluginOccurrences?.has(pluginId)
+                ? params.retainedActivationRegistryLeases?.find(lease => lease.pluginIds.has(pluginId))
+                : undefined;
+            return retained?.readDaemonDatabaseCapability?.(pluginId) ?? daemonDatabaseHost.readCapability(pluginId);
         },
         runDaemonDatabaseRetention: (days, nowMs, operation) => daemonDatabaseHost.runRetention(days, nowMs, operation),
         connectedAccountContributions,

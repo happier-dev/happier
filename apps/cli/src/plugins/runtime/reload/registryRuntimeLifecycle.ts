@@ -354,7 +354,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         ? Object.freeze([developmentCandidate.pluginId])
         : developmentRemoval
           ? Object.freeze([developmentRemoval.pluginId])
-        : candidate!.admissionRefresh && activeRegistry
+        : candidate!.runtimeRefresh === 'admission' && activeRegistry
           ? [...new Set([
               ...candidate!.changedPluginIds,
               ...Object.keys(activeRegistry.contributes.pluginEnablementById ?? {}),
@@ -365,7 +365,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               return !arePluginEnablementsEqual(before, after);
             })
           : candidate!.changedPluginIds;
-      if (candidate?.admissionRefresh && activeRegistry && changedPluginIdList.length === 0) {
+      if (candidate?.runtimeRefresh && activeRegistry && changedPluginIdList.length === 0) {
         return Object.freeze({
           abort: async () => undefined,
           adopt: async () => undefined,
@@ -693,6 +693,13 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             });
           }
         }
+        if (candidate?.runtimeRefresh === 'daemonDatabaseAllocation'
+          && !candidateDaemonDatabasePluginIds.some(pluginId =>
+            registry.readDaemonDatabaseCapability?.(pluginId).status === 'available')) {
+          // If capacity is still unknown, preserve the serving refusal and occurrence.
+          await disposeOnce();
+          return Object.freeze({ abort: async () => undefined, adopt: async () => undefined });
+        }
         await settlePluginRuntimeReadiness(registry);
       } catch (error) {
         await disposeOnce();
@@ -828,7 +835,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               registry,
               changedPluginIds: changedPluginIdList,
               durableRevision: record.revision,
-              ...(durableCandidate.admissionRefresh ? { admissionRefresh: true } : {}),
+              ...(durableCandidate.runtimeRefresh ? { admissionRefresh: true } : {}),
               runningSessionDisposition: durableCandidate.runningSessionDisposition,
               beforePublish: async (candidateRegistry, publish) => {
                 if (durableCandidate.mutationKind === 'install') await params.beforeInstallPublish?.(candidateRegistry, durableCandidate.changedPluginIds, firstInstallPluginIds);
@@ -840,9 +847,8 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
               throw new Error('Prepared plugin runtime registry adoption did not publish');
             }
             adopted = true;
-            // Account intent changes do not commit Machine state, so their
-            // adopted projection publishes through the existing runtime push.
-            if (durableCandidate.admissionRefresh) params.onRuntimeProjectionInvalidated?.();
+            // Runtime-only changes publish through the existing runtime push.
+            if (durableCandidate.runtimeRefresh) params.onRuntimeProjectionInvalidated?.();
             await releasePreparedCustody().catch((error) => {
               logger.warn('[PLUGIN RUNTIME] Adopted plugin activation custody release failed', {
                 error: projectPluginFailureText(error),

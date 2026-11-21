@@ -170,10 +170,12 @@ export type PluginRunningSessionRevocationScope = Readonly<{
   immutableGenerationId: string;
 }>;
 
+export type PluginRegistryRuntimeRefresh = 'admission' | 'daemonDatabaseAllocation';
+
 export type PluginRegistryRuntimeCandidate = Readonly<{
   mutationKind: 'state' | 'install' | 'rollback' | 'uninstall';
-  /** Reprojects external admission intent without creating an installation revision. */
-  admissionRefresh?: true;
+  /** Reuses the current installation revision for changed runtime facts. */
+  runtimeRefresh?: PluginRegistryRuntimeRefresh;
   runningSessionDisposition: PluginRunningSessionDisposition;
   runningSessionRevocationScope?: PluginRunningSessionRevocationScope;
   changedPluginIds: readonly string[];
@@ -354,7 +356,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   write: (next: PluginStateFileV1) => Promise<void>;
   update: (transform: StateTransform) => Promise<PluginStateFileV1>;
   updateWithResult: (transform: StateTransform) => Promise<PluginRegistryStateMutationResult>;
-  refreshRuntime: (pluginIds: readonly string[]) => Promise<void>;
+  refreshRuntime: (pluginIds: readonly string[], reason?: PluginRegistryRuntimeRefresh) => Promise<void>;
   install: (input: CommitPluginRegistryInstallationInput) => Promise<PluginRegistryTransactionResult>;
   rollback: (pluginId: string) => Promise<PluginStateFileV1>;
   rollbackWithResult: (pluginId: string) => Promise<PluginRegistryStateMutationResult>;
@@ -703,12 +705,12 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return runtimeLifecycle;
   }
 
-  async function refreshRuntime(pluginIds: readonly string[]): Promise<void> {
+  async function refreshRuntime(pluginIds: readonly string[], reason: PluginRegistryRuntimeRefresh = 'admission'): Promise<void> {
     const lifecycle = requireRuntimeLifecycle();
     const current = await readCurrent();
     const prepared = await lifecycle.prepare({
       mutationKind: 'state',
-      admissionRefresh: true,
+      runtimeRefresh: reason,
       runningSessionDisposition: 'retainRunningSessions',
       changedPluginIds: pluginIds,
       runtimeCatalog: current.catalog,

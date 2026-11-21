@@ -1,3 +1,4 @@
+import type { PluginDaemonDatabaseCapability } from '../context/daemonDatabase';
 import {
     activatePluginRuntimeRegistry,
     type ActivatedPluginRuntimeRegistry,
@@ -10,6 +11,7 @@ import {
 type ActivationRegistryLeasePayload = Readonly<{
     registry: ActivatedPluginRuntimeRegistry;
     pluginIds: ReadonlySet<string>;
+    readDaemonDatabaseCapability?: (pluginId: string) => PluginDaemonDatabaseCapability;
 }>;
 
 export type PluginRuntimeActivationRegistryLease = RefCountedLease<
@@ -28,9 +30,10 @@ function createActivationRegistryLeaseOwner(
     dispose: (options?: Parameters<ActivatedPluginRuntimeRegistry['dispose']>[0]) => Promise<void> = async (options) => {
         await registry.dispose(options);
     },
+    readDaemonDatabaseCapability?: ActivationRegistryLeasePayload['readDaemonDatabaseCapability'],
 ): ActivationRegistryLeaseOwner {
     const owner = createRefCountedLeaseOwner({
-        payload: Object.freeze({ registry, pluginIds }),
+        payload: Object.freeze({ registry, pluginIds, readDaemonDatabaseCapability }),
         disposedError: 'Plugin runtime activation registry lease is already disposed',
         dispose,
     });
@@ -65,6 +68,7 @@ export async function assemblePluginRuntimeActivation(input: Readonly<{
     scopedPluginIds?: readonly string[];
     retainedLeases?: readonly PluginRuntimeActivationRegistryLease[];
     preparedLeases?: readonly PluginRuntimeActivationRegistryLease[];
+    readDaemonDatabaseCapability?: ActivationRegistryLeasePayload['readDaemonDatabaseCapability'];
     disposeInvocationServices(): Promise<void>;
 }>): Promise<Readonly<{
     activatedRegistry: ActivatedPluginRuntimeRegistry;
@@ -95,6 +99,7 @@ export async function assemblePluginRuntimeActivation(input: Readonly<{
                 registry.dispose(options),
                 invocationServicesLease.release(),
             ], 'Failed to dispose plugin activation component'),
+            input.readDaemonDatabaseCapability,
         );
     };
     let preparingActivationComponents = (input.scopedPluginIds?.length ?? 0) > 0;

@@ -864,6 +864,7 @@ export async function startDaemon(
       onTick: () => { machineResourceSummary?.refresh(); daemonGuard?.refreshOnTick(); projectWorkerAdmission?.notifyChanged(); },
     });
     await machineVitals.start();
+    const storageVitals = createDaemonStorageVitalsBindings(machineVitals);
     daemonKeepAwake = createDaemonKeepAwake({ policy: machineResourcesPolicy, vitals: machineVitals });
     await daemonKeepAwake.start();
     machineResourceSummary = createMachineResourceSummary({
@@ -2143,6 +2144,14 @@ export async function startDaemon(
     const pluginRuntimeInitialization = settleDaemonOptionalCapability(
       'plugin_runtime', pluginRuntimeOwner.initialize(), reportOptionalCapabilityUnavailable,
     );
+    const recoverPluginDatabaseAllocations = () => {
+      if (machineResourcesPolicy?.read().status === 'ready') {
+        void pluginRuntimeOwner.recoverDaemonDatabaseAllocations();
+      }
+    };
+    machineResourcesPolicy.subscribeKey('alerts', recoverPluginDatabaseAllocations);
+    const unsubscribeDatabaseVolumeRecovery = storageVitals.subscribeVolumes(recoverPluginDatabaseAllocations);
+    homeTransportCancellation.signal.addEventListener('abort', unsubscribeDatabaseVolumeRecovery, { once: true });
     // A role toggle republishes only the plugins whose role admission changed; no restart.
     bootMachineRoles.subscribe(() => {
       void pluginRuntimeInitialization.then(() => pluginRuntimeOwner.refreshMachineRoleAdmission())
@@ -3332,7 +3341,6 @@ export async function startDaemon(
           if (unresolvedRoot) return { status: 'unavailable' as const, projects };
           return { status: 'ready' as const, projects };
         };
-        const storageVitals = createDaemonStorageVitalsBindings(machineVitals);
         const hostBootedAt = machineVitals?.host()?.bootedAt;
         const storageIdle = async () => (await managedActivity.readDecision()).kind === 'idle'
           && scmWorktreeMutationActivity.isIdle();
@@ -4398,6 +4406,8 @@ export async function startDaemon(
         orphanedDeadDaemonSessions,
         onMachineConnectionOnline: async () => {
           void pluginRuntimeOwner.recoverAccountCensusAfterConnect();
+          if (machineResourcesPolicy?.read().status === 'ready') recoverPluginDatabaseAllocations();
+          else void machineResourcesPolicy?.reload().catch(error => logger.debug('[DAEMON RUN] Resources policy refresh failed', error));
           await reconcileSessionMachineAccessBindings();
           await refreshServerFeaturesAndBrowserRouteOwners();
           pluginRuntimeOwner.reportCurrentAvailability();

@@ -35,6 +35,7 @@ import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn
 import {
   createPluginRegistryStateStore,
   type PluginRegistryAvailabilityInventory,
+  type PluginRegistryRuntimeRefresh,
 } from '@/plugins/store/registry/currentState';
 import type { PluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
 import { logger } from '@/ui/logger';
@@ -838,16 +839,31 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       .catch((error: unknown) => reportAvailabilityFailure(error, -1));
   };
 
-  let admissionRefresh = Promise.resolve();
-  function refreshAdmission(readPluginIds: () => readonly string[]): Promise<void> {
-    // If an availability push was reading when the Machine reconnected, finish
-    // it first so its pre-reconnect result cannot replace the recovery.
-    admissionRefresh = admissionRefresh.catch(() => undefined).then(async () => {
+  let runtimeRefresh = Promise.resolve();
+  function refreshRuntime(
+    readPluginIds: () => readonly string[],
+    reason?: PluginRegistryRuntimeRefresh,
+  ): Promise<void> {
+    // Finish a pre-reconnect refresh before selecting work for the new connection.
+    runtimeRefresh = runtimeRefresh.catch(() => undefined).then(async () => {
       if (params.signal?.aborted) return;
       const pluginIds = readPluginIds();
-      if (pluginIds.length > 0) await stateStore.refreshRuntime(pluginIds);
+      if (pluginIds.length > 0) await stateStore.refreshRuntime(pluginIds, reason);
     });
-    return admissionRefresh;
+    return runtimeRefresh;
+  }
+
+  function readUnallocatedDatabasePluginIds(): readonly string[] {
+    const registry = params.reloadController.getState().activeRegistry;
+    if (!registry) return [];
+    return registry.contributes.activationTargets
+      .filter(target => registry.activatedPluginIds.has(target.pluginId)
+        && usesMachineDaemonDatabaseAllocation(target.manifest.contributes.daemonDatabases))
+      .map(target => target.pluginId)
+      .filter(pluginId => {
+        const capability = registry.readDaemonDatabaseCapability?.(pluginId);
+        return capability?.status === 'unavailable' && capability.code === 'daemon_database_policy_unavailable';
+      });
   }
 
   let lastEnablement: ResolvedContributionRegistry['pluginEnablementById'];
@@ -867,7 +883,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   function recoverFailedAccountCensus(waitForAdmission = false): Promise<void> | undefined {
     if (!waitForAdmission && readFailedAccountCensusPluginIds().length === 0) return;
     if (accountCensusRecovery) return accountCensusRecovery;
-    accountCensusRecovery = refreshAdmission(readFailedAccountCensusPluginIds)
+    accountCensusRecovery = refreshRuntime(readFailedAccountCensusPluginIds)
       .catch(error => {
         // A refresh failure leaves the last typed refusal in service.
         logger.warn('[PLUGIN RUNTIME] Account plugin census recovery failed', projectPluginFailureText(error));
@@ -1153,7 +1169,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         const relevantPluginIds = changedPluginIds.filter(pluginId => contributes?.pluginEnablementById?.[pluginId]
           || contributes?.pluginDeclarations?.some(declaration => declaration.pluginId === pluginId));
         if (relevantPluginIds.length === 0) return;
-        void refreshAdmission(() => relevantPluginIds).catch(error => {
+        void refreshRuntime(() => relevantPluginIds).catch(error => {
           logger.warn('[PLUGIN RUNTIME] Account availability refresh failed', error);
         });
       });
@@ -1161,12 +1177,16 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       await developmentRoots.initialize();
       })();
       // The first authenticated connection can arrive before cold admission settles.
-      admissionRefresh = initialization;
+      runtimeRefresh = initialization;
       params.reloadController.setRuntimeInitialization(initialization, recoverFailedAccountCensus);
       return initialization;
     },
     async recoverAccountCensusAfterConnect() {
       await recoverFailedAccountCensus(true);
+    },
+    async recoverDaemonDatabaseAllocations() {
+      await refreshRuntime(readUnallocatedDatabasePluginIds, 'daemonDatabaseAllocation')
+        .catch(error => logger.warn('[PLUGIN RUNTIME] Daemon database allocation recovery failed', projectPluginFailureText(error)));
     },
     reportCurrentAvailability,
     /**
@@ -1179,7 +1199,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       if (!current) return;
       const next = applyMachineRoleAdmission({ pluginEnablementById: current, machineRoles: contributes.machineRoles ?? [] });
       const changedPluginIds = Object.keys(next).filter(pluginId => !arePluginEnablementsEqual(current[pluginId], next[pluginId]));
-      if (changedPluginIds.length > 0) await refreshAdmission(() => changedPluginIds);
+      if (changedPluginIds.length > 0) await refreshRuntime(() => changedPluginIds);
     },
     readCatalog: async () => await readCurrentDaemonPluginCatalog({
       happyHomeDir: params.happyHomeDir,
