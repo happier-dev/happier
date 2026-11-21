@@ -1463,6 +1463,12 @@ describe('workflow editor body', () => {
         // Step options (WF-REDESIGN-1116): who runs the step as the shared Session controls (its engine is the
         // card header's chip), then where it runs and works.
         expect(screen.findByTestId('workflow-editor-inspector-session-chips')).not.toBeNull();
+        // Round 1116b A (FIN-DESIGN-ACCEPT-2 F3): the Session settings lead as one compact chip set, so Workspace
+        // and This step stay in view; each chip opens its own picker. No field-select column leads the options.
+        const { SessionAuthoringControls } = await import('@/components/sessions/authoring/controls/SessionAuthoringControls');
+        const sessionControls = screen.root.findAllByType(SessionAuthoringControls)
+            .filter((node) => node.props.testIDPrefix === 'workflow-editor-inspector-control');
+        expect(sessionControls.map((node) => node.props.presentation)).toEqual(['chips']);
         expect(screen.findByTestId('workflow-editor-inspector-workspace-row')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-inspector-done');
         expect(screen.findByTestId('workflow-editor-inspector-options')).toBeNull();

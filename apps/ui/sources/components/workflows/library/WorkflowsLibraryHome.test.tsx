@@ -1588,8 +1588,8 @@ describe('workflow library summaries and filter', () => {
         const manual = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003');
         expect(manual).not.toBeNull();
         const copy = manual!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
-        // Scene 8 Lines 2: the trigger is the row's detail ("No automatic triggers"); the step count is a Lines 3 detail.
-        expect(copy).toContain(t('automations.list.noAutomaticTriggers'));
+        // Scene 8 Lines 2: the trigger is the row's detail ("Manual"); the step count is a Lines 3 detail.
+        expect(copy).toContain(t('workflows.triggers.summary.manual'));
         expect(copy).not.toContain(formatNextScheduledRun(1_900_000_000_000));
         const timed = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000004');
         expect(timed).not.toBeNull();

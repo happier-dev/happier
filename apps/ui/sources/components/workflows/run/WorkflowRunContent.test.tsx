@@ -2855,9 +2855,11 @@ describe('WorkflowRunContent', () => {
       pendingControl: 'retry',
     });
 
+    // Beside the open step the header keeps one action slot: Pause at boundary is its `⋯` entry, withdrawn too.
+    expect(screen.findAllByType(ItemRowActions).flatMap((menu) => menu.props.actions)
+      .find((action: { id: string }) => action.id === 'workflow-run-pause')).toMatchObject({ disabled: true });
     for (const testID of [
       'workflow-run-cancel',
-      'workflow-run-pause',
       'workflow-run-resume',
       'workflow-run-retry-same',
       'workflow-run-retry-fresh',
@@ -4557,17 +4559,40 @@ describe('WorkflowRunContent', () => {
     expect(onSelectInvocation).toHaveBeenCalledWith('inv-implement');
     await screen.unmount();
 
-    // With the result open beside the Run, the Completed state still shows Run workflow again next to Open
-    // result (07 §6.1, M15; lab run-A_completed); the `⋯` never repeats it.
+    // Full width, the Completed state shows Run workflow again next to Open result (07 §6.1, M15; lab
+    // run-A_completed); the `⋯` never repeats it.
+    const wide = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
+      definition, invocations, finalOutputInvocationId: 'inv-implement', resultLabel: 'All checks green',
+      onSelectInvocation, onRunAgain: vi.fn(),
+    });
+    expect(wide.findAllByType(ToolbarButton).map((button) => button.props.testID))
+      .toEqual(expect.arrayContaining(['workflow-run-run-again', 'workflow-run-open-result']));
+    await wide.unmount();
+    // Beside the open result the header's column is narrow: it keeps one action slot on the title's line in every
+    // state (FIN-DESIGN-ACCEPT-2 F2, no travel), so Run workflow again is the `⋯` entry there, never both.
     const opened = await renderContent({
       run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
       definition, invocations, finalOutputInvocationId: 'inv-implement', resultLabel: 'All checks green',
       onSelectInvocation, selectedInvocationId: 'inv-implement', onRunAgain: vi.fn(),
     });
-    expect(opened.findAllByType(ToolbarButton).map((button) => button.props.testID))
-      .toEqual(expect.arrayContaining(['workflow-run-run-again', 'workflow-run-open-result']));
+    expect(opened.findAllByType(ToolbarButton).map((button) => button.props.testID)).toEqual(['workflow-run-open-result']);
     expect(opened.findAllByType(ItemRowActions).flatMap((menu) => menu.props.actions.map((action: { id: string }) => action.id)))
-      .not.toContain('workflow-run-run-again');
+      .toContain('workflow-run-run-again');
+  });
+
+  it('keeps a running Run\'s header to Stop and `⋯` beside an open step, Pause at boundary one press away', async () => {
+    const running = { run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', availability: { cancel: true, pause: true } }),
+      invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'running' })],
+      onCancel: vi.fn(), onPause: vi.fn() } satisfies Partial<ContentProps>;
+    const wide = await renderContent(running);
+    expect(wide.findByTestId('workflow-run-pause')).not.toBeNull();
+    await wide.unmount();
+    const beside = await renderContent({ ...running, selectedInvocationId: 'inv-1' });
+    expect(beside.findByTestId('workflow-run-pause')).toBeNull();
+    expect(beside.findByTestId('workflow-run-cancel')).not.toBeNull();
+    expect(beside.findAllByType(ItemRowActions).flatMap((menu) => menu.props.actions.map((action: { id: string }) => action.id)))
+      .toContain('workflow-run-pause');
   });
 
   it('keeps a structured final output in its result pane instead of printing it under the outcome', async () => {

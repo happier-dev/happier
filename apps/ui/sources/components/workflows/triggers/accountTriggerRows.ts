@@ -7,6 +7,8 @@ import { formatTriggerSetSummary } from './formatTriggerSummary';
 import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
 
+const OFF_SAID_BY_ROW = Object.freeze({ offSaidElsewhere: true });
+
 export type AccountTriggerRow = Readonly<{
     automationId: string;
     triggerId: WorkflowTriggerSetV1['triggers'][number]['id'] | null;
@@ -74,7 +76,8 @@ export function projectAccountTriggerRows(params: Readonly<{
             return {
                 automationId: attachment.automationId,
                 triggerId: attachment.triggerId,
-                title: formatTriggerSetSummary([attachment.summary]),
+                // The row says Off in its own state place (`off`), so the sentence never repeats it ("Off · Off").
+                title: formatTriggerSetSummary([attachment.summary], undefined, OFF_SAID_BY_ROW),
                 glyph: resolveTriggerEventGroup(attachment.summary).glyph,
                 subtitle: legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(target, params.resolveWorkflowTitle),
                 ...(!legacy && target?.kind === 'workflow' && params.isWorkflowTitlePending?.(target.ref) ? { subtitlePending: true as const } : {}),
@@ -96,7 +99,7 @@ export function projectAccountTriggerRows(params: Readonly<{
         const triggers = set.triggers.length > 0 ? set.triggers : [null];
         return triggers.map((trigger) => {
         const legacy = describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle);
-        const when = formatTriggerSetSummary(trigger ? [trigger] : []);
+        const when = formatTriggerSetSummary(trigger ? [trigger] : [], undefined, OFF_SAID_BY_ROW);
         const then = legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(set.health === 'available' ? set.target : undefined, params.resolveWorkflowTitle);
         // A set with no event is run by hand: "Manual" says nothing that tells one such row from the next, so
         // what it runs leads and "Manual" is the quiet line (a legacy row keeps its own name).

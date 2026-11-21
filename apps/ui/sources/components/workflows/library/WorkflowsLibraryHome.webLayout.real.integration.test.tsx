@@ -120,7 +120,7 @@ describe('Workflows home, as a browser lays it out', () => {
             return found!;
         });
         const text = row.textContent ?? '';
-        const trigger = text.indexOf(t('automations.list.noAutomaticTriggers'));
+        const trigger = text.indexOf(t('workflows.triggers.summary.manual'));
         const steps = text.indexOf(t('workflows.examples.stepCount', { count: 1 }));
         expect(trigger).toBeGreaterThanOrEqual(0);
         expect(steps).toBeGreaterThan(trigger);

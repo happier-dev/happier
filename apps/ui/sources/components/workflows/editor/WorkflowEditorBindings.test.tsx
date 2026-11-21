@@ -169,7 +169,7 @@ describe('workflow editor declared bindings', () => {
             .toContain('workflows.page.blocks.actionNotInCatalog');
         expect(screen.getTextContent()).not.toContain('workflows.contentUnavailable');
     });
-    it('reads input-bound fields as one line at rest and opens them when the step is selected', async () => {
+    it('reads input-bound fields as their own rows, with no summary line repeating them', async () => {
         const block = { kind: 'action' as const, id: 'verify', actionId: 'machines.command.run', input: {
             command: { kind: 'literal' as const, value: 'echo hi' },
             env: { kind: 'input' as const, name: 'backupTarget', path: ['environmentId'] },
@@ -181,10 +181,10 @@ describe('workflow editor declared bindings', () => {
             ] }) });
         const props = { block, draft, ordinal: 1, total: 1, actions: [], onSelect: () => {}, onChangeBlock: () => {}, testIDPrefix: 'editor' };
         const atRest = await renderScreen(<harness.WorkflowActionBlockEditor {...props} />);
-        expect(atRest.findByTestId('editor-action-verify-field-env')).toBeNull();
-        expect(atRest.findByTestId('editor-action-verify-field-cwd')).toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-field-env')).not.toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-field-cwd')).not.toBeNull();
         expect(atRest.findByTestId('editor-action-verify-field-command')).not.toBeNull();
-        expect(atRest.findByTestId('editor-action-verify-asks')).not.toBeNull();
+        expect(atRest.findByTestId('editor-action-verify-asks')).toBeNull();
         const selected = await renderScreen(<harness.WorkflowActionBlockEditor {...props} selected />);
         expect(selected.findByTestId('editor-action-verify-asks')).toBeNull();
         expect(selected.findByTestId('editor-action-verify-field-env')).not.toBeNull();
@@ -207,6 +207,10 @@ describe('workflow editor declared bindings', () => {
         // A reader never sees the control: unset fields already say nothing there.
         const reading = await renderScreen(<harness.WorkflowActionBlockEditor {...props} editable={false} />);
         expect(reading.findByTestId('editor-action-quiet-more-settings')).toBeNull();
+        // A resting card reads what is set; the disclosure belongs to the selected step (round 1116 S6).
+        const resting = await renderScreen(<harness.WorkflowActionBlockEditor {...props} />);
+        expect(resting.findByTestId('editor-action-quiet-more-settings')).toBeNull();
+        expect(resting.findByTestId('editor-action-quiet-field-command')).not.toBeNull();
     });
 
     it('edits command text literally while preserving its environment binding', async () => {

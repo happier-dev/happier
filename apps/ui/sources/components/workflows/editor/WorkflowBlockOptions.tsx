@@ -242,7 +242,7 @@ export function WorkflowSettingsFrame(props: Readonly<{
                 testID={`${testIDPrefix}-options-page`}
                 style={styles.page}
                 keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+                // A bounded panel (an anchored popover held inside the editor pane) shows that more lies below.
                 scrollEventThrottle={64}
                 onScroll={(event) => setScrolled(event.nativeEvent.contentOffset.y > 0)}
             >
@@ -643,10 +643,10 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const detachedUnavailable = props.runAsTargets?.find((target) => target.kind === 'detached_run' && !target.available);
     const insideEvaluator = isLoopEvaluator(draft.blocks, step.id);
 
-    // The step's options (round 1116b, recomposed by the design owner 11-18): who runs it as labelled field
-    // selects on the one label track (the same owner and pickers as the How card; changed rows are marked and
-    // lead with "Use workflow's"), then where it runs and works, then when it runs, then this step's own choices.
-    // The engine is the card header's chip, so it is not repeated here.
+    // The step's options (owner-approved round 1116b A): the Session settings as one compact chip set (each
+    // chip opens its own picker, quiet while inherited, marked once changed, its picker leading with "Use
+    // workflow's"), then where it runs and works, then this step's own choices (FIN-DESIGN-ACCEPT-2 F3: eight
+    // field selects ahead of Workspace pushed This step below the fold). The engine is the card header's chip.
     const changedSessionFields = new Set(listWorkflowStepSessionChanges(step));
     return (
         <>
@@ -656,7 +656,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
             <ItemGroup title={t('workflows.page.sections.groupWho')}>
                 <BareSectionContent><View testID={`${testIDPrefix}-session-chips`}>
                     <SessionAuthoringControls
-                        presentation="selects"
+                        presentation="chips"
                         fields={WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE}
                         values={effectiveExecution}
                         overriddenFields={changedSessionFields}
@@ -665,7 +665,6 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                         resetOverride={{ label: t('workflows.page.useWorkflowsValue'),
                             onResetField: (field) => onChange(setWorkflowStepExecutionField(draft, step.id, field, undefined)) }}
                         onChangeField={(field, value) => onChange(setWorkflowStepExecutionField(draft, step.id, field, value))}
-                        renderFieldRow={(field, title, control) => renderWorkflowCardFieldRow(field, title, control)}
                         {...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts })}
                         testIDPrefix={`${testIDPrefix}-control`}
                     />

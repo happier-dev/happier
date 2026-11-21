@@ -19015,6 +19015,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         asksLabel: '執行時詢問',
         asksWhenItRuns: ({ names }: { names: string }) => `執行時詢問 ${names}`,
         moreSettings: ({ count }: { count: number }) => `另外 ${count} 項設定`,
+        structuredItems: ({ count }: { count: number }) => `${count} 項`,
         uses: '使用',
         workflowSub: '執行另一個工作流程 · 其步驟顯示在此次執行中',
         builtin: '內建',

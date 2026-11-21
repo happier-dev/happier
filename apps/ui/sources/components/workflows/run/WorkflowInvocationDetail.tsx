@@ -32,6 +32,8 @@ import { describeWorkflowInvocationAttempt, formatWorkflowFailureRemedyLabel, ty
 import { formatWorkflowUsageLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
@@ -227,6 +229,9 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const execution = props.progress?.execution;
     const answeredBy = useAnsweredByLabel(props.progress?.review?.resultSource);
     const visibleResult = props.finalResult != null ? props.finalResult.value : props.progress?.result;
+    // Only a structured result offers Copy; the copy owner demands its Home only then (as an Item's copy does).
+    const resultCopyable = visibleResult !== undefined && visibleResult !== null && typeof visibleResult === 'object';
+    const writeClipboard = useClipboardWrite(undefined, { enabled: resultCopyable });
     const workspace = recovery.workspace;
     // A step that worked in the home folder with nothing else to say ("~") gets no row (FIN-DESIGN-REVIEW H4).
     const workspaceInformative = props.machineSetupStep !== true && workspace != null && (workspace.displayDirectory !== '~' || workspace.branchName !== null
@@ -900,18 +905,20 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                 // sits in the review card's own rows (DESIGN-16 D4, D5). Any other step's own result heads
                 // "Result"; "Final output" is the Run's, and only one step carries it.
                 <View testID={`${testIDPrefix}-invocation-result`}><ListPresentationProvider value="page">
-                    <ItemGroup title={props.waitPrompt ?? t('workflows.input.result')}>
+                    <ItemGroup title={props.waitPrompt ?? t('workflows.input.result')}
+                        // The exact structured value stays one Copy away, never printed as JSON: Copy sits in the
+                        // region's header (lab run-A_completed), not as a row inside the value (FIN-DESIGN-ACCEPT-2 F6).
+                        {...(!resultCopyable ? {} : {
+                            action: <IconButton testID={`${testIDPrefix}-invocation-result-copy`} variant="plain" iconName="copy"
+                                accessibilityLabel={t('common.copy')} tooltip={t('common.copy')}
+                                onPress={() => { void writeClipboard(JSON.stringify(visibleResult, null, 2)); }} />,
+                        })}>
                         {visibleResult !== undefined ? (
                             <>
                                 <WorkflowReviewValue value={visibleResult}
                                     blockKind={props.finalResult != null ? undefined : props.progress?.blockKind}
                                     contract={props.finalResult != null ? undefined : resultContract}
                                     testIDPrefix={`${testIDPrefix}-invocation-result`} />
-                                {/* The exact structured value stays one Copy away, never printed as JSON. */}
-                                {visibleResult === null || typeof visibleResult !== 'object' ? null : (
-                                    <Item testID={`${testIDPrefix}-invocation-result-copy`} title={t('common.copy')}
-                                        copy={JSON.stringify(visibleResult, null, 2)} showChevron={false} />
-                                )}
                                 {answeredBy === null ? null : (
                                     <SectionContentRow testID={`${testIDPrefix}-invocation-answered-by`}>
                                         <Text style={styles.provenance}>{answeredBy}</Text>

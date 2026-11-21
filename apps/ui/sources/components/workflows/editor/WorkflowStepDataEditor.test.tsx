@@ -359,6 +359,17 @@ describe('WorkflowBindingRow help (DESIGN-13)', () => {
         expect(text).not.toContain('happier-ref:');
     });
 
+    it('reads a structured field with workflow values inside as its item count at rest, never as JSON source', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'structured-field' });
+        const token = '[Reviewers](happier-ref:workflowInput:0)';
+        const screen = await renderScreen(<WorkflowBindingRow label="Steps" structured binding={{ kind: 'text', input: [{ kind: 'input', name: 'reviewers' }],
+            document: { text: `[{"kind":"review","reviewers":${token}}]`, references: [{ kind: 'happier.workflowInput', ref: 'workflowInput:0', label: 'Reviewers', token }] } }}
+            draft={draft} editable={false} testID="structured-row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('workflows.page.blocks.structuredItems:{"count":1}');
+        expect(text).not.toContain('"kind"');
+    });
+
     it('keeps a field\'s binding note out of a resting card and shows it while the step is edited', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'note' });
         const row = (editing: boolean) => (

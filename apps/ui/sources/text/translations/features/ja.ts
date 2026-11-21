@@ -19075,6 +19075,7 @@ const ja: WorkflowEditorPageTranslations = {
         asksLabel: '実行時に確認',
         asksWhenItRuns: ({ names }: { names: string }) => `実行時に ${names} を確認します`,
         moreSettings: ({ count }: { count: number }) => `その他の設定 ${count} 件`,
+        structuredItems: ({ count }: { count: number }) => `${count} 件の項目`,
         uses: '使用',
         workflowSub: '別のワークフローを実行 · そのステップはこの実行に表示されます',
         builtin: '組み込み',

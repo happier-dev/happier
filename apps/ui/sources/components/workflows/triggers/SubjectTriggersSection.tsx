@@ -472,7 +472,7 @@ const ReadOnlyAutomationRow = React.memo(function ReadOnlyAutomationRow(props: R
   return (
     <View ref={anchorRef} collapsable={false}>
       <Item testID={`subject-triggers-read-only:${row.automationId}:${row.triggerId ?? 'manual'}`}
-        title={row.subtitlePending ? WORKFLOW_NAME_PENDING_TITLE : row.subtitle} subtitle={joinHappierFacts(row.title, author)} dimmed={row.off}
+        title={row.subtitlePending ? WORKFLOW_NAME_PENDING_TITLE : row.subtitle} subtitle={joinHappierFacts(row.off ? t('workflows.triggers.row.off') : null, row.title, author)} dimmed={row.off}
         icon={<Icon name={row.glyph} color={theme.colors.text.secondary} />}
         onPress={() => props.onOpen(row, anchorRef)} />
     </View>

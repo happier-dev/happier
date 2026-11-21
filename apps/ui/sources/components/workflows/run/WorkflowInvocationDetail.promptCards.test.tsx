@@ -330,6 +330,17 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(unanswered.getTextContent()).toContain('Does #1482 fix the crash?');
         expect(unanswered.findByTestId('workflow-run-invocation-unanswered')).not.toBeNull();
     });
+    it('puts a structured result\'s Copy in the Result region\'s header, never as a row inside the value (FIN-DESIGN-ACCEPT-2 F6)', async () => {
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+            invocationPath: { blockId: 'inspect', scope: [] }, attempt: '0', logicalInvocationRecordId: 'structured',
+            timing: { startedAt: '2026-10-12T10:00:00.000Z', finishedAt: '2026-10-12T10:01:00.000Z' }, result: { items: [], cursor: null } };
+        const screen = await renderDetail({ progress, lifecycle: 'completed' });
+        const { Item } = await import('@/components/ui/lists/Item');
+        expect(screen.root.findAllByType(Item).some((item) => item.props.testID === 'workflow-run-invocation-result-copy')).toBe(false);
+        const { IconButton } = await import('@/components/ui/buttons/IconButton');
+        expect(screen.root.findAllByType(IconButton).some((button) => button.props.testID === 'workflow-run-invocation-result-copy')).toBe(true);
+    });
+
     it('keeps a completed Wait\'s question and says it was continued, never unanswered, when it carries no value', async () => {
         const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'wait',
             invocationPath: { blockId: 'review', scope: [] }, attempt: '0', logicalInvocationRecordId: 'continued',

@@ -155,9 +155,9 @@ export function readWorkflowLibraryRowFacts(
         : [],
     triggerLine:
       definition.triggerSummaryErrorCode === undefined
-        ? definition.triggers.length === 0
-          ? t('automations.list.noAutomaticTriggers')
-          : formatTriggerSetSummary(definition.triggers, undefined, OFF_SAID_ELSEWHERE)
+        // A workflow without triggers reads "Manual", as the trigger owner says it (scene 8 lab), never a sentence
+        // repeated on every row (FIN-DESIGN-ACCEPT-2 F15).
+        ? formatTriggerSetSummary(definition.triggers, undefined, OFF_SAID_ELSEWHERE)
         : t('common.unavailable'),
     stepCount: available ? definition.stepCount : null,
     steps: available ? (definition.previewSteps ?? EMPTY_STEPS) : EMPTY_STEPS,

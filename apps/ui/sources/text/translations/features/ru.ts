@@ -19166,6 +19166,7 @@ const ru: WorkflowEditorPageTranslations = {
         asksLabel: 'Спрашивает при запуске',
         asksWhenItRuns: ({ names }: { names: string }) => `При запуске спрашивает: ${names}`,
         moreSettings: ({ count }: { count: number }) => `Ещё настроек: ${count}`,
+        structuredItems: ({ count }: { count: number }) => `Элементов: ${count}`,
         uses: 'Использует',
         workflowSub: 'Запускает другой сценарий · его шаги видны в этом запуске',
         builtin: 'Встроенный',

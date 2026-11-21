@@ -19077,6 +19077,7 @@ const es: WorkflowEditorPageTranslations = {
         asksLabel: 'Pide al ejecutarse',
         asksWhenItRuns: ({ names }: { names: string }) => `Pide ${names} al ejecutarse`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? '1 ajuste más' : `${count} ajustes más`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 elemento' : `${count} elementos`),
         uses: 'Usa',
         workflowSub: 'Ejecuta otro flujo · sus pasos aparecen en esta ejecución',
         builtin: 'Integrado',

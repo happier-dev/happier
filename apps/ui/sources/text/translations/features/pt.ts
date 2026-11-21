@@ -19127,6 +19127,7 @@ const pt: WorkflowEditorPageTranslations = {
         asksLabel: 'Pede ao executar',
         asksWhenItRuns: ({ names }: { names: string }) => `Pede ${names} ao executar`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? 'Mais 1 configuração' : `Mais ${count} configurações`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 item' : `${count} itens`),
         uses: 'Usa',
         workflowSub: 'Executa outro workflow · os seus passos aparecem nesta execução',
         builtin: 'Integrado',

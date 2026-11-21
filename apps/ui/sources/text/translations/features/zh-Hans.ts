@@ -19015,6 +19015,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         asksLabel: '运行时询问',
         asksWhenItRuns: ({ names }: { names: string }) => `运行时询问 ${names}`,
         moreSettings: ({ count }: { count: number }) => `另外 ${count} 项设置`,
+        structuredItems: ({ count }: { count: number }) => `${count} 项`,
         uses: '使用',
         workflowSub: '运行另一个工作流 · 其步骤显示在此次运行中',
         builtin: '内置',

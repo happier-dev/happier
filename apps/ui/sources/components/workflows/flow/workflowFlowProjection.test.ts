@@ -79,6 +79,13 @@ describe('definition flow projection', () => {
     expect(authoring).not.toBe(t('workflows.condition.always'));
     expect(projectWorkflowFlow(blocks, {}, {}, { presentation: 'authoring' }).nodesById.get('gate')?.labelDetail).toBe(authoring);
   });
+  it('prints nothing under a named Run map condition that always holds, never "If Always" (FIN-DESIGN-ACCEPT-2 F14)', () => {
+    const unset = { kind: 'exists' as const, value: { kind: 'literal' as const, value: true } };
+    const blocks = definition([{ kind: 'if', id: 'gate', name: 'Use the review path', when: unset, then: [step('ship')], otherwise: [] }]);
+    const node = projectWorkflowFlow(blocks, {}, {}, { presentation: 'run' }).nodesById.get('gate');
+    expect(node?.label).toBe('Use the review path');
+    expect(node?.labelDetail ?? null).toBeNull();
+  });
   it('keeps the If in a named condition so the map reads as a condition, like the editor (lab run-A)', () => {
     const condition = { kind: 'compare' as const, operator: 'eq' as const,
       left: { kind: 'result' as const, producer: { blockId: 'check', scope: { kind: 'current' as const } }, path: ['approved'] },

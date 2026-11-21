@@ -299,9 +299,9 @@ export function projectWorkflowFlow(
           break;
         }
         case 'if': {
-          const condition = options.presentation === 'run'
-            ? resolveWorkflowConditionHeadline(referenceContext, block.when, 'run').sentence
-            : formatWorkflowConditionSentence(referenceContext, block.when);
+          const runHeadline = options.presentation === 'run' ? resolveWorkflowConditionHeadline(referenceContext, block.when, 'run') : null;
+          const condition = runHeadline !== null ? runHeadline.sentence : formatWorkflowConditionSentence(referenceContext, block.when);
+          const named = Boolean(block.name?.trim());
           pushNode({
             nodeId,
             blockId: block.id,
@@ -310,7 +310,9 @@ export function projectWorkflowFlow(
             label: workflowBlockReferenceLabel(block),
             // Unnamed, the kind's own word leads ("**If** · … is No"); a named condition keeps its If so
             // the map reads as a condition, as the editor's heading does (lab run-A).
-            labelDetail: block.name?.trim() ? t('workflows.page.inspector.ifSentence', { condition }) : condition,
+            // A named condition that always holds says nothing under its name, never "If Always" (FIN-DESIGN-ACCEPT-2 F14).
+            ...(named && runHeadline?.unconditional === true ? {}
+              : { labelDetail: named ? t('workflows.page.inspector.ifSentence', { condition }) : condition }),
             parentNodeId,
             observed: false,
           });

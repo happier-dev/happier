@@ -1183,7 +1183,9 @@ describe('workflow block list editor', () => {
             { kind: 'action', id: 'unknown', actionId: 'acme.plugin.unknown_action', input: { target: { kind: 'literal', value: 'x' } } },
         ] as never);
         const changes: Array<ReturnType<typeof buildDraft>> = [];
-        const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
+        // The Action step is selected: its "more settings" disclosure belongs to the selected step (round 1116 S6).
+        const screen = await renderList(harness, { draft, selectedBlockId: 'notify',
+            onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
         // Action: one row per declared field, bound or not; options nobody set wait behind one
         // "more settings" control (lab round 1106 F1), never as nothing.

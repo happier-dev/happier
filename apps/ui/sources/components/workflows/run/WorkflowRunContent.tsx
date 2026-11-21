@@ -1232,12 +1232,16 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // `detailsPaneAvailable` already excludes an embedded Run.
     const compactActions = phonePage || (detailsPaneAvailable && props.selectedInvocationId !== null);
     // Run workflow again never folds where the state shows it as its action (07 §6.1, M15): a failed Run (the
-    // way forward beside the failure) and a Completed one with a result to open (Open result + Run workflow
-    // again, lab run-A_completed). Elsewhere it is a `⋯` entry while the header is narrow.
+    // way forward beside the failure) and, on a phone page's own row, a Completed one with a result to open.
+    // Beside an open details pane the header keeps one action slot on the title's line in every state, so the
+    // completion moment never moves it (FIN-DESIGN-ACCEPT-2 F2): there Run workflow again and Pause at boundary
+    // are `⋯` entries, never both, and Open result or Stop holds the slot.
+    const besidePane = compactActions && !phonePage;
     const runAgainIsStateAction = primaryAction === 'run_again' || props.run.state === 'failed'
-        || terminalOutcome?.kind === 'open_result';
+        || (terminalOutcome?.kind === 'open_result' && !besidePane);
     const runAgainFolded = compactActions && runAgainAction !== null && !runAgainIsStateAction;
     const anotherRoundFolded = compactActions && anotherRoundAction !== null;
+    const pauseFolded = besidePane && props.run.availability.pause && props.onPause !== undefined;
     const secondaryElements = [resumeAction, runAgainFolded ? null : runAgainAction, anotherRoundFolded ? null : anotherRoundAction, outcomeAction,
         remedyAction]
         .filter((element) => element !== null && element !== primaryElement);
@@ -1247,6 +1251,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             icon: 'play' as const, onPress: onRunAgain }] : []),
         ...(anotherRoundFolded && onAnotherRound ? [{ id: `${testIDPrefix}-another-round`, title: t('workflows.start.anotherRound'),
             icon: 'arrows-clockwise' as const, disabled: operationPending, onPress: onAnotherRound }] : []),
+        ...(pauseFolded && props.onPause ? [{ id: `${testIDPrefix}-pause`, title: t('workflows.run.pauseAtBoundary'),
+            icon: 'pause-circle' as const, disabled: operationPending, onPress: props.onPause }] : []),
         ...(sourceFolded && props.sourceAction ? [{ id: `${testIDPrefix}-${props.sourceAction.kind}-workflow`,
             title: props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow'),
             icon: props.sourceAction.kind === 'edit' ? 'pencil-simple' as const : 'tree-structure' as const,
@@ -1287,7 +1293,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <>
             {phonePage ? stopControl : null}
             {outcomeActions}
-            {props.run.availability.pause && props.onPause !== undefined ? (
+            {props.run.availability.pause && props.onPause !== undefined && !pauseFolded ? (
                 // Pause is the quiet one beside the bordered Stop (lab run-A): two outlines side by side would
                 // say the two are equals. It reads what it does, "Pause at boundary" (07 §2.3 item 6).
                 <SectionActionButton

@@ -19141,6 +19141,7 @@ const it: WorkflowEditorPageTranslations = {
         asksLabel: 'Chiede all’esecuzione',
         asksWhenItRuns: ({ names }: { names: string }) => `Chiede ${names} all’esecuzione`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? '1 altra impostazione' : `${count} altre impostazioni`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 elemento' : `${count} elementi`),
         uses: 'Usa',
         workflowSub: 'Esegue un altro workflow · i suoi passaggi compaiono in questa esecuzione',
         builtin: 'Integrato',

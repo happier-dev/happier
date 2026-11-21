@@ -19155,6 +19155,7 @@ const ca: WorkflowEditorPageTranslations = {
         asksLabel: 'Demana en executar-se',
         asksWhenItRuns: ({ names }: { names: string }) => `Demana ${names} quan s’executa`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? '1 ajust més' : `${count} ajustos més`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 element' : `${count} elements`),
         uses: 'Fa servir',
         workflowSub: 'Executa un altre flux · els seus passos apareixen en aquesta execució',
         builtin: 'Integrat',

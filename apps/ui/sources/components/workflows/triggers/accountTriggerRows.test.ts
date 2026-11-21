@@ -45,6 +45,20 @@ describe('projectAccountTriggerRows', () => {
         expect(projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer', resolveWorkflowTitle: () => null }))
             .toMatchObject([{ yours: true, readOnly: false }, { yours: false, readOnly: true }, { yours: true, readOnly: true }]);
     });
+    it('leaves "Off" to the row\'s own state word, so a turned-off trigger never reads "Off · Off" (FIN-DESIGN-ACCEPT-2 F11)', () => {
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            { automationId: 'off-direct', triggerId: 't1', workflowDefinitionId: null, relation: 'direct',
+                enabled: false, revision: 1, summary: { kind: 'schedule', enabled: false, schedule: daily('t1', '0 7 * * *').schedule },
+                setUpBy: { accountId: 'viewer', displayName: null } },
+        ], nextCursor: null, skippedNotSharedCount: 0 });
+        const [attached] = projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer' });
+        expect(attached?.off).toBe(true);
+        expect(attached?.title).not.toContain('workflows.triggers.row.off');
+        const [inlineRow] = projectAccountTriggerRows({ sets: [set('off-inline', { enabled: false, triggers: [daily('t2', '0 7 * * *', false)] })], accountId: 'viewer' });
+        expect(inlineRow?.off).toBe(true);
+        expect(inlineRow?.title).not.toContain('workflows.triggers.row.off');
+    });
+
     it('projects a saved Action attachment through the ordinary trigger row owner', () => {
         const trigger = AutomationActionTriggerSchema.parse({ kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask',
             actionIds: ['machines.command.run'] });

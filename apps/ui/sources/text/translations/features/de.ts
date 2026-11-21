@@ -18635,6 +18635,7 @@ const de: WorkflowEditorPageTranslations = {
         asksLabel: 'Fragt beim Ausführen',
         asksWhenItRuns: ({ names }: { names: string }) => `Fragt beim Ausführen nach ${names}`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? '1 weitere Einstellung' : `${count} weitere Einstellungen`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 Eintrag' : `${count} Einträge`),
         uses: 'Verwendet',
         workflowSub: 'Führt einen anderen Workflow aus · seine Schritte erscheinen in diesem Lauf',
         builtin: 'Integriert',

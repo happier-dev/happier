@@ -19165,6 +19165,7 @@ const pl: WorkflowEditorPageTranslations = {
         asksLabel: 'Pyta przy uruchomieniu',
         asksWhenItRuns: ({ names }: { names: string }) => `Przy uruchomieniu pyta o: ${names}`,
         moreSettings: ({ count }: { count: number }) => `Więcej ustawień: ${count}`,
+        structuredItems: ({ count }: { count: number }) => `Elementy: ${count}`,
         uses: 'Używa',
         workflowSub: 'Uruchamia inny przepływ · jego kroki pojawiają się w tym uruchomieniu',
         builtin: 'Wbudowane',

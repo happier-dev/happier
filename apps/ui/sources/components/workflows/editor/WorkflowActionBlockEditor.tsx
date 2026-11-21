@@ -12,7 +12,6 @@ import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/ac
 import type { WorkflowActionFieldBindingV1, WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { isWorkflowActionLiteralFieldV1 } from '@happier-dev/protocol/workflows/stepActionsV1';
-import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { ActionInputFields, formatActionInputFieldChoice } from '@/components/sessions/actions/ActionInputFields';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -141,26 +140,16 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const actionSource = spec?.plugin?.title ?? (spec === null
         ? catalogReadLabel === null ? t('workflows.page.blocks.actionNotInCatalog') : undefined : 'Happier');
 
-    // At rest, fields the workflow fills from its inputs read as one line; selecting the step opens them.
-    const askedRows = props.selected === true ? NO_ROWS : rows.filter((row) =>
-        block.input[row.key]?.kind === 'input' && props.fieldIssues?.[row.key] === undefined);
-    const listedRows = askedRows.length === 0 ? rows : rows.filter((row) => !askedRows.includes(row));
     // Settings disclose progressively (owner 2026-11-06, lab round 1106 F1): what is set, required or
     // in need of repair stays; an option nobody set waits behind one "N more settings" until asked for.
+    // A resting card reads only what is set (round 1116 S6): the disclosure belongs to the selected step.
     // A reader never sees unset fields at all (`WorkflowBindingRow`), so this is the editor's alone.
+    // Every set field reads as its own row, a workflow input as its token: no summary line repeats them.
     const [allSettingsShown, setAllSettingsShown] = React.useState(false);
-    const quietRows = !editable || allSettingsShown ? NO_ROWS : listedRows.filter((row) =>
+    const quietRows = !editable || allSettingsShown ? NO_ROWS : rows.filter((row) =>
         block.input[row.key] === undefined && !row.required && props.fieldIssues?.[row.key] === undefined);
-    const shownRows = quietRows.length === 0 ? listedRows : listedRows.filter((row) => !quietRows.includes(row));
-    const askedLine = askedRows.length === 0 ? null : t('workflows.page.blocks.asksWhenItRuns', {
-        names: [...new Set(askedRows.flatMap((row) => {
-            const binding = block.input[row.key];
-            if (binding?.kind !== 'input') return [];
-            // The same words as the page's "Asks when it runs" row and Workflow settings.
-            const declared = props.draft.inputs.find((input) => input.name === binding.name);
-            return [formatWorkflowFieldLabel(binding.name, declared ? workflowInputToFieldHint(declared).title : undefined)];
-        }))].join(', '),
-    });
+    const shownRows = quietRows.length === 0 ? rows : rows.filter((row) => !quietRows.includes(row));
+    const moreSettingsShown = quietRows.length > 0 && props.selected === true;
 
     const setBinding = (key: string, binding: WorkflowActionFieldBindingV1 | undefined) => {
         const { [key]: _previous, ...rest } = block.input;
@@ -203,16 +192,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
             {spec?.projectionError ? <Text testID={`${rowPrefix}-projection-error`} accessibilityRole="alert"
                 style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.actionUnavailable', { action: displayName })}</Text> : rows.length === 0 ? spec === null ? null : (
                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.noFields')}</Text>
-            ) : <>{askedLine === null ? null : editable ? (
-                <HappierPressable testID={`${rowPrefix}-asks`} accessibilityRole="button" accessibilityLabel={askedLine}
-                    onPress={props.onSelect} style={workflowEditorStyles.actionFieldRow}>
-                    <Text style={workflowEditorStyles.groupSummary}>{askedLine}</Text>
-                </HappierPressable>
-            ) : (
-                <View testID={`${rowPrefix}-asks`} style={workflowEditorStyles.actionFieldRow}>
-                    <Text style={workflowEditorStyles.groupSummary}>{askedLine}</Text>
-                </View>
-            )}{shownRows.map((row) => {
+            ) : <>{shownRows.map((row) => {
                 const binding = block.input[row.key];
                 const fieldId = `${rowPrefix}-field-${row.key}`;
                 const literalOnly = isWorkflowActionLiteralFieldV1(block.actionId, row.key);
@@ -223,6 +203,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         testID={fieldId}
                         label={row.label}
                         required={row.required}
+                        structured={row.hint?.widget === 'json'}
                         {...(literalOnly ? { note: t('workflows.actionTitles.commandValuesInEnv') } : {})}
                         binding={binding}
                         referenceLabels={props.referenceLabels?.[row.key]}
@@ -332,7 +313,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                         )}
                     />
                 );
-            })}{quietRows.length === 0 ? null : (
+            })}{!moreSettingsShown ? null : (
                 <HappierPressable testID={`${rowPrefix}-more-settings`} accessibilityRole="button"
                     accessibilityLabel={t('workflows.page.blocks.moreSettings', { count: quietRows.length })}
                     onPress={() => setAllSettingsShown(true)} style={workflowEditorStyles.actionFieldRow}>

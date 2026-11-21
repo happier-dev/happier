@@ -8,7 +8,7 @@ import { useLocalSetting } from '@/sync/store/hooks';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowAuthoredResultReference, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowActionFieldBindingV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
-import type { WorkflowActionTextBindingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
+import { renderWorkflowActionTextV1, type WorkflowActionTextBindingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
@@ -126,6 +126,16 @@ export function WorkflowReferenceSentence(props: Readonly<{ draft: WorkflowEdito
 }
 
 /** An Action field's text with workflow values inside: its words, each value as the same token chip a sentence uses. */
+/**
+ * A structured (JSON) field's text with values inside reads at rest as what it holds ("1 item"), never
+ * as its JSON source. Values inside are counted, not read: the summary parses with each value as null.
+ */
+function readWorkflowStructuredTextSummary(binding: WorkflowActionTextBindingV1): string | null {
+    const rendered = renderWorkflowActionTextV1(binding.document, 'json', () => null);
+    if (!rendered.ok || !Array.isArray(rendered.value)) return null;
+    return t('workflows.page.blocks.structuredItems', { count: rendered.value.length });
+}
+
 export function WorkflowActionFieldTextValue(props: Readonly<{ draft: WorkflowEditorDraft; binding: WorkflowActionTextBindingV1; testID?: string }>): React.ReactElement {
     const parts = React.useMemo(() => listWorkflowActionFieldTextParts(props.binding), [props.binding]);
     return (
@@ -149,6 +159,8 @@ export function WorkflowActionFieldTextValue(props: Readonly<{ draft: WorkflowEd
 export function WorkflowBindingRow(props: Readonly<{
     label: string;
     required?: boolean;
+    /** The field takes a JSON structure: at rest its text with values inside reads as its item count. */
+    structured?: boolean;
     /** A fact about how this field binds ("Values go in as environment variables"). */
     note?: string;
     binding: WorkflowActionFieldBindingV1 | undefined;
@@ -223,9 +235,11 @@ export function WorkflowBindingRow(props: Readonly<{
         if (props.editable && props.onEdit !== undefined) {
             rowAction = { testID: `${props.testID}-edit`, accessibilityLabel: `${t('common.edit')} ${props.label}`, onPress: props.onEdit };
         }
+        const structuredSummary = props.structured === true && binding.kind === 'text' ? readWorkflowStructuredTextSummary(binding) : null;
         value = (
             <View testID={`${props.testID}-value`} style={workflowEditorStyles.metaRow}>
-                {binding.kind === 'text' ? <WorkflowActionFieldTextValue draft={props.draft} binding={binding} /> : (binding.kind === 'object' ? Object.entries(binding.fields)
+                {structuredSummary !== null ? <Text style={workflowEditorStyles.actionFieldText}>{structuredSummary}</Text>
+                    : binding.kind === 'text' ? <WorkflowActionFieldTextValue draft={props.draft} binding={binding} /> : (binding.kind === 'object' ? Object.entries(binding.fields)
                     : (binding.kind === 'list' ? binding.items : [binding]).map(reference => [null, reference] as const)).map(([field, reference], index) => (
                     <React.Fragment key={field ?? index}>
                         {field === null ? null : <Text style={workflowEditorStyles.actionFieldLabel}>{field}</Text>}

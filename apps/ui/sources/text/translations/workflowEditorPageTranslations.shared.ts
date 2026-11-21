@@ -38,6 +38,7 @@ export const en = {
         asksLabel: 'Asks when it runs',
         asksWhenItRuns: ({ names }: { names: string }) => `Asks for ${names} when it runs`,
         moreSettings: ({ count }: { count: number }) => (count === 1 ? '1 more setting' : `${count} more settings`),
+        structuredItems: ({ count }: { count: number }) => (count === 1 ? '1 item' : `${count} items`),
         uses: 'Uses',
         workflowSub: 'Runs another workflow · its steps show in this run',
         builtin: 'Built-in',
