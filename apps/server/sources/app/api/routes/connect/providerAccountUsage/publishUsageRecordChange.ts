@@ -20,7 +20,9 @@ export function publishUsageRecordChange(tx: Tx, input: Readonly<{
             });
             const day = readProviderAccountUsageDayChangeV1(previous);
             const sameDay = day?.dayStartAtMs === dayStartAtMs ? day : undefined;
-            const previousCursor = Math.max(0, ...previous.map(row => row.cursor));
+            // The global row can belong to another record. Only the exact row
+            // identifies the predecessor the reader may already have admitted.
+            const previousCursor = previous.find(row => row.entityId === exact.entityId)?.cursor ?? 0;
             changes = [...buildProviderAccountUsageMaterialChangesV1(recordId, {
                 dayStartAtMs, afterCursor: sameDay?.afterCursor ?? previousCursor,
                 publication: { kind: historyFromAtMs === undefined ? 'summary' : 'observation', afterCursor: previousCursor },

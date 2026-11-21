@@ -12,7 +12,7 @@ import { buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol
 import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { readProviderAccountUsagePageProjection, writeProviderAccountUsagePageProjection } from './pageProjectionStorage';
-import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -21,6 +21,7 @@ import {
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import {
     createProviderAccountUsageRecordKey,
     createUsageSnapshot,
@@ -41,6 +42,7 @@ import {
 import {
     writeProviderAccountUsageRecordWithPolicy,
 } from "./routeWritePolicy";
+import { publishUsageRecordChange } from './publishUsageRecordChange';
 import {
     ProviderAccountUsagePayloadInvariantError,
 } from "./types";
@@ -64,6 +66,50 @@ describe("provider account usage record storage (integration)", () => {
         harness.resetEnv();
         await db.providerAccountUsageRecord.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it('chains interleaved and back-to-back usage publications to the exact record within the existing query budget', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const dayStartAtMs = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+        const gemini = buildProviderAccountUsageRecordId(createProviderAccountUsageRecordKey({ providerId: 'gemini' }));
+        const claude = buildProviderAccountUsageRecordId(createProviderAccountUsageRecordKey({ providerId: 'claude' }));
+        const accountChangeQueries: string[] = [];
+        const publish = async (recordId: string, ...offsets: number[]) => {
+            const stop = observeSqliteRequests({ before: ({ model, action }) => {
+                if (model === 'AccountChange') accountChangeQueries.push(action);
+            } });
+            try {
+                await inTx(async tx => {
+                    for (const offset of offsets) {
+                        publishUsageRecordChange(tx, { accountId: account.id, recordId, dayStartAtMs,
+                            historyFromAtMs: dayStartAtMs + offset });
+                    }
+                });
+            } finally {
+                stop();
+            }
+            const [global, exact] = buildProviderAccountUsageMaterialChangesV1(recordId);
+            const rows = await db.accountChange.findMany({
+                where: { accountId: account.id, kind: 'account', entityId: { in: [global.entityId, exact.entityId] } },
+            });
+            const day = readProviderAccountUsageDayChangeV1(rows);
+            expect(day).toBeDefined();
+            return day!;
+        };
+
+        const firstGemini = await publish(gemini, 1_000);
+        const firstClaude = await publish(claude, 2_000);
+        const secondGemini = await publish(gemini, 3_000);
+        const secondClaude = await publish(claude, 4_000);
+        const finalGemini = await publish(gemini, 5_000, 6_000);
+
+        // Each publication still reads the paired rows once and upserts both once.
+        expect(accountChangeQueries).toEqual(Array.from({ length: 6 }, () => ['findMany', 'upsertOne', 'upsertOne']).flat());
+        expect(secondGemini.publication?.afterCursor).toBe(firstGemini.throughCursor);
+        expect(secondClaude.publication?.afterCursor).toBe(firstClaude.throughCursor);
+        expect(finalGemini.publication?.afterCursor).toBe(finalGemini.throughCursor - 2);
+        expect(finalGemini.history).toEqual({ fromAtMs: dayStartAtMs + 6_000, afterCursor: finalGemini.throughCursor - 2 });
+        expect(finalGemini.publication!.afterCursor).toBeGreaterThan(secondGemini.throughCursor);
     });
 
     it('acknowledges current-record mutations without reading a payload while its write lock is held', async () => {
