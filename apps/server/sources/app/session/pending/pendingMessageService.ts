@@ -54,7 +54,7 @@ import { reconcileAutonomousExchangeAcceptedTurnInTx } from '@/app/session/pendi
 import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { Fastify } from '@/app/api/types';
 import { readCurrentExecutionRunFollowSource, type ExecutionRunFollowFrontierWitness } from '@/app/session/follow/executionRunFollowSource';
-import { readAutonomousExchangeSourceRoot, readReceiverAutonomousExchangeRootInTx,
+import { readAutonomousExchangeSourceRoot, readCommittedPersonFollowRootInTx, readReceiverAutonomousExchangeRootInTx,
     isAutonomousExchangeRootReceiptForAccount } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
 import { AutonomousExchangeStateV1Schema, createAutonomousExchangeStateV1,
     readAutonomousExchangeAdmissionV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
@@ -2088,6 +2088,12 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
             sourceInputId: undefined } : undefined
         : params.validation?.sourceSession;
     let exchangeRoot: { sessionId: string; localId: string } | undefined;
+    if (params.targetExecutionRunId === null && followOriginal && 'sourceMessage' in followOriginal
+        && followDelivery && 'event' in followDelivery && followDelivery.event.kind === 'person_wrote') {
+        exchangeRoot = await readCommittedPersonFollowRootInTx(params.tx, {
+            accountId: params.accountId, sourceSessionId: followOriginal.sourceSessionId, sourceMessage: followOriginal.sourceMessage,
+        });
+    }
     const runWake = runDelivery?.delivery === 'wake';
     if (runWake && params.targetExecutionRunId === null) {
         exchangeRoot = original?.turnStartWitnessId && original.autonomousExchangeRootSessionId && original.autonomousExchangeRootLocalId

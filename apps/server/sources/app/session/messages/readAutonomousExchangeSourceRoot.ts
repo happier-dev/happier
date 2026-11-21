@@ -29,6 +29,26 @@ export function isAutonomousExchangeRootReceiptForAccount(value: unknown, accoun
     return readAutonomousExchangeRootReceiptForAccount(value, accountId, sessionId) !== null;
 }
 
+function isDirectAutonomousExchangeRootReceipt(receipt: SessionInputAdmissionReceiptV1 | null): boolean {
+    return receipt !== null && !receipt.followDeliveryV1 && !receipt.followSources && !receipt.followRelations
+        && (receipt.issuer === 'authenticatedAccount' || !receipt.discussionAddressing);
+}
+
+/** A person-message wake can run before the source's provider acceptance arrives. */
+export async function readCommittedPersonFollowRootInTx(tx: Tx, input: Readonly<{
+    accountId: string; sourceSessionId: string; sourceMessage: { localId: string; seq: number };
+}>): Promise<AutonomousExchangeRoot | undefined> {
+    const { accountId, sourceSessionId, sourceMessage } = input;
+    const message = await tx.sessionMessage.findUnique({
+        where: { sessionId_localId: { sessionId: sourceSessionId, localId: sourceMessage.localId },
+            seq: sourceMessage.seq, session: { accountId }, messageRole: 'user',
+            sidechainId: null, targetExecutionRunId: null, autonomousExchangeCause: null },
+        select: { inputAdmissionReceipt: true },
+    });
+    const receipt = readAutonomousExchangeRootReceiptForAccount(message?.inputAdmissionReceipt, accountId, sourceSessionId);
+    if (isDirectAutonomousExchangeRootReceipt(receipt)) return { sessionId: sourceSessionId, localId: sourceMessage.localId };
+}
+
 /** Foreign causes join the receiver's current local input/root, not the sender's private lineage. */
 export async function readReceiverAutonomousExchangeRootInTx(tx: Tx, input: Readonly<{
     accountId: string; sessionId: string; selection?: 'latest_person';
@@ -92,8 +112,7 @@ export async function readAutonomousExchangeSourceRoot(input: Readonly<{
         // Protected CLI originals use Machine admission too. Their accepted,
         // exact Account/Session receipt is already an owned root; this does not
         // turn a Follow or Discussion carrier into a new person input.
-        const directOriginal = receipt && !receipt.followDeliveryV1 && !receipt.followSources && !receipt.followRelations
-            && (receipt.issuer === 'authenticatedAccount' || !receipt.discussionAddressing);
+        const directOriginal = isDirectAutonomousExchangeRootReceipt(receipt);
         let candidate = inheritedSessionId && inheritedLocalId
             ? { sessionId: inheritedSessionId, localId: inheritedLocalId }
             : directOriginal && sourceInput.localId

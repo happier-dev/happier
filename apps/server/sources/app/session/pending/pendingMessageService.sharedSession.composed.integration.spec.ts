@@ -2768,19 +2768,21 @@ describe("pendingMessageService (shared sessions)", () => {
                 .toMatchObject({ ok: true });
         };
         await follow(first, second);
-        const accept = async (receiver: typeof first, localId: string, kind: 'newTurn' | 'followUp') => {
+        const complete = async (receiver: typeof first, turnId: string) => {
+            await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: receiver.sessionId, turnId } },
+                data: { status: 'completed', terminalAt: BigInt(Date.now()) } });
+            await db.session.update({ where: { id: receiver.sessionId }, data: { latestTurnStatus: 'completed' } });
+        };
+        const accept = async (receiver: typeof first, localId: string, kind: 'newTurn' | 'followUp', finish = true) => {
             const turnId = randomUUID();
             const observedAt = Date.now();
             expect(await applySessionTurnMutation({ ...actor, mutation: { v: 1, action: 'begin', turnId,
                 sessionId: receiver.sessionId, mutationId: randomUUID(), observedAt, startingInputId: localId } }))
                 .toMatchObject({ ok: true, didApply: true });
-            expect(await resolveAcceptedPendingDelivery({ ...actor, ...receiver, localId,
-                acceptedTurn: { kind, turnId } })).toMatchObject({ ok: true, didResolve: true });
-            if (preset === 'everything') {
-                // Persist the provider terminal boundary used by ordinary Follow.
-                await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: receiver.sessionId, turnId } },
-                    data: { status: 'completed', terminalAt: BigInt(observedAt + 1) } });
-                await db.session.update({ where: { id: receiver.sessionId }, data: { latestTurnStatus: 'completed' } });
+            if (finish) {
+                expect(await resolveAcceptedPendingDelivery({ ...actor, ...receiver, localId,
+                    acceptedTurn: { kind, turnId } })).toMatchObject({ ok: true, didResolve: true });
+                if (preset === 'everything') await complete(receiver, turnId);
             }
             return turnId;
         };
@@ -2793,20 +2795,24 @@ describe("pendingMessageService (shared sessions)", () => {
                     // Actual Follow requests send a protected Follow receipt, without direct-send sourceSession validation.
                     validation: { autonomousCheckIn: defaultCheckIn } } });
         };
-        const person = async (receiver: typeof first) => {
+        const person = async (receiver: typeof first, finish = true) => {
             const localId = randomUUID();
             expect(await enqueuePendingMessage({ actorUserId: owner.id, ...receiver, localId,
                 content: { t: 'encrypted', c: 'person-input' }, targetMachineId: receiver.publisherAuthority.machineId }))
                 .toMatchObject({ ok: true });
             expect(await settle(receiver, localId)).toMatchObject({ ok: true, result: { status: 'accepted' } });
-            return { localId, turnId: await accept(receiver, localId, 'newTurn') };
+            return { localId, turnId: await accept(receiver, localId, 'newTurn', finish) };
         };
-        const delivery = async (source: typeof first, receiver: typeof first, turnId: string) => {
+        const delivery = async (source: typeof first, receiver: typeof first, turnId: string,
+            sourceMessage?: { localId: string; seq: number }, whileBusy?: () => Promise<void>) => {
             const sourceSessionId = source.sessionId;
             const requestId = randomUUID();
             const agentStateVersion = preset === 'important' ? (await db.session.update({ where: { id: sourceSessionId },
                 data: { agentStateVersion: { increment: 1 } }, select: { agentStateVersion: true } })).agentStateVersion : 0;
-            const followDeliveryV1 = preset === 'everything'
+            const followDeliveryV1 = sourceMessage
+                ? { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId, sourceMessage },
+                    event: { kind: 'person_wrote' as const } }
+                : preset === 'everything'
                 ? { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId, sourceTurn: { id: turnId, status: 'completed' as const } },
                     event: { kind: 'finished' as const } }
                 : { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId, sourceRequests: {
@@ -2816,6 +2822,15 @@ describe("pendingMessageService (shared sessions)", () => {
             expect(await enqueuePendingMessage({ actorUserId: owner.id, ...receiver, localId,
                 targetMachineId: receiver.publisherAuthority.machineId, content: { t: 'encrypted', c: 'follow-input' },
                 requestedAction: { v: 1, kind: 'enqueue' }, followDeliveryV1, followRelations: [{ relation: 'follower' }] })).toMatchObject({ ok: true });
+            if (whileBusy) {
+                expect(await materializeNextPendingMessage({ ...actor, ...receiver, deliveryState: 'provider',
+                    deliveryTiming: 'after_foreground_ready', foregroundState: 'active_unsteerable' }))
+                    .toMatchObject({ ok: true, didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' });
+                expect(await listPendingMessages({ actorUserId: owner.id, sessionId: receiver.sessionId })).toMatchObject({
+                    pending: expect.arrayContaining([expect.objectContaining({ localId, deliveryStatus: { status: 'queued' } })]),
+                });
+                await whileBusy();
+            }
             return { localId, result: await settle(receiver, localId) };
         };
         const count = (root: typeof first, originInputLocalId: string) =>
@@ -2834,7 +2849,11 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(priorFollow.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
         await accept(second, priorFollow.localId, 'newTurn');
 
-        const intervention = await person(second);
+        const intervention = await person(second, preset !== 'everything');
+        const initiatingMessage = await db.sessionMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: second.sessionId, localId: intervention.localId } },
+            select: { seq: true },
+        });
         let source = second;
         let receiver = first;
         let turnId = intervention.turnId;
@@ -2851,9 +2870,16 @@ describe("pendingMessageService (shared sessions)", () => {
                     status: 'held', code: 'session_input_target_unavailable',
                 } });
             }
-            const sent = await delivery(source, receiver, turnId);
-            expect(sent.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+            const sent = await delivery(source, receiver, turnId,
+                i === 0 && preset === 'everything' ? { localId: intervention.localId, seq: initiatingMessage.seq } : undefined,
+                i === 1 && preset === 'everything' ? () => complete(second, intervention.turnId) : undefined);
+            expect(sent.result, `Follow hop ${i + 1}`).toMatchObject({ ok: true, result: { status: 'accepted' } });
             turnId = await accept(receiver, sent.localId, i === 1 ? 'followUp' : 'newTurn');
+            if (i === 0 && preset === 'everything') {
+                // Source acceptance can settle after its message-backed wake.
+                expect(await resolveAcceptedPendingDelivery({ ...actor, ...second, localId: intervention.localId,
+                    acceptedTurn: { kind: 'newTurn', turnId: intervention.turnId } })).toMatchObject({ ok: true, didResolve: true });
+            }
             const progress = await count(second, intervention.localId);
             observed.push(progress.ok ? progress.state.observedStarts : progress.error);
             [source, receiver] = [receiver, source];

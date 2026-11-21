@@ -537,9 +537,11 @@ an older Home leaves those controls unavailable. Continue releases the hold and
 removes the pointer from the Pending projection. No latest-message lookup or new
 exchange authority is introduced.
 
-Within one Account, causal inputs retain their original root. Waking Follow
-inputs inherit the root of the terminal Turn or the single Turn named by their
-foreground requests. A person's new input starts a separate exchange. A cross-Account
+Within one Account, causal inputs retain their original root. A Follow wake
+from a person's committed message uses that exact protected input, even while
+the source Turn is still running or its provider acceptance is settling. Wakes
+from terminal Turns or foreground requests inherit the root of the exact Turn
+they name. A person's new input starts a separate exchange. A cross-Account
 agent cause instead joins the receiving Session's current Account-local root.
 If it has no prior local input, the protected incoming input becomes that local
 root. Only the receiver's current check-in setting and native starts apply;
