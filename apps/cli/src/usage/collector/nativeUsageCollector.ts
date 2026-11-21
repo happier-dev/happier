@@ -303,9 +303,10 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
         return effects.inLock(async () => {
             checkSignal(signal);
             const wasConsented = requireSource(sourceId).consented;
-            await retire(sourceId);
-            checkSignal(signal);
-            await commit(next => { next.find(source => source.sourceId === sourceId)!.consented = enabled; });
+            await commit(next => {
+                checkSignal(signal);
+                next.find(source => source.sourceId === sourceId)!.consented = enabled;
+            }, [sourceId]);
             if (enabled) await activate(sourceId);
             else if (wasConsented) input.onSourceSettled?.();
             return view(requireSource(sourceId));

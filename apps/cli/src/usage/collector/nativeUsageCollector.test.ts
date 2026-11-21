@@ -18,7 +18,7 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
-    it.each(['replacement', 'discover', 'scoped delete'] as const)('keeps the old capture running when saving %s fails', async effect => {
+    it.each(['replacement', 'discover', 'scoped delete', 'stop', 'consent'] as const)('keeps the old capture running when saving %s fails', async effect => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-replacement-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
         const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
@@ -61,6 +61,8 @@ describe('consented native accounting collector', () => {
                     return collector.discover();
                 }
                 if (effect === 'scoped delete') return collector.deleteHistory(source.sourceId, { startMs: 10, endMs: 20 });
+                if (effect === 'stop') return collector.stop(source.sourceId);
+                if (effect === 'consent') return collector.setConsent(source.sourceId, false);
                 return collector.setRoot(source.sourceId, replacementRoot);
             };
             rejectNextSave = true;
@@ -84,6 +86,13 @@ describe('consented native accounting collector', () => {
                 await expect(collector.deleteHistory(source.sourceId, { startMs: 10, endMs: 20 })).resolves.toMatchObject({ success: true });
                 expect((await durable.load()).sources).toMatchObject([{ sourceId: source.sourceId, consented: false }]);
                 expect(historyDeletes).toBe(1);
+                expect(notify).toBeUndefined();
+                return;
+            }
+
+            if (effect === 'stop' || effect === 'consent') {
+                await expect(change()).resolves.toMatchObject({ consent: 'disabled' });
+                expect((await durable.load()).sources).toMatchObject([{ sourceId: source.sourceId, consented: false }]);
                 expect(notify).toBeUndefined();
                 return;
             }
@@ -376,12 +385,9 @@ describe('consented native accounting collector', () => {
                 const consenting = collector.setConsent(source.sourceId, true);
                 await entered;
                 const stopping = collector.stop(source.sourceId);
-                // Let the real owner complete its asynchronous admission/abort steps,
-                // while the HTTP boundary remains unresolved.
-                await new Promise<void>(resolve => setImmediate(resolve));
                 try {
-                    expect(readSignal?.aborted).toBe(true);
-                    expect(settledViews).toEqual([]);
+                    await expect.poll(() => readSignal?.aborted).toBe(true);
+                    expect((await store.load()).sources[0]?.consented).toBe(false);
                 } finally { releaseRead(); await consenting; await stopping; await collector.dispose(); }
                 expect((await store.load()).sources[0]).toMatchObject({ consented: false, pending: [] });
                 expect(await Promise.all(settledViews)).toEqual([[expect.objectContaining({
