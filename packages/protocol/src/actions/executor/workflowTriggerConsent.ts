@@ -4,7 +4,7 @@ import type { WorkflowTriggerContextV1 } from '../../automations/automationWorkf
 import { WorkflowProjectTargetV1Schema, type WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPreparationV1.js';
-import type { WorkflowMaterializedLeafV1, WorkflowResolvedInputsV1 } from '../../workflows/workflowDefinitionV1.js';
+import type { WorkflowMaterializedLeafV1, WorkflowResolvedInputsV1, WorkflowRunExecutionTargetV1 } from '../../workflows/workflowDefinitionV1.js';
 import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
 import { AutomationStoredWorkflowDefinitionV2Schema, type AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeV2.js';
@@ -103,6 +103,7 @@ export async function readWorkflowTriggerActorConsentSteps(input: WorkflowTrigge
 /** The fixed-input rule and deployment SHA extension share one declaration/value binder. */
 export async function materializeWorkflowTriggerActionDefinition(input: Readonly<{
   definition: WorkflowDefinitionV1; inputs: WorkflowResolvedInputsV1; project: WorkflowProjectTargetV1;
+  executionTarget?: WorkflowRunExecutionTargetV1;
   resolveWorkflow(ref: string): Promise<WorkflowDefinitionV1>;
   materializer?: Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>;
   /** A pre-guest review freezes effects; the enrolled Run decides actual target availability. */
@@ -112,7 +113,7 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
   const materialized = await materializeWorkflowDefinitionAuthorityV1({ definition: input.definition,
     ...(input.materializer?.roleSelection ? { roleSelection: input.materializer.roleSelection } : {}),
     context: { source: { kind: 'inline' }, inputs: input.inputs, machineId: input.project.machineId,
-      executionTarget: { kind: 'detached_run' },
+      executionTarget: input.executionTarget ?? { kind: 'detached_run' },
       workspaceTarget: { project: { ...input.project, checkoutRootPath: input.project.directory } },
       authorization: { principal: { kind: 'host' } } },
     effects: {

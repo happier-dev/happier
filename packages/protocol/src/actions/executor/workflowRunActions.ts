@@ -1196,7 +1196,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       const inputs = await resolveWorkflowContextInputsV1({ definition: resolved.definition,
         inputs: startInputs, originSessionId });
       const preview = await materializeWorkflowTriggerActionDefinition({ definition: resolved.definition, inputs,
-        project: admittedTarget, deferTargetAvailability: true, resolveWorkflow: async ref => {
+        project: admittedTarget, executionTarget, deferTargetAvailability: true, resolveWorkflow: async ref => {
           const child = await resolveWorkflowDefinitionRefV1(ref, { readPluginWorkflows: deps.readPluginWorkflows,
             readArtifact: async artifactId => await deps.definitions.get({ definitionId: artifactId,
               ...(args.context.signal ? { signal: args.context.signal } : {}) }),

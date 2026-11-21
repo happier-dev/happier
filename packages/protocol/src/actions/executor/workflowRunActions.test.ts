@@ -453,6 +453,43 @@ describe('shared Account workflow run owner', () => {
     expect(storageEffects).toEqual([]);
   });
 
+  it.each(['session', 'detached_run'] as const)('reviews a Team model for preset placement with the requested %s target', async kind => {
+    const acquireWorkflowPlacement = vi.fn<NonNullable<WorkflowAccountRunActionDeps['acquireWorkflowPlacement']>>()
+      .mockResolvedValue({ ok: true, result: { admission: 'created', run: runSnapshot().run } });
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async () => {
+      throw new Error('preset_review_must_not_write_run_storage');
+    } }), acquireWorkflowPlacement });
+    const project = { machineId: 'controller', directory: '/repo',
+      sessionPlacement: { kind: 'preset' as const, homeId: 'home', presetId: 'preset' } };
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: project.machineId, project } };
+    const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, executionTarget: { kind }, source: { kind: 'inline',
+      definition: { version: 1, blocks: [{ kind: 'step', id: 'ask',
+        document: { text: 'Check the guest', references: [], attachments: [] }, execution: { agentTarget,
+          teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'team-credential',
+            expectedResourceRevision: 0, deliveryMode: 'brokered', teamId: 'team',
+            providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model' } }],
+        },
+      }] },
+    } });
+    const request = { actionId: 'workflow.run.start' as const, input, context };
+    if (kind === 'detached_run') {
+      await expect(owner.prepareStartApproval(request, {})).rejects.toMatchObject({
+        code: 'target_unavailable', details: { reason: 'selection_unavailable', blockId: 'ask' },
+      });
+      expect(acquireWorkflowPlacement).not.toHaveBeenCalled();
+      return;
+    }
+    const prepared = await owner.prepareStartApproval(request, {});
+    expect(acquireWorkflowPlacement).not.toHaveBeenCalled();
+    await expect(prepared.executeAdmittedAction!({ ...request,
+      execute: async () => { throw new Error('preset_run_must_not_launch_on_controller'); },
+    })).resolves.toMatchObject({ ok: true, result: { admission: 'created' } });
+    expect(acquireWorkflowPlacement).toHaveBeenCalledOnce();
+    expect(acquireWorkflowPlacement).toHaveBeenCalledWith({ start: input, project, context });
+  });
+
   it('refuses lost-start rejoin with a different saved Session placement', async () => {
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => runSnapshot() }));
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: {
