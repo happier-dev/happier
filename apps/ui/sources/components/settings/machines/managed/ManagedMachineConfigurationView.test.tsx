@@ -1850,6 +1850,47 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
 
+  it('keeps the decrypted preset name when saving Edit choices on an E2EE preset', async () => {
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+    const { sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+    const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+    const { ManagedMachinePresetV1Schema, ManagedMachinePresetUpdateInputV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }),
+      secret: encodeBase64(new Uint8Array(32).fill(24), 'base64url') };
+    const encryption = await createEncryptionFromAuthCredentials(credentials);
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://encrypted-preset-edit.example.test',
+      serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+    const recipient = { account: { kind: 'account' as const, accountId: 'owner', name: null, firstName: null, lastName: null, username: null, avatarUrl: null },
+      readiness: { status: 'available' as const, contentPublicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) },
+      envelopeStatus: 'prepared' as const };
+    const content = { v: 1 as const, name: 'BL2-RP 190 guest preset',
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'bl2-rp-187g', choices: { cpu: 2 } } };
+    const preset = ManagedMachinePresetV1Schema.parse({ id: 'e2ee-preset', homeId: 'srv_add_server', revision: 0,
+      owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'e2ee', controller: defaultController,
+      ...sealManagedMachinePresetContentV1({ presetId: 'e2ee-preset', mode: 'e2ee', content, recipientCensus: [{ ...recipient, envelopeStatus: 'missing' }],
+        randomBytes: length => new Uint8Array(length).fill(23) }) });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+    harness.answer(serverId, '/v1/machines/presets/recipient-census', {
+      body: { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient] } });
+    harness.answer(serverId, '/v1/machines/presets/update', { select: value => ({ body: { kind: 'saved',
+      preset: applyManagedMachinePresetUpdateFixture(preset, ManagedMachinePresetUpdateInputV1Schema.parse(value)) } }) });
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({ pluginId: provisioner.contribution.pluginId, descriptor: provisioner.descriptor }));
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const onPresetSaved = vi.fn();
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={preset.id} presetOnly
+      initialController={defaultController} onPresetSaved={onPresetSaved} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      await act(async () => screen.pressByTestId('managed-config.create'));
+      await waitForHomeGovernance(() => expect(onPresetSaved).toHaveBeenCalled());
+      expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: { content: { t: 'encrypted' } } });
+      expect(onPresetSaved).toHaveBeenCalledWith(expect.objectContaining({ id: preset.id, name: content.name }));
+    } finally { await screen.unmount(); }
+  });
+
   it.each(['ready', 'unavailable', 'retired'] as const)('saves a name edit on an existing Account creation preset exactly once with credential discovery=%s', async discovery => {
     const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
       serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true });

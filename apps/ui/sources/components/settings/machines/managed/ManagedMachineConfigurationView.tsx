@@ -509,8 +509,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const seed = handOff?.draft.creation ?? preset;
         const initial = createManagedConfiguratorDraft({ provisioner, controller: seed.controllerPoolId ? undefined : catalogController ?? seed.controller,
             controllerPoolId: seed.controllerPoolId,
-            // The editor's one name is the preset's; a Machine made from it starts with the provider's default name, as a one-off does.
-            name: handOff ? handOff.draft.name : props.presetOnly ? preset.launch.name : title,
+            name: handOff ? handOff.draft.name : props.presetOnly ? preset.name : title,
             enrollmentIdentity: props.initialEnrollmentIdentity,
             credentials: delegatedPreset && !props.presetOnly ? undefined : seed.launch.credentials, setup: handOff ? continuationSeed : preset.setup,
             preset: { id: preset.id, revision: handOff?.preset?.revision ?? preset.revision, name: preset.name, retention: seed.retention, wakeOnAcceptedMessage: seed.wakeOnAcceptedMessage } });
@@ -801,10 +800,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // Editing this preset's choices keeps the private content this editor doesn't show (Project files, Credential broker):
         // the update replaces the whole private body.
         const kept = draft?.preset && preset?.id === draft.preset.id ? preset : null;
+        // Preserve the saved launch name on a choices-only edit. The explicit Rename control still updates both names.
+        const existingLaunchName = props.presetOnly && kept?.name === saveLaunch.name ? kept.launch?.name : undefined;
         const saveDraft: MachinePresetEditDraft = { name: saveLaunch.name, setup: draft?.setup,
             ...(kept?.projectFiles ? { projectFiles: kept.projectFiles } : {}),
             ...(kept?.credentialBroker === true ? { credentialBroker: true } : {}),
-            creation: { launch: saveLaunch, ...(draft?.controllerPoolId ? { controllerPoolId: draft.controllerPoolId }
+            creation: { launch: existingLaunchName === undefined ? saveLaunch : { ...saveLaunch, name: existingLaunchName },
+                ...(draft?.controllerPoolId ? { controllerPoolId: draft.controllerPoolId }
                 : { controller: props.presetOnly ? draft?.controller : facts?.controller }),
                 ...(reusablePresetRetention ? { retention: reusablePresetRetention } : {}),
                 ...((draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage) !== undefined
