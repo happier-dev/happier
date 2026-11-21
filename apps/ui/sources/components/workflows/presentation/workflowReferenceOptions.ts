@@ -2,7 +2,6 @@ import * as React from 'react';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
 import type { BuiltinWorkflowIconV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
-import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -17,17 +16,10 @@ import { t } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from './workflowProblemPresentation';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { workflowReferenceHeaderTitle, readWorkflowReferenceHeaderTitles } from './workflowReferenceHeaderTitles';
 import { isArtifactOnlyHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { sync } from '@/sync/sync';
-
-function workflowReferenceHeaderTitle(header: DecryptedArtifact['rawHeader'] | null | undefined): string | null {
-    if (header?.kind !== 'workflow-definition.v1') return null;
-    const metadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(header.metadata);
-    return formatWorkflowDefinitionLibraryTitle({ metadata: metadata.success ? metadata.data : null });
-}
 
 /** A workflow a Run a workflow step can name, as the picker and the block both present it. */
 export type WorkflowReferenceOption = Readonly<{
@@ -97,7 +89,7 @@ export function useWorkflowReferenceTitleRead(refs: readonly string[], enabled =
         return () => { controller.abort(); retirement.dispose(); };
     }, [activeLifetime, addressed, artifactKey, enabled, lifetime, useStore]);
     const [addressedRead, setAddressedRead] = React.useState<Readonly<{
-        lifetime: ServerAccountScopeLifetime; artifactKey: string; titles: readonly (string | null)[];
+        lifetime: ServerAccountScopeLifetime; artifactKey: string; titles: readonly (string | null | undefined)[];
     }> | null>(null);
     React.useEffect(() => {
         if (!addressedReadEnabled || !lifetime) return;
@@ -108,22 +100,12 @@ export function useWorkflowReferenceTitleRead(refs: readonly string[], enabled =
             controller?.abort();
             const attempt = new AbortController();
             controller = attempt;
-            void (async () => {
-                const account = await captureLazyActionAccountContext(lifetime.scope.serverId, attempt.signal);
-                try {
-                    if (!lifetime.isCurrent() || account.accountId !== lifetime.scope.accountId) return;
-                    const rows = await account.readArtifactHeaders(ids, { signal: attempt.signal });
-                    if (attempt.signal.aborted || !lifetime.isCurrent()) return;
-                    const titles = rows.map(row => {
-                        const artifact = row.status === 'fulfilled' ? row.value : null;
-                        return workflowReferenceHeaderTitle(artifact?.isDecrypted && artifact.ownerAccountId && artifact.access
-                            ? artifact.rawHeader : null);
-                    });
-                    setAddressedRead(previous => previous?.lifetime === lifetime && previous.artifactKey === artifactKey
-                        && previous.titles.length === titles.length && titles.every((title, index) => title === previous.titles[index])
-                        ? previous : { lifetime, artifactKey, titles });
-                } finally { account.dispose(); }
-            })().catch(() => {});
+            void readWorkflowReferenceHeaderTitles(ids, lifetime, attempt.signal).then(titles => {
+                if (attempt.signal.aborted || !lifetime.isCurrent()) return;
+                setAddressedRead(previous => previous?.lifetime === lifetime && previous.artifactKey === artifactKey
+                    && previous.titles.length === titles.length && titles.every((title, index) => title === previous.titles[index])
+                    ? previous : { lifetime, artifactKey, titles });
+            }).catch(() => {});
         };
         const retirement = lifetime.onRetire(() => { controller?.abort(); setAddressedRead(null); });
         const unsubscribe = subscribeHomeAccountChange(event => {
@@ -189,8 +171,8 @@ export function useWorkflowReferenceTitleRead(refs: readonly string[], enabled =
     const titles = React.useMemo(() => {
         const result = new Map(listBuiltinWorkflowReferenceOptions().map(option => [option.ref, option.title]));
         artifactIds.forEach((id, index) => {
-            const title = addressedReadEnabled ? addressedTitles?.[index] ?? null : workflowReferenceHeaderTitle(headers[index]);
-            if (title !== null) result.set(id, title);
+            const title = addressedReadEnabled ? addressedTitles?.[index] : workflowReferenceHeaderTitle(headers[index]);
+            if (title !== undefined) result.set(id, title ?? t('common.unavailable'));
         });
         if (pluginsEnabled && lifetime?.isCurrent()) {
             [...pluginRefs].forEach((ref, index) => {

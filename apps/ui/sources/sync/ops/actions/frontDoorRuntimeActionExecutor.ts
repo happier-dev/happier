@@ -6,6 +6,7 @@ export { requireActionSuccess, readActionApprovalRequestCreatedError } from './a
 import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { presentActionAutomationSkipNotice } from './actionAutomationSkipNotice';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
@@ -107,6 +108,7 @@ export function createFrontDoorUiActionExecutor(
 ) => Promise<unknown> {
   const execute = createFrontDoorActionExecute(executor);
   return async (actionId, input, options) => {
+    const noticeLifetime = captureSkipNoticeLifetime(scopeContext);
     const result = await (options?.confirmed ? execute.confirmed : execute)(actionId, input, {
       surface: 'ui',
       ...scopeContext,
@@ -125,10 +127,18 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.capturePublicProfilePreview ? { capturePublicProfilePreview: options.capturePublicProfilePreview } : {}),
       ...(options?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: options.publicProfilePreviewAdmission } : {}),
     });
-    presentActionAutomationSkipNotice(result);
+    void presentActionAutomationSkipNotice(result, noticeLifetime);
     requireActionSuccess(result, actionId);
     return result.result;
   };
+}
+
+/** Capture the notice's Account before dispatch can suspend or change the active Home. */
+function captureSkipNoticeLifetime(context?: Pick<UiActionExecutorContext, 'serverId' | 'expectedAccountId' | 'runtimeAccountId'>) {
+  const lifetime = captureActiveServerAccountScopeLifetime();
+  const accountId = context?.expectedAccountId ?? context?.runtimeAccountId;
+  return lifetime && (!accountId || accountId === lifetime.scope.accountId)
+    && (!context?.serverId || areServerProfileIdentifiersEquivalent(context.serverId, lifetime.scope.serverId)) ? lifetime : null;
 }
 
 /**
@@ -152,8 +162,9 @@ export function createFrontDoorRuntimeActionExecutor(
   const runtimeExecute: FrontDoorRuntimeActionExecute = async ({ actionId, input, context }, options) => {
     // Presentation stays private to this invocation; the shared policy still decides whether to ask.
     const dispatch = options?.presentUserActionConfirmation ? createFrontDoorActionExecute(executor, options) : execute;
+    const noticeLifetime = context?.surface === 'ui' ? captureSkipNoticeLifetime(context) : null;
     const result = await dispatch(actionId, input, context);
-    if (context?.surface === 'ui') presentActionAutomationSkipNotice(result);
+    if (context?.surface === 'ui') void presentActionAutomationSkipNotice(result, noticeLifetime);
     return result.ok ? result.result : result;
   };
   return Object.assign(runtimeExecute, { actionExecute: execute });

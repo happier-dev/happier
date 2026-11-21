@@ -95,7 +95,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     if (activeLifetime && !activeLifetime.isCurrent()) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
-    if (!executeChildAction && surface === 'ui') presentActionAutomationSkipNotice(result);
+    if (!executeChildAction && surface === 'ui') void presentActionAutomationSkipNotice(result, activeLifetime);
     if (!result.ok) {
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
         throw new WorkflowActionError({

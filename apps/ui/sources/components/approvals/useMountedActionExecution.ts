@@ -179,9 +179,9 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     /** Value-parsing clients unwrap only the terminal receipt delivered by this same mounted owner. */
     const executeValue = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<unknown> => {
         const result = await execute(actionId, input, operation);
-        presentActionAutomationSkipNotice(result);
+        void presentActionAutomationSkipNotice(result, binding);
         requireActionSuccess(result);
         return result.result;
-    }, [execute]);
+    }, [binding, execute]);
     return { execute, executeForCaller, executeCaptured, executeValue, executeForPresentation, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
 }
