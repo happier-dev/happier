@@ -16,6 +16,7 @@ export type PrivateServiceExportSelection = Readonly<{
 }>;
 
 type ServiceExport = NonNullable<NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports']>[number];
+type StoredDefinition = Extract<DeploymentEnvironmentContentV1['definition'], { kind: 'stored' }>;
 
 /** A private export is shared through a joined network or the Happier network; every surface reads it here. */
 export function isPrivateServiceExport(entry: ServiceExport): boolean {
@@ -82,17 +83,20 @@ export function readPrivateServiceSharingScheme(content: DeploymentEnvironmentCo
   return compose?.tcpContainerPorts.get(service)?.includes(port) ? CONVENTIONAL_TCP_SCHEMES.get(port) ?? null : null;
 }
 
-function publicationTarget(value: unknown): Readonly<{ target: number; protocol: string }> {
+function readPublication(value: unknown): Readonly<{ target: number; protocol: string; hostAddress: string | null }> {
   if (typeof value === 'number' || typeof value === 'string') {
     const [ports, protocol = 'tcp'] = String(value).split('/');
-    const target = Number(ports?.split(':').at(-1));
+    const parts = ports?.split(':') ?? [];
+    const target = Number(parts.pop());
     if (!Number.isInteger(target)) return invalid();
-    return { target, protocol };
+    parts.pop(); // Published port, if supplied.
+    return { target, protocol, hostAddress: parts.join(':').replace(/^\[|\]$/gu, '') || null };
   }
   if (!value || typeof value !== 'object' || !('target' in value)) return invalid();
   const target = Number(value.target);
   if (!Number.isInteger(target)) return invalid();
-  return { target, protocol: 'protocol' in value && typeof value.protocol === 'string' ? value.protocol : 'tcp' };
+  return { target, protocol: 'protocol' in value && typeof value.protocol === 'string' ? value.protocol : 'tcp',
+    hostAddress: 'host_ip' in value && typeof value.host_ip === 'string' ? value.host_ip : null };
 }
 
 function privateExport(entry: ServiceExport) {
@@ -104,10 +108,26 @@ function privateExport(entry: ServiceExport) {
   return { ...entry, exposure: 'privateNetwork' as const, privateNetwork: entry.privateNetwork };
 }
 
-/** Author the two existing Environment update content operands together. */
-export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentContentV1, selection: PrivateServiceExportSelection) {
+function storedDefinition(content: DeploymentEnvironmentContentV1): StoredDefinition {
   const definition = content.definition;
   if (definition.kind !== 'stored') throw Object.assign(new Error('needs_repository'), { code: 'needs_repository' });
+  return definition;
+}
+
+function privateServiceExportPatch(definition: StoredDefinition, document: string, serviceExports: ServiceExport[]) {
+  const patch = {
+    definition: { from: 'compose' as const, document, profiles: definition.profiles, services: definition.services,
+      ...(definition.primaryService ? { primaryService: definition.primaryService } : {}),
+      ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) },
+    ownServer: { serviceExports },
+  };
+  DeploymentEnvironmentContentPatchV1Schema.parse(patch);
+  return patch;
+}
+
+/** Author the two existing Environment update content operands together. */
+export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentContentV1, selection: PrivateServiceExportSelection) {
+  const definition = storedDefinition(content);
   const { hostPort, reach } = selection;
   if (hostPort === undefined && reach.kind === 'privateNetwork') return invalid();
   if (hostPort !== undefined) DeploymentServiceExportV1Schema.shape.containerPort.parse(hostPort);
@@ -119,7 +139,7 @@ export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentCon
   if (ports !== undefined && !isSeq(ports)) return invalid();
   const currentPorts: unknown[] = ports ? ports.toJSON() : [];
   const retained = currentPorts.filter(value => {
-    const port = publicationTarget(value);
+    const port = readPublication(value);
     return port.protocol !== 'tcp' || port.target !== selection.containerPort;
   });
   // The Happier network reaches a loopback publication on this Machine; a joined network binds its own address.
@@ -134,13 +154,39 @@ export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentCon
   serviceExports.push(reach.kind === 'happierNetwork'
     ? { ...shared, exposure: 'loopback', transport: { kind: 'iroh' } }
     : { ...shared, exposure: 'privateNetwork', privateNetwork: reach.privateNetwork });
-  const patch = {
-    definition: { from: 'compose' as const, document: storedComposeDocumentText(document),
-      profiles: definition.profiles, services: definition.services,
-      ...(definition.primaryService ? { primaryService: definition.primaryService } : {}),
-      ...(definition.publicFiles ? { publicFiles: definition.publicFiles } : {}) },
-    ownServer: { serviceExports },
-  };
-  DeploymentEnvironmentContentPatchV1Schema.parse(patch);
-  return patch;
+  return privateServiceExportPatch(definition, storedComposeDocumentText(document), serviceExports);
+}
+
+/** Stop the saved export with the same Environment update that authored it. */
+export function buildStopPrivateServiceExportPatch(content: DeploymentEnvironmentContentV1, key: string) {
+  const definition = storedDefinition(content);
+  const exports = content.ownServer?.serviceExports ?? [];
+  const selected = exports.find(entry => entry.key === key);
+  if (!selected || !isPrivateServiceExport(selected)) return invalid();
+  const retained = exports.filter(entry => entry.key !== key).map(privateExport);
+  // Multiple export names can use one publication. Remove only the name when another still uses it.
+  if (retained.some(entry => entry.service === selected.service && entry.containerPort === selected.containerPort)) {
+    return privateServiceExportPatch(definition, definition.document, retained);
+  }
+  const document = parseDocument(definition.document, { merge: true });
+  if (document.errors.length) return invalid();
+  const service = document.getIn(['services', selected.service], true);
+  if (service === undefined) return privateServiceExportPatch(definition, definition.document, retained);
+  if (!isMap(service)) return invalid();
+  const ports = service.get('ports', true);
+  if (ports === undefined) return privateServiceExportPatch(definition, definition.document, retained);
+  if (!isSeq(ports)) return invalid();
+  const publications: unknown[] = ports.toJSON();
+  const matches = publications.flatMap((value, index) => {
+    const { target, protocol, hostAddress } = readPublication(value);
+    const isLoopback = hostAddress === '127.0.0.1' || hostAddress === '::1';
+    const addressMatches = selected.exposure === 'loopback' ? isLoopback
+      : hostAddress !== null && !isLoopback && hostAddress !== '0.0.0.0' && hostAddress !== '::';
+    return target === selected.containerPort && protocol === 'tcp' && addressMatches ? [index] : [];
+  });
+  if (matches.length === 0) return privateServiceExportPatch(definition, definition.document, retained);
+  if (matches.length > 1) return invalid();
+  ports.items.splice(matches[0]!, 1);
+  if (ports.items.length === 0) service.delete('ports');
+  return privateServiceExportPatch(definition, storedComposeDocumentText(document), retained);
 }

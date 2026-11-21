@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { buildPrivateServiceExportPatch, privateServiceExportAuthoring } from './privateServiceExport';
+import { buildPrivateServiceExportPatch, buildStopPrivateServiceExportPatch, privateServiceExportAuthoring } from './privateServiceExport';
 
 function privatePublicationDetail(): DeploymentEnvironmentReadDetailV1 {
   const base = createDeploymentEnvironmentDetailV1();
@@ -60,6 +60,23 @@ describe('private service export authoring availability', () => {
 });
 
 describe('private service export authoring', () => {
+  it('stops only the saved private publication and preserves other ports in the Environment update', () => {
+    const base = privatePublicationDetail().content;
+    if (base.definition.kind !== 'stored') throw new Error('Expected stored Compose');
+    const other = { key: 'metrics', service: 'postgres', containerPort: 9090, scheme: 'http',
+      exposure: 'privateNetwork' as const, privateNetwork: 'operations' };
+    const withShare = buildPrivateServiceExportPatch(base, { key: 'database', service: 'postgres', containerPort: 5432,
+      scheme: 'postgres', reach: { kind: 'happierNetwork' } });
+    const content = { ...base,
+      definition: { ...base.definition, document: `services:\n  postgres:\n    image: postgres:17\n    ports:\n      - {target: 5432, host_ip: 127.0.0.1, protocol: tcp}\n      - "5432:5432/udp"\n      - {target: 9090, host_ip: 100.81.1.12, published: "9090"}\n` },
+      ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [...withShare.ownServer.serviceExports, other] } };
+    const patch = buildStopPrivateServiceExportPatch(content, 'database');
+    expect(patch.ownServer.serviceExports).toEqual([other]);
+    expect(parse(patch.definition.document).services.postgres.ports).toEqual([
+      '5432:5432/udp', { target: 9090, host_ip: '100.81.1.12', published: '9090' },
+    ]);
+  });
+
   it('saves the selected concrete publication and export together, preserving other ports and source inputs', () => {
     const base = createDeploymentEnvironmentDetailV1().content;
     const content = { ...base, definition: { kind: 'stored' as const, contentRevision: 4,
