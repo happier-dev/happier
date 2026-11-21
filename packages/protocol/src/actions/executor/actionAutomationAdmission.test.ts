@@ -107,13 +107,16 @@ it('keeps the refused admission unavailable while a concurrent admission reopens
   expect(await recovering).toMatchObject({ status: 'ready' });
 });
 
-it('checks pinned child revisions without rematerializing or reconciling unchanged consent', async () => {
+it.each([
+  { source: 'one Workflow', reads: 0, hasChild: false },
+  { source: 'a Workflow with a pinned child', reads: 4, hasChild: true },
+])('checks unchanged consent for $source without materialization or writes', async ({ reads, hasChild }) => {
   const childRef = '22222222-2222-4222-8222-222222222222';
-  const root = WorkflowDefinitionV1Schema.parse({ version: 1,
-    blocks: [{ kind: 'workflow', id: 'child', workflowRef: childRef }] });
   const child = WorkflowDefinitionV1Schema.parse({ version: 1,
     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
     blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] });
+  const root = hasChild ? WorkflowDefinitionV1Schema.parse({ version: 1,
+    blocks: [{ kind: 'workflow', id: 'child', workflowRef: childRef }] }) : child;
   const revisions = new Map([["root", 1], [childRef, 1]]);
   const definitions = new Map([["root", root], [childRef, child]]);
   let workflowReads = 0;
@@ -160,7 +163,7 @@ it('checks pinned child revisions without rematerializing or reconciling unchang
     saved: { automationId: saved.automationId, triggerId: saved.triggerId, workflowRevision: saved.workflowRevision }, consentTrigger };
   expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
   expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
-  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: 4, materializationCalls: 0, reconcileWrites: 0 });
+  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: reads, materializationCalls: 0, reconcileWrites: 0 });
 });
 
 describe('Approval profile subject admission', () => {
