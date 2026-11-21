@@ -40,8 +40,19 @@ export function buildDedicatedDaemonAccountCommand(): string {
     'happier_home="$(getent passwd happier | cut -d: -f6)"',
     'test -n "$happier_home" && test "$happier_home" != / && test -d "$happier_home" && test ! -L "$happier_home"',
     'test "$(stat -c %u "$happier_home")" = "$happier_uid"',
-    'if [ -e "$happier_home/.happier" ]; then test ! -L "$happier_home/.happier" && test "$(stat -c %u "$happier_home/.happier")" = "$happier_uid"; fi',
-    `if [ -e ${DEDICATED_DAEMON_INSTALL_HOME} ]; then test ! -L ${DEDICATED_DAEMON_INSTALL_HOME} && test "$(stat -c %u ${DEDICATED_DAEMON_INSTALL_HOME})" = "$happier_uid"; fi`,
+    'test ! -L "$happier_home/.happier"',
+    'if [ -e "$happier_home/.happier" ]; then test "$(stat -c %u "$happier_home/.happier")" = "$happier_uid"; fi',
+    `test ! -L ${DEDICATED_DAEMON_INSTALL_HOME}`,
+    // Image preparation installs the payload as root before enrollment.
+    `if [ -e ${DEDICATED_DAEMON_INSTALL_HOME} ]; then
+      test -d ${DEDICATED_DAEMON_INSTALL_HOME}
+      install_uid="$(stat -c %u ${DEDICATED_DAEMON_INSTALL_HOME})"
+      case "$install_uid" in
+        0) chown -hR -P --from=0 happier:happier -- ${DEDICATED_DAEMON_INSTALL_HOME} ;;
+        "$happier_uid") ;;
+        *) exit 1 ;;
+      esac
+    fi`,
     'install -d -o happier -g happier -m 0700 "$happier_home" "$happier_home/.happier"',
     `install -d -o happier -g happier -m 0755 ${DEDICATED_DAEMON_INSTALL_HOME}`,
   ].join('; '));

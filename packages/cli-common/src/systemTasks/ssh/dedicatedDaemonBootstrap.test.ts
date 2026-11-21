@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -13,6 +13,8 @@ import { checkMachineSetupEffectPlan, applyMachineSetupEffectPlans, createMachin
 import * as bootstrap from '../nativeRemoteSshBootstrap.js';
 import { DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
 import { installRemoteCli } from './installRemoteCli.js';
+import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 
 describe('portable dedicated daemon bootstrap', () => {
   it('refuses managed installation without its Home before touching the guest', async () => {
@@ -57,6 +59,91 @@ describe('portable dedicated daemon bootstrap', () => {
           }
         },
       } })).rejects.toMatchObject({ code: 'dedicated_identity_unsupported' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32').each([
+    { name: 'root-owned prepared CLI', owner: '0', locked: true, symlink: false, accepted: true },
+    { name: 'previous dedicated CLI', owner: '1001', locked: true, symlink: false, accepted: true },
+    { name: 'foreign install owner', owner: '1002', locked: true, symlink: false, accepted: false },
+    { name: 'unlocked account', owner: '0', locked: false, symlink: false, accepted: false },
+    { name: 'symlinked install root', owner: '0', locked: true, symlink: true, accepted: false },
+  ])('prepares the dedicated account with $name', async fixture => {
+    const directory = await mkdtemp(join(tmpdir(), 'mach-prepared-identity-'));
+    try {
+      const installRoot = join(directory, 'opt', 'happier');
+      const imageRoot = fixture.symlink ? join(directory, 'image') : installRoot;
+      await mkdir(imageRoot, { recursive: true });
+      if (fixture.symlink) {
+        await mkdir(join(directory, 'opt'));
+        await symlink(imageRoot, installRoot);
+      }
+      await mkdir(join(directory, 'systemd'));
+      const home = join(directory, 'home');
+      await mkdir(join(home, '.happier'), { recursive: true });
+      const imageOwner = join(imageRoot, 'owner');
+      await writeFile(imageOwner, fixture.owner);
+      const q = safeBashSingleQuote;
+      // Run the real enrollment command against an isolated filesystem. Account
+      // lookup and privileged OS commands are the fixture's only substitutes.
+      const commands = {
+        id: 'case "$*" in "-u") echo 0 ;; "-u happier") echo 1001 ;; "-gn happier") echo happier ;; happier) : ;; *) exit 2 ;; esac',
+        uname: 'echo Linux',
+        systemctl: 'exit 0',
+        loginctl: 'exit 0',
+        runuser: 'exit 0',
+        useradd: 'exit 2',
+        usermod: 'exit 2',
+        passwd: `echo 'happier ${fixture.locked ? 'L' : 'P'}'`,
+        getent: `echo ${q(`happier:x:1001:1001::${home}:/bin/bash`)}`,
+        stat: `case "$3" in ${q(installRoot)}) cat ${q(imageOwner)} ;; ${q(home)}|${q(join(home, '.happier'))}) echo 1001 ;; *) exit 2 ;; esac`,
+        chown: `for target do :; done; test "$target" = ${q(installRoot)} || exit 2; printf 1001 > ${q(imageOwner)}`,
+        install: 'exit 0',
+      };
+      await Promise.all(Object.entries(commands).map(([name, script]) =>
+        writeFile(join(directory, name), `#!/bin/sh\n${script}\n`, { mode: 0o755 })));
+      const managedEnrollment = ManagedEnrollmentCorrelationV1Schema.parse({ homeId: 'srv_managed_home',
+        managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
+        controller: { machineId: 'controller-1', installationId: 'installation-1' } });
+      const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: managedEnrollment.homeId,
+        canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] },
+        authority: 'trusted_enrollment' });
+      const phases: string[] = [];
+      const enroll = () => installRemoteCli({ channel: 'stable', bootstrap: {
+        parsed: { relay: { relayUrl: 'https://home.example' }, homeTarget,
+          managedEnrollment, enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+            role: 'deployTarget', adminAccessAtCreation: 'preauthorized' } },
+        context: { taskId: 'prepared-image', emit: () => {}, prompt: async () => { throw new Error('No prompt expected'); } },
+        createPromptId: () => 'unused', prepareManagedBootstrap: async () => { phases.push('prepare'); },
+      }, transport: {
+        install: async () => {
+          expect(await readFile(imageOwner, 'utf8')).toBe('1001');
+          phases.push('install');
+          return { binaryPath: join(installRoot, 'cli/current/happier') };
+        },
+        exec: async ({ command }) => {
+          const isolated = command.replaceAll(DEDICATED_DAEMON_INSTALL_HOME, installRoot)
+            .replaceAll('/run/systemd/system', join(directory, 'systemd'));
+          try {
+            const result = await promisify(execFile)('/bin/sh', ['-c', isolated], { env: { PATH: `${directory}:/usr/bin:/bin` } });
+            return { status: 0, ...result };
+          } catch (error) {
+            const result = error as Error & { code: number; stdout: string; stderr: string };
+            return { status: result.code, stdout: result.stdout, stderr: result.stderr };
+          }
+        },
+      } });
+      if (fixture.accepted) {
+        await enroll();
+        await enroll();
+        expect(phases).toEqual(['install', 'prepare', 'install', 'prepare']);
+      } else {
+        await expect(enroll()).rejects.toMatchObject({ code: 'dedicated_identity_unconfirmed' });
+        expect(phases).toEqual([]);
+        expect(await readFile(imageOwner, 'utf8')).toBe(fixture.owner);
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

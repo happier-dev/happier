@@ -34,6 +34,12 @@ async function deployment(status = 200) {
   return { endpoint, http, paths };
 }
 describe('Coder public authoring entry and portable authentication', () => {
+  it('declares enrollment as the account supplied by the workspace agent', () => {
+    expect(PLUGIN.manifest.contributes.machineProvisioners).toContainEqual(expect.objectContaining({
+      id: 'coder', enrollmentRole: 'personal',
+    }));
+  });
+
   it('offers first-administrator setup through native Connected services with a private password field', () => {
     const service = PLUGIN.manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === ACCOUNT_SERVICE.localId);
     const mode = service?.authentication.modes.find(entry => entry.id === 'first-admin');

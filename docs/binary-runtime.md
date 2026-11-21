@@ -154,6 +154,12 @@ are optional and apply only to the selected guest process, not prerequisite
 inspection processes. Provider-reported SSH key
 evidence must match a fresh scan but cannot approve replacing saved host trust.
 
+Image preparation can bake the CLI into a root-owned `/opt/happier`. At
+dedicated enrollment, the account bootstrap confirms the locked non-root
+`happier` account and transfers the root-owned install tree to it without
+following symlinks. An install root owned by another account or linked to a
+different path stops enrollment with `dedicated_identity_unconfirmed`.
+
 The bootstrap carrier protects command, file and enrollment-secret delivery; it
 does not reverse-forward the controller's Home listener. The guest independently
 uses the admitted Home descriptor's application endpoint or Iroh route. In 0.3

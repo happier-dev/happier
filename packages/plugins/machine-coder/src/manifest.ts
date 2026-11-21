@@ -19,7 +19,7 @@ const runtime = async (context: PluginInvocationContext) => (await import('./mac
 const failure = <const T>(error: unknown, fallback: T) => projectMachineProvisionerActionFailure(error, () => fallback);
 
 export const MACHINE_PROVISIONER = {
-  title: 'Coder', icon: 'terminal', resourceKind: 'coder-workspace', schemaVersion: 1, enrollmentRole: 'server',
+  title: 'Coder', icon: 'terminal', resourceKind: 'coder-workspace', schemaVersion: 1, enrollmentRole: 'personal',
   kindTitle: 'Workspace', description: 'A workspace on your Coder deployment, enrolled as an ordinary Happier Machine.',
   launchSchema: CoderLaunchSchema.jsonSchema, resourceSchema: CoderResourceSchema.jsonSchema, resourceIdPath: 'workspaceId',
   sessionPlacement: { kind: 'controller-local', when: { op: 'eq', path: 'workspaceHost', value: 'controller-local' },
