@@ -6,6 +6,7 @@ import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugin
 import {
   TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
   type TeamSharedResourceCollectionRefV1,
+  type TeamSharedResourceSummaryRowV1,
 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -26,16 +27,18 @@ import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamSharedCollectionRowOpener, useTeamSharedCollections } from '@/hooks/teams/useTeamSharedCollections';
 import { useTeamSharedMachinePools } from '@/hooks/teams/useTeamSharedMachinePools';
 import { useTeamSharedMachines } from '@/hooks/teams/useTeamSharedMachines';
 import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecrets';
+import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 
-import { TeamSection } from '../TeamSection';
+import { TeamSection, TeamSectionPageHeader } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import {
@@ -88,17 +91,69 @@ export const TeamSharedKindScreen = React.memo(function TeamSharedKindScreen(
 ) {
   const presentation = TEAM_SHARED_KIND_PRESENTATION[props.kind];
   const collection = props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? props.collection : null;
+  const title = collection?.collectionId ?? t(presentation.title);
   return (
     <TeamSection
       serverId={props.serverId}
       teamId={props.teamId}
-      title={collection?.collectionId ?? t(presentation.title)}
+      title={title}
       description={t('teams.overview.shared.kindDescription')}
+      renderHeader={(context) => <TeamSharedKindHeader context={context} title={title} kind={props.kind} collection={collection} />}
     >
       {(context) => <TeamSharedKindBody context={context} kind={props.kind} collection={collection} />}
     </TeamSection>
   );
 });
+
+/**
+ * The pushed kind page's head, as the overview pane's (lab L12-machinesp): the kind, "N shared with this Team" from the
+ * summary owner, and the kind's existing share flow when it has one. Until the count is known it says what the page is.
+ */
+function TeamSharedKindHeader(props: Readonly<{
+  context: TeamSectionContext;
+  title: string;
+  kind: TeamSharedListKind | typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
+  collection: TeamSharedResourceCollectionRefV1 | null;
+}>) {
+  const { context, kind, collection } = props;
+  const router = useRouter();
+  const summary = useTeamSharedResourcesSummary({ scope: context.scope, address: context.address, enabled: true });
+  const row = summary.kinds.find((candidate) => candidate.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1
+    ? collection !== null && candidate.collection.pluginId === collection.pluginId
+      && candidate.collection.collectionId === collection.collectionId
+    : candidate.kind === kind);
+  return (
+    <TeamSectionPageHeader
+      title={props.title}
+      description={row?.status === 'available'
+        ? t('teams.overview.summary.credentialsShared', { count: row.count })
+        : t('teams.overview.shared.kindDescription')}
+      actions={<TeamSharedKindShareAction kind={kind} teamName={context.team.name} testID="team-shared-kind-share"
+        onOpen={(href) => router.push(href as never)} />}
+      teamName={context.team.name}
+      homeName={context.homeName}
+    />
+  );
+}
+
+/** The kind's existing share flow ("Share a source with Acme"), from the kind presentation owner; none when it has none. */
+export function TeamSharedKindShareAction(props: Readonly<{
+  kind: TeamSharedListKind | typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 | TeamSharedResourceSummaryRowV1['kind'];
+  teamName: string;
+  testID: string;
+  onOpen: (href: string) => void;
+}>) {
+  const share = TEAM_SHARED_KIND_PRESENTATION[props.kind].share;
+  if (!share) return null;
+  return (
+    <SectionActionButton
+      testID={props.testID}
+      icon="plus"
+      title={t(share.title, { team: props.teamName })}
+      onPress={() => props.onOpen(share.href)}
+    />
+  );
+}
 
 /**
  * The list of one shared kind, without its page: the kind's own page above draws it, and on a wide layout the Team

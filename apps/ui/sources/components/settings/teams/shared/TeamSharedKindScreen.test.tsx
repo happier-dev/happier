@@ -190,6 +190,16 @@ describe('Team shared kind list', () => {
     expect(ids(returned)).not.toContain('team-shared-kind-loading');
   });
 
+  it('heads the pushed kind page with its count, as the overview pane does, and offers no share flow it lacks', async () => {
+    const serverId = await addHome([sharedPool('Build farm')]);
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, summary.path, { body: { teamId: 'team-1', kinds: [{ kind: 'machinePools', status: 'available', count: 1 }] } });
+    const screen = await renderScreen(<TeamSharedKindScreen serverId={serverId} teamId="team-1" kind="machinePools" />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('teams.overview.summary.credentialsShared', { count: 1 })));
+    // Machine pools share from each pool's own Share menu (lab L12-machinesp draws "Share a …" only where a flow exists).
+    expect(ids(screen)).not.toContain('team-shared-kind-share');
+  });
+
   it('says once when nothing of the kind is shared', async () => {
     const serverId = await addHome([]);
     const screen = await renderScreen(

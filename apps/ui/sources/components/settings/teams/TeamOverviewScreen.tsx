@@ -22,7 +22,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
@@ -33,7 +32,7 @@ import { directorySourcePresentationState } from './identity/directoryAdministra
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
 import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
-import { TeamSharedKindBody } from './shared/TeamSharedKindScreen';
+import { TeamSharedKindBody, TeamSharedKindShareAction } from './shared/TeamSharedKindScreen';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
@@ -529,8 +528,8 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
       subtitle: openShared.status === 'available'
         ? t('teams.overview.summary.credentialsShared', { count: openShared.count })
         : undefined,
-      lineTrailing: <TeamSharedKindShareAction row={openShared} teamName={current.teamName}
-        onOpen={(href) => router.push(href as never)} />,
+      lineTrailing: <TeamSharedKindShareAction kind={openShared.kind} teamName={current.teamName}
+        testID="team-overview-shared-pane-share" onOpen={(href) => router.push(href as never)} />,
     },
     content: <TeamSharedKindPane serverId={props.serverId} teamId={props.teamId} row={openShared} />,
   } : null, [current, openShared, props.serverId, props.teamId, router]);
@@ -570,25 +569,6 @@ function sharedKindTitle(row: TeamSharedResourceSummaryRowV1): string {
     ? row.collection.collectionId
     : t(TEAM_SHARED_KIND_PRESENTATION[row.kind].title);
 }
-
-/** The kind's existing share flow, when it has one ("Share a source with Acme"); the Team name comes from its read. */
-const TeamSharedKindShareAction = React.memo(function TeamSharedKindShareAction(props: Readonly<{
-  row: TeamSharedResourceSummaryRowV1;
-  teamName: string;
-  onOpen: (href: string) => void;
-}>) {
-  const share = props.row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? undefined
-    : TEAM_SHARED_KIND_PRESENTATION[props.row.kind].share;
-  if (!share) return null;
-  return (
-    <SectionActionButton
-      testID="team-overview-shared-pane-share"
-      icon="plus"
-      title={t(share.title, { team: props.teamName })}
-      onPress={() => props.onOpen(share.href)}
-    />
-  );
-});
 
 /** One shared kind's list in the overview's details pane; the pane header names the kind and its count. */
 const TeamSharedKindPane = React.memo(function TeamSharedKindPane(props: Readonly<{
