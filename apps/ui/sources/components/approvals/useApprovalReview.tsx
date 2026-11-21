@@ -460,10 +460,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         } else if (parsed.kind === 'target') {
           // The Action owner carries the deciding Account's signed authority to
           // the exact executor, including on another Account's Machine.
-          const consentSave = decision === 'approve' ? sessionConsentChoice.saveBeforeApprove() : null;
-          if (consentSave) await consentSave;
           if (!await decideActionApproval(decision)) return;
           setRecordedDecision(decision);
+          // "Next time in this Session" is saved only once this approval ran; a refused run saves nothing.
+          const consentSave = decision === 'approve' ? sessionConsentChoice.saveAfterApproved() : null;
+          if (consentSave) await consentSave;
         } else if (parsed.kind === 'host_action') {
           if (!await decideActionApproval(decision)) throw new Error('approval_decision_failed');
           setRecordedDecision(decision);
@@ -477,9 +478,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
             computerChoice.chooseTarget();
             return;
           }
-          // The person's "Next time in this Session" is saved first; a failed save still approves this call once.
-          const consentSave = decision === 'approve' ? sessionConsentChoice.saveBeforeApprove() : null;
-          if (consentSave) await consentSave;
           const options = proposal && decision !== 'cancel' ? proposal.decisionOptions(decision, choice)
             : decision === 'approve' ? { ...computerChoice.decisionOptions, ...bindingChoice.decisionOptions } : undefined;
           if (!await decideActionApproval(decision, {
@@ -491,6 +489,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
           // The decision owner accepted the answer. A request another device placed reads open
           // until its host replays the decision, so the page says the answer it recorded.
           setRecordedDecision(decision);
+          // "Next time in this Session" follows an accepted approval; a refused one saves nothing.
+          const consentSave = decision === 'approve' ? sessionConsentChoice.saveAfterApproved() : null;
+          if (consentSave) await consentSave;
         }
         await refreshArtifact();
       } catch (err) {

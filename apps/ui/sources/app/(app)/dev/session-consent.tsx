@@ -44,15 +44,15 @@ function SheetRow(props: Readonly<{ scoped?: boolean; failed?: boolean }>) {
     setRow: props.failed ? REFUSED : SAVED,
     ready: true,
   });
-  const { choose, saveBeforeApprove } = choice;
+  const { choose, saveAfterApproved } = choice;
   React.useEffect(() => {
     if (props.failed) {
       choose('always');
     }
   }, [choose, props.failed]);
   React.useEffect(() => {
-    if (props.failed && choice.value === 'always') void saveBeforeApprove();
-  }, [choice.value, props.failed, saveBeforeApprove]);
+    if (props.failed && choice.value === 'always') void saveAfterApproved();
+  }, [choice.value, props.failed, saveAfterApproved]);
   return (
     <ApprovalSessionConsentRow
       choice={choice}

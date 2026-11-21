@@ -206,7 +206,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         return targetActionReplayFailure(currentness.failure.errorCode, currentness.failure.error);
       }
       if (currentness.status === 'stale') {
-        logger.debug('[RPC] Contributed approval origin is stale', {
+        logger.warnLocalFile('[RPC] Contributed approval origin is stale', {
           code: 'approval_stale',
           reason: currentness.reason,
         });

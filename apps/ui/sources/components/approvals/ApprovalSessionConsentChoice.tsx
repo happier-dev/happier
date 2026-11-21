@@ -34,7 +34,7 @@ export type ApprovalSessionConsentChoice = Readonly<{
   value: ApprovalSessionConsentChoiceValue;
   choose: (value: ApprovalSessionConsentChoiceValue) => void;
   /** Saves the chosen rung before Approve, or null when nothing is chosen. Never rejects: a failed save still lets the call be approved once. */
-  saveBeforeApprove: () => Promise<void> | null;
+  saveAfterApproved: () => Promise<void> | null;
   saveFailed: boolean;
   ready: boolean;
   scope: ActionApprovalScopeV1 | null;
@@ -82,8 +82,8 @@ export function useApprovalSessionConsentChoiceState(
     },
     [requestKey],
   );
-  const saveBeforeApprove = React.useCallback(() => {
-    // Nothing chosen: Approve goes straight on, with no extra turn before the decision.
+  const saveAfterApproved = React.useCallback(() => {
+    // Nothing chosen: nothing to save after the approval.
     if (!input.offered || actionId === null || value === 'ask') return null;
     setFailedKey(null);
     return setRow({
@@ -100,14 +100,14 @@ export function useApprovalSessionConsentChoiceState(
   const serverId = input.address?.serverId ?? null;
   // One stable controller per change, so the review's decide callback is not rebuilt on every render.
   return React.useMemo(
-    () => ({ offered: input.offered, value, choose, saveBeforeApprove, saveFailed, ready: input.ready, scope, serverId }),
-    [choose, input.offered, input.ready, saveBeforeApprove, saveFailed, scope, serverId, value],
+    () => ({ offered: input.offered, value, choose, saveAfterApproved, saveFailed, ready: input.ready, scope, serverId }),
+    [choose, input.offered, input.ready, saveAfterApproved, saveFailed, scope, serverId, value],
   );
 }
 
 /**
  * "Next time in this Session": Ask again | On {Machine} | Always, with what the chosen rung means. It sits
- * right above the decision; Approve saves the choice and then approves, Reject saves nothing.
+ * right above the decision; Approve saves the choice once the approval is accepted; a refused approval and Reject save nothing.
  */
 export function ApprovalSessionConsentRow(
   props: Readonly<{

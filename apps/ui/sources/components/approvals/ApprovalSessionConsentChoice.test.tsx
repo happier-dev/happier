@@ -65,7 +65,7 @@ function Sheet(
 
 async function approve() {
   await act(async () => {
-    await latest?.saveBeforeApprove();
+    await latest?.saveAfterApproved();
   });
 }
 

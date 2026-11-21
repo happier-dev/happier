@@ -47,6 +47,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
+import { SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { createTriageSelectedPrStartApprovalInput } from '../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
 
 /** The value beside a facts row's key (the shared approval fields draw label then value). */
@@ -1858,6 +1859,20 @@ describe('ApprovalDetailScreen', () => {
     await vi.waitFor(() => expect(screen.findByTestId('approvals.session-consent:always')).not.toBeNull());
     expect(screen.findByTestId('approvals.session-consent:scoped')).toBeNull();
   });
+
+  it('saves no "Always" Session row when the approved Action does not run', async () => {
+    currentArtifact = createTargetActionApprovalArtifact();
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="target-artifact-1" />);
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.session-consent:always')).not.toBeNull());
+    await screen.pressByTestIdAsync('approvals.session-consent:always');
+    await screen.pressByTestIdAsync('approvals.approve');
+    // This retained live-only request has no surviving invocation, so the approval settles as failed.
+    await vi.waitFor(() => expect(readRenderedText(screen)).toContain('approvals.status.failed'));
+    const consentRows = homes.artifacts(account.serverId).list()
+      .filter(row => row.kindHint === SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1);
+    expect(consentRows).toEqual([]);
+  });
+
 
   it('renders the exact plugin target input and updates only that artifact', async () => {
     currentArtifact = createTargetActionApprovalArtifact();
