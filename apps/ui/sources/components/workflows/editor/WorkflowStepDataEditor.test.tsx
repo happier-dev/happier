@@ -296,6 +296,17 @@ describe('WorkflowStepDataEditor field selects', () => {
         expect(order.some((id) => id.startsWith('row-input-0-value'))).toBe(true);
     });
 
+    it('removes a set value from its row\'s … menu, never a trailing x beside the field (UI refinements, 11-21)', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'draft-1', name: 'Review', blocks: [stepBlock('step-a', [])] });
+        const onRemove = vi.fn();
+        const screen = await renderScreen(<WorkflowValueReferenceEditor reference={{ kind: 'literal', value: 'push' }} index={0}
+            draft={draft} stepId="step-a" onChange={() => {}} onRemove={onRemove} testIDPrefix="row" />);
+        expect(screen.findAll((node) => node.props?.iconName === 'x')).toHaveLength(0);
+        const { chooseDropdownMenuItem } = await import('@/dev/testkit/harness/dropdownMenuHarness');
+        await chooseDropdownMenuItem(screen, 'row-input-0-actions', 'remove');
+        expect(onRemove).toHaveBeenCalledOnce();
+    });
+
     it('keeps the whole result and a path into it reachable beside a step\'s named fields', async () => {
         const producer = { ...stepBlock('producer-a', []), result: { kind: 'json' as const, schema: { type: 'object' as const, properties: { verdict: { type: 'string' as const } } } } };
         const initial: WorkflowValueReference = { kind: 'result', producer: { blockId: 'producer-a', scope: { kind: 'current' } }, path: ['verdict'] };

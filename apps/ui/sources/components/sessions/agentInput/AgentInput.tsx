@@ -4284,8 +4284,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         {renderedActionControlNodes.length > 0 || secondaryLeadingControlsForWrap.length > 0 || secondaryTrailingControlsForWrap.length > 0 || trailingAccessory != null ? (
                             <AgentInputReadOnlyChipRow testID="agent-input-read-only-chips"
                                 engine={renderedActionControlNodes}
-                                chips={[...secondaryLeadingControlsForWrap, ...secondaryTrailingControlsForWrap,
-                                    <React.Fragment key="trailing-accessory">{trailingAccessory}</React.Fragment>]} />
+                                chips={[...secondaryLeadingControlsForWrap, ...secondaryTrailingControlsForWrap]}
+                                trailing={trailingAccessory} />
                         ) : null}
                     </GlassSurface>
                 </View>

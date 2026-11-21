@@ -307,7 +307,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                         />
                                     ),
                                 })}
-                                {...(row.required ? {} : { onRemove: () => setBinding(row.key, undefined) })}
+                                {...(row.required ? {} : { onRemove: () => setBinding(row.key, undefined), label: row.label })}
                                 testIDPrefix={fieldId}
                             />
                         )}

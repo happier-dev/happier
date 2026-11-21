@@ -15,6 +15,7 @@ import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/wo
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { WorkflowBlockActionsMenu } from './WorkflowBlockActionsMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -476,6 +477,8 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
     literalOnly?: boolean;
     onChange: (value: WorkflowValueReference) => void;
     onRemove?: () => void;
+    /** The field this value fills, named by its row's "…" menu. */
+    label?: string;
     /**
      * Draws a literal value with the consumer's own field (an Action field's
      * options picker), in place of the plain text entry. The binding stays this
@@ -528,12 +531,12 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 testID={`${rowId}-value`}
                 pathTestID={`${rowId}-path`}
             />}
-            {/* Removing a value is the editor's quiet trailing x on its line (as a condition's value), so it
-                keeps the picker's line on a phone instead of a lone word beneath it. */}
+            {/* Removing a value lives in its row's own "…", never an x beside the field (UI refinements ruling
+                2026-11-21); the menu keeps the picker's line on a phone. */}
             {props.onRemove === undefined ? null : (
-                <IconButton testID={`${rowId}-remove`} variant="plain" iconName="x"
-                    accessibilityLabel={t('workflows.editor.remove')} tooltip={t('workflows.editor.remove')}
-                    onPress={props.onRemove} />
+                <WorkflowBlockActionsMenu testID={`${rowId}-actions`} blockLabel={props.label ?? t('workflows.condition.valuePlaceholder')}
+                    actions={[{ id: 'remove', label: t('workflows.editor.remove'), destructive: true,
+                        testID: `${rowId}-remove`, onSelect: props.onRemove }]} />
             )}
         </View>
     );
