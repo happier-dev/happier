@@ -4,14 +4,14 @@ import type { BuiltinWidgetIdV1, ProjectSurfaceBuiltinWidgetIdV1 } from '@happie
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { ProjectReadinessWidgetBody } from './ProjectReadinessWidgetBody';
 import { ProjectAutomationsWidgetBody } from './ProjectAutomationsWidgetBody';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { buildProjectCheckoutOpenRoute } from '@/components/projects/activation/projectOpenRoute.mjs';
 import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
-import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
+import { ProjectScriptsBody, resolveProjectScriptsWorkspace } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { buildProjectRouteHref, readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
 import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
@@ -29,11 +29,11 @@ import { sortRepoWorktreeRows } from '@/components/workspaces/scm/worktrees/sort
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useActiveServerAccountScope, useWorkspaceRefs, useWorkspaceScmSummarySnapshot, useActiveMachineFacts } from '@/sync/domains/state/storage';
-import { sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
+import { sameWorkspaceProject, resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveWorkspaceRefDisplayName, resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { warmWorkspaceRepositoryDirectoryCache } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
-import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey, workspaceScopeFromProject, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -51,7 +51,7 @@ import { formatProjectSourceAddress } from '@/components/projects/sources/projec
 import { useProjectsTreeCheckoutFacts } from '@/components/projects/useProjectsTreeCheckoutFacts';
 import { labelProjectCheckouts, projectsTreeCheckoutKey } from '@/components/projects/projectsTreeRows';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { WorkspaceLocalChangesBody } from '@/components/projects/scm/WorkspaceLocalChangesBody';
 import { activeReviewFileKeyForWorkspace, requestActiveReviewFileForComparison } from '@/components/workspaces/scm/review/activeReviewFile';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
@@ -60,7 +60,7 @@ import { ProjectSessionsWidgetBody } from './ProjectSessionsWidgetBody';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 
-type Props = Readonly<{ id: Exclude<BuiltinWidgetIdV1, ProjectSurfaceBuiltinWidgetIdV1>; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1; testID: string }>;
+type Props = Readonly<{ id: Exclude<BuiltinWidgetIdV1, ProjectSurfaceBuiltinWidgetIdV1>; workspace: WorkspaceAddressV2; checkout: WorkspaceRefV1; testID: string }>;
 
 /** Native Project bodies consume only the generic binder's admitted exact checkout, or the Project surface itself. */
 export function ProjectBuiltinWidgetBody(props: Props | Readonly<{ id: ProjectSurfaceBuiltinWidgetIdV1; target: ProjectSurfaceTargetV1; serverId: string; testID: string }>): React.ReactElement {
@@ -75,12 +75,18 @@ export function ProjectBuiltinWidgetBody(props: Props | Readonly<{ id: ProjectSu
     return <ProjectSessionsWidgetBody checkout={props.checkout} testID={props.testID} />;
 }
 
-function useScope(workspace: WorkspaceAddressV1): WorkspaceScopeBase {
-    return React.useMemo(() => ({ serverId: workspace.serverId, machineId: workspace.machineId, rootPath: workspace.rootPath }),
-        [workspace.serverId, workspace.machineId, workspace.rootPath]);
+function useScope(checkout: WorkspaceRefV1): WorkspaceScopeBase {
+    const workspace = workspaceAddressFromRefV2(checkout);
+    // Enrichment of the accepted row does not change its filesystem subscription.
+    return React.useMemo(() => workspaceScopeFromProject(checkout, checkout.rootPath),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [workspace.serverId, workspace.workspaceId, workspace.rootPath,
+            'kind' in workspace ? workspace.managedId : workspace.machineId,
+            'kind' in workspace ? workspace.controller.machineId : null,
+            'kind' in workspace ? workspace.controller.installationId : null]);
 }
 
-function useProjectNavigation(workspace: WorkspaceAddressV1, checkout: WorkspaceRefV1) {
+function useProjectNavigation(workspace: WorkspaceAddressV2, checkout: WorkspaceRefV1) {
     const router = useRouter();
     const { open: openWorkspaceFile } = useWorkspaceFileOpener();
     const routeParams = useLocalSearchParams<Record<string, string | string[] | undefined>>();
@@ -94,22 +100,22 @@ function useProjectNavigation(workspace: WorkspaceAddressV1, checkout: Workspace
     const admittedRouteParams = routeIsExactCheckout || (currentCheckout && sameWorkspaceProject(currentCheckout, checkout))
         ? routeParams : undefined;
     const storedCheckout = useWorkspaceRefById(workspace.workspaceId, workspace.serverId);
-    const scope = useScope(workspace);
+    const scope = useScope(checkout);
     const snapshot = useWorkspaceScmSummarySnapshot(scope);
     const defaultRootPath = storedCheckout?.rootPath ?? workspace.rootPath;
     const href = React.useCallback((segment: 'overview' | 'code' | 'changes' | 'scripts', filePath?: string, rootPath = workspace.rootPath, worktreeId?: string | null, details?: SessionPaneUrlDetailsTarget, codeLocation?: WorkspaceCodeLocation) => filePath !== undefined
         ? buildWorkspaceFileLink({ target: { kind: 'project', workspaceRefId: workspace.workspaceId, serverId: workspace.serverId,
-            machineId: workspace.machineId, rootPath }, path: filePath }) : buildProjectRouteHref({
+            rootPath }, path: filePath }) : buildProjectRouteHref({
         workspaceRefId: workspace.workspaceId, serverId: workspace.serverId, segment,
         routeParams: admittedRouteParams,
         activeRootPath: rootPath, defaultRootPath,
         activeWorktreeId: worktreeId ?? findVisibleRepoWorktreeByPath(snapshot?.repo.worktrees ?? [], rootPath)?.id,
         ...(codeLocation ? { initialResource: null, codeLocation } : {}),
         ...(details ? { details } : {}),
-    }), [workspace.workspaceId, workspace.serverId, workspace.machineId, workspace.rootPath, defaultRootPath, snapshot?.repo.worktrees, admittedRouteParams]);
+    }), [workspace.workspaceId, workspace.serverId, workspace.rootPath, defaultRootPath, snapshot?.repo.worktrees, admittedRouteParams]);
     const openFile = React.useCallback((path: string) => { void openWorkspaceFile({ kind: 'project', workspaceRefId: workspace.workspaceId,
-        serverId: workspace.serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, path }); },
-    [openWorkspaceFile, workspace.workspaceId, workspace.serverId, workspace.machineId, workspace.rootPath]);
+        serverId: workspace.serverId, rootPath: workspace.rootPath, path }); },
+    [openWorkspaceFile, workspace.workspaceId, workspace.serverId, workspace.rootPath]);
     return { href, openFile, router };
 }
 
@@ -119,7 +125,7 @@ function useProjectNavigation(workspace: WorkspaceAddressV1, checkout: Workspace
  * machine, path and branch are the header chip's, not repeated here.
  */
 function AboutBody(props: Props): React.ReactElement {
-    const scope = useScope(props.workspace);
+    const scope = useScope(props.checkout);
     const phone = useDeviceType() === 'phone';
     const viewer = useActiveServerAccountScope();
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer?.serverId, viewer?.accountId]);
@@ -162,11 +168,14 @@ function ScriptsBody(props: Props): React.ReactElement {
     const navigation = useProjectNavigation(props.workspace, props.checkout);
     const { href, router } = navigation;
     const openScripts = React.useCallback(() => router.push(href('scripts') as Parameters<typeof router.push>[0]), [href, router]);
-    return <ProjectScriptsBody workspace={props.workspace} presentation="widget" onOpenScripts={openScripts} testID={props.testID} />;
+    const workspace = resolveProjectScriptsWorkspace(props.workspace);
+    if (!workspace) return <UnavailableInstalledWidget
+        unresolved={{ state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID} />;
+    return <ProjectScriptsBody workspace={workspace} presentation="widget" onOpenScripts={openScripts} testID={props.testID} />;
 }
 
 function CodeBody(props: Props): React.ReactElement {
-    const scope = useScope(props.workspace);
+    const scope = useScope(props.checkout);
     const navigation = useProjectNavigation(props.workspace, props.checkout);
     const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspace.workspaceId, props.workspace.serverId));
     const browser = useRepositoryTreeBrowserState(tryBuildWorkspaceCacheKey(scope) ?? '');
@@ -182,7 +191,7 @@ function CodeBody(props: Props): React.ReactElement {
 }
 
 function ReadmeBody(props: Props): React.ReactElement {
-    const scope = useScope(props.workspace);
+    const scope = useScope(props.checkout);
     const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspace.workspaceId, props.workspace.serverId));
     const key = tryBuildWorkspaceCacheKey(scope);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(key);
@@ -217,7 +226,7 @@ function ReadmeBody(props: Props): React.ReactElement {
 const CHECKOUTS_GLANCE_OTHERS = 2;
 
 function CheckoutsBody(props: Props): React.ReactElement {
-    const scope = useScope(props.workspace);
+    const scope = useScope(props.checkout);
     // Branch and worktrees only.
     const { snapshot } = useWorkspaceScmSnapshotController(scope, { detail: 'summary' });
     const navigation = useProjectNavigation(props.workspace, props.checkout);
@@ -230,19 +239,15 @@ function CheckoutsBody(props: Props): React.ReactElement {
     useMachineReachabilityRevision();
     const presenceNowMs = useMachinePresenceNowMs(machines);
     const openProject = useOpenProject();
-    const projectRefs = React.useMemo(() => refs.filter(ref => sameWorkspaceProject(ref, checkout)),
-        // The Project is the checkout's stored identity, not the prop object's.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [refs, checkout.id, checkout.serverId, checkout.machineId, checkout.rootPath, checkout.projectKey]);
+    const projectRefs = React.useMemo(() => refs.filter(ref => sameWorkspaceProject(ref, checkout)), [refs, checkout]);
     const facts = useProjectsTreeCheckoutFacts(projectRefs);
     const machineOf = (machineId: string) => machines.find(machine => machine.id === machineId) ?? null;
     // Named like the picker names it (same-named machines tell themselves apart); a machine the inventory does not list is
     // "unlisted", never its raw id.
     const machineName = (machineId: string) => getMachineDisplayName(machineOf(machineId) ?? { id: machineId, absence: 'unlisted' }, machines);
-    const refAt = (machineId: string, rootPath: string) => projectRefs.find(ref => ref.machineId === machineId
-        && normalizeWorkspaceRootPath(ref.rootPath) === normalizeWorkspaceRootPath(rootPath)) ?? null;
+    const refAt = (rootPath: string) => resolveProjectCheckoutWorkspaceRef(projectRefs, checkout, rootPath);
     const status = (ref: WorkspaceRefV1 | null) => (ref
-        ? facts.get(projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV1(ref) })) ?? null : null);
+        ? facts.get(projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV2(ref) })) ?? null : null);
     // An offline machine's checkout stays listed and says so (lab p-projects: dimmed, last-known).
     const isOffline = (machineId: string) => {
         const machine = machineOf(machineId);
@@ -257,10 +262,10 @@ function CheckoutsBody(props: Props): React.ReactElement {
             factTone: attention === 'needs-you' ? 'attention' as const : 'quiet' as const,
         };
     };
-    const here = refAt(scope.machineId, scope.rootPath);
+    const here = refAt(scope.rootPath);
     const worktrees = sortRepoWorktreeRows(filterVisibleRepoWorktreeRows(snapshot?.repo.worktrees ?? []))
         .filter(worktree => normalizeWorkspaceRootPath(worktree.path) !== normalizeWorkspaceRootPath(scope.rootPath));
-    const listed = new Set([here, ...worktrees.map(worktree => refAt(scope.machineId, worktree.path))]);
+    const listed = new Set([here, ...worktrees.map(worktree => refAt(worktree.path))]);
     const others = projectRefs.filter(ref => !listed.has(ref));
     const [showAll, setShowAll] = React.useState(false);
     const needsYou = (ref: WorkspaceRefV1 | null) => status(ref)?.attention === 'needs-you' ? 0 : 1;
@@ -275,11 +280,11 @@ function CheckoutsBody(props: Props): React.ReactElement {
         ...others.map(ref => ({ branch: status(ref)?.branch ?? null, folder: namesByRef.get(ref)! })),
     ]);
     const rows = [
-        ...worktrees.map(worktree => ({ rank: needsYou(refAt(scope.machineId, worktree.path)), row: <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"
-            title={labels[1 + worktrees.indexOf(worktree)]!} {...fact(scope.machineId, refAt(scope.machineId, worktree.path))}
+        ...worktrees.map(worktree => ({ rank: needsYou(refAt(worktree.path)), row: <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"
+            title={labels[1 + worktrees.indexOf(worktree)]!} {...fact(scope.machineId, refAt(worktree.path))}
             onPress={() => navigation.router.push(navigation.href('overview', undefined, worktree.path, worktree.id) as Parameters<typeof navigation.router.push>[0])} /> })),
-        ...others.map(ref => ({ rank: needsYou(ref), row: <WidgetGlanceRow key={`${ref.serverId}:${ref.machineId}:${ref.id}:${ref.rootPath}`} testID={`${props.testID}.checkout:${ref.id}`} mark="desktop"
-            title={labels[1 + worktrees.length + others.indexOf(ref)]!} {...fact(ref.machineId, ref)}
+        ...others.map(ref => ({ rank: needsYou(ref), row: <WidgetGlanceRow key={projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV2(ref) })} testID={`${props.testID}.checkout:${ref.id}`} mark="desktop"
+            title={labels[1 + worktrees.length + others.indexOf(ref)]!} {...fact(workspaceScopeFromProject(ref, ref.rootPath).machineId, ref)}
             onPress={() => fireAndForget(openProject(ref.id, { serverId: ref.serverId }), { tag: 'ProjectWidget.openCheckout' })} /> })),
     ].sort((left, right) => left.rank - right.rank);
     const hidden = showAll ? 0 : Math.max(0, rows.length - CHECKOUTS_GLANCE_OTHERS);
@@ -296,7 +301,7 @@ function CheckoutsBody(props: Props): React.ReactElement {
 }
 
 function ChangesBody(props: Props): React.ReactElement {
-    const scope = useScope(props.workspace);
+    const scope = useScope(props.checkout);
     const navigation = useProjectNavigation(props.workspace, props.checkout);
     const lifetime = captureActiveServerAccountScopeLifetime();
     const scopeKey = tryBuildWorkspaceCacheKey(scope);

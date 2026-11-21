@@ -7,7 +7,7 @@ import { HappierPageHeader, happierPageTextMetrics } from '@happier-dev/plugin-u
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectExecutionChoiceV1, WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { resolveProjectMemoryDemandV1, type ProjectMemoryDemandV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1';
@@ -102,6 +102,11 @@ import {
 import { useProjectScriptsController, type ProjectScriptsController } from './useProjectScriptsController';
 import { describeProjectAuthoringOpenFailure, useProjectSetupAuthoring } from './useProjectSetupAuthoring';
 import type { ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
+
+/** Scripts inspection and execution currently support Machine workspaces. */
+export function resolveProjectScriptsWorkspace(workspace: WorkspaceAddressV2): WorkspaceAddressV1 | null {
+  return 'kind' in workspace ? null : workspace;
+}
 
 export type ProjectScriptsBodyProps = Readonly<{
   workspace: WorkspaceAddressV1;

@@ -314,6 +314,14 @@ describe('native widget target contracts', () => {
             .toMatchObject({ target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } });
     });
 
+    it('admits managed widget selections only for the accepted guest and controller installation', () => {
+        const checkout = { v: 2 as const, kind: 'managed' as const, id: 'checkout', serverId: 'home',
+            managedId: 'guest', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo', createdAtMs: 1 };
+        const input = { value: checkout, serverId: 'home', workspaceRefs: [checkout] };
+        expect(validateWidgetWorkspaceInputV1(input)).toEqual({ status: 'valid', checkout });
+        expect(validateWidgetWorkspaceInputV1({ ...input, value: { ...checkout, controller: {
+            ...checkout.controller, installationId: 'replacement' } } })).toMatchObject({ status: 'denied', reasonCode: 'widget_target_identity_mismatch' });
+    });
     it('admits a pinned real WorkspaceRef with additive Project facts, without making them checkout authority', () => {
         const checkout = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
             projectKey: 'stable-project', label: 'My checkout', source: { sourceId: 'source', revision: 2 } };

@@ -12,8 +12,8 @@ import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/
 import type { PluginProjectedResourceV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
+import type { WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import type { ProjectWidgetAreaContextV1 } from './projectWidgetAreaContext';
@@ -23,7 +23,7 @@ export const WidgetSessionAddressReadSchema = createStoredReadSchema(VoiceTracke
 export const WidgetConnectedAccountSelectionReadSchema = createProtocolStoredReadSchema(QualifiedConnectedAccountRefSchema);
 
 export type ConfiguredWidgetTargetResolution =
-  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1 }>; projectContext?: ProjectWidgetAreaContextV1; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
+  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV2; checkout: WorkspaceRefV1 }>; projectContext?: ProjectWidgetAreaContextV1; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
   | Readonly<{ status: 'loading'; reasonCode: string }>
   | Readonly<{ status: 'selection_required' | 'invalid' | 'unavailable' | 'denied'; reasonCode: string; fields?: readonly WidgetInputIssueV1[]; repair?: WidgetInputRepairOutcome }>;
 /** Credential-free facts for one next action; Connect never needs a shared inputs writer. */
@@ -128,7 +128,7 @@ function resolveConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetInput):
     if (admitted.status !== 'valid') return { ...admitted, fields: [{ path, ...admitted }] };
     // Equality may accept target-platform spelling differences; only the admitted
     // checkout supplies the actual path bytes passed to filesystem/SCM readers.
-    const workspace = workspaceAddressFromRefV1(admitted.checkout);
+    const workspace = workspaceAddressFromRefV2(admitted.checkout);
     return { status: 'ready', target: { kind: 'workspace', workspace, checkout: admitted.checkout }, runtime: input.appRuntime, input: input.resolvedInput.input };
   }
   if (declaredTarget.kind === 'app') {

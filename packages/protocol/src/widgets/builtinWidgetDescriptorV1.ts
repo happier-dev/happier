@@ -7,7 +7,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { lazyDefinition } from '../lazyZodSchema.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
-import { WorkspaceRefV1WriteSchema } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceRefV2WriteSchema } from '../workspaces/workspaceRefV1.js';
 import type { WidgetLayoutWidgetV1 } from './widgetLayoutItemV1.js';
 import { USAGE_QUERY_INPUT_FIELDS, USAGE_MULTI_BREAKDOWN_INPUT_FIELD, UsageAccountingMetricSchema, UsageQuerySchema, UsageSourceInventoryScopeSchema } from '../inputs/usageQuery.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
@@ -190,7 +190,7 @@ const sessionInputs: WidgetInputDescriptorV1 = {
 };
 const nativeSizeDeclaration = { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' } satisfies WidgetSizeDeclarationV1;
 const workspaceInputSchema = lazyDefinition(() => PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(z.strictObject({
-    checkout: WorkspaceRefV1WriteSchema,
+    checkout: WorkspaceRefV2WriteSchema,
 }), { target: 'draft-7' })));
 const workspaceInputs: WidgetInputDescriptorV1 = {
     inputs: { fields: [{ path: 'checkout', title: 'Checkout', prompt: 'Which checkout?', widget: 'select', inputType: { hostType: 'workspace' }, required: true }] },

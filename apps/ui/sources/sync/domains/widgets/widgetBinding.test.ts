@@ -22,6 +22,24 @@ const runtime = (serverId: string, machineId: string): PluginUiProjectionCurrent
 const session = (id: string, serverId = 'home'): Session => createSessionFixture({ id, serverId });
 
 describe('configured widget executable target', () => {
+  it('admits a managed checkout through native widget inputs and retains its exact guest address', () => {
+    const checkout = { v: 2 as const, kind: 'managed' as const, serverId: 'home', id: 'guest-checkout',
+      managedId: 'guest', controller: { machineId: 'controller', installationId: 'installation' },
+      rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
+    const definition = { kind: 'builtin' as const, id: 'project_code' };
+    const descriptor = readBuiltinWidgetDescriptorV1(definition)!;
+    const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition,
+      bindings: { checkout: { kind: 'context', slot: 'checkout' } } };
+    const resolvedInput = resolveConfiguredWidgetInputs({ descriptor, instance,
+      providedContext: { checkout: [checkout] }, viewerValues: {} });
+    expect(resolvedInput).toEqual({ status: 'ready', input: { checkout } });
+    const input = { scope: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } },
+      definition, descriptor, targetKind: 'app' as const, resolvedInput, workspaceRefs: [checkout],
+      appRuntime: runtime('home', 'controller'), readSession: () => { throw new Error('No Session for a checkout'); } };
+    expect(resolveConfiguredWidgetTarget(input)).toMatchObject({ status: 'ready', target: { kind: 'workspace', checkout,
+      workspace: { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-checkout', managedId: 'guest',
+        controller: checkout.controller, rootPath: '/repo' } } });
+  });
   it('uses the admitted Project target on its own dashboard without borrowing an App or Session target', async () => {
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://project-widget.test', accountId: 'viewer' });
     try {

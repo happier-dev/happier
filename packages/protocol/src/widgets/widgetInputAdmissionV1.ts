@@ -10,7 +10,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, type PluginJsonS
 import { resolveWidgetBindingsV1, type WidgetInputBindingsV1, type WidgetBindingResolutionInputV1, type WidgetBindingResolutionV1, type WidgetInstanceV1 } from './widgetInstanceV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
-import { resolveWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceRefResolutionContextV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV2, type WorkspaceRefResolutionContextV1 } from '../workspaces/workspaceRefResolutionV1.js';
 
 export type WidgetInputDescriptorV1 = Readonly<{
     /** Current installed declaration metadata; never persisted in an instance or bound input. */
@@ -114,7 +114,7 @@ export function validateWidgetWorkspaceInputV1(input: Readonly<{
     const selectedServerId = context.normalizeServerId?.(selected.data.serverId) ?? selected.data.serverId;
     const scopeServerId = context.normalizeServerId?.(input.serverId) ?? input.serverId;
     if (selectedServerId !== scopeServerId) return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
-    const admitted = resolveWorkspaceRefV1(input.workspaceRefs, workspaceAddressFromRefV1(selected.data), context);
+    const admitted = resolveWorkspaceRefV1(input.workspaceRefs, workspaceAddressFromRefV2(selected.data), context);
     return admitted.kind === 'resolved' ? { status: 'valid', checkout: admitted.ref }
         : { status: 'denied', reasonCode: 'widget_target_identity_mismatch' };
 }

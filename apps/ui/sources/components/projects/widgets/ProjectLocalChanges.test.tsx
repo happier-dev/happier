@@ -58,7 +58,8 @@ afterAll(() => disposeActionLoader?.());
 const boundary = vi.hoisted(() => ({ navigate: vi.fn(), denied: false, confirmDiscard: false, confirmPush: false, rootReadme: false,
     manifestPresent: true,
     alerts: [] as unknown[][],
-    pathname: '/', routeParams: {} as Record<string, string | string[] | undefined>, writes: [] as { method: string; params: unknown }[] }));
+    pathname: '/', routeParams: {} as Record<string, string | string[] | undefined>, writes: [] as { method: string; params: unknown }[],
+    snapshotReads: [] as unknown[] }));
 installSessionDetailsPanelNonRnModuleMocks({ router: () => createExpoRouterMock({ router: { push: boundary.navigate },
     pathname: () => boundary.pathname, params: () => boundary.routeParams }).module });
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -85,7 +86,7 @@ const { resolveNewSessionDraftRouteScope } = await import('@/components/sessions
 const { listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 const { useRepositoryTreeBrowserState } = await import('@/hooks/workspaces/files/repositoryTreeBrowserState');
-const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+const { tryBuildWorkspaceCacheKey, workspaceScopeFromProject } = await import('@/sync/domains/workspaces/workspaceScope');
 const { clearCachedWorkspaceRepositoryDirectoryEntries, getCachedWorkspaceRepositoryDirectoryEntries } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
 const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
@@ -150,9 +151,12 @@ const runtime = installSessionPaneRuntimeTestHarness({
             if (request.method.endsWith(`:${RPC_METHODS.SCM_WORKSPACE_WATCH}`)) return new Promise(resolve => {
                 pendingWatchReplies.push(() => resolve({ ok: true, result: { status: 'cancelled' } }));
             });
-            if (request.method.endsWith(`:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`)) return { ok: true, result: boundary.denied
+            if (request.method.endsWith(`:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`)) {
+                boundary.snapshotReads.push(request.params);
+                return { ok: true, result: boundary.denied
                 ? { success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, error: 'Denied' }
                 : { success: true, snapshot: currentSnapshot } };
+            }
             if (request.method.endsWith(`:${RPC_METHODS.SCM_COMMIT_CREATE}`)) {
                 boundary.writes.push(request);
                 return { ok: true, result: { success: true, commitSha: 'created-commit' } };
@@ -195,6 +199,7 @@ beforeEach(async () => {
     boundary.routeParams = {};
     resetActiveReviewFilesForTests();
     boundary.writes.length = 0;
+    boundary.snapshotReads.length = 0;
     boundary.alerts.length = 0;
     currentSnapshot = snapshot(['src/a.ts', 'src/b.ts']);
     storage.setState({ sessions: {} });
@@ -209,22 +214,24 @@ beforeEach(async () => {
 const TALL_PRESENTATION = { size: 'tall' as const, footprint: getWidgetSizeFootprintV1('home', 'tall')!, geometry: { width: 480, height: 640 } };
 
 async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checkouts' | 'project_scripts' | 'project_code' | 'project_readme' = 'project_changes',
-    options: Readonly<{ tall?: boolean }> = {}) {
+    options: Readonly<{ tall?: boolean; checkout?: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceRefV1 }> = {}) {
     const { ProjectBuiltinWidgetBody } = await import('./ProjectBuiltinWidgetBody');
+    const checkout = options.checkout ?? { serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath, projectKey: 'project', createdAtMs: 1 };
+    const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
     const routeParams = { workspaceRefId: 'wr_1', serverId: runtime.serverId, ...boundary.routeParams };
     const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-local-changes"
         ref={{ kind: 'project', params: routeParams }} pathname={boundary.pathname} focused visible
         navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
         <WidgetPresentationProvider value={options.tall ? TALL_PRESENTATION : undefined}>
             <ProjectBuiltinWidgetBody id={id}
-                checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath, projectKey: 'project', createdAtMs: 1 }}
-                workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath }} testID="local-changes" />
+                checkout={checkout}
+                workspace={workspaceAddressFromRefV2(checkout)} testID="local-changes" />
         </WidgetPresentationProvider>
     </DestinationInstanceHost></runtime.Wrapper>);
     await vi.waitFor(async () => {
         await flushHookEffects();
         if (id === 'project_changes' || id === 'project_checkouts') {
-            const scope = { serverId: runtime.serverId, machineId: 'm1', rootPath };
+            const scope = workspaceScopeFromProject(checkout, rootPath);
             const error = storage.getState().getWorkspaceScmSnapshotError(scope);
             if (error && !boundary.denied) throw new Error(`Fixture SCM read failed: ${error.message}`);
             expect(storage.getState().getWorkspaceScmSnapshot(scope) ?? error).not.toBeNull();
@@ -478,6 +485,42 @@ describe('Project Local Changes', () => {
         expect(url.searchParams.get('layoutId')).toBe(relation === 'same-project' ? 'named-dashboard' : null);
         expect(url.searchParams.get('initialFile')).toBe(relation === 'same-project' ? 'src/current.ts' : null);
         expect(url.searchParams.get('comparisonId')).toBe(relation === 'same-project' ? 'saved-comparison' : null);
+    });
+    it('lists managed siblings beside a Machine checkout without interpreting their path on the controller', async () => {
+        const checkout = { id: 'wr_1', serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
+        const managed = { v: 2 as const, kind: 'managed' as const, id: 'managed-sibling', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: 'm1', installationId: 'project-test-installation' },
+            rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout, managed] });
+        const screen = await mount('/repo', 'project_checkouts');
+        expect(screen.findHostByTestId('local-changes.checkout:managed-sibling')).not.toBeNull();
+    });
+    it('reads managed Local changes in the guest namespace even when the controller has the same root', async () => {
+        const checkout = { v: 2 as const, kind: 'managed' as const, id: 'managed-current', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: 'm1', installationId: 'project-test-installation' },
+            rootPath: '/widget-shared-repo', projectKey: 'project', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+        const controllerScope = { serverId: runtime.serverId, machineId: 'm1', rootPath: checkout.rootPath };
+        const controllerSnapshot = snapshot(['controller-only.ts']);
+        storage.getState().updateWorkspaceScmSnapshot(controllerScope, controllerSnapshot);
+        const screen = await mount(checkout.rootPath, 'project_changes', { checkout });
+        expect(screen.findHostByTestId('local-changes')).not.toBeNull();
+        expect(storage.getState().getWorkspaceScmSnapshot(workspaceScopeFromProject(checkout, checkout.rootPath))).not.toBeNull();
+        expect(storage.getState().getWorkspaceScmSnapshot(controllerScope)?.entries.map(entry => entry.path)).toEqual(['controller-only.ts']);
+        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        expect(boundary.snapshotReads).toContainEqual(expect.objectContaining({ kind: 'targeted_action_rpc', target: workspaceAddressFromRefV2(checkout) }));
+    });
+    it('keeps managed Scripts unavailable while the inspection owner requires a Machine checkout', async () => {
+        const { ProjectBuiltinWidgetBody } = await import('./ProjectBuiltinWidgetBody');
+        const { UnavailableInstalledWidget } = await import('@/components/widgets/InstalledWidgetSurface');
+        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        const checkout = { v: 2 as const, kind: 'managed' as const, id: 'managed-scripts', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: 'm1', installationId: 'project-test-installation' },
+            rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
+        const screen = await renderScreen(<runtime.Wrapper><ProjectBuiltinWidgetBody id="project_scripts"
+            checkout={checkout} workspace={workspaceAddressFromRefV2(checkout)} testID="managed-scripts" /></runtime.Wrapper>);
+        expect(screen.findAllByType(UnavailableInstalledWidget).map(node => node.props.unresolved)).toContainEqual({
+            state: 'unavailable', reasonCode: 'widget_type_unavailable' });
     });
     it('keeps Checkouts to three rows, the ones that need the person first, until the person asks for the rest', async () => {
         const worktrees = ['one', 'two', 'three', 'four', 'five'].map(name => ({ id: name, path: `/repo/${name}`, branch: name, isCurrent: false }));
