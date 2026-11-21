@@ -1,6 +1,6 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
@@ -148,7 +148,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     /** Supplied only when the ordinary guide draft owner can open the requested context. */
     openAskHappier?: (context?: AskHappierContext) => void | Promise<void>;
     /** Matches `useNavigateToSession`: the Home is passed when the producer holds it. */
-    openExecutionRunDraft?: (seed: ExecutionRunLauncherDraftSeed) => void;
+    openExecutionRunDraft?: (seed: ExecutionRunLauncherDraftSeed) => void | Promise<void>;
     navigateToSession: (sessionId: string, opts?: Readonly<{ serverId?: string }>) => void;
   }>;
   actions: Readonly<{
@@ -541,6 +541,14 @@ export function buildCommandPaletteCommands(
         icon: 'code',
         category: t('commandPalette.commands.runsCategory'),
         action: async () => {
+          if (!activeSessionId && entry.spec.id === REVIEW_START_ACTION_ID_V1) {
+            if (!actionDraftAccountScope) return;
+            await nav.openExecutionRunDraft?.({ scope: actionDraftAccountScope, sessionId: null, actionId: 'review.start',
+              input: buildExecutionRunActionDraftInputForUi({ actionId: 'review.start', sessionId: null,
+                instructions: '', extra: { target: { kind: 'detached' } } }),
+            });
+            return;
+          }
           const sessionId = await requireSession(activeSessionId, alert);
           if (!sessionId) return;
           const session = sessionsById?.[sessionId] ?? null;
@@ -553,7 +561,7 @@ export function buildCommandPaletteCommands(
 
           const serverId = typeof session?.serverId === 'string' ? session.serverId.trim() : '';
           if (!actionDraftAccountScope || !serverId || actionDraftAccountScope.serverId !== serverId) return;
-          nav.openExecutionRunDraft?.({ scope: actionDraftAccountScope, sessionId,
+          await nav.openExecutionRunDraft?.({ scope: actionDraftAccountScope, sessionId,
             actionId: entry.spec.id as ActionId,
             input: buildExecutionRunActionDraftInputForUi({
               actionId: entry.spec.id as ActionId,

@@ -134,6 +134,17 @@ export function useContextualStartComposer(source: ContextualStartSource, admiss
 
 export type ContextualStartComposerModel = ReturnType<typeof useContextualStartComposer>;
 
+/** The same placement presentation and admissibility for a combined composer or Review's stepped body. */
+export function ContextualStartWhere({ model }: Readonly<{ model: ContextualStartComposerModel }>) {
+    const { source, where } = model;
+    const busy = !source.enabled || source.busy === true;
+    return where ? <WorkflowProjectTargetControl presentation="inline" accountLifetime={where.accountLifetime}
+        target={where.target} machineName={where.machineName} machineHomeDir={where.machineHomeDir}
+        machines={busy || model.admissible.machine === 'fixed' ? undefined : where.machines}
+        directoryEditable={!busy && model.admissible.folder === 'select'}
+        onChange={busy || model.admissible.folder === 'fixed' ? undefined : where.choose} testIDPrefix={where.testIDPrefix} /> : null;
+}
+
 /**
  * The folded Who list (lab flows `ask`): about four mixed top picks, so the question and what they can
  * read stay in reach without scrolling. Presentation only; the owner's ranking decides which ones.
@@ -177,7 +188,7 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
     details?: ReadonlyMap<string, () => React.ReactNode>;
 }>) {
     const { theme } = useUnistyles();
-    const { source, where } = model;
+    const { source } = model;
     const { participants } = source;
     const busy = !source.enabled || source.busy === true;
     const [detailId, setDetailId] = React.useState<string | null>(null);
@@ -400,11 +411,7 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
                 editable={!busy}
                 accessibilityLabel={t('session.collaboration.discussion.secondOpinion.question')} />
         </FieldItem> : null)}
-        {where && !changing ? <WorkflowProjectTargetControl presentation="inline" accountLifetime={where.accountLifetime}
-            target={where.target} machineName={where.machineName} machineHomeDir={where.machineHomeDir}
-            machines={busy || model.admissible.machine === 'fixed' ? undefined : where.machines}
-            directoryEditable={!busy && model.admissible.folder === 'select'}
-            onChange={busy || model.admissible.folder === 'fixed' ? undefined : where.choose} testIDPrefix={where.testIDPrefix} /> : null}
+        {!changing ? <ContextualStartWhere model={model} /> : null}
     </View>;
 }
 

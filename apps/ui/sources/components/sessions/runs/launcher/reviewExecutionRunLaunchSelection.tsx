@@ -17,19 +17,20 @@ import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExe
 type LaunchSelection = ReviewInputSelection;
 export type ReviewInputSelectionRequest = Readonly<{
     anchor?: PopoverAnchor;
-    sessionId: string;
+    sessionId: string | null;
     serverId: string;
     draft: Readonly<Record<string, unknown>>;
-    projection: ReviewInputSelectionProjection;
+    /** Omitting a projection starts the authored Review; projections return input without invoking it. */
+    projection?: ReviewInputSelectionProjection;
     isCurrent: () => boolean;
 }>;
 
-/** Both no-invoke projections use the existing Review authoring body and modal lifecycle. */
+/** Global Review authoring and no-invoke projections share one body and modal lifecycle. */
 export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjectedProps & ReviewInputSelectionRequest & Readonly<{
     onResolve: (selection: LaunchSelection | null) => void;
 }>) {
     const { onResolve, setChrome } = props;
-    // The composer's send returns the selection, so the footer holds only Cancel; a phone sheet's close and drag
+    // The composer owns the primary action, so the footer holds only Cancel; a phone sheet's close and drag
     // already dismiss it, which leaves that footer empty.
     const phoneSheet = useSheetDismiss() !== null;
     const footer = React.useMemo(() => phoneSheet ? null : (
@@ -44,7 +45,7 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
             intent="review" initialActionInput={props.draft}
             initialText={typeof props.draft.instructions === 'string' ? props.draft.instructions : undefined}
             reviewSelectionProjection={props.projection} selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
-            onRunStarted={() => {}} />
+            onStartAccepted={() => onResolve(null)} onRunStarted={() => onResolve(null)} />
     </View>;
 }
 

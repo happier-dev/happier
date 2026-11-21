@@ -9,6 +9,9 @@ import { useOpenExecutionRunLauncherDraft } from './useOpenExecutionRunLauncherD
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { Modal } from '@/modal';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
@@ -44,4 +47,31 @@ it('retains the scoped Run Start in the shared Details owner before its renderer
     });
     expect(readSessionLauncherDraftPreviewFromDraft(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 's1' })?.document, 'plan')).toBe('Plan the change');
     expect(getSessionDraftSnapshot({ ...scope, accountId: 'other' }, { kind: 'session', sessionId: 's1' })).toBeNull();
+});
+
+it('opens global Review authoring in the existing modal and closes it when its Account retires', async () => {
+    const previousScope = storage.getState().profileScope;
+    const previousRuntime = getAppliedActiveServerSnapshot();
+    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    publishAppliedActiveServerSnapshot({ ...previousRuntime, serverId: scope.serverId }, true);
+    storage.setState({ profileScope: scope });
+    const hook = await renderHook(() => useOpenExecutionRunLauncherDraft());
+    const input = buildExecutionRunActionDraftInputForUi({ actionId: 'review.start', sessionId: null,
+        extra: { target: { kind: 'detached' } } });
+    try {
+        vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.hide).mockClear();
+        await act(async () => hook.getCurrent()({ scope, sessionId: null, actionId: 'review.start', input }));
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
+        expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0]).toMatchObject({
+            props: { sessionId: null, serverId: scope.serverId, draft: input },
+        });
+        expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 's1' })).toBeNull();
+        publishAppliedActiveServerRuntimeAvailability(false);
+        expect(Modal.hide).toHaveBeenCalledWith('modal-id');
+    } finally {
+        await hook.unmount();
+        storage.setState({ profileScope: previousScope });
+        publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+    }
 });

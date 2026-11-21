@@ -14,7 +14,7 @@ import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happie
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildRolesRailPickerOption } from '@/components/roles/rail/buildRolesRailPickerOption';
-import { ContextualStartComposerBody, useContextualStartComposer, type ContextualStartSource, type ContextualStartAdmissibleSet } from '@/components/sessions/authoring/ContextualStartComposer';
+import { ContextualStartComposerBody, ContextualStartWhere, useContextualStartComposer, type ContextualStartSource, type ContextualStartAdmissibleSet } from '@/components/sessions/authoring/ContextualStartComposer';
 import { ContextualStartLead } from '@/components/sessions/authoring/ContextualStartLead';
 import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { RoleRailItem } from '@/components/roles/rail/rolesRailTypes';
@@ -119,7 +119,7 @@ import { buildReviewStartWorkflowDraftSeed } from './reviewStartWorkflowDraft';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { getValueAtPath } from '@/components/sessions/actions/ActionInputFields';
-import { useSessionProjectScmSummarySnapshot, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
+import { useMachineListForServer, useSessionProjectScmSummarySnapshot, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { selectScmChangedFileCount } from '@/scm/scmStatusFiles';
 import { scmSnapshotLineTotals } from '@/scm/scmLineDelta';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
@@ -198,6 +198,7 @@ export type ExecutionRunStartedPresentation = ExecutionRunReviewPresentation & R
 const UNAVAILABLE_REASON_KEYS = SESSION_EXECUTION_RUN_LAUNCH_UNAVAILABLE_KEYS;
 const RUN_SESSION_ADMISSIBLE: ContextualStartAdmissibleSet = { who: ['newAgent'], machine: 'fixed', folder: 'fixed' };
 const RUN_DETACHED_ADMISSIBLE: ContextualStartAdmissibleSet = { ...RUN_SESSION_ADMISSIBLE, folder: 'select' };
+const RUN_GLOBAL_REVIEW_ADMISSIBLE: ContextualStartAdmissibleSet = { ...RUN_DETACHED_ADMISSIBLE, machine: 'select' };
 const EMPTY_REVIEW_ENGINE_OPTIONS = Object.freeze({});
 
 /**
@@ -256,6 +257,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         recovery?: Readonly<{ retryInputLocalId: string; initialText?: string }>,
         presentation?: ExecutionRunStartedPresentation,
     ) => void;
+    /** A modal host closes after a Review is accepted, before navigation to its Artifact. */
+    onStartAccepted?: () => void;
     /**
      * Host-provided text. Without a `launchOrigin` it seeds the composer. With a Discussion
      * `launchOrigin` it is the selected messages: shown as the draft's context (never as text the
@@ -300,6 +303,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const serverId = props.sessionId === null ? explicitServerId : preferredServerId;
     const [chosenWorkspace, setChosenWorkspace] = React.useState<typeof props.workspace>();
     const workspace = chosenWorkspace ?? props.workspace;
+    const choosingReviewWorkspace = intent === 'review' && props.sessionId === null && !props.workspace && !props.comparisonReview;
+    const reviewMachines = useMachineListForServer(serverId ?? '', choosingReviewWorkspace);
     const selectingReviewInput = props.reviewSelectionProjection !== undefined;
     const credentialSelectionOnly = props.reviewSelectionProjection === 'executionRunLaunch';
     const launcher = useExecutionRunLaunchContext(props.sessionId, serverId, workspace);
@@ -432,7 +437,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         busy: phase !== 'idle',
     });
     const { teamCredential, secretState: secretOverlayState } = reviewOptions;
-    const machine = useExecutionRunMachineName(session, serverId, props.workspace?.machineId);
+    const machine = useExecutionRunMachineName(session, serverId, workspace?.machineId);
     const runIdRef = React.useRef<string | null>(null);
     const notifiedRunIdRef = React.useRef<string | null>(null);
     const submitInFlightRef = React.useRef(false);
@@ -575,6 +580,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 && (reviewStart.kind === 'workflow' || reviewStart.runs.length > 0)) {
                 launcherDraft.clearAcceptedSelection(selectionCapture, submission.onOutboundHandoff());
                 setPhase('idle');
+                props.onStartAccepted?.();
                 router.push(artifactViewRoute(reviewStart.reviewRound.reviewId) as never);
                 return;
             }
@@ -615,7 +621,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, comparisonReview.launchInput, launcher, startAction, identity.correlationId, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.reviewSelectionProjection, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, router, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
+    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, comparisonReview.launchInput, launcher, startAction, identity.correlationId, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.reviewSelectionProjection, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.onStartAccepted, props.sessionId, router, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
 
     submitBoundedStartRef.current = submitBoundedStart;
 
@@ -1190,16 +1196,18 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             };
         }) } }],
         selectedIds: new Set(options.selectedBackendTargetKeys),
-        where: { accountLifetime, target: whereTarget, machineName: machine.name,
+        where: { accountLifetime, target: whereTarget, machineName: choosingReviewWorkspace && !workspace ? null : machine.name,
+            machines: choosingReviewWorkspace ? reviewMachines ?? undefined : undefined,
             machineHomeDir: session ? readSessionOwnerMetadataView(session)?.homeDir : null,
             testIDPrefix: 'run-start', choose: target => {
                 if (isWorkflowProjectTarget(target)) setChosenWorkspace({ machineId: target.machineId, cwd: target.directory });
             } },
-    }), [accountLifetime, draftModelSelection, editable, exactModelPresentation.subtitle, intent, machine.name, reviewModelSubtitle,
+    }), [accountLifetime, choosingReviewWorkspace, draftModelSelection, editable, exactModelPresentation.subtitle, intent, machine.name, reviewMachines, reviewModelSubtitle,
         options.backendChoices, options.inheritedDraftSelection, options.selectedBackendTargetKeys, selectBackend,
-        selectedChoice?.targetKey, session, teamCredential.selected, whereTarget]);
+        selectedChoice?.targetKey, session, teamCredential.selected, whereTarget, workspace]);
     const contextualComposer = useContextualStartComposer(contextualSource,
-        props.sessionId === null && !props.comparisonReview ? RUN_DETACHED_ADMISSIBLE : RUN_SESSION_ADMISSIBLE);
+        choosingReviewWorkspace ? RUN_GLOBAL_REVIEW_ADMISSIBLE
+            : props.sessionId === null && !props.comparisonReview ? RUN_DETACHED_ADMISSIBLE : RUN_SESSION_ADMISSIBLE);
     // A single chosen reviewer's model opens under the list from its row's Change (lab flOpinion
     // `recipe`), never as a whole model list drawn inline.
     const reviewModelChoice = intent === 'review' && !credentialSelectionOnly ? reviewOptions.modelChoice : null;
@@ -1337,7 +1345,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                             scopeLabel={reviewScopeLabel} scopeDetail={reviewScopeDetail} /> : null}
                 </ContextualStartLead>
             )}
-            {blockedReason ? (
+            {blockedReason && !(choosingReviewWorkspace && !workspace && launchUnavailableReason === 'machineOffline') ? (
                 <SurfaceStateCard
                     testID="execution-run-start-blocked"
                     size="line"
@@ -1359,6 +1367,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     />
                 </View>
             ) : null}
+            {choosingReviewWorkspace ? <ContextualStartWhere model={contextualComposer} /> : null}
             {intent === 'review' && !credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
                 consumerSessionId={props.sessionId} stepControls={reviewStepControls}

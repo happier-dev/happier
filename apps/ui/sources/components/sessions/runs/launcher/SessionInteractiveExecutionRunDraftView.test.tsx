@@ -976,6 +976,30 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         }
     });
 
+    it('authors a global Review by choosing its Machine and folder through the shared placement control', async () => {
+        const accepted = vi.fn();
+        await mount({ sessionId: null, intent: 'review', onStartAccepted: accepted, initialActionInput: {
+            target: { kind: 'detached' }, reviewers: [{ kind: 'engine', engineId: 'claude' }],
+        } });
+        await waitFor(() => expect(screen.findByTestId('agent-input-machine-chip')).not.toBeNull());
+        expect(screen.findAllHostsByTestId('agent-input-machine-chip')).toHaveLength(1);
+        expect(emittedStarts).toEqual([]);
+        expect(accepted).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('agent-input-machine-chip');
+        await screen.pressByTestIdAsync('run-start-machine-option:machine_1');
+        await waitFor(() => expect(composer().workspace?.machineId).toBe('machine_1'));
+        expect(screen.findAllHostsByTestId('agent-input-machine-chip')).toHaveLength(1);
+        await screen.pressByTestIdAsync('agent-input-path-chip');
+        const picker = screen.findByType(PathSelectionList);
+        await act(async () => picker.props.onCommit('/chosen-review-folder'));
+        await waitFor(() => expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/chosen-review-folder' }));
+        await type('Review this folder');
+        await send('Review this folder');
+        expect(emittedStarts[0]).toMatchObject({ cwd: '/chosen-review-folder' });
+        expect(accepted).toHaveBeenCalledOnce();
+        expect(home.requests.filter(request => request.path.includes('/session_1/resume'))).toEqual([]);
+    });
+
     it('A2: retains comparison-bound placement on a detached Start', async () => {
         await mount({ sessionId: null, workspace: { machineId: 'machine_1', cwd: '/captured-folder' }, intent: 'review',
             comparisonReview: { cwd: '/captured-folder', comparison: { kind: 'workingTree' }, comparisonId: 'captured-a2',

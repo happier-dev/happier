@@ -18,6 +18,8 @@ import {
   type PluginContributedActionCurrentSnapshot,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
+import { buildCommandPaletteSelectionListSections } from './buildCommandPaletteSelectionListSections';
+import { filterSelectionListSections } from '@/components/ui/selectionList/filterSelectionListSections';
 import { readSessionComposerModelFavorites, registerSessionComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { readActiveFileViewActionOwner, registerFileViewActionOwner, type FileViewActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 
@@ -889,7 +891,7 @@ describe('buildCommandPaletteCommands', () => {
 
     expect(commandTitles(cmds)).toEqual(
       expect.arrayContaining([
-        'Start review run',
+        'Start a review',
         'Start plan run',
         'Start delegation run',
         'Open session runs',
@@ -907,7 +909,7 @@ describe('buildCommandPaletteCommands', () => {
     await openRuns!.action();
     expect(pushes).toContain('/session/session-1/runs?serverId=home-b');
 
-    const startReview = cmds.find((c) => c.title === 'Start review run');
+    const startReview = cmds.find((c) => c.title === 'Start a review');
     expect(startReview).toBeTruthy();
     await startReview!.action();
     expect(createSessionActionDraftSpy).toHaveBeenCalled();
@@ -981,7 +983,7 @@ describe('buildCommandPaletteCommands', () => {
     }
   });
 
-  it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {
+  it('opens Review authoring globally while keeping plan runs Session-scoped', async () => {
     const alerts: Array<{ title: string; message: string }> = [];
     const pushes: string[] = [];
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
@@ -1003,10 +1005,21 @@ describe('buildCommandPaletteCommands', () => {
       },
     });
 
-    const startReview = cmds.find((c) => c.title === 'Start review run');
+    const startReview = cmds.find((c) => c.title === 'Start a review');
     expect(startReview).toBeTruthy();
+    const matching = filterSelectionListSections(buildCommandPaletteSelectionListSections(cmds), 'Start a review');
+    expect(matching.flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []))
+      .toContain('command:action:review.start');
 
+    createSessionActionDraftSpy.mockClear();
     await startReview!.action();
+    expect(alerts).toEqual([]);
+    expect(createSessionActionDraftSpy).toHaveBeenCalledWith(
+      { serverId: 'server-a', accountId: 'account-a' },
+      { serverId: 'server-a', sessionId: null },
+      expect.objectContaining({ actionId: 'review.start', input: expect.objectContaining({ target: { kind: 'detached' } }) }),
+    );
+    await cmds.find(command => command.id === 'action:subagents.plan.start')!.action();
     expect(alerts.length).toBe(1);
     expect(alerts[0]!.title).toContain('Session required');
     expect(pushes).toEqual([]);
@@ -1033,7 +1046,7 @@ describe('buildCommandPaletteCommands', () => {
       alert: async () => {},
     });
 
-    const startReview = cmds.find((c) => c.title === 'Start review run');
+    const startReview = cmds.find((c) => c.title === 'Start a review');
     expect(startReview).toBeTruthy();
 
     await startReview!.action();
@@ -1072,7 +1085,7 @@ describe('buildCommandPaletteCommands', () => {
     });
 
     const expectations: Array<Readonly<{ title: string; actionId: string; permissionMode: string }>> = [
-      { title: 'Start review run', actionId: 'review.start', permissionMode: 'read_only' },
+      { title: 'Start a review', actionId: 'review.start', permissionMode: 'read_only' },
       { title: 'Start plan run', actionId: 'subagents.plan.start', permissionMode: 'read_only' },
       { title: 'Start delegation run', actionId: 'subagents.delegate.start', permissionMode: 'workspace_write' },
     ];
@@ -1170,7 +1183,7 @@ describe('buildCommandPaletteCommands', () => {
       alert: async () => {},
     });
 
-    expect(commandTitles(cmds)).not.toEqual(expect.arrayContaining(['Start review run']));
+    expect(commandTitles(cmds)).not.toEqual(expect.arrayContaining(['Start a review']));
   });
 
   it('does not include the retired standalone memory-search command', async () => {

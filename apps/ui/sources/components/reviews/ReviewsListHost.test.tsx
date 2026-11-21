@@ -366,7 +366,8 @@ describe('/reviews live host', () => {
         }
     });
 
-    it('offers Start a review once when there are no Reviews, through the same Start review command', async () => {
+    it.each([false, true])('offers Start a review with existing Reviews=%s, through the same Start review command', async hasReviews => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1024, height: 900, scale: 1, fontScale: 1 });
         const serverId = await homes.addHome({ serverUrl: 'https://reviews-empty.example', name: 'Reviews', accountId: 'alice' });
         await setActiveServerId(serverId, { scope: 'device' });
         const previousScope = storage.getState().profileScope;
@@ -374,18 +375,28 @@ describe('/reviews live host', () => {
         const previousAvailable = isAppliedActiveServerRuntimeAvailable();
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
         storage.setState({ profileScope: { serverId, accountId: 'alice' } });
-        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => ({ body: { items: [], cursor: null } }) });
+        const items: ReviewListResponseV1['items'] = hasReviews ? [{ reviewId: 'existing-review', projectSourceId: null,
+            workflowId: null, subjectKind: 'repository', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: null, createdAt: 1, updatedAt: 1, counts: { total: 0, needsDecision: 0 },
+            needsYou: { reviewId: 'existing-review', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } }] : [];
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => ({ body: { items, cursor: null } }) });
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://reviews-empty.example', accountId: 'alice', request: homes.request });
+        await sync.awaitBootstrapForegroundAcquisition();
         const opened: (string | undefined)[] = [];
         const runtime: UniversalSearchRuntime = { open: query => { opened.push(query); }, buildCommands: () => [] };
         const screen = await renderScreen(<UniversalSearchRuntimeProvider value={runtime}>
             <PluginSurfaceFocusEligibilityProvider active presentationActive><WorkspaceRouteBody /></PluginSurfaceFocusEligibilityProvider>
         </UniversalSearchRuntimeProvider>);
         try {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('reviews:empty')).not.toBeNull());
-            await screen.pressByTestIdAsync('reviews:empty:start');
+            const startId = hasReviews ? 'reviews:start' : 'reviews:empty:start';
+            await waitForHomeGovernance(() => expect(screen.findByTestId(startId)).not.toBeNull());
+            expect(screen.findByTestId(hasReviews ? 'reviews:empty:start' : 'reviews:start')).toBeNull();
+            await screen.pressByTestIdAsync(startId);
             expect(opened).toEqual([t('commandPalette.commands.startReviewRunTitle')]);
         } finally {
             await screen.unmount();
+            await connection.dispose();
             storage.setState({ profileScope: previousScope });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
         }

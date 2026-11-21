@@ -7,14 +7,16 @@ import { executionRunLauncherDraftKey } from '@/components/sessions/agents/launc
 import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { createExecutionRunLauncherDetailsTab, type ExecutionRunIntent } from './executionRunLauncherModel';
 
-export type ExecutionRunLauncherDraftSeed = Readonly<{
+type ExecutionRunLauncherDraftInput = Readonly<{
     scope: ServerAccountScope;
-    sessionId: string;
-    actionId: ActionId;
     input: Record<string, unknown>;
 }>;
+export type ExecutionRunLauncherDraftSeed = ExecutionRunLauncherDraftInput & (
+    | Readonly<{ sessionId: string; actionId: ActionId }>
+    | Readonly<{ sessionId: null; actionId: 'review.start' }>
+);
 
-export function prepareExecutionRunLauncherDraft(seed: ExecutionRunLauncherDraftSeed) {
+export function prepareExecutionRunLauncherDraft(seed: ExecutionRunLauncherDraftSeed & Readonly<{ sessionId: string }>) {
     const intent: ExecutionRunIntent = seed.actionId === 'subagents.plan.start' ? 'plan'
         : seed.actionId === 'subagents.delegate.start' ? 'delegate' : 'review';
     const roleId = typeof seed.input.roleId === 'string' ? seed.input.roleId : null;

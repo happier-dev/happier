@@ -11047,7 +11047,7 @@ const enCommandPalette = {
     sessionRequiredTitle: 'Session required',
     sessionRequiredBody: 'Open a session first so this command can target it.',
     openNotchTitle: "Open the notch",
-    startReviewRunTitle: 'Start review run',
+    startReviewRunTitle: 'Start a review',
     startPlanRunTitle: 'Start plan run',
     startDelegationRunTitle: 'Start delegation run',
     openSessionRunsTitle: 'Open session runs',

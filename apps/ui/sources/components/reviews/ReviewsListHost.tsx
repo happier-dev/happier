@@ -59,8 +59,9 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const view = useReviewsCollectionView(focused, surface === 'home');
     const { list } = view;
     const router = useRouter();
-    // Starting a Review needs a subject; the one Start review command picks it (the palette's).
+    // The shared Start command opens Review authoring, including its subject and placement choices.
     const universalSearch = useOptionalUniversalSearchRuntime();
+    const startReview = React.useCallback(() => universalSearch?.open(t('commandPalette.commands.startReviewRunTitle')), [universalSearch]);
     const reviewLabel = t('detailsSurface.review.title');
     const moreLabel = t('common.more');
     const searching = view.searchQuery.trim().length > 0;
@@ -121,16 +122,17 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
             : <SurfaceStateCard testID="reviews:empty" kind="empty" title={t('reviewWalkthrough.detail.emptyTitle')}
                 reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
                 action={universalSearch ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
-                    onPress: () => universalSearch.open(t('commandPalette.commands.startReviewRunTitle')) } : undefined} />)} />;
+                    onPress: startReview } : undefined} />)} />;
     if (surface !== 'home') return <CoreCollectionScope>
         {list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;
-    return <ReviewsCollectionPage view={view} failure={failure}>{collection}</ReviewsCollectionPage>;
+    return <ReviewsCollectionPage view={view} failure={failure}
+        startReview={universalSearch && list.items?.length ? startReview : undefined}>{collection}</ReviewsCollectionPage>;
 }
 
 /** Only the home owns the saved-view toolbar; its draft also narrows the adjacent column. */
-function ReviewsCollectionPage({ view, failure, children }: Readonly<{
-    view: ReviewsCollectionView; failure: React.ReactNode; children: React.ReactNode;
+function ReviewsCollectionPage({ view, failure, children, startReview }: Readonly<{
+    view: ReviewsCollectionView; failure: React.ReactNode; children: React.ReactNode; startReview?: () => void;
 }>): React.ReactElement {
     const header = useReviewsSpaceHeader(view, 'reviews-space');
     const [searchOpen, setSearchOpen] = React.useState(false);
@@ -138,7 +140,9 @@ function ReviewsCollectionPage({ view, failure, children }: Readonly<{
     const closeSearch = React.useCallback(() => { setSearchOpen(false); view.setSearchQuery(''); }, [view]);
     return <ItemList pageColumn="wide"><CoreCollectionScope renderPageScroller={passThrough}>
         <PageContentColumn>
-            <PageHeader title={t('homeSettings.groups.reviews')} />
+            <PageHeader title={t('homeSettings.groups.reviews')}
+                primaryAction={startReview ? { title: t('reviewWalkthrough.detail.startReview'),
+                    onPress: startReview, testID: 'reviews:start' } : undefined} />
             <View testID="reviews:scope-line" style={styles.controlLine}>
                 {header.titleControl}
                 <View style={styles.strip}>{header.strip}</View>
