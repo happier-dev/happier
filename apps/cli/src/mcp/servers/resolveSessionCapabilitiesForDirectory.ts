@@ -6,7 +6,7 @@ import type { SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/s
 import type { ReachContextV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { SessionSkillSelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
-import { resolveSessionProjectKey, type SessionProjectPromptStackInput } from '@/workspaces/resolveSessionProjectKey';
+import { resolveSessionProjectKey, type SessionProjectKeyResolution, type SessionProjectPromptStackInput } from '@/workspaces/resolveSessionProjectKey';
 import { createRealpathNormalizer, realpathReachRules } from './createRealpathNormalizer';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { areSessionMcpSelectionsEquivalent } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
@@ -20,7 +20,9 @@ type DirectoryCapabilityParams = Readonly<{
   mcpPluginItems?: readonly McpPluginItemV1[];
   nativeServerNames?: readonly string[];
 }>;
-type SessionProjectInput = Omit<SessionProjectPromptStackInput, 'machineId' | 'directory'>;
+export type DirectoryCapabilitySessionProject = Omit<SessionProjectPromptStackInput, 'machineId' | 'directory'> & Readonly<{
+  readAssociation?: () => Promise<SessionProjectKeyResolution>;
+}>;
 export type DirectoryCapabilityResult = ResolveSessionCapabilitiesV1Result & ManagedMcpSelectionProjectionV1
   & Readonly<{ context: ReachContextV1; projectKey?: string | null; mcpServerIdentities: Readonly<Record<string, McpServerIdentity>> }>;
 
@@ -34,9 +36,9 @@ export function hasExplicitlyEmptyManagedMcpSelection(metadata: unknown): boolea
 }
 
 /** Real filesystem comparison and Account Project association at the machine boundary. */
-export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject: SessionProjectInput }>): Promise<DirectoryCapabilityResult>;
+export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject: DirectoryCapabilitySessionProject }>): Promise<DirectoryCapabilityResult>;
 export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject?: never }>): DirectoryCapabilityResult;
-export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject?: SessionProjectInput }>): DirectoryCapabilityResult | Promise<DirectoryCapabilityResult> {
+export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject?: DirectoryCapabilitySessionProject }>): DirectoryCapabilityResult | Promise<DirectoryCapabilityResult> {
   if (!params.sessionProject) return resolveForContext(params);
   return resolveForSession(params, params.sessionProject);
 }
@@ -54,11 +56,11 @@ function needsProjectAssociation(params: DirectoryCapabilityParams): boolean {
   return params.skills?.rules.some(rule => rule.target.t === 'project' && matchesAgent(rule.agentId) && receivableIds.has(rule.skillId)) ?? false;
 }
 
-async function resolveForSession(params: DirectoryCapabilityParams, sessionProject: SessionProjectInput): Promise<DirectoryCapabilityResult> {
+async function resolveForSession(params: DirectoryCapabilityParams, sessionProject: DirectoryCapabilitySessionProject): Promise<DirectoryCapabilityResult> {
   sessionProject.signal?.throwIfAborted();
   if (params.projectKey !== undefined || !needsProjectAssociation(params)) return resolveForContext(params);
-  const project = await resolveSessionProjectKey({ ...sessionProject, machineId: params.machineId,
-    ...(params.directory === null ? {} : { directory: params.directory }) });
+  const project = await (sessionProject.readAssociation?.() ?? resolveSessionProjectKey({ ...sessionProject, machineId: params.machineId,
+    ...(params.directory === null ? {} : { directory: params.directory }) }));
   if (project.kind === 'pending') throw Object.assign(new Error(project.reason), {
     code: 'preparation_pending', status: 'preparation_pending', reason: project.reason,
   });

@@ -7,10 +7,9 @@ import type {
   SessionCapabilitySelectionV1,
 } from '@happier-dev/protocol';
 
-import { resolveSessionCapabilitiesForDirectory } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
+import { resolveSessionCapabilitiesForDirectory, type DirectoryCapabilitySessionProject } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
 import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
-import type { SessionProjectPromptStackInput } from '@/workspaces/resolveSessionProjectKey';
 import type { McpPluginItemV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { SkillRuleV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import type { AccountArtifactHeader } from '@/api/artifacts/accountArtifactStore';
@@ -54,7 +53,7 @@ export async function resolveSessionMcpPreview(params: Readonly<{
   directory: string | null;
   agentId: string;
   projectKey?: string | null;
-  sessionProject?: Omit<SessionProjectPromptStackInput, 'machineId' | 'directory'>;
+  sessionProject?: DirectoryCapabilitySessionProject;
   capabilitySelection?: SessionCapabilitySelectionV1 | null;
   isFeatureEnabled?: (featureId: FeatureId) => boolean;
   detectedServers: ReadonlyArray<DetectedMcpServerV1>;

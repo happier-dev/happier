@@ -5,6 +5,8 @@ import { DaemonMcpServersDetectRequestSchema, DaemonMcpServersTestRequestSchema 
 import { DaemonMcpServersPreviewRequestSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
 import { listMcpServerCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { estimateTokensV1 } from '@happier-dev/protocol/capabilities/estimateTokensV1';
+import { resolveSessionPluginProjectAdmissionV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { isMcpPluginItemIdV1, type McpPluginItemV1, type McpServerToolsSnapshotV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { DaemonMcpServersPreviewResponse, DaemonMcpServersTestErrorCode, DaemonMcpServersDetectResponse, DaemonMcpServersDetectWarningV1, DaemonMcpServersTestRequest, DaemonMcpServersTestResponse, McpServersSettingsV1, McpServerMaterializationV1 } from '@happier-dev/protocol';
 
@@ -26,6 +28,7 @@ import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerSto
 import { redactMcpServerProbeError } from '@/mcp/servers/redactMcpServerProbeError';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { resolveSessionMcpPreview } from '@/mcp/preview/resolveSessionMcpPreview';
+import { resolveSessionProjectKey, type SessionProjectKeyResolution } from '@/workspaces/resolveSessionProjectKey';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readSkillLibraryInventory } from '@/prompts/skills/library/readSkillLibraryContent';
 import { resolveFirstPartySkillFeatures } from '@/prompts/skills/runtime/resolveFirstPartySkillFeatures';
@@ -545,6 +548,11 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             sessionRunning = session.rawSession.active === true;
             capabilitySelection = readSessionCapabilitySelectionFromMetadataV1(opened);
           }
+          const sessionProjectInput = { credentials, metadata, signal: context?.signal };
+          let association: Promise<SessionProjectKeyResolution> | undefined;
+          const readAssociation = () => association ??= resolveSessionProjectKey({
+            ...sessionProjectInput, machineId: parsed.data.machineId, ...(directory === null ? {} : { directory }),
+          });
           // Finite previews observe current destinations without starting retained-source
           // maintenance. Their independent inventories share only this request's lifetime.
           const [ruleCatalog, inventory, mcpPluginItems, pluginSkills, detected, featureEnabled] = await Promise.all([
@@ -553,7 +561,28 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             inventoryRead,
             (async () => {
               const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-              try { await assertCurrent(); return await lease.registry.projectMcpServerItems?.(accountMcpSettings) ?? []; }
+              try {
+                await assertCurrent();
+                const { mcpServers, pluginEnablementById } = lease.registry.contributes;
+                const pluginIds = new Set(mcpServers?.map(entry => entry.pluginId));
+                const scopesByPluginId = [...pluginIds].flatMap(pluginId => {
+                  const fact = pluginId ? pluginEnablementById?.[pluginId] : undefined;
+                  return pluginId && fact?.enabled && fact.projectScope ? [[pluginId, fact.projectScope] as const] : [];
+                });
+                const refusals = await resolveSessionPluginProjectAdmissionV1({
+                  scopesByPluginId,
+                  async readAcceptedProjectKey() {
+                    try {
+                      const project = await readAssociation();
+                      return project.kind === 'resolved' ? project.projectKey : null;
+                    } catch (error) {
+                      if (error instanceof PromptStackPreparationError) return null;
+                      throw error;
+                    }
+                  },
+                });
+                return await lease.registry.projectMcpServerItems?.(accountMcpSettings, refusals) ?? [];
+              }
               finally { await lease.release(); }
             })(),
             readAvailablePluginSkillItemsV1(() => readAccountPluginSkills({ credentials, settings: operationContext.readSnapshot()?.settings,
@@ -574,7 +603,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             directory,
             agentId,
             ...(parsed.data.projectKey !== undefined ? { projectKey: parsed.data.projectKey } : {}),
-            sessionProject: { credentials, metadata, signal: context?.signal },
+            sessionProject: { ...sessionProjectInput, readAssociation },
             capabilitySelection,
             isFeatureEnabled: featureId => featureEnabled[featureId] === true,
             sessionMetadata: metadata, sessionRunning,

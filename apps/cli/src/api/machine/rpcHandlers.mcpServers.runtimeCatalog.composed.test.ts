@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { McpServersSettingsV1Schema, mcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { DaemonMcpServersTestResponseSchema, DetectedMcpServerV1Schema, type DetectedMcpServerV1 } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { McpServerCatalogRowMutationV1Schema, openMcpServerCatalogContentV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { DaemonMcpServersPreviewResponseSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
@@ -25,7 +26,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListRequestV1Schema, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { PromptBundleArtifactHeaderV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -542,6 +543,59 @@ describe('Machine MCP catalog admission', () => {
     const unassociated = await preview(target);
     expect(unassociated, JSON.stringify(unassociated)).toMatchObject({ ok: true, managed: [{ serverId: 'srv-row', selected: false }] });
     expect(await preview({ ...target, projectKey: 1 })).toMatchObject({ ok: false, errorCode: 'invalid_request' });
+  });
+
+  it('previews a Project-scoped plugin MCP server only in an accepted checkout for that Project', async () => {
+    const pluginId = 'acme.project-scoped-mcp';
+    const serverId = mcpPluginItemIdV1({ pluginId, localId: 'tools' });
+    const projectKey = 'scope-project';
+    const otherProjectKey = 'other-project';
+    const directory = process.cwd();
+    const otherDirectory = join(directory, 'other-checkout');
+    const { rpcHandlerManager } = register();
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      happyHomeDir: configuration.happyHomeDir,
+      resolveContributes: async happyHomeDir => {
+        const contributes = await resolvePluginContributes({ happyHomeDir });
+        return createResolvedContributionRegistry({ ...contributes, pluginEnablementById: {
+          ...contributes.pluginEnablementById,
+          [pluginId]: { enabled: true, machineEnabled: true, projectScope: { kind: 'only', projectKeys: [projectKey] } },
+        } });
+      },
+      plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { mcp: { servers: [
+        { id: 'tools', title: 'Scoped tools', kind: 'static', transport: { kind: 'http', url: 'https://scope.test/mcp' } },
+      ] } } }), files: { 'daemon.mjs': 'export function activate() {}' } }],
+    });
+    const post = vi.mocked(axios.post).getMockImplementation()!;
+    vi.mocked(axios.post).mockImplementation(async (...args) => {
+      if (new URL(String(args[0])).pathname !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return post(...args);
+      const serverId = ProjectAccountRowListRequestV1Schema.parse(args[1]).serverId!;
+      const rows = [[directory, projectKey], [otherDirectory, otherProjectKey]].map(([rootPath, associatedProject], index) => {
+        const key = { kind: 'workspace-ref', serverId, id: `checkout-${index}` };
+        return { key, revision: 1, content: { t: 'plain', v: {
+          key, value: { id: key.id, serverId, machineId: 'm1', rootPath, projectKey: associatedProject, createdAtMs: 1 },
+        } } };
+      });
+      return { status: 200, data: ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows }) };
+    });
+    const preview = async (request: Readonly<{ directory?: string; projectKey?: string }>) => {
+      const response = DaemonMcpServersPreviewResponseSchema.parse(await rpcHandlerManager.invokeLocal(
+        RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, { machineId: 'm1', agentId: 'claude', ...request,
+          capabilitySelection: { mcp: { v: 1, managedServersEnabled: true,
+            forceIncludeServerIds: [serverId], forceExcludeServerIds: [] } },
+        },
+      ));
+      if (!response.ok) throw new Error(`Preview failed: ${response.error}`);
+      return response.mcp.items.find(item => item.id === serverId);
+    };
+    try {
+      expect(await preview({ directory })).toMatchObject({ id: serverId, source: 'plugin' });
+      expect(await preview({ directory: otherDirectory, projectKey: otherProjectKey })).toBeUndefined();
+      expect(await preview({ directory: otherDirectory, projectKey })).toBeUndefined();
+      expect(await preview({})).toBeUndefined();
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('tests a saved row server with Windows binding roots and nullable env patches', async () => {
