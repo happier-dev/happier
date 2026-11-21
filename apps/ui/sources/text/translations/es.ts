@@ -20524,6 +20524,7 @@ settingsSession: {
       latestNote: 'Instala la última versión publicada, o la rama por defecto si no hay ninguna, y anota el commit.',
       preview: 'Vista previa',
       latestRelease: ({ tag }: { tag: string }) => `última versión ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `Leyendo ${repository}…`,
       defaultBranch: 'rama por defecto',
       commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },

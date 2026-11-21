@@ -15157,6 +15157,7 @@ settingsSession: {
       latestNote: '安裝最新發佈版本；若沒有，則安裝預設分支，並記錄提交。',
       preview: '預覽',
       latestRelease: ({ tag }: { tag: string }) => `最新發佈 ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `正在讀取 ${repository}…`,
       defaultBranch: '預設分支',
       commit: ({ commit }: { commit: string }) => `提交 ${commit}`,
     },

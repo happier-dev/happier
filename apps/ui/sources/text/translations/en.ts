@@ -23723,6 +23723,7 @@ const enSettingsPlugins = {
     latestNote: 'Installs the latest release, or the default branch when there is none, and records the commit.',
     preview: 'Preview',
     latestRelease: ({ tag }: { tag: string }) => `latest release ${tag}`,
+    previewReading: ({ repository }: { repository: string }) => `Reading ${repository}…`,
     defaultBranch: 'default branch',
     commit: ({ commit }: { commit: string }) => `commit ${commit}`,
   },

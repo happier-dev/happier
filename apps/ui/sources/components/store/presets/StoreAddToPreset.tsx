@@ -52,6 +52,8 @@ export function describeStorePreset(preset: OpenedManagedMachinePresetV1): strin
 export type StorePresetChoice = Readonly<{
   serverId: string;
   preset: OpenedManagedMachinePresetV1 | null;
+  /** What the door adds, so the editor can say why the person is there. */
+  itemName?: string;
 }>;
 
 /**
@@ -183,11 +185,11 @@ export function StoreAddToPresetButton(
           return;
         }
         if (id === NEW_PRESET) {
-          if (props.serverId) props.onChoose({ serverId: props.serverId, preset: null });
+          if (props.serverId) props.onChoose({ serverId: props.serverId, preset: null, itemName: props.name });
           return;
         }
         const choice = choices.find((entry) => entry.preset.id === id);
-        if (choice && !choice.contains) props.onChoose(choice);
+        if (choice && !choice.contains) props.onChoose({ serverId: choice.serverId, preset: choice.preset, itemName: props.name });
       }}
       trigger={({ toggle }) => (
         <RoundButton
@@ -220,7 +222,7 @@ export function StorePresetEditorHandoff(
 ) {
   const { preset, serverId } = props.choice;
   if (!preset)
-    return <StoreNewPresetHandoff serverId={serverId} item={props.item} onReturn={props.onReturn} />;
+    return <StoreNewPresetHandoff serverId={serverId} item={props.item} itemName={props.choice.itemName} onReturn={props.onReturn} />;
   return <StoreSavedPresetHandoff serverId={serverId} preset={preset} item={props.item} onReturn={props.onReturn} />;
 }
 
@@ -268,6 +270,7 @@ function StoreNewPresetHandoff(
   props: Readonly<{
     serverId: string;
     item: StorePresetDoorItem;
+    itemName?: string;
     onReturn: () => void;
   }>,
 ) {
@@ -284,7 +287,10 @@ function StoreNewPresetHandoff(
       <ItemList>
         <PageHeader
           title={t('capabilities.store.softwarePage.presetsNew')}
-          description={t('machinePresets.empty')}
+          // Why the person is here: the item joins the new preset's Setup (Store delta 2 fix 5).
+          description={props.itemName
+            ? t('capabilities.store.softwarePage.presetAddsItem', { name: props.itemName })
+            : t('machinePresets.empty')}
           actions={
             <RoundButton
               testID="store.preset.new.cancel"

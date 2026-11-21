@@ -20349,6 +20349,7 @@ settingsSession: {
             latestNote: 'Instaluje najnowsze wydanie, a jeśli go nie ma, domyślną gałąź, i zapisuje commit.',
             preview: 'Podgląd',
             latestRelease: ({ tag }: { tag: string }) => `najnowsze wydanie ${tag}`,
+            previewReading: ({ repository }: { repository: string }) => `Odczytywanie ${repository}…`,
             defaultBranch: 'domyślna gałąź',
             commit: ({ commit }: { commit: string }) => `commit ${commit}`,
           },

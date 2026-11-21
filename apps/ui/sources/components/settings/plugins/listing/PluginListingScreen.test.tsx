@@ -165,4 +165,13 @@ describe('PluginListingScreen', () => {
         expect(install?.props.title).toContain('Build Mac');
         expect(install?.props.title).not.toBe('Install & Trust');
     });
+
+    it('says a failed install on its install line, in place, instead of a row that pushes the page', async () => {
+        state.value = screenState({ routineOperationSettlement: { scope: 'discover', message: 'page words', outcome: 'failed',
+            pluginId: listing.id, sourceId: listing.sourceId, detail: 'The machine has no room left.' } });
+        const screen = await renderListing();
+        expect(screen.findByTestId('settings.plugins.listing.installOutcome')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('The machine has no room left.');
+        expect(screen.findByTestId('settings.plugins.discover.operationSettlement')).toBeNull();
+    });
 });

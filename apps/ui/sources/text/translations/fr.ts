@@ -20398,6 +20398,7 @@ settingsSession: {
       latestNote: 'Installe la dernière version publiée, ou la branche par défaut s’il n’y en a pas, et note le commit.',
       preview: 'Aperçu',
       latestRelease: ({ tag }: { tag: string }) => `dernière version ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `Lecture de ${repository}…`,
       defaultBranch: 'branche par défaut',
       commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },

@@ -20605,6 +20605,7 @@ settingsSession: {
         latestNote: 'Installiert das neueste Release oder, falls es keins gibt, den Standard-Branch und notiert den Commit.',
         preview: 'Vorschau',
         latestRelease: ({ tag }: { tag: string }) => `neuestes Release ${tag}`,
+        previewReading: ({ repository }: { repository: string }) => `${repository} wird gelesen…`,
         defaultBranch: 'Standard-Branch',
         commit: ({ commit }: { commit: string }) => `Commit ${commit}`,
       },

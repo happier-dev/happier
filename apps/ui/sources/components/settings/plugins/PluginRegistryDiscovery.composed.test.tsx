@@ -524,7 +524,10 @@ it('previews a Git link before Review and installs only from Review (Add from Gi
             vendorPlugin: { contentCounts: { skills: 8, mcpServers: 1 }, notImported: { commands: 3 } } },
     };
     // The host's preview and install capabilities are the dialog's contract; their Actions are covered by their owners.
-    const onPreviewGit = vi.fn(async () => ({ kind: 'preview' as const, preview }));
+    let finishPreview: (() => void) | null = null;
+    const onPreviewGit = vi.fn(() => new Promise<{ kind: 'preview'; preview: typeof preview }>((resolve) => {
+        finishPreview = () => resolve({ kind: 'preview', preview });
+    }));
     const onInstallGit = vi.fn(() => true);
     const screen = await renderAddDialog({ onInstallGit, onPreviewGit });
     const gitTab = screen.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith(':mode:git'))[0];
@@ -533,14 +536,18 @@ it('previews a Git link before Review and installs only from Review (Add from Gi
     await act(async () => { screen.changeTextByTestId('plugins.add.git.url', 'https://github.com/acme/tools'); });
     expect(screen.findByTestId('plugins.add.git.review')?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync('plugins.add.git.preview');
+    // While it reads, the dialog says so.
+    await waitForHomeGovernance(() => expect(screen.findByTestId('plugins.add.git.previewReading')).not.toBeNull());
+    await act(async () => { finishPreview?.(); });
     await waitForHomeGovernance(() => expect(screen.findByTestId('plugins.add.git.previewSummary')).not.toBeNull());
+    expect(screen.findByTestId('plugins.add.git.previewReading')).toBeNull();
     expect(onPreviewGit).toHaveBeenCalledExactlyOnceWith({ locator: 'https://github.com/acme/tools' });
     expect(onInstallGit).not.toHaveBeenCalled();
     const text = screen.getTextContent();
     expect(text).toContain('Acme tools');
     // Where it resolves: the repository, then its release and the short commit it would install.
     const header = screen.findAll(node => node.props.testID === 'plugins.add.git.previewHeader' && node.props.facts !== undefined)[0];
-    expect(header?.props.facts).toMatchObject({ source: { label: 'https://github.com/acme/tools' } });
+    expect(header?.props.facts).toMatchObject({ source: { label: 'acme/tools' } });
     expect(header?.props.facts.extra).toHaveLength(2);
     expect(screen.findByTestId('plugins.add.git.notImported')).not.toBeNull();
     await screen.pressByTestIdAsync('plugins.add.git.review');

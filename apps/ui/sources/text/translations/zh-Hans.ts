@@ -20144,6 +20144,7 @@ settingsSession: {
       latestNote: '安装最新发布版本；若没有，则安装默认分支，并记录提交。',
       preview: '预览',
       latestRelease: ({ tag }: { tag: string }) => `最新发布 ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `正在读取 ${repository}…`,
       defaultBranch: '默认分支',
       commit: ({ commit }: { commit: string }) => `提交 ${commit}`,
     },

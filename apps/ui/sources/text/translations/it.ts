@@ -20526,6 +20526,7 @@ settingsSession: {
       latestNote: 'Installa l’ultima release pubblicata, o il branch predefinito se non ce n’è una, e annota il commit.',
       preview: 'Anteprima',
       latestRelease: ({ tag }: { tag: string }) => `ultima release ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `Lettura di ${repository}…`,
       defaultBranch: 'branch predefinito',
       commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },

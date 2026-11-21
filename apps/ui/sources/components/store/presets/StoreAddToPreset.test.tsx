@@ -38,14 +38,16 @@ it('starts a new preset from the door with the picked item already in it, and Ca
         onChoose={onChoose} testID="door" />);
     const menu = door.tree.findAll(node => node.props.testID === 'door.menu' && typeof node.props.onSelect === 'function')[0]!;
     await act(async () => menu.props.onSelect('store.preset.new'));
-    expect(onChoose).toHaveBeenCalledWith({ serverId: 'srv', preset: null });
+    expect(onChoose).toHaveBeenCalledWith({ serverId: 'srv', preset: null, itemName: 'Google Chrome' });
     await door.unmount();
 
     const onReturn = vi.fn();
     const setPaneTitle = vi.fn();
     const screen = await renderScreen(<StoreListingPaneTitleContext.Provider value={setPaneTitle}>
-        <StorePresetEditorHandoff choice={{ serverId: 'srv', preset: null }} item={item} onReturn={onReturn} />
+        <StorePresetEditorHandoff choice={{ serverId: 'srv', preset: null, itemName: 'Google Chrome' }} item={item} onReturn={onReturn} />
     </StoreListingPaneTitleContext.Provider>);
+    // The person sees why they are here: the picked item joins this new preset's Setup (Store delta 2 fix 5).
+    expect(screen.getTextContent()).toContain('Google Chrome');
     // The listing pane is titled for the editor it handed its room to, never the kind word again.
     expect(setPaneTitle).toHaveBeenLastCalledWith(expect.stringMatching(/\S/));
     // First the same provider picker the Presets page uses, kept in place so the item travels with it.

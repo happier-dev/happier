@@ -1380,8 +1380,9 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
             && (props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown') && !installedPluginById.has(entry.id) ? (
             <Status
                 testID={`settings.plugins.marketplace.installOutcome.${entry.sourceId}.${entry.id}`}
-                label={props.settlement.outcome === 'unknown'
-                    ? t('settingsPlugins.surfaces.cardInstallUnknown') : t('settingsPlugins.surfaces.cardInstallFailed')}
+                // The owner's cause sentence when it has one; otherwise what happened and what to do.
+                label={props.settlement.detail ?? (props.settlement.outcome === 'unknown'
+                    ? t('settingsPlugins.surfaces.cardInstallUnknown') : t('settingsPlugins.surfaces.cardInstallFailed'))}
                 tone="warning" presentation="inline" indicator
             />
         ) : entry.warning === 'withdrawn' ? (

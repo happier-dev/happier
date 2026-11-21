@@ -21,6 +21,8 @@ export function CapabilityDetailHeader(props: Readonly<{
     title: string;
     purpose?: string;
     facts: Omit<CapabilityFactsProps, 'presentation'>;
+    /** Lines that belong to the identity (what is left out of an import), on the header's own text edge. */
+    details?: React.ReactNode;
     status?: CapabilityStatus | null;
     /** Rare operations behind ⋯ (Duplicate, Copy install link). */
     menuItems?: readonly PageHeaderMenuAction[];
@@ -56,6 +58,7 @@ export function CapabilityDetailHeader(props: Readonly<{
                 : undefined}
             actionsPlacement="page"
             primaryAction={props.primaryAction}
+            {...(props.details ? { details: props.details, detailsPlacement: 'column' as const } : {})}
         />
     );
 }

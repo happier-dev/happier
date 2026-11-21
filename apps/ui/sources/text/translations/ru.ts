@@ -20478,6 +20478,7 @@ settingsSession: {
       latestNote: 'Устанавливает последний релиз, а если его нет — ветку по умолчанию, и записывает коммит.',
       preview: 'Предпросмотр',
       latestRelease: ({ tag }: { tag: string }) => `последний релиз ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `Чтение ${repository}…`,
       defaultBranch: 'ветка по умолчанию',
       commit: ({ commit }: { commit: string }) => `коммит ${commit}`,
     },

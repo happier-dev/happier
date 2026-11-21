@@ -171,6 +171,8 @@ export function PluginSetupSection(
               subtitle={presentation.status}
               showChevron={false}
               mode="info"
+              // On a row too narrow for both (a phone), the actions move beneath the title and status.
+              accessoryLayout="adaptive"
               rightElement={
                 <View style={styles.rowActions}>
                   {skip ? (

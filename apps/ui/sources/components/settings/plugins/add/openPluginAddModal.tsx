@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries';
-import { PluginGitSourceV1Schema, type PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
+import { normalizePluginGitRepositoryUrl, PluginGitSourceV1Schema, type PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -158,6 +158,11 @@ function PluginGitSourceInput({ onInstall, onPreview }: Readonly<{
                 accessibilityLabel={t('settingsPlugins.gitInstall.subdirectory')} placeholder={t('settingsPlugins.gitInstall.subdirectory')}
                 autoCapitalize="none" monospace onSubmitEditing={onPreview ? requestPreview : review} />
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{t('settingsPlugins.gitInstall.latestNote')}</Text>
+            {current === 'loading' && parsed.success ? (
+                // Reading a repository can take a while: say what is happening, not only a busy button.
+                <SurfaceStateCard testID={`${TEST_ID}.git.previewReading`} kind="loading" size="line"
+                    title={t('settingsPlugins.gitInstall.previewReading', { repository: gitRepositoryLabel(parsed.data.locator) })} />
+            ) : null}
             {current && current !== 'loading' && current.kind === 'failed' ? (
                 <SurfaceStateCard testID={`${TEST_ID}.git.previewFailed`} kind="error" size="line" title={current.message}
                     action={{ label: t('common.retry'), onPress: requestPreview }} />
@@ -177,7 +182,9 @@ function PluginGitPreviewSummary({ preview }: Readonly<{ preview: Extract<Plugin
     const { summary } = preview;
     const facts = [
         summary.publisher?.name,
-        preview.source.subdirectory ? `${preview.source.locator} · ${preview.source.subdirectory}` : preview.source.locator,
+        preview.source.subdirectory
+            ? `${gitRepositoryLabel(preview.source.locator)} · ${preview.source.subdirectory}`
+            : gitRepositoryLabel(preview.source.locator),
         preview.release.kind === 'stableRelease'
             ? t('settingsPlugins.gitInstall.latestRelease', { tag: preview.release.tag })
             : t('settingsPlugins.gitInstall.defaultBranch'),
@@ -189,14 +196,27 @@ function PluginGitPreviewSummary({ preview }: Readonly<{ preview: Extract<Plugin
             <CapabilityDetailHeader testID={`${TEST_ID}.git.previewHeader`} title={summary.title}
                 purpose={summary.description ?? undefined}
                 mark={<PluginMark title={summary.title} pluginId={summary.itemId || summary.title} size="page" />}
-                facts={{ source: { kind: 'registry', label: facts[0] ?? summary.title }, extra: facts.slice(1) }} />
-            {omissions.length > 0 ? (
-                <Text variant="meta" style={{ color: theme.colors.text.secondary }} testID={`${TEST_ID}.git.notImported`}>
-                    {`${t('settingsPlugins.gitInstall.notImported')} · ${omissions.join(', ')}`}
-                </Text>
-            ) : null}
+                facts={{ source: { kind: 'registry', label: facts[0] ?? summary.title }, extra: facts.slice(1) }}
+                details={omissions.length > 0 ? (
+                    <View style={gitStyles.previewDetails}>
+                        {omissions.length > 0 ? (
+                            <Text variant="meta" style={{ color: theme.colors.text.secondary }} testID={`${TEST_ID}.git.notImported`}>
+                                {`${t('settingsPlugins.gitInstall.notImported')} · ${omissions.join(', ')}`}
+                            </Text>
+                        ) : null}
+                    </View>
+                ) : undefined} />
         </View>
     );
+}
+
+/** "obra/superpowers" for a GitHub link, else the host and path: the repository as a person names it. */
+function gitRepositoryLabel(locator: string): string {
+    const normalized = normalizePluginGitRepositoryUrl(locator);
+    if (!normalized) return locator;
+    const url = new URL(normalized);
+    const path = url.pathname.replace(/^\/+/, '');
+    return url.hostname === 'github.com' ? path : `${url.host}/${path}`;
 }
 
 const gitStyles = StyleSheet.create((theme) => ({
@@ -204,6 +224,7 @@ const gitStyles = StyleSheet.create((theme) => ({
     fieldRow: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s12 },
     field: { flex: 1, minWidth: 0 },
     preview: { gap: theme.space.s8, paddingTop: theme.space.s8 },
+    previewDetails: { gap: theme.space.s4 },
     footer: { flexDirection: 'row', justifyContent: 'flex-end', paddingTop: theme.space.s8 },
 }));
 

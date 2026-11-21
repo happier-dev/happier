@@ -73,6 +73,7 @@ export type StoreSoftwareTranslation = Readonly<{
   presetsNew: string;
   addToPreset: string;
   addToPresetTitle: (params: Name) => string;
+  presetAddsItem: (params: Name) => string;
   alreadyInPreset: string;
 }>;
 
@@ -147,6 +148,7 @@ const en: StoreSoftwareTranslation = {
   presetsNew: 'New preset',
   addToPreset: 'Add to a preset…',
   addToPresetTitle: ({ name }) => `Add ${name} to`,
+  presetAddsItem: ({ name }) => `Adds ${name} to this preset’s Setup.`,
   alreadyInPreset: 'Already in it',
 };
 
@@ -215,6 +217,7 @@ const ca: StoreSoftwareTranslation = {
   presetsNew: 'Preajust nou',
   addToPreset: 'Afegeix a un preajust…',
   addToPresetTitle: ({ name }) => `Afegeix ${name} a`,
+  presetAddsItem: ({ name }) => `Afegeix ${name} a la configuració d’aquest preajust.`,
   alreadyInPreset: 'Ja hi és',
 };
 
@@ -283,6 +286,7 @@ const de: StoreSoftwareTranslation = {
   presetsNew: 'Neue Vorlage',
   addToPreset: 'Zu einer Vorlage hinzufügen…',
   addToPresetTitle: ({ name }) => `${name} hinzufügen zu`,
+  presetAddsItem: ({ name }) => `Fügt ${name} zur Einrichtung dieser Vorlage hinzu.`,
   alreadyInPreset: 'Bereits enthalten',
 };
 
@@ -351,6 +355,7 @@ const es: StoreSoftwareTranslation = {
   presetsNew: 'Nuevo preajuste',
   addToPreset: 'Añadir a un preajuste…',
   addToPresetTitle: ({ name }) => `Añadir ${name} a`,
+  presetAddsItem: ({ name }) => `Añade ${name} a la configuración de este preajuste.`,
   alreadyInPreset: 'Ya está incluido',
 };
 
@@ -419,6 +424,7 @@ const fr: StoreSoftwareTranslation = {
   presetsNew: 'Nouveau préréglage',
   addToPreset: 'Ajouter à un préréglage…',
   addToPresetTitle: ({ name }) => `Ajouter ${name} à`,
+  presetAddsItem: ({ name }) => `Ajoute ${name} à la configuration de ce préréglage.`,
   alreadyInPreset: 'Déjà inclus',
 };
 
@@ -487,6 +493,7 @@ const it: StoreSoftwareTranslation = {
   presetsNew: 'Nuovo preset',
   addToPreset: 'Aggiungi a un preset…',
   addToPresetTitle: ({ name }) => `Aggiungi ${name} a`,
+  presetAddsItem: ({ name }) => `Aggiunge ${name} alla configurazione di questo preset.`,
   alreadyInPreset: 'Già incluso',
 };
 
@@ -555,6 +562,7 @@ const ja: StoreSoftwareTranslation = {
   presetsNew: '新しいプリセット',
   addToPreset: 'プリセットに追加…',
   addToPresetTitle: ({ name }) => `${name} の追加先`,
+  presetAddsItem: ({ name }) => `${name} をこのプリセットのセットアップに追加します。`,
   alreadyInPreset: '追加済み',
 };
 
@@ -623,6 +631,7 @@ const pl: StoreSoftwareTranslation = {
   presetsNew: 'Nowy preset',
   addToPreset: 'Dodaj do presetu…',
   addToPresetTitle: ({ name }) => `Dodaj ${name} do`,
+  presetAddsItem: ({ name }) => `Dodaje ${name} do konfiguracji tego presetu.`,
   alreadyInPreset: 'Już jest w nim',
 };
 
@@ -691,6 +700,7 @@ const pt: StoreSoftwareTranslation = {
   presetsNew: 'Nova predefinição',
   addToPreset: 'Adicionar a uma predefinição…',
   addToPresetTitle: ({ name }) => `Adicionar ${name} a`,
+  presetAddsItem: ({ name }) => `Adiciona ${name} à configuração desta predefinição.`,
   alreadyInPreset: 'Já incluído',
 };
 
@@ -759,6 +769,7 @@ const ru: StoreSoftwareTranslation = {
   presetsNew: 'Новый пресет',
   addToPreset: 'Добавить в пресет…',
   addToPresetTitle: ({ name }) => `Добавить ${name} в`,
+  presetAddsItem: ({ name }) => `Добавляет ${name} в настройку этого пресета.`,
   alreadyInPreset: 'Уже в нём',
 };
 
@@ -827,6 +838,7 @@ const zhHans: StoreSoftwareTranslation = {
   presetsNew: '新建预设',
   addToPreset: '添加到预设…',
   addToPresetTitle: ({ name }) => `将 ${name} 添加到`,
+  presetAddsItem: ({ name }) => `将 ${name} 添加到此预设的设置。`,
   alreadyInPreset: '已包含',
 };
 
@@ -895,6 +907,7 @@ const zhHant: StoreSoftwareTranslation = {
   presetsNew: '新增預設',
   addToPreset: '加入預設…',
   addToPresetTitle: ({ name }) => `將 ${name} 加入`,
+  presetAddsItem: ({ name }) => `將 ${name} 加入此預設的設定。`,
   alreadyInPreset: '已包含',
 };
 

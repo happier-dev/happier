@@ -20438,6 +20438,7 @@ settingsSession: {
       latestNote: '最新のリリース（なければデフォルトブランチ）をインストールし、コミットを記録します。',
       preview: 'プレビュー',
       latestRelease: ({ tag }: { tag: string }) => `最新リリース ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `${repository} を読み込み中…`,
       defaultBranch: 'デフォルトブランチ',
       commit: ({ commit }: { commit: string }) => `コミット ${commit}`,
     },

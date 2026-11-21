@@ -128,6 +128,8 @@ export const PluginDetailHeader = React.memo(function PluginDetailHeader(props: 
             title={title}
             description={description}
             meta={meta}
+            // The name sits beside the mark on its title line, as on the listing (Store delta 2 fix 6).
+            markSpan="title"
             leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={props.projection?.iconAgentId ?? null} size="page"
                 installedPackage={props.projection?.installedPackage} machineId={props.machineId} serverId={props.serverId} />}
             actions={enabled || hasMenu ? (

@@ -145,4 +145,17 @@ describe('DiscoverListingsSection', () => {
         expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.community.acme.plugin')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.other-source.acme.plugin')).toBeNull();
     });
+    it('says a failed install on its card, in the owner\'s cause words when it has them', async () => {
+        const render = (detail?: string) => <DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
+            canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
+            settlement={{ scope: 'discover', message: 'page words', outcome: 'failed', pluginId: entry.id, sourceId: entry.sourceId,
+                ...(detail ? { detail } : {}) }}
+            installFromBrowse={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} />;
+        const outcome = 'settings.plugins.marketplace.installOutcome.community.acme.plugin';
+        const screen = await renderMeasured(render());
+        expect(screen.findByTestId(outcome)).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('page words');
+        await act(async () => { screen.update(render('The machine has no room left.')); });
+        expect(screen.getTextContent()).toContain('The machine has no room left.');
+    });
 });

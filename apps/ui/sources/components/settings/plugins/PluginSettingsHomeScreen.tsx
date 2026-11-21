@@ -492,8 +492,9 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                                     onOpenSources={openPluginSources}
                                 />
                                 {approvalWaiting}
+                                {/* A card's install outcome reads on its card, in place; the page line keeps the rest. */}
                                 <PluginRoutineOperationSettlementRow
-                                    settlement={state.routineOperationSettlement}
+                                    settlement={state.routineOperationSettlement?.pluginId ? null : state.routineOperationSettlement}
                                     scope="discover"
                                 />
                             </>

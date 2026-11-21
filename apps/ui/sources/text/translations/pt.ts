@@ -20630,6 +20630,7 @@ settingsSession: {
       latestNote: 'Instala a versão mais recente, ou o ramo padrão se não houver nenhuma, e regista o commit.',
       preview: 'Pré-visualizar',
       latestRelease: ({ tag }: { tag: string }) => `versão mais recente ${tag}`,
+      previewReading: ({ repository }: { repository: string }) => `A ler ${repository}…`,
       defaultBranch: 'ramo padrão',
       commit: ({ commit }: { commit: string }) => `commit ${commit}`,
     },

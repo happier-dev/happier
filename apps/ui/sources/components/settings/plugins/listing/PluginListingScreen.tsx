@@ -104,6 +104,9 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     const approvalReview = useInPlaceApprovalReview(state.pluginActionApproval);
     // Installing on several Machines is its own combined review, opened only by the person's tap.
     const installOnMachines = usePluginInstallOnMachines(state, entry);
+    const settlement = state.routineOperationSettlement;
+    const installOutcome = settlement?.scope === 'discover' && settlement.pluginId === props.pluginId
+        && (settlement.outcome === 'failed' || settlement.outcome === 'unknown') ? settlement : null;
     const outcome = (
         <>
             {approvalReview.waiting ? (
@@ -114,7 +117,9 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                     onOpenApproval={approvalReview.reopen}
                 />
             ) : null}
-            <PluginRoutineOperationSettlementRow settlement={state.routineOperationSettlement} scope="discover" />
+            {/* This listing's own install outcome reads on its install line, in place; other outcomes keep the row. */}
+            <PluginRoutineOperationSettlementRow
+                settlement={installOutcome ? null : state.routineOperationSettlement} scope="discover" />
         </>
     );
 
@@ -124,6 +129,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
             pending={state.isPluginActionInFlight(entry.id, entry.sourceId)}
             targetMachine={state.administrationTargetLabel?.machine ?? null}
+            outcome={installOutcome ? { message: installOutcome.detail ?? installOutcome.message } : null}
             onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
             onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
             // The target is a row in the install block (lab scene 2, pane and page alike): the same Machine
@@ -294,6 +300,8 @@ function ListingInstall(props: Readonly<{
     /** The press is in flight: the button says what is happening, not only that it is unavailable. */
     pending: boolean;
     targetMachine: string | null;
+    /** The last install's failure or unconfirmed outcome: it takes the install note's line, so nothing moves. */
+    outcome?: Readonly<{ message: string }> | null;
     onInstall: () => void;
     /** Present when the plugin can go to several of the person's Machines at once. */
     onInstallOnMachines?: () => void;
@@ -313,11 +321,18 @@ function ListingInstall(props: Readonly<{
             </ItemGroup>
         ) : null}
         <View style={styles.install}>
-            <Text style={styles.installNote}>
-                {props.targetMachine
-                    ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: props.targetMachine })
-                    : t('settingsPlugins.surfaces.listingChooseMachine')}
-            </Text>
+            {props.outcome ? (
+                <Text testID="settings.plugins.listing.installOutcome" style={[styles.installNote, styles.installOutcome]}
+                    accessibilityLiveRegion="polite">
+                    {props.outcome.message}
+                </Text>
+            ) : (
+                <Text style={styles.installNote}>
+                    {props.targetMachine
+                        ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: props.targetMachine })
+                        : t('settingsPlugins.surfaces.listingChooseMachine')}
+                </Text>
+            )}
             {entry.registrySelectionOrigin !== null ? (
                 <Text testID="settings.plugins.listing.registrySelection" style={styles.installNote}>
                     {t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })}
@@ -382,5 +397,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     installNote: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+    },
+    installOutcome: {
+        color: theme.colors.state.warning.foreground,
     },
 }));
