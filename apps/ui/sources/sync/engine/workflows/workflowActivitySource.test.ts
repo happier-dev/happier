@@ -250,10 +250,27 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     publishHomeAccountChange(scope.serverId, [`workflow-run:${continuationRun.id}`], { workflowRunsMaterialized: true });
     expect(pages).toHaveLength(16);
     expect(pages.at(-1)?.runs.map(row => row.id)).toEqual([run.id, baselineRun.id, middleRun.id]);
+    const finishedAt = new Date();
+    const terminal = { ...run, revision: 3, state: 'succeeded' as const,
+        finishedAt: finishedAt.toISOString(), updatedAt: new Date(finishedAt.getTime() + 1).toISOString() };
+    storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(terminal, null)], scope);
+    notify();
+    const parseEventDate = vi.spyOn(Date, 'parse');
+    try {
+        notify(); notify(); notify();
+        expect(parseEventDate.mock.calls.filter(([value]) => value === terminal.finishedAt || value === terminal.updatedAt))
+            .toHaveLength(0);
+    } finally {
+        parseEventDate.mockRestore();
+    }
+    expect(column.filter(row => row.kind === 'run' && row.event === 'terminal')).toEqual([
+        expect.objectContaining({ runId: run.id, state: 'succeeded', sourceRevision: 3, occurredAt: finishedAt.getTime() }),
+    ]);
+    expect(pages).toHaveLength(18);
     storage.getState().removeWorkflowRun(run.id, scope);
     notify(); notify();
-    expect(pages).toHaveLength(18);
-    expect(pages[16]).toBe(pages[17]);
+    expect(pages).toHaveLength(20);
+    expect(pages[18]).toBe(pages[19]);
     expect(pages.at(-1)?.runs.map(row => row.id)).toEqual([baselineRun.id, middleRun.id]);
     await publishMachineInventoryForTest(scope, [{ ...machine, active: false, activeAt: Date.now() }]);
     expect(column.filter(row => row.kind === 'machine' && row.event === 'offline')).toHaveLength(1);
