@@ -183,6 +183,7 @@ import { isDeferredManagedMachineAuthorPresetDraft, readManagedMachineSelectionR
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { NewSessionPreparedInstructions } from '../modules/newSessionLaunchIntent';
 import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
+import { describeManagedMachineDeleteWork } from '@/components/settings/machines/managed/managedMachineDeleteReview';
 import { prepareNewSessionSpaceMembership } from '../organization/prepareNewSessionSpaceMembership';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -919,6 +920,7 @@ export function useCreateNewSession(params: Readonly<{
                     setupRecovery: opts.managedMachineSetupRecovery,
                     reviewDelete: census => Modal.confirm(t('managedMachines.actions.deleteMachine'), [
                         readManagedMachineSelectionName(managedDraft) ?? t('managedMachines.picker.newMachine'), t('managedMachines.dependencies.help'),
+                        ...(census.machineId ? [describeManagedMachineDeleteWork(scope, census.machineId)] : []),
                         census.references.length ? census.references.map(reference => reference.name || reference.id).join('\n')
                             : t('managedMachines.dependencies.empty'),
                         ...(census.coverage === 'partial' ? [t('managedMachines.dependencies.partial')] : []),
@@ -1658,6 +1660,7 @@ export function useCreateNewSession(params: Readonly<{
                 sessionName: submittedSessionName,
                 initialSessionFacts: current.authoringDraft?.initialSessionFacts,
                 memoryEnabled: current.authoringDraft?.memoryEnabled,
+                isolationOverride: current.authoringDraft?.isolationOverride,
                 sessionPlacement: current.authoringDraft?.sessionPlacement,
                 ...(submittedPromptStack !== undefined ? { promptStack: submittedPromptStack } : {}),
                 executionTarget: selectedMachineId ? {

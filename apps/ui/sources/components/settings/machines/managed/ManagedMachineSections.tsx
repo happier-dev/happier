@@ -90,7 +90,7 @@ import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation'
 import { useDeviceType } from '@/utils/platform/responsive';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview, type ManagedMachineDeleteReview } from './managedMachineDeleteReview';
+import { buildReviewedManagedMachineDeleteInput, describeManagedMachineDeleteWork, qualifyManagedMachineDeleteReview, type ManagedMachineDeleteReview } from './managedMachineDeleteReview';
 import { MANAGED_PROVISIONER_MARK_SIZE, useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { projectManagedMachineApproval, shouldReleaseManagedMachinePendingOnApproval } from './managedMachineDetailPresentation';
@@ -832,6 +832,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         {machine.enrolledMachineId && props.binding?.scope ? <MachineDeleteAudience testID="managed-machine.delete-audience"
             machineId={machine.enrolledMachineId} machineName={machineName} scope={props.binding.scope}
             online={creationContext.enrolledMachine?.online ?? null} /> : null}
+        {machine.enrolledMachineId && props.binding?.scope ? <SurfaceStateCard kind="warning" size="line"
+            title={describeManagedMachineDeleteWork(props.binding.scope, machine.enrolledMachineId)}
+            testID="managed-machine.delete-work-warning" /> : null}
         {/* The decision is one quiet button row: the way back, then the irreversible step last, then its consequence. */}
         <ManagedDecisionRow testID="managed-machine.delete-decision" footnote={t('managedMachines.dependencies.help')}
             onCancel={canDelete ? () => setDeleteReview(null) : undefined}

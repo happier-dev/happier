@@ -2755,6 +2755,21 @@ describe('managed Machine detail', () => {
         }), ...(authority === 'guest' ? [createMachineFixture({ id: 'guest', installationId: 'guest-installation', updatedAt: Date.now(),
             access: { custodian: { accountId: 'foreign-owner', displayName: 'Foreign owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         })] : [])]);
+        if (authority === 'controller') {
+            storage.setState({ profileScope: { serverId, accountId: 'owner' } });
+            const now = Date.now();
+            storage.getState().applySessions([
+                createSessionFixture({ id: 'busy-guest-session', serverId, active: true, activeAt: now,
+                    latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now,
+                    metadata: { name: 'Preparing the build', path: '/work', host: 'guest', machineId: 'guest' } }),
+                createSessionFixture({ id: 'busy-controller-session', serverId, active: true, activeAt: now,
+                    latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now,
+                    metadata: { name: 'Working elsewhere', path: '/work', host: 'controller', machineId: controller.machineId } }),
+                createSessionFixture({ id: 'idle-guest-session', serverId, active: true, activeAt: now,
+                    metadata: { name: 'Idle on the guest', path: '/work', host: 'guest', machineId: 'guest' } }),
+            ], { sourceServerId: serverId });
+            expect(storage.getState().sessionListRowsByServerId[serverId]?.['busy-guest-session']).toBeDefined();
+        }
         const machine: ManagedMachineFullV1 = { id: 'delete-reviewed', homeId: 'srv_managed_delete', custodianAccountId: 'foreign-owner', launch,
             controller, allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'original-resource' } },
@@ -2927,6 +2942,11 @@ describe('managed Machine detail', () => {
         const aside = screen.findByTestId('managed-machine.detail.receipt-aside');
         expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-review').length).toBeGreaterThan(0);
         if (machine.enrolledMachineId) expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-audience').length).toBeGreaterThan(0);
+        if (authority === 'controller') {
+            expect(screen.getTextContent()).toContain('Preparing the build');
+            expect(screen.getTextContent()).not.toContain('Working elsewhere');
+            expect(screen.getTextContent()).not.toContain('Idle on the guest');
+        }
         // The decision is one closing button row: the button names it, so no row repeats "Delete machine".
         expect(screen.findByTestId('managed-machine.delete-decision')).not.toBeNull();
         expect(screen.findByTestId('managed-machine.delete-decision.cancel')).not.toBeNull();
