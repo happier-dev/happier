@@ -15,6 +15,7 @@ const ENTRY_LOAD_RESULT = 'HAPPIER_COMMIT_ENTRY_LOAD_RESULT ';
 const ENTRY_LOAD_READY = 'HAPPIER_COMMIT_ENTRY_LOAD_READY';
 const ENTRY_GRAPHS_PATH = 'apps/stack/scripts/perf/entry-graphs.mjs';
 const ENTRY_LOAD_PATH = 'apps/stack/scripts/perf/entry-load.mjs';
+const CLI_GRAPH = 'cli';
 const GENERATED = 'apps/server/generated';
 // Route composition of the tree's server (P03 ORCH 2026-11-18): the entry graphs stop at the server's import probe,
 // so an Action a route names but the packet's Protocol lacks (1f986f64d8a: review.get) passed them. This graph
@@ -31,13 +32,6 @@ const ROOT_RUNTIME_INPUT = /(\.[cm]?[jt]sx?|\.json|\.ya?ml)$|^patches\//;
 const HARNESS = /^apps\/stack\/scripts\/(perf|utils\/proc)\//;
 // Extracted trees and derived server clients share one filesystem so a derivation is renamed, never copied.
 const defaultRoot = () => join(process.env.P03_COMMIT_TREE_HOST_TMP || tmpdir(), 'happier-commit-tree');
-
-/** The gate mode both HEAD writers share: `report` (default), `block` or `off`. */
-export function commitTreeGateMode(env = process.env) {
-  const mode = String(env.HAPPIER_COMMIT_TREE_GATE ?? '').trim() || 'report';
-  if (!['report', 'block', 'off'].includes(mode)) throw new Error(`HAPPIER_COMMIT_TREE_GATE must be report, block or off (got ${mode})`);
-  return mode;
-}
 
 function gitAt(repo) {
   return (args, input) => execFileSync('git', args, { cwd: repo, input, maxBuffer: 2 ** 31, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -94,11 +88,17 @@ export async function selectWorkspaceClosureInputs({ repo, revisions, scopes, pa
  */
 export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase }) {
   const git = gitAt(repo);
-  let graphs;
-  try {
-    const source = git(['show', `${tree}:${ENTRY_GRAPHS_PATH}`]).toString();
-    ({ ENTRY_GRAPHS: graphs } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`));
-  } catch { return { graphs: [], selected: [], changed: [] }; }
+  const hasRegistry = revision => git(['ls-tree', '--name-only', revision, '--', ENTRY_GRAPHS_PATH]).length > 0;
+  if (!hasRegistry(tree)) {
+    if (hasRegistry(base)) throw new Error(`candidate removed the entry graph registry at ${ENTRY_GRAPHS_PATH}`);
+    return { graphs: [], selected: [], changed: [] };
+  }
+  const source = git(['show', `${tree}:${ENTRY_GRAPHS_PATH}`]);
+  const { ENTRY_GRAPHS: graphs } = await import(`data:text/javascript;base64,${source.toString('base64')}`);
+  if (!Array.isArray(graphs) || !graphs.length || graphs.some(graph => !graph?.id || !graph?.entry)
+    || new Set(graphs.map(graph => graph.id)).size !== graphs.length) {
+    throw new Error(`invalid entry graph registry at ${ENTRY_GRAPHS_PATH}`);
+  }
   const pathsBetween = (from, to) => git(['diff', '--no-renames', '--name-only', '-z', from, to]).toString().split('\0').filter(Boolean);
   const changed = pathsBetween(base, tree);
   const packages = treeWorkspacePackages(git, tree);
@@ -200,8 +200,9 @@ function childCpuMs() {
  * not, takes part: a packet that needs another lane's uncommitted producer fails, and another lane's
  * unfinished edit never fails an unrelated packet (owner ruling 2026-11-18).
  *
- * Returns `{ findings, preexisting, results, selected, timings }` (`findings` are the failures the packet adds); throws when the check cannot judge (extraction,
- * derivation or harness failure), which callers report as unavailable, never as a refusal.
+ * Returns `{ findings, preexisting, results, selected, timings }`. A CLI load failure always refuses the candidate.
+ * Other graphs report failures they share with the base. Extraction, derivation or missing harness results make
+ * the check unavailable.
  */
 export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, compareAdmittedEntryLoads }) {
   const git = gitAt(repo);
@@ -306,9 +307,10 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
   const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies });
-  // Like every other gate check, only failures the packet adds refuse it: the failing graphs load again from the
-  // base tree (paid only when the candidate fails), and a failure the base already has is reported, not blamed.
-  const failing = [...new Set(candidate.failures.map(failure => failure.graph))];
+  const cliFailure = candidate.failures.find(failure => failure.graph === CLI_GRAPH);
+  if (cliFailure) return finish({ findings: [cliFailure.finding], preexisting: [], results: candidate.results });
+  // Non-CLI graphs keep reporting the delta for checks such as manifest generation and route composition.
+  const failing = candidate.failures.map(failure => failure.graph);
   const baseFindings = failing.length
     ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(failure => failure.finding))
     : new Set();
@@ -351,7 +353,12 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
       mark('loadsMs', at);
       return output;
     });
-    const failures = results.filter(result => result.status !== 'passed').map(result => {
+    const reported = new Set(results.map(result => result?.graph));
+    if (results.length !== ids.length || ids.some(id => !reported.has(id))
+      || results.some(result => !['passed', 'failed'].includes(result?.status) || !Number.isFinite(result.elapsedMs))) {
+      throw new Error(`entry-load harness did not return one valid result for each selected graph: ${ids.join(', ')}`);
+    }
+    const failures = results.filter(result => result.status === 'failed').map(result => {
       const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
       const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
       return { graph: result.graph, finding: `${result.graph}: ${module}: ${message}` };
@@ -470,16 +477,16 @@ async function runServerRoutes({ dir, env, signal }) {
   }
 }
 
-/** Where report-mode verdicts land, one JSON line per candidate (P03 ORCH reads the cost from it). */
+/** Where standalone reports write a verdict, one JSON line per candidate. */
 export function defaultCommitTreeLedger(repo) {
   return join(repo, '.project/tmp/commit-tree-gate/ledger.jsonl');
 }
 
 /**
- * Detached report-mode run for a writer that must not wait (the ledger records the verdict). A tree
- * without the entry-load harness (scratch repositories) has nothing to load and starts nothing.
+ * A standalone diagnostic can run detached and write its verdict to the ledger. Trees without the
+ * entry-load harness have nothing to load.
  */
-export function startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger = defaultCommitTreeLedger(repo), env = process.env }) {
+function startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger = defaultCommitTreeLedger(repo), env = process.env }) {
   try { gitAt(repo)(['cat-file', '-e', `${tree}:${ENTRY_GRAPHS_PATH}`]); } catch { return null; }
   mkdirSync(dirname(ledger), { recursive: true });
   const log = openSync(`${ledger}.log`, 'a');

@@ -169,7 +169,6 @@ while [ "$1" != -- ]; do shift; done
 shift
 exec "$@"
 '''); launcher.chmod(0o755)
-        env['HAPPIER_COMMIT_TREE_GATE'] = 'block'
     selected = '-'
     if kind == 'newfile':
         (d/'wholefiles').write_text('c.txt\n'); selected=str(d/'wholefiles')

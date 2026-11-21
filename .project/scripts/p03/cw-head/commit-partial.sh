@@ -37,8 +37,6 @@ branch=$(git symbolic-ref --short HEAD)
 tooling=$(cd -- "$(dirname "$SELF")/../../../.." && pwd -P)
 entry_phase=${P03_CP_ENTRY_PHASE:-0}
 declaration_phase=${P03_CP_DECLARATION_PHASE:-0}
-entry_block=0
-if [[ ${HAPPIER_COMMIT_TREE_GATE:-} =~ ^[[:space:]]*block[[:space:]]*$ ]]; then entry_block=1; fi
 # The gate is a separate process; P03_COMMIT_GATE replaces it in scratch-repo selftests.
 GATE=${P03_COMMIT_GATE:-/home/leeroy.guest/.happier-stack/workspace/0.3/.project/scripts/p03/cw-head/gate.sh}
 # R3: every gate run executes a private copy. Bash reads a running script by offset, so an in-place edit
@@ -304,10 +302,7 @@ admit_final_phase() {
     packetDir=
     exit "$rc"
   fi
-  entry_projects=
-  if [ "$entry_block" = 1 ]; then
-    entry_projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
-  fi
+  entry_projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
   declaration_projects=$(node "$tooling/scripts/workspaces/commitGate.mjs" --select-declarations "--base=$head" "--tree=$gated") || {
     declaration_admission_incomplete "$?"
     exit 11

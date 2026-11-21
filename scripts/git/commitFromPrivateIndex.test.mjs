@@ -307,7 +307,7 @@ test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }
   assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
 });
 
-function runWithCommitLockContender(f, winner, name, { observeTreeGate = false, additionalWinners = [], refuseFinalAdmission = false } = {}) {
+function runWithCommitLockContender(f, winner, name, { treeGateMode, additionalWinners = [], refuseFinalAdmission = false } = {}) {
   const base = f.git('rev-parse', 'HEAD').trim();
   const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
   const bin = path.join(f.cwd, 'bin');
@@ -346,12 +346,14 @@ fi
 exec "$real_git" "$@"
 `, { mode: 0o755 });
   }
+  const inheritedEnv = { ...process.env };
+  delete inheritedEnv.HAPPIER_COMMIT_TREE_GATE;
   const result = spawnSync(process.execPath, [
     fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', name,
   ], {
     cwd: f.cwd, encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      HAPPIER_COMMIT_TREE_GATE: observeTreeGate ? 'block' : 'report', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+    env: { ...inheritedEnv, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      ...(treeGateMode ? { HAPPIER_COMMIT_TREE_GATE: treeGateMode } : {}), HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
       HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
       TEST_TREE_GATE_LOCKS: treeGateLocks, TEST_FINAL_GRANTS: finalGrants, TEST_FINAL_ACTIVE: finalActive,
       TEST_FINAL_DENY: refuseFinalAdmission ? '1' : '0', TEST_FINAL_HEAD: additionalWinners.at(-1) ?? '', TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
@@ -433,8 +435,12 @@ export async function loadEntryGraph(graph) {
   }
   const { status } = spawnSync(process.env.TEST_FLOCK, ['-n', process.env.TEST_LOCK, 'true']);
   appendFileSync(process.env.TEST_TREE_GATE_LOCKS, graph.id + ':' + status + String.fromCharCode(10));
-  await import(pathToFileURL(resolve(graph.entry)).href);
-  return { graph: graph.id, status: 'passed', elapsedMs: 0 };
+  try {
+    await import(pathToFileURL(resolve(graph.entry)).href);
+    return { graph: graph.id, entry: graph.entry, status: 'passed', elapsedMs: 0 };
+  } catch (error) {
+    return { graph: graph.id, entry: graph.entry, status: 'failed', elapsedMs: 0, loadError: { message: error.message } };
+  }
 }
 `);
   f.git('add', '--', 'apps', 'packages/cli-common');
@@ -449,9 +455,57 @@ export async function loadEntryGraph(graph) {
   return { f, base, winner, packet };
 }
 
+test('refuses a duplicate TypeScript import in the committed CLI entry closure before moving HEAD by default', { skip: !hasFlock }, t => {
+  const { f } = treeGraphReplayFixture(t);
+  f.write('apps/cli/src/index.mjs', "await import('./action.ts');\n");
+  const producer = 'apps/cli/src/actionProducer.mjs';
+  f.write(producer, 'export const open = () => 42;\n');
+  const name = 'apps/cli/src/action.ts';
+  const binding = "import { open } from './actionProducer.mjs';\n";
+  f.write(name, binding + 'export const value = open();\n');
+  f.git('add', '--', 'apps/cli/src');
+  f.git('commit', '-qm', 'test: loadable CLI dependency');
+  const head = f.git('rev-parse', 'HEAD').trim();
+  f.write(name, binding + binding + 'export const value = open();\n');
+
+  const { result } = runWithCommitLockContender(f, head, name);
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /action\.ts:2:\d+: Duplicate import binding: open/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
+});
+
+test('refuses an unloadable CLI entry even when its parent is broken and the legacy mode is off', { skip: !hasFlock }, t => {
+  const { f } = treeGraphReplayFixture(t);
+  const entry = 'apps/cli/src/index.mjs';
+  f.write(entry, 'throw new Error("Cannot load this CLI");\n');
+  f.git('add', '--', entry);
+  f.git('commit', '-qm', 'test: broken CLI parent');
+  const head = f.git('rev-parse', 'HEAD').trim();
+  f.write(entry, 'throw new Error("Cannot load this CLI");\nexport const value = 1;\n');
+
+  const { result } = runWithCommitLockContender(f, head, entry, { treeGateMode: 'off' });
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /cli: .*Cannot load this CLI/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
+});
+
+test('leaves HEAD unchanged if the selected CLI entry does not return a result', { skip: !hasFlock }, t => {
+  const { f, base } = treeGraphReplayFixture(t);
+  const harness = 'apps/stack/scripts/perf/entry-load.mjs';
+  f.write(harness, 'export const ENTRY_GRAPHS = [];\nexport async function loadEntryGraph() {}\n');
+
+  const { result } = runWithCommitLockContender(f, base, harness);
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /0\/1 results/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
+});
+
 test('lands a selected-zero UI packet on moving HEAD without an unlocked entry recheck', { skip: !hasFlock }, t => {
   const { f, base, winner, packet } = treeGraphReplayFixture(t);
-  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet, { observeTreeGate: true });
+  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet);
 
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(result.stderr, /Released the commit lock for the full gate/);
@@ -463,7 +517,7 @@ test('lands a selected-zero UI packet on moving HEAD without an unlocked entry r
 
 test('releases the lock and reruns only entry graphs whose inputs changed since the accepted base', { skip: !hasFlock }, t => {
   const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
-  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet, { observeTreeGate: true });
+  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0'], 'only the CLI graph reloads, outside the lock');
@@ -484,7 +538,7 @@ function twiceStaleEntryFixture(t, refuseFinalAdmission) {
   f.git('read-tree', base);
 
   return { f, additionalWinners, ...runWithCommitLockContender(f, winner, packet,
-    { observeTreeGate: true, additionalWinners, refuseFinalAdmission }) };
+    { additionalWinners, refuseFinalAdmission }) };
 }
 
 test('after two CAS losses obtains entry admission before locking and reloads only the affected graph', { skip: !hasFlock }, t => {

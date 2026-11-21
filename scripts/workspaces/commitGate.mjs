@@ -8,8 +8,8 @@
 //   node scripts/workspaces/commitGate.mjs --base=<rev> --tree=<tree-ish> [--prior=<tree-ish>] [--cheap-only]
 //   exit 0 pass, 10 refused, 11 incomplete, 3 needs a full recheck (--cheap-only), 75 unavailable (never the candidate's fault)
 //
-// Every check reads the candidate's Git objects, never the moving checkout, and refuses only what the packet adds over
-// its base. The commit wrapper adds its cached bundle and export-scan tier (gate.sh) on top of this list.
+// Every check reads the candidate's Git objects. The commit wrapper adds its cached bundle and export-scan tier
+// (gate.sh) on top of this list.
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
@@ -23,8 +23,8 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitChangedPaths, commitProducerClosure, COMMIT_SOURCE_PATH, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { commitTreeGateMode, commitTreeEntryLoads, EntryLoadAdmissionUnavailable, selectWorkspaceClosureInputs,
-  startCommitTreeEntryLoadReport, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
+import { commitTreeEntryLoads, EntryLoadAdmissionUnavailable, selectWorkspaceClosureInputs,
+  withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 
 export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, incomplete: 11, needsFull: 3, unavailable: 75 });
 
@@ -91,7 +91,6 @@ export async function runCommitGate(options) {
 async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, finalDeclarationRecheck = false, compareAdmittedEntryLoads, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
-  const treeMode = commitTreeGateMode(env);
   const judge = async (check, run) => {
     try { return await run(); } catch (error) { throw new CommitGateUnavailable(check, error); }
   };
@@ -166,15 +165,10 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   // The controller keeps distinct broker grants for declaration and entry work.
   const entryEnv = env.P03_GATE_ENTRY_ADMISSION_SLOT
     ? { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: env.P03_GATE_ENTRY_ADMISSION_SLOT } : env;
-  if (treeMode === 'block') {
-    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env: entryEnv, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
-    if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
-    if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
-  } else if (treeMode === 'report' && !prior && !cheapOnly) {
-    // Report mode records the verdict in the ledger without waiting; a recheck replays a packet whose first gate started it.
-    const pid = startCommitTreeEntryLoadReport({ repo, base, tree, label, env });
-    if (pid) notes.push(`tree entry loads: report started (pid ${pid})`);
-  }
+  const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env: entryEnv, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
+  if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
+  if (loads.selected.length) notes.push(`tree entry loads: ${loads.selected.length} graph(s) judged, ${loads.findings.length} refused, ${loads.preexisting.length} also fail at the base`);
+  if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
   return { verdict: 'pass', check: null, findings: [], notes };
 }
 
@@ -184,7 +178,7 @@ export function formatCommitGateIncomplete(result) {
 
 /** One message for a refusal, the same from every writer. */
 export function formatCommitGateRefusal(result) {
-  return [`Commit refused by the commit gate (${result.check}): ${result.findings.length} finding(s) the packet adds:`,
+  return [`Commit refused by the commit gate (${result.check}): ${result.findings.length} finding(s):`,
     ...result.findings.map(finding => `  ${finding}`)].join('\n');
 }
 
@@ -240,7 +234,6 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     reason: { code: 'final-recheck-incomplete' }, findings: [], notes: [],
   });
   let recheckedAfterRelease = false;
-  const entryBlocking = commitTreeGateMode() === 'block';
   const check = async (cheapOnly, compareAdmittedEntryLoads) => {
     const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree,
       priorBase: accepted?.base, cheapOnly, compareAdmittedEntryLoads, label, env: accepted ? recheckEnv : process.env });
@@ -257,14 +250,14 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     if (gate.verdict !== 'pass') return { gate };
   }
   for (;;) {
-    const finalEntryPhase = entryBlocking && losses >= 2;
+    const finalEntryPhase = losses >= 2;
     const locked = (compareAdmittedEntryLoads, entryPhaseAttempted = false) => withCommitLock({ repo, ref }, async (moveRef) => {
       for (;;) {
         const head = headAt();
         if (head !== packet.base) {
           if (recheckedAfterRelease) losses++;
           recheckedAfterRelease = false;
-          if (entryBlocking && losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
+          if (losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
           packet = replay(head);
           if (!packet) return {};
         }
@@ -288,7 +281,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
           // A writer outside the lock (or a host without flock) can still win CAS.
           recheckedAfterRelease = false;
           losses++;
-          if (entryBlocking && losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
+          if (losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
         }
       }
     });

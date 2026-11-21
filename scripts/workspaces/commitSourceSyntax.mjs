@@ -3,6 +3,33 @@ import { extname } from 'node:path';
 
 const LOADERS = { '.ts': 'ts', '.tsx': 'tsx', '.js': 'js', '.mjs': 'js' };
 
+function duplicateImportBindings(ts, path, source) {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest);
+  const seen = new Set();
+  const findings = [];
+  for (const statement of file.statements) {
+    const names = [];
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause || clause.isTypeOnly) continue;
+      if (clause.name) names.push(clause.name);
+      const bindings = clause.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) names.push(bindings.name);
+      else if (bindings) names.push(...bindings.elements.filter(binding => !binding.isTypeOnly).map(binding => binding.name));
+    } else if (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly) {
+      names.push(statement.name);
+    }
+    for (const name of names) {
+      if (seen.has(name.text)) {
+        const { line, character } = file.getLineAndCharacterOfPosition(name.getStart(file));
+        findings.push(`${path}:${line + 1}:${character}: Duplicate import binding: ${name.text}`);
+      }
+      seen.add(name.text);
+    }
+  }
+  return findings;
+}
+
 /**
  * Parses every source file a commit packet adds or changes, from the packet's Git objects (never the
  * moving working tree). Both HEAD writers refuse on findings: the commit wrapper's gate
@@ -21,13 +48,21 @@ export async function commitSourceSyntax({ repo, base, tree }) {
     .split('\0').filter((path) => Object.hasOwn(LOADERS, extname(path)));
   const findings = [];
   for (const path of paths) {
+    const loader = LOADERS[extname(path)];
+    const source = git('show', `${tree}:${path}`);
     try {
-      await transform(git('show', `${tree}:${path}`), { sourcefile: path, loader: LOADERS[extname(path)],
+      await transform(source, { sourcefile: path, loader,
         tsconfigRaw: { compilerOptions: { experimentalDecorators: true } } });
     } catch (error) {
       // esbuild's structured parser errors are findings; anything else means the check could not judge.
       if (!error.errors?.length) throw error;
       for (const detail of error.errors) findings.push(`${path}:${detail.location?.line ?? 0}:${detail.location?.column ?? 0}: ${detail.text}`);
+      continue;
+    }
+    if (loader === 'ts' || loader === 'tsx') {
+      // esbuild's TypeScript transform can elide a duplicate runtime import.
+      const { default: ts } = await import('typescript');
+      findings.push(...duplicateImportBindings(ts, path, source));
     }
   }
   return { findings, parsed: paths.length };
