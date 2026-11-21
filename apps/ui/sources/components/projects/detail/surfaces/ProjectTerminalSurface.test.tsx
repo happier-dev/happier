@@ -3,7 +3,7 @@ import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
-import { observeMachinePresenceForTest, publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installRealActionExecutorModuleLoader, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
@@ -94,11 +94,13 @@ function ActiveProjectPane(props: React.PropsWithChildren<{ scopeId: string }>) 
     return <>{props.children}</>;
 }
 
-async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[], machine?: ReturnType<typeof createMachineFixture>) {
+async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[], machine?: ReturnType<typeof createMachineFixture>, additionalMachines: readonly ReturnType<typeof createMachineFixture>[] = []) {
     const serverUrl = `https://${serverId}.test`;
     const accountId = 'bob';
-    const machineRow = { ...createPlainMachineRowFixture({ id: 'machine', accountId, machine }),
-        installationPublicKey: await servedMachineActionRelayInstallationPublicKey() };
+    const installationPublicKey = await servedMachineActionRelayInstallationPublicKey();
+    const machineRows = [machine, ...additionalMachines].map(machine => ({
+        ...createPlainMachineRowFixture({ id: machine?.id ?? 'machine', accountId, machine }), installationPublicKey,
+    }));
     let relay: Awaited<ReturnType<typeof createServedTerminalActionRelay>> | null = null;
     const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl, accountId, serverIdentityId: serverId, currentAccount: true,
         settings: {
@@ -111,9 +113,9 @@ async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[]
             if (request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
                 return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: refs }));
             }
-            if (request.path === '/v1/machines') return Response.json([machineRow]);
+            if (request.path === '/v1/machines') return Response.json(machineRows);
             if (request.path === '/v1/machines/read-batch' && request.method === 'POST') {
-                return createMachineReadBatchResponseFixture(request.body, id => id === machineRow.id ? machineRow : null);
+                return createMachineReadBatchResponseFixture(request.body, id => machineRows.find(machine => machine.id === id) ?? null);
             }
             if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') {
                 return Response.json(createRootLayoutFeaturesResponse({ features: { terminal: {
@@ -124,7 +126,7 @@ async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[]
         } });
     relay = await createServedTerminalActionRelay({
         homes: [{ serverId: home.homes.project!.id, serverUrl, serverIdentityId: serverId, accountId }],
-        machineIds: [machineRow.id],
+        machineIds: machineRows.map(machine => machine.id),
         machineRpc: request => outputRpc(request),
     });
     await getServerFeaturesSnapshot({ serverId: home.homes.project!.id, force: true });
@@ -409,9 +411,8 @@ describe('Project terminal through the incumbent pane workspace', () => {
         const source = { id: 'source-ref', serverId, machineId: 'source-machine', rootPath: '/source', projectKey: 'project', createdAtMs: 1 };
         const worker = { ...source, id: 'worker-ref', machineId: 'worker-machine', rootPath: '/worker' };
         const unrelated = { ...worker, id: 'other-project', projectKey: 'other', rootPath: '/other' };
-        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://output-checkout.test', accountId: 'bob', serverIdentityId: serverId }],
-            route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
-                ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [source, worker, unrelated] })) : undefined });
+        const home = await serveCensusHome(serverId, [source, worker, unrelated],
+            createMachineFixture({ id: source.machineId }), [createMachineFixture({ id: worker.machineId })]);
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({
@@ -430,6 +431,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
                         workspaceRefId: worker.id, cwd: '/worker/packages/check', terminalId: 'worker-pty' } }) };
             let current = operation.snapshot;
             outputRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
+                if (request.method === RPC_METHODS.DAEMON_TERMINAL_LIST) return { ok: true, terminals: [], machineShell: { ok: true, cwd: source.rootPath } };
                 expect(request.method).toBe(ACTION_OPERATION_RPC_METHODS_V2.get);
                 expect(request.payload).toEqual({ operationId: operation.snapshot.operationId });
                 return { kind: 'found', operation: current };
@@ -500,17 +502,15 @@ describe('Project terminal through the incumbent pane workspace', () => {
     });
 
     it('uses pushed Machine presence and keeps its admitted terminal identity across disconnect/reconnect', async () => {
-        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-expiry.test', accountId: 'bob' }],
-            route: () => undefined });
+        const serverId = 'srv_project_terminal_expiry';
+        const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
+        const machine = createMachineFixture({ id: workspace.machineId, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const home = await serveCensusHome(serverId, [{ ...workspace, id: workspace.workspaceId, projectKey: 'project', createdAtMs: 1 }], machine);
         const previous = storage.getState();
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-            const serverId = home.homes.project!.id;
-            const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
             applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ ...workspace, id: workspace.workspaceId, createdAtMs: 1 }] });
-            const machine = createMachineFixture({ id: workspace.machineId, activeAt: Date.now() });
-            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
-            observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [machine.id]);
+            await publishMachineInventoryForTest({ serverId, accountId: 'bob' }, [machine]);
             vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
             const screen = await renderScreen(<AppPaneProvider><WorkspaceEmbeddedTerminalPane scopeId="expiry-terminal"
                 machineId={machine.id} serverId={serverId} rootPath={workspace.rootPath} workspace={workspace}
