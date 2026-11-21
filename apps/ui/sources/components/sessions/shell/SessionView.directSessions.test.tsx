@@ -2619,21 +2619,47 @@ describe('SessionView (direct sessions)', () => {
       'openai-codex/launch-profile': ['daily'],
       'openai-codex/backup-profile': ['five_hour'],
     };
+    const issue = storageState.sessions.s1.lastRuntimeIssue!;
+    const sessions = storageState.sessions as Record<string, any>;
+    sessions.s2 = {
+      ...storageState.sessions.s1,
+      id: 's2',
+      lastRuntimeIssue: {
+        ...issue, occurredAt: 20_000,
+        usageLimit: { ...issue.usageLimit!,
+          quotaSnapshotRef: { serviceId: 'openai-codex', profileId: 'backup-profile', fetchedAtMs: 20_000 },
+          allWindows: [{ meterId: 'weekly', scope: 'Weekly', remainingPct: 30 }],
+          effectiveMeterId: 'weekly', effectiveRemainingPct: 30,
+        },
+      },
+    };
+    sessions.s3 = {
+      ...sessions.s2,
+      id: 's3',
+      lastRuntimeIssue: {
+        ...issue, occurredAt: 30_000,
+        usageLimit: { ...issue.usageLimit!,
+          quotaSnapshotRef: { serviceId: 'openai-codex', profileId: 'other-login', fetchedAtMs: 30_000 },
+        },
+      },
+    };
     const screen = await renderSessionViewAndSettle();
 
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
-      providerDisplayName: 'connectedServices.serviceNames.openaiCodex',
-      activeAccountDisplayLabel: 'backup-account',
+      providerDisplayName: 'agentInput.agent.codex',
+      ringValueLabel: '30',
     }));
     expect(findAgentInput(screen).props.providerUsageGauge.usageRings.map((ring: { meterId: string }) => ring.meterId))
-      .toEqual(['weekly', 'five_hour']);
+      .toEqual(['weekly']);
   });
 
   it('uses runtime quota evidence for provider usage title when no launch-time profile binding exists', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
+      // The evidence is Claude's, so the composer must be on Claude to show it.
+      metadata: { ...storageState.sessions.s1.metadata, flavor: 'claude' },
       lastRuntimeIssue: {
         v: 1,
         scope: 'primary_session',
@@ -2664,7 +2690,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'claude-subscription',
-      providerDisplayName: 'connectedServices.serviceNames.claudeSubscription',
+      providerDisplayName: 'agentInput.agent.claude',
       activeAccountDisplayLabel: 'claude-backup',
     }));
   });
@@ -2696,7 +2722,7 @@ describe('SessionView (direct sessions)', () => {
     expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
-      providerDisplayName: 'connectedServices.serviceNames.openaiCodex',
+      providerDisplayName: 'agentInput.agent.codex',
       activeAccountDisplayLabel: 'Native Codex account',
       ringValueLabel: '38',
     }));
