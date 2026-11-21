@@ -145,14 +145,17 @@ function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof Ite
   & Readonly<{ description: string; widget?: boolean }>) {
   // A page section wherever it is mounted: a plugin page draws it through its host with no list presentation of its
   // own, where it fell back to a grouped card (its description under the rows, its empty line in a pill; DBW M10).
+  // That page's column already owns the width and the outer inset, so there the section adds neither: it shares the
+  // edge of the page's other sections instead of a narrower, centred block (DBW M14).
   const page = useListPresentation() === 'page';
   const section = <ItemGroup testID={props.testID ?? 'subject-triggers'}
+    {...(page || props.widget ? {} : { constrainToContentWidth: false })}
     {...(props.widget ? { surface: 'none' as const }
       : { title: t('workflows.triggers.section.title'), description: props.description, action: props.action })}>
     {props.widget ? <WidgetGlanceRow variant="fact" title={props.description} testID="subject-triggers-description" /> : null}
     {props.children}
   </ItemGroup>;
-  return props.widget || page ? section : <ListPresentationProvider value="page">{section}</ListPresentationProvider>;
+  return props.widget || page ? section : <ListPresentationProvider value="page" pageInsets="contained">{section}</ListPresentationProvider>;
 }
 
 /** A host whose subject read has not succeeded keeps the shared section without inventing an identity. */
