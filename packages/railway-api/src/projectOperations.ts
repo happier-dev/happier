@@ -20,10 +20,23 @@ const connection = defineProtocolObject({
   edges: defineProtocolArray(defineProtocolObject({ node: choice }, open)),
   pageInfo,
 }, open);
+const serviceInstance = defineProtocolObject({
+  serviceId: text, serviceName: text, deletedAt: optionalText,
+  service: defineProtocolObject({ templateId: optionalText }, open).optional(),
+}, open);
+const exactServiceInstance = defineProtocolObject({
+  environmentId: text, serviceId: text, serviceName: text, deletedAt: optionalText,
+  service: defineProtocolObject({
+    projectId: text,
+    templateId: optionalText.optional(),
+    project: defineProtocolObject({ workspaceId: text }, open).optional(),
+  }, open),
+}, open);
+const templateIdentity = defineProtocolObject({ id: text }, open);
 const environmentServices = defineProtocolObject({
   id: text, projectId: text, serviceInstances: defineProtocolObject({
     edges: defineProtocolArray(defineProtocolObject({
-      node: defineProtocolObject({ serviceId: text, serviceName: text, deletedAt: optionalText }, open),
+      node: serviceInstance,
     }, open)), pageInfo,
   }, open),
 }, open);
@@ -38,6 +51,12 @@ const deleteService = `mutation DeleteServiceInstance($id: String!, $environment
 
 type Choice = ProtocolSchemaOutput<typeof choice>;
 type Page = Readonly<{ choices: Choice[]; nextCursor: string | null }>;
+type ServiceSelection = Readonly<{
+  projectId: string;
+  environmentId: string;
+  serviceId: string;
+  workspaceId?: string;
+}>;
 type ServiceVariableUpdate = Readonly<{
   projectId: string;
   environmentId: string;
@@ -50,6 +69,12 @@ function child(value: unknown, field: string): unknown {
   return value !== null && typeof value === 'object' && field in value
     ? (value as Record<string, unknown>)[field]
     : undefined;
+}
+
+function requireTemplateIdentity(value: unknown) {
+  const parsed = templateIdentity.safeParse(value);
+  if (!parsed.success) throw new NativeError('railway_invalid_response');
+  return parsed.data;
 }
 
 function readNextCursor({ hasNextPage, endCursor }: ProtocolSchemaOutput<typeof pageInfo>, after: string | null) {
@@ -108,19 +133,67 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     return readChoicePage(child(data.project, field), after);
   }
 
-  async function readEnvironmentServicesPage(projectId: string, environmentId: string, after: string | null) {
-    const { environment } = await graphql(`query($projectId: String!, $environmentId: String!, $after: String) {
+  async function readEnvironmentServicesPage(projectId: string, environmentId: string, after: string | null, templateCode?: string) {
+    const templateInput = templateCode === undefined ? '' : ', $templateCode: String!';
+    const templateQuery = templateCode === undefined ? '' : 'template(code: $templateCode) { id }';
+    const provenance = templateCode === undefined ? '' : 'service { templateId }';
+    const data = await graphql(`query($projectId: String!, $environmentId: String!, $after: String${templateInput}) {
+      ${templateQuery}
       environment(id: $environmentId, projectId: $projectId) { id projectId serviceInstances(after: $after) {
-        edges { node { serviceId serviceName deletedAt } } pageInfo { hasNextPage endCursor }
+        edges { node { serviceId serviceName deletedAt ${provenance} } } pageInfo { hasNextPage endCursor }
       } }
-    }`, { projectId, environmentId, after });
-    const parsed = environmentServices.safeParse(environment);
+    }`, { projectId, environmentId, after, templateCode });
+    const parsed = environmentServices.safeParse(data.environment);
     if (!parsed.success || parsed.data.id !== environmentId || parsed.data.projectId !== projectId) {
       throw new NativeError('railway_invalid_response');
     }
+    const template = templateCode === undefined ? undefined : requireTemplateIdentity(data.template);
     const { edges, pageInfo } = parsed.data.serviceInstances;
-    return { choices: edges.flatMap(({ node }) => node.deletedAt === null ? [{ id: node.serviceId, name: node.serviceName }] : []),
-      nextCursor: readNextCursor(pageInfo, after) };
+    const choices = edges.flatMap(({ node }) => {
+      if (node.deletedAt !== null || template && node.service?.templateId !== template.id) return [];
+      return [{ id: node.serviceId, name: node.serviceName }];
+    });
+    return { choices, nextCursor: readNextCursor(pageInfo, after) };
+  }
+
+  async function readServiceInstance({ projectId, environmentId, serviceId, workspaceId }: ServiceSelection, templateCode?: string) {
+    const templateInput = templateCode === undefined ? '' : ', $templateCode: String!';
+    const templateQuery = templateCode === undefined ? '' : 'template(code: $templateCode) { id }';
+    const data = await graphql(`query($environmentId: String!, $serviceId: String!${templateInput}) {
+      ${templateQuery}
+      serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
+        environmentId serviceId serviceName deletedAt service { projectId ${templateCode === undefined ? '' : 'templateId'} ${workspaceId === undefined ? '' : 'project { workspaceId }'} }
+      }
+    }`, { environmentId, serviceId, templateCode });
+    const instance = exactServiceInstance.safeParse(data.serviceInstance);
+    if (!instance.success) throw new NativeError('railway_invalid_response');
+    const row = instance.data;
+    if (row.environmentId !== environmentId || row.serviceId !== serviceId || row.service.projectId !== projectId
+      || workspaceId !== undefined && row.service.project?.workspaceId !== workspaceId) return null;
+    if (row.deletedAt !== null || templateCode !== undefined && row.service.templateId !== requireTemplateIdentity(data.template).id) return null;
+    return { id: row.serviceId, name: row.serviceName };
+  }
+
+  async function readServiceVariable({ projectId, environmentId, serviceId }: ServiceSelection, key: string): Promise<string | null> {
+    const data = await graphql(`query($projectId: String!, $environmentId: String!, $serviceId: String!) {
+      variablesForServiceDeployment(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+    }`, { projectId, environmentId, serviceId });
+    const variables = data.variablesForServiceDeployment;
+    if (!variables || typeof variables !== 'object' || Array.isArray(variables)) throw new NativeError('railway_invalid_response');
+    const value = child(variables, key);
+    if (value === undefined) return null;
+    if (typeof value !== 'string') throw new NativeError('railway_invalid_response');
+    return value;
+  }
+
+  async function observeServiceAbsent({ projectId, environmentId, serviceId }: ServiceSelection): Promise<boolean> {
+    let after: string | null = null;
+    do {
+      const page = await readEnvironmentServicesPage(projectId, environmentId, after);
+      if (page.choices.some(choice => choice.id === serviceId)) return false;
+      after = page.nextCursor;
+    } while (after !== null);
+    return true;
   }
 
   async function upsertServiceVariables({ projectId, environmentId, serviceId, variables, skipDeploys }: ServiceVariableUpdate): Promise<void> {
@@ -152,6 +225,9 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     listServices: (projectId: string) => listPages(after => readProjectPage(projectId, 'services', after)),
     readEnvironmentsPage: (projectId: string, after: string | null) => readProjectPage(projectId, 'environments', after),
     readEnvironmentServicesPage,
+    readServiceInstance,
+    readServiceVariable,
+    observeServiceAbsent,
     upsertServiceVariables,
   };
 }

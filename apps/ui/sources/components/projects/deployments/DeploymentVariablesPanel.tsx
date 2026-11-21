@@ -63,6 +63,10 @@ import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { useDeploymentProviderVariables } from './useDeploymentProviderVariables';
 import type { DeploymentTargetVariableMetadataV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
+import type { DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
+import { railwayDatabaseReferenceChoices } from './railwayDatabaseVariables';
 const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
 type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
@@ -80,7 +84,7 @@ type BindingsDraft = ReturnType<typeof useEnvironmentSecretBindingsDraft>;
 type SavedSecretBindings = ReturnType<typeof useEnvironmentSavedSecretBindings>;
 type SecretSources = EnvironmentSavedSecretBindingResult['sources'];
 type PanelMode = 'table' | 'bulk';
-type Adding = 'plain' | 'secret' | 'saved' | 'reference' | 'fact';
+type Adding = 'plain' | 'secret' | 'saved' | 'reference' | 'fact' | 'railwayDatabase';
 type SecretSource = Extract<VariableBinding['source'], { kind: 'secret' }>;
 
 const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
@@ -128,6 +132,10 @@ export const DeploymentVariablesPanel = React.memo(
       projectSourceId?: string;
       providerTargetLinkId?: string | null;
       providerVariablesActive?: boolean;
+      railwayDatabase?: Readonly<{
+        detail: DeploymentEnvironmentReadDetailV1;
+        inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
+      }>;
       /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
       scope: AccountSettingsScope | null;
       controlTarget?: DeploymentSecretControlTarget;
@@ -153,6 +161,9 @@ export const DeploymentVariablesPanel = React.memo(
     const editor = draft.editor;
     const provider = useDeploymentProviderVariables({ lifetime: props.lifetime, active: props.providerVariablesActive, projectSourceId: props.projectSourceId,
       environmentId: props.environmentId, targetLinkId: props.providerTargetLinkId });
+    const railwayDetail = props.railwayDatabase?.detail;
+    const railwayChoices = React.useMemo(() => props.lifetime ? railwayDatabaseReferenceChoices(railwayDetail) : [],
+      [props.lifetime, railwayDetail]);
     const providerByKey = React.useMemo(() => new Map(provider.value?.variables.map(row => [row.key, row]) ?? []), [provider.value]);
     const [providerSaveState, setProviderSave] = React.useState<Readonly<{ lifetime: typeof props.lifetime; environmentId: string; result: ProviderSaveResult }> | null>(null);
     const providerSave = providerSaveState?.lifetime === props.lifetime && providerSaveState.environmentId === props.environmentId
@@ -473,6 +484,7 @@ export const DeploymentVariablesPanel = React.memo(
             disabled={adding !== null}
             secretsAvailable={props.scope !== null}
             savedAvailable={props.lifetime !== null}
+            railwayDatabaseAvailable={railwayChoices.length > 0}
             referenceAvailable={(props.referenceTargets ?? NO_REFERENCE_TARGETS).length > 0
               || (props.referenceEnvironments?.size ?? 0) > 1}
             onSelect={(choice) => {
@@ -576,7 +588,23 @@ export const DeploymentVariablesPanel = React.memo(
             }}
           />
         ) : null}
-        {mode === 'table' && adding === 'reference' ? (
+        {mode === 'table' && adding === 'railwayDatabase' ? (
+          props.lifetime && props.railwayDatabase ? <AddRailwayDatabaseVariable
+            key={props.railwayDatabase.detail.environment.runtimeTargetLinkId ?? props.environmentId}
+            machineId={props.railwayDatabase.detail.environment.controllerMachineId}
+            inspect={props.railwayDatabase.inspect}
+            lifetime={props.lifetime}
+            choices={railwayChoices}
+            taken={rows}
+            requestReview={props.review.request}
+            onCancel={() => setAdding(null)}
+            onAdd={(name, value) => {
+              const result = editor.setVariable({ name, phase: 'runtime', source: { kind: 'value', value } });
+              if (result.ok) setAdding(null);
+              return result.ok;
+            }}
+          /> : null
+        ) : mode === 'table' && adding === 'reference' ? (
           <AddReferenceVariable
             draftKey={draftKey}
             projectSourceId={props.projectSourceId}
@@ -864,11 +892,12 @@ function AddValueVariable(
     secret: boolean;
     /** A saved secret already picked: only its name here is asked for. */
     bound?: string | null;
-    status: SavedSecretBindings['status'];
+    status?: SavedSecretBindings['status'];
+    reading?: boolean;
     valueControl?: React.ReactNode;
     valueReady?: boolean;
     onCancel: () => void;
-    onAdd: (name: string, value: string) => boolean | Promise<boolean>;
+    onAdd: (name: string, value: string) => boolean | void | Promise<boolean | void>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -878,7 +907,7 @@ function AddValueVariable(
     : '');
   const [value, setValue] = React.useState('');
   const [failed, setFailed] = React.useState(false);
-  const busy = props.status !== 'idle';
+  const busy = props.reading || (props.status !== undefined && props.status !== 'idle');
   const trimmed = name.trim();
   const duplicate = props.taken.some((row) => row.name === trimmed);
   return (
@@ -891,8 +920,9 @@ function AddValueVariable(
       trigger={null}
       onCancel={props.onCancel}
       onSave={() => {
-        void Promise.resolve(props.onAdd(trimmed, value)).then((ok) => setFailed(!ok));
+        void Promise.resolve(props.onAdd(trimmed, value)).then((ok) => setFailed(ok === false));
       }}
+      saving={props.reading}
       saveDisabled={trimmed.length === 0 || duplicate || busy || props.valueReady === false || (props.secret && !props.bound && value.length === 0)}
       cancelLabel={t('common.cancel')}
       saveLabel={t('common.add')}
@@ -903,6 +933,7 @@ function AddValueVariable(
         <FieldTextInput
           testID="project-deployments.environment.variables.add.name"
           value={name}
+          editable={!busy}
           onChangeText={(next) => {
             setFailed(false);
             setName(next.toUpperCase());
@@ -945,6 +976,62 @@ function AddValueVariable(
       </View>
     </InlineAddExpander>
   );
+}
+
+function AddRailwayDatabaseVariable(props: Readonly<{
+  machineId: string;
+  inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
+  lifetime: ServerAccountScopeLifetime;
+  choices: ReturnType<typeof railwayDatabaseReferenceChoices>;
+  taken: readonly VariableRow[];
+  requestReview: DeploymentReviewHandle['request'];
+  onCancel: () => void;
+  onAdd: (name: string, reference: string) => boolean;
+}>) {
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [reading, setReading] = React.useState(false);
+  const [code, setCode] = React.useState<string | null>(null);
+  const shouldContinue = useMountedShouldContinue();
+  const selected = props.choices.find(choice => choice.id === selectedId);
+  const id = 'project-deployments.environment.variables.add.railwayDatabase';
+  return <AddValueVariable taken={props.taken} secret={false} reading={reading}
+    valueReady={selected !== undefined}
+    valueControl={<>
+      <ValueFieldSelect testID={id + '.source'} label={t('projects.deployments.managedData.railwayReference')}
+        placeholder={t('projects.deployments.managedData.railwayReferenceChoose')} fill items={props.choices}
+        selectedId={selectedId} disabled={reading} onSelect={nextId => { setSelectedId(nextId); setCode(null); }} />
+      {code ? <SurfaceStateCard testID={id + '.failed'} kind="error" size="line"
+        title={code === 'target_mismatch' ? t('projects.deployments.managedData.railwayReferenceMismatch') : t('common.unavailable')}
+        diagnosticCode={code} /> : null}
+    </>}
+    onCancel={props.onCancel}
+    onAdd={async name => {
+      if (!selected || reading || !props.lifetime.isCurrent()) return;
+      setReading(true);
+      setCode(null);
+      try {
+        const result = await props.inspect(selected.actionId, selected.input,
+          { externalActionTarget: { kind: 'machine', machineId: props.machineId } });
+        if (!shouldContinue() || !props.lifetime.isCurrent()) return;
+        if (!result.ok) {
+          if (result.approvalArtifactId) props.requestReview(result.approvalArtifactId);
+          else setCode(result.code);
+          return;
+        }
+        if (!isRecord(result.value) || typeof result.value.reference !== 'string' || !result.value.reference) {
+          setCode('provider_response_invalid');
+          return;
+        }
+        return props.onAdd(name, result.value.reference);
+      } catch (error) {
+        if (shouldContinue() && props.lifetime.isCurrent()) {
+          const failure = readDeploymentActionError(error);
+          if (failure.kind === 'approval') props.requestReview(failure.artifactId);
+          else setCode(failure.kind === 'refused' ? failure.code : 'unknown_error');
+        }
+      } finally { if (shouldContinue()) setReading(false); }
+    }}
+  />;
 }
 
 /** Add → Point at another service (lab `variables/refpick`): a name and the service export it resolves to on deploy. */
@@ -1084,6 +1171,7 @@ function AddMenu(
     secretsAvailable: boolean;
     savedAvailable: boolean;
     referenceAvailable: boolean;
+    railwayDatabaseAvailable: boolean;
     onSelect: (choice: Adding | 'paste') => void;
   }>,
 ) {
@@ -1117,6 +1205,13 @@ function AddMenu(
         title: t('projects.deployments.addPlain'),
         icon: <Icon name="code" size={16} color={theme.colors.text.secondary} />,
       },
+      ...(props.railwayDatabaseAvailable ? [{
+        id: 'railwayDatabase',
+        testID: `${id}.railwayDatabase`,
+        title: t('projects.deployments.managedData.railwayReference'),
+        subtitle: t('projects.deployments.managedData.railwayReferenceHint'),
+        icon: <Icon name="link" size={16} color={theme.colors.text.secondary} />,
+      }] : []),
       ...(props.referenceAvailable
         ? [{
             id: 'reference',
@@ -1141,7 +1236,7 @@ function AddMenu(
         icon: <Icon name="file-text" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [props.referenceAvailable, props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
+    [props.railwayDatabaseAvailable, props.referenceAvailable, props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu

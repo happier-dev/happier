@@ -34,7 +34,7 @@ import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentTargetDeclarations } from './DeploymentPlatformTargetSheet';
 import { buildPlatformTargetDraft, buildPlatformTargetLinkInput, applyPlatformFieldPatch, disclosePlatformFields } from './platformTargetLink';
 import { buildPreviewBranchReadInput } from './previewDatabaseBranches';
-import { managedDataConnections, managedDataLinkContent, managedDataTargets, type ManagedDataOperation, type ManagedDataTarget } from './managedData';
+import { managedDataConnections, managedDataLinkContent, managedDataTargets, readManagedDataAdoptionReceipt, type ManagedDataOperation, type ManagedDataTarget } from './managedData';
 import { deploymentSheetStyles } from './deploymentSheet';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import { useManagedDataForm } from './useManagedDataForm';
@@ -77,6 +77,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const [cursors, setCursors] = React.useState<readonly string[]>([]);
   const [fieldCursors, setFieldCursors] = React.useState<Readonly<Record<string, readonly string[]>>>({});
   const [requestKey, setRequestKey] = React.useState(randomUUID);
+  const adoption = readManagedDataAdoptionReceipt(results['projects.provision']?.value);
   const result = operation ? results[operation.role] : undefined;
   const value = result?.value;
   const saved = isRecord(value) && isRecord(value.connectionSave) ? value.connectionSave : value;
@@ -107,17 +108,24 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   };
   const draft = operation ? draftFor(operation) : null;
   const fields = React.useMemo(() => operation ? disclosePlatformFields(resolveEffectiveActionInputFields(operation, seeded), seeded) : [], [operation, seeded]);
+  const editableFields = adoption ? fields.filter(field => !Object.hasOwn(adoption.scope, field.path)) : fields;
   const requiredFields = reviewing && optionsOperation ? resolveEffectiveActionInputFields(optionsOperation, seeded) : fields;
   const missing = requiredFields.some(field => field.required && (getValueAtPath(seeded, field.path) === undefined
     || getValueAtPath(seeded, field.path) === ''));
   const blockedCreate = uncertain && (operation?.role === 'projects.provision' || operation?.role === 'branches.create');
   const provider = result ? managedDataLinkContent(result.input.credentialPrincipal, value) : null;
   const canLink = provider && (result?.role === 'projects.link' || result?.role === 'projects.provision' || result?.role === 'branches.create');
+  const serviceName = result?.role === 'projects.link' && isRecord(value) && typeof value.serviceName === 'string' ? value.serviceName : undefined;
+  const inspectedService = adoption && canLink ? provider.providerIdentity.providerResourceId : null;
   const nextCursor = isRecord(value) && typeof value.nextCursor === 'string' ? value.nextCursor : null;
   const reset = () => { setResults({}); setError(null); setBound(false); setReplace([]); setCursors([]); setFieldCursors({}); setRequestKey(randomUUID()); };
   const patch = (next: Record<string, unknown>) => {
     const patched = applyPlatformFieldPatch(fields, seeded, next);
     setValues(patched.values); setError(null); setBound(false); setReplace([]); setCursors([]); setFieldCursors({});
+    if (adoption) {
+      setResults(current => ({ 'projects.provision': current['projects.provision']! }));
+      return;
+    }
     // Reviewed creation options belong to these operands; uncertain effects and saved halves remain visible.
     setResults(current => Object.fromEntries(Object.entries(current).filter(([, entry]) => {
       const savedConnections = isRecord(entry.value) && isRecord(entry.value.connectionSave) ? entry.value.connectionSave : entry.value;
@@ -144,7 +152,16 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
       }
       setCursors(page);
       setBound(false); setReplace([]);
-      setResults(current => ({ ...current, [runOperation.role]: { value: response.value, input, role: runOperation.role } }));
+      const next = { value: response.value, input, role: runOperation.role };
+      const receipt = runOperation.role === 'projects.provision' ? readManagedDataAdoptionReceipt(response.value) : null;
+      if (receipt && operations.some(entry => entry.role === 'projects.link')) {
+        setValues({ ...seeded, ...receipt.scope, serviceId: undefined });
+        setRole('projects.link');
+        setFieldCursors({});
+        setResults({ [runOperation.role]: next });
+      } else {
+        setResults(current => ({ ...current, [runOperation.role]: next }));
+      }
     } catch (failure) {
       const outcome = readDeploymentActionError(failure);
       if (outcome.kind === 'approval') approval(outcome.artifactId);
@@ -157,7 +174,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
     try {
       const response = await props.actions.link(buildPlatformTargetLinkInput({
         target: { pluginId: target.pluginId, targetId: target.target.id, targetKind: target.target.targetKind },
-        environment: props.detail.environment, provider, role: 'data' }), { confirmed: true });
+        environment: props.detail.environment, provider, role: 'data', title: serviceName }), { confirmed: true });
       if (response.ok) props.onClose(); else setError(response.error);
     } catch (failure) {
       const outcome = readDeploymentActionError(failure);
@@ -199,7 +216,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
         action={{ label: t('common.retry'), onPress: retry }} />
       : !target || !operation ? <SurfaceStateCard size="line" kind="empty" title={t('projects.deployments.managedData.empty')} /> : <>
       {/* Where the database runs is the first choice, drawn as the providers themselves (lab database-createmanaged). */}
-      {!props.linked ? <ItemGroup title={t('projects.deployments.databaseProviderTitle')}>
+      {!props.linked && !adoption ? <ItemGroup title={t('projects.deployments.databaseProviderTitle')}>
         <SelectionTiles<string> testIdPrefix="managed-data.provider" surface="sheet" minimumColumns={1}
           accessibilityLabel={t('projects.deployments.databaseProviderTitle')}
           options={targets.map(entry => ({ id: entry.key, title: entry.title, disabled: busy || uncertain || partial,
@@ -207,19 +224,26 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
           value={target.key}
           onChange={key => { if (!key || key === target.key) return; setTargetKey(key); setRole(null); setAccount(null); setValues({}); reset(); }} />
       </ItemGroup> : null}
+      {adoption ? <ItemGroup testID="managed-data.adoption" title={t('projects.deployments.managedData.adoptionTitle')}
+        description={t('projects.deployments.managedData.adoptionBody')}>
+        <Item title={t('projects.deployments.managedData.adoptionWorkflow')} detail={adoption.workflowId} wrapDetail mode="info" />
+        <Item title={t('projects.deployments.managedData.adoptionProject')} detail={adoption.scope.projectId} wrapDetail mode="info" />
+        <Item title={t('projects.deployments.managedData.adoptionEnvironment')} detail={adoption.scope.railwayEnvironmentId} wrapDetail mode="info" />
+      </ItemGroup> : null}
       <ItemGroup header="none">
-        {choices.length <= 4 ? <SegmentedChoiceItem testID="managed-data.operation" title={t('projects.deployments.managedData.operation')}
+        {adoption ? null : choices.length <= 4 ? <SegmentedChoiceItem testID="managed-data.operation" title={t('projects.deployments.managedData.operation')}
           options={choices} value={operation.role} disabled={busy} onChange={role => { setRole(role); setCursors([]); setFieldCursors({}); setError(null); }} />
           : <DropdownMenu testID="managed-data.operation" open={operationOpen} onOpenChange={setOperationOpen}
             items={choices.map(choice => ({ id: choice.id, title: choice.label }))} selectedId={operation.role}
             onSelect={role => { setOperationOpen(false); setRole(role); setCursors([]); setFieldCursors({}); setError(null); }}
             itemTrigger={{ title: t('projects.deployments.managedData.operation'), showSelectedSubtitle: false, itemProps: { disabled: busy } }} />}
-        {!props.linked && operation.credential && !needsConnect ? <ConnectedAccountPurposeTargetChooser testID="managed-data.account"
+        {!props.linked && !adoption && operation.credential && !needsConnect ? <ConnectedAccountPurposeTargetChooser testID="managed-data.account"
           localizedTextPluginId={target.pluginId} accountsOnly disabled={busy || uncertain || partial} value={account ? { kind: 'account', account } : null}
           declaration={{ ...operation.credential, title: t('projects.deployments.platformLink.connection'), required: true }}
           onChange={next => { setAccount(next?.kind === 'account' ? next.account : null); reset(); }} /> : null}
         {/* The operation's fields read the provider through its account: they follow the first Connect. */}
-        {needsConnect ? null : <ManagedDataActionFields fields={fields} operation={operation} input={seeded} draft={draft}
+        {needsConnect ? null : <ManagedDataActionFields fields={editableFields} operation={operation} input={seeded} draft={draft}
+          serviceRefresh={adoption !== null}
           lifetime={props.lifetime} busy={busy} editable={!busy && !partial} onPatch={patch}
           cursors={fieldCursors} setCursors={setFieldCursors} />}
       </ItemGroup>
@@ -228,7 +252,9 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
         title={t('projects.deployments.managedData.unknown')} reason={t('projects.deployments.managedData.recover')} /> : null}
       {partial ? <SurfaceStateCard testID="managed-data.partial" size="line" kind="unavailable"
         title={t('projects.deployments.managedData.partial')} /> : null}
-      {value !== undefined || (reviewing === false && operation.role === 'projects.provision' && results['projects.provisionOptions']) ? <ItemGroup title={t('projects.deployments.managedData.result')}>
+      {inspectedService ? <ItemGroup title={t('projects.deployments.managedData.adoptionReview')}>
+        <Item title={serviceName ?? inspectedService} detail={serviceName ? inspectedService : undefined} wrapDetail mode="info" />
+      </ItemGroup> : !adoption && (value !== undefined || (reviewing === false && operation.role === 'projects.provision' && results['projects.provisionOptions'])) ? <ItemGroup title={t('projects.deployments.managedData.result')}>
         <Text selectable>{JSON.stringify(value ?? results['projects.provisionOptions']?.value, null, 2)}</Text>
         {cursors.length ? <Item testID="managed-data.page.previous" title={t('projects.deployments.pagePrevious')}
           disabled={busy} onPress={() => { void run(cursors.slice(0, -1)); }} /> : null}
@@ -280,7 +306,7 @@ function ManagedDataFirstConnection(props: Readonly<{ target: ManagedDataTarget;
 function ManagedDataActionFields(props: Readonly<{
   fields: readonly EffectiveActionInputField[]; operation: ManagedDataOperation;
   input: Record<string, unknown>; draft: Record<string, unknown> | null;
-  lifetime: ServerAccountScopeLifetime; busy: boolean; editable: boolean;
+  lifetime: ServerAccountScopeLifetime; busy: boolean; editable: boolean; serviceRefresh?: boolean;
   onPatch: (patch: Record<string, unknown>) => void;
   cursors: Readonly<Record<string, readonly string[]>>;
   setCursors: React.Dispatch<React.SetStateAction<Readonly<Record<string, readonly string[]>>>>;
@@ -297,7 +323,10 @@ function ManagedDataActionFields(props: Readonly<{
       onPress={() => props.setCursors(current => ({ ...current, [field.path]: (current[field.path] ?? []).slice(0, -1) }))} /> : null}
     {options.state(field).nextCursor ? <Item title={t('projects.deployments.pageNext')} disabled={props.busy}
       onPress={() => props.setCursors(current => ({ ...current, [field.path]: [...current[field.path] ?? [], options.state(field).nextCursor!] }))} /> : null}
-  </React.Fragment>)}</>;
+  </React.Fragment>)}
+    {props.serviceRefresh ? <Item testID="managed-data.adoption.refresh" title={t('projects.deployments.managedData.adoptionRefresh')}
+      disabled={props.busy} onPress={() => options.retry()} /> : null}
+  </>;
 }
 
 export type ManagedDataProvisionDraft = DeploymentEnvironmentCopyProvisionV1;

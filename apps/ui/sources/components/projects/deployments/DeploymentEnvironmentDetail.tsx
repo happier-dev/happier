@@ -1289,6 +1289,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               projectSourceId={detail.environment.projectSourceId}
               providerTargetLinkId={runtime?.source.kind === 'plugin' ? runtime.id : null}
               providerVariablesActive={props.demand.mounted && props.demand.visible && props.demand.focused}
+              railwayDatabase={props.platformLink ? { detail, inspect: props.platformLink.inspectPlatformTarget } : undefined}
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}

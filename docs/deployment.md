@@ -980,6 +980,28 @@ and reuses the Workflow identified by its qualified Action, Home and template.
 Disabling new previews leaves both sources enabled for retained-preview cleanup
 and status publication; removing the template configuration does not disarm them.
 
+## Railway managed databases (unreleased 0.3)
+
+Choose a Railway project and environment with the Railway Connected Account,
+then create a PostgreSQL or MySQL template service. Railway returns a workflow
+ID. Inspect the exact service and confirm the link to the Happier Environment
+after creation. If the create outcome is uncertain, check the Railway
+environment before trying again. You can link a service you confirm there.
+
+For a Railway app in the same project and environment, the Variables flow adds
+a private service reference using the linked database. Review the variable
+name and any replacement before saving. Apply the app's Railway changes to
+use the new value.
+
+Workbench can list the linked database. Reads remain unavailable until
+Workbench supports binding a limited Railway database login. For writes, bind
+a separately reviewed login and an address the controller Machine can reach,
+such as a Railway TCP proxy. Removing an adopted Link defaults
+to unlinking. Explicit service deletion targets the selected Railway
+environment. Review the service's volume separately in Railway.
+[Railway database reference](https://docs.railway.com/databases/reference) ·
+[Railway TCP proxy](https://docs.railway.com/networking/tcp-proxy)
+
 ## Database operations (0.3 development)
 
 UI and agent SQL use the semantic `database.statement.run` Action. A selected
@@ -2871,8 +2893,9 @@ capabilities, with omitted groups/leaves unsupported. Both normalized arms reuse
 the Protocol role factories rather than maintaining a second grammar. A data
 target's optional `dataV1.database.engineId` associates it with a database engine.
 This development-source metadata is neither an Action reference nor an invocation
-or credential grant. Neon and Supabase declare `postgresql`; selected-target
-resolution still owns transport selection and custody.
+or credential grant. Neon and Supabase declare `postgresql`. Railway declares
+separate `postgresql` and `mysql` targets. Selected-target resolution owns
+transport selection and custody.
 The parent branch reference is one strict provider-project/branch native-id pair,
 not a branch name or authority grant. Own-server execution admission reads this same
 catalog. A plugin's local target id cannot select the host target. This is

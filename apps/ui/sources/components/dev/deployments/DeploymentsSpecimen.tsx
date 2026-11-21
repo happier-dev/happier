@@ -41,6 +41,10 @@ const RAILWAY_LINK = {
   },
   sourceMethod: 'gitIntegration',
 } as const;
+const RAILWAY_DATA_TARGET = { pluginId: 'happier.deploy.railway-data', localId: 'postgresql' };
+const RAILWAY_DATA_LINK_ID = 'railway-orders';
+const RAILWAY_DATA_SELECTION = { ...RAILWAY_LINK.providerEnvironment.selection, serviceId: 'orders-service' };
+const railwayTabs = (tabs: string | undefined) => tabs === 'railway-domains' || tabs === 'railway-database';
 const SPECIMEN_COLLECTOR_ID = 'machine-collector';
 const HOUR = 3_600_000;
 const SPECIMEN_NOW = Date.now();
@@ -332,6 +336,7 @@ const SPECIMEN_DOMAINS = [
  * `?tabs=` decides what the Domains, Checks & alerts, Backups and Previews reads answer: `populated` (default),
  * `empty`, `loading`, `error`, `denied`, `paged` (Domains continue to a second page), `notNeeded` (backups) and
  * `team` (a Team Environment) or `railway-domains` (Railway staging with its addresses, receipt and variables).
+ * `railway-database` also links a database to the same Railway environment.
  */
 function tabFixtures(tabs: string, environmentId: string) {
   const never = new Promise<never>(() => {});
@@ -348,7 +353,7 @@ function tabFixtures(tabs: string, environmentId: string) {
     if (tabs === 'error') return { ok: false, failure: { code: 'deployment_unavailable', retryable: true } };
     if (tabs === 'denied') return { ok: false, failure: { code: 'deployment_access_denied', retryable: false } };
     if (tabs === 'empty') return { ok: true, value: { items: [], nextCursor: null } };
-    if (tabs === 'railway-domains') {
+    if (railwayTabs(tabs)) {
       const fixture = domainItem(SPECIMEN_DOMAINS[0]!);
       return { ok: true, value: { items: [
         { ...fixture, title: 'store-staging.up.railway.app', domain: { ...fixture.domain, provider: true },
@@ -461,7 +466,7 @@ function transportFor(
   telemetry?: string,
 ): DeploymentReadTransportV1 {
   const base = createDeploymentEnvironmentDetailV1();
-  const railway = tabs === 'railway-domains';
+  const railway = railwayTabs(tabs);
   const baseHeader = createDeploymentEnvironmentHeaderV1({
     updatedAtMs: SPECIMEN_NOW - 0.4 * HOUR,
   });
@@ -493,6 +498,23 @@ function transportFor(
       targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a',
     } })) } : {}),
   });
+  const stagingWithData = tabs === 'railway-database' ? {
+    ...staging,
+    targetLinks: [...staging.targetLinks, {
+      targetLink: createDeploymentTargetLinkHeaderV1({ id: RAILWAY_DATA_LINK_ID, environmentId: staging.environment.id,
+        role: 'data', targetKind: 'railway-postgresql', machines: [], members: [],
+        source: { kind: 'plugin', contribution: RAILWAY_DATA_TARGET } }),
+      content: {
+        providerIdentity: { providerAccountId: RAILWAY_DATA_SELECTION.projectId, providerResourceId: RAILWAY_DATA_SELECTION.serviceId,
+          providerEnvironment: RAILWAY_DATA_SELECTION.environmentId },
+        providerEnvironment: { kind: 'native' as const, selection: RAILWAY_DATA_SELECTION },
+        credentialPrincipal: { ...RAILWAY_LINK.credentialPrincipal,
+          purpose: { consumer: { pluginId: RAILWAY_DATA_TARGET.pluginId, localId: 'postgresql-link' }, purpose: 'cloud-api' } },
+        data: { engine: 'postgresql', providerConsole: { label: 'Railway',
+          url: 'https://railway.com/project/shop-project/service/orders-service?environmentId=shop-staging' } },
+      },
+    }],
+  } : staging;
   const production = createDeploymentEnvironmentDetailV1({
     content: { ...base.content, name: 'Production API' },
     environment: createDeploymentEnvironmentHeaderV1({
@@ -536,7 +558,7 @@ function transportFor(
                     ? []
                     : [
                         {
-                          environment: onMachine(staging.environment, machineId),
+                          environment: onMachine(stagingWithData.environment, machineId),
                           title: 'Staging',
                           currentDeployment: {
                             ...receipts[0]!.deployment,
@@ -555,7 +577,7 @@ function transportFor(
     readEnvironment: async (_scope, environmentId) => ({
       ok: true,
       value: onMachine(environmentId === production.environment.id ? production
-        : preview ? withSpecimenPreview(staging, preview) : staging, machineId),
+        : preview ? withSpecimenPreview(stagingWithData, preview) : stagingWithData, machineId),
     }),
     listHistory: async () => ({
       ok: true,
@@ -632,7 +654,8 @@ function specimenRestore(restore: string) {
  * `offline`, `started` (accepted, the rail shows it) or `conflict`. A held review is not drawn here: it opens
  * the real approval page, which only a real request has.
  */
-function specimenActions(deploy: string, restore: string | undefined, railway: boolean) {
+function specimenActions(deploy: string, restore: string | undefined, tabs: string | undefined) {
+  const railway = railwayTabs(tabs);
   const refusal = (error: string) => ({ ok: false as const, error } as never);
   const unsupported = async () => {
     await pause();
@@ -642,7 +665,11 @@ function specimenActions(deploy: string, restore: string | undefined, railway: b
     restore: restore ? specimenRestore(restore) : unsupported,
     restart: unsupported,
     link: unsupported,
-    inspectPlatformTarget: unsupported,
+    inspectPlatformTarget: async (_actionId: string, input: Record<string, unknown>) => {
+      if (tabs !== 'railway-database' || input.targetLinkId !== RAILWAY_DATA_LINK_ID) return unsupported();
+      await pause();
+      return { ok: true as const, value: { reference: '${{Orders.DATABASE_URL}}' } };
+    },
     addDomain: unsupported,
     removeDomain: unsupported,
     verifyDomain: unsupported,
@@ -724,6 +751,9 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
     running: false, hasRetainedAssociations: true, canRemove: true,
     providerResource: { name: 'acme-auth', consequence: 'Delete the recorded Supabase project and all of its data',
       defaultChoice: 'unlink' , role: 'data' } },
+  'railway-database': { subject: { kind: 'target', targetLinkId: RAILWAY_DATA_LINK_ID }, name: 'Staging', machine: null,
+    provider: 'Railway PostgreSQL', running: false, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'Orders', consequence: 'Delete the selected Railway database service?', defaultChoice: 'unlink', role: 'data' } },
   machine: { subject: { kind: 'target', targetLinkId: 'link-machine' }, name: 'Production', machine: 'vps-fra-1',
     running: true, services: ['web', 'worker', 'postgres'], hasRetainedAssociations: true, canRemove: true },
 };
@@ -757,9 +787,9 @@ export function DeploymentsSpecimen(
     return (match ?? [...named].sort((a, b) => b.name.length - a.name.length)[0])?.id ?? null;
   });
   const preview = React.useMemo(() => createSpecimenPreview(props.preview), [props.preview]);
-  const railway = props.tabs === 'railway-domains';
-  const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore, railway),
-    ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, preview, railway]);
+  const railway = railwayTabs(props.tabs);
+  const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore, props.tabs),
+    ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, props.tabs, preview]);
   // Preview and platform specimens use the signed-in Account's installed deployment-target declarations.
   const { binding } = useServerCredentialAccountScopeBinding(preview || railway ? getActiveServerId() : null);
   const cancellable = props.cancellable === 'true' ? true : props.cancellable === 'false' ? false : undefined;

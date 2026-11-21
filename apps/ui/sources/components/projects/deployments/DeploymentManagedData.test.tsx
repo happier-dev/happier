@@ -326,6 +326,111 @@ it('reviews native creation options, retains an ambiguous create and continues t
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });
 
+it('hands a creation workflow to explicit service selection before confirming its Link', async () => {
+  const pluginId = 'com.example.workflow-database';
+  const service = { pluginId: 'com.example.workflow-account', localId: 'account' };
+  const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
+  const string = { type: 'string', minLength: 1 } as const;
+  const scope = { workspaceId: 'workspace-id', projectId: 'project-id', railwayEnvironmentId: 'preview-id' };
+  const scopeFields = [
+    { path: 'workspaceId', title: 'Workspace', widget: 'text', required: true },
+    { path: 'projectId', title: 'Project', widget: 'text', required: true },
+    { path: 'railwayEnvironmentId', title: 'Environment', widget: 'text', required: true },
+  ] as const;
+  const scopeProperties = { workspaceId: string, projectId: string, railwayEnvironmentId: string };
+  const choices = [{ value: 'database-old', label: 'Orders · database-old' }, { value: 'database-new', label: 'Orders · database-new' }];
+  const operands = (role: 'projects.link' | 'projects.provision') => {
+    const base = roleSchema(role);
+    return { ...base, properties: { ...base.properties, ...scopeProperties, ...(role === 'projects.link' ? { serviceId: string } : {}) },
+      required: [...base.required ?? [], ...Object.keys(scopeProperties), ...(role === 'projects.link' ? ['serviceId'] : [])] };
+  };
+  const common = { execution, surfaces: ['ui'] as const, hostAccess: ['manage'],
+    connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }] };
+  const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Workflow database',
+    hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts', reason: 'Manage a database',
+      scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
+    actions: {
+      create: { ...common, title: 'Create', dangerLevel: 'writesRemote', readOnly: false, confirmation: { title: 'Create database?' },
+        inputHints: { fields: scopeFields }, inputSchema: operands('projects.provision'),
+        resultSchema: { ...closed, properties: { ...scopeProperties, status: string, workflowId: string } }, run: async () => ({}) },
+      inspect: { ...common, title: 'Inspect service', dangerLevel: 'safe', readOnly: true,
+        inputHints: { fields: [...scopeFields, { path: 'serviceId', title: 'Database service', widget: 'select', required: true, options: choices }] },
+        inputSchema: operands('projects.link'), resultSchema: { ...closed, properties: {
+          providerIdentity: preparation.providerIdentity!, providerEnvironment: preparation.providerEnvironment!, engine: string,
+        } }, run: async () => ({}) },
+    }, deploymentTargets: { database: { role: 'data', title: 'Workflow database', targetKind: 'database', icon: 'server-outline',
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { projects: { provision: 'create', link: 'inspect' } } } } });
+  const serverId = await homes.addHome({ name: 'Managed workflow', serverUrl: 'https://managed-workflow.test',
+    serverIdentityId: 'srv_managed_workflow', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
+  const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+  storage.setState({ profileScope: account.accountLifetime.scope,
+    profile: { ...storage.getState().profile, connectedAccountsV4: [connectedProfile(service, 'management-token', scope.workspaceId)] } });
+  const calls: unknown[] = [];
+  const links: unknown[] = [];
+  const providerIdentity = { providerAccountId: scope.workspaceId, providerResourceId: `${scope.projectId}/database-new`, providerEnvironment: scope.railwayEnvironmentId };
+  const providerEnvironment = { kind: 'native', selection: {} };
+  homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+    environment: detail.environment, targetLinks: [] } });
+  await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+    actionId: 'deployments.targets.link', tokenEpoch: 0, deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+    execute: input => {
+      links.push(input);
+      return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+        targetLinkId: 'data-link', targetLinkRevision: 1 };
+    } });
+  await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+    actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
+      const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
+      calls.push({ action: invocation.action.localId, input: invocation.input });
+      if (invocation.action.localId === 'create') return { status: 'adoption_required', workflowId: 'workflow-123', ...scope };
+      return { engine: 'postgresql', providerIdentity, providerEnvironment };
+    } });
+  const onClose = vi.fn();
+  const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} lifetime={account.accountLifetime}
+    actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={onClose} />);
+  try {
+    const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+    const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+    const field = (path: string) => screen.findAllByType(ActionInputFields).find(node => node.props.fields[0]?.path === path);
+    const run = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'managed-data.run');
+    const link = () => screen.findAllByType(RoundButton).find(node => node.props.testID === 'managed-data.link');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(run()).toBeDefined(); });
+    await act(async () => screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account: { service, accountId: 'management-token' } }));
+    for (const [path, value] of Object.entries(scope)) await act(async () => field(path)!.props.onPatch({ [path]: value }));
+    expect(run()!.props.disabled).toBe(false);
+    await act(async () => run()!.props.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {});
+      expect(calls).toEqual([expect.objectContaining({ action: 'create', input: expect.objectContaining(scope) })]);
+      expect(run()!.props.loading).toBe(false);
+    });
+    expect(links).toEqual([]);
+    expect(link()).toBeUndefined();
+    expect(screen.getTextContent()).toContain('workflow-123');
+    expect(screen.findByTestId('managed-data.adoption')).not.toBeNull();
+    expect(field('projectId')).toBeUndefined();
+    expect(field('railwayEnvironmentId')).toBeUndefined();
+    expect(field('serviceId')!.props.input.serviceId).toBeUndefined();
+    expect(field('serviceId')!.props.resolveFieldOptions(field('serviceId')!.props.fields[0])).toEqual(choices);
+    expect(run()!.props.disabled).toBe(true);
+    await act(async () => field('serviceId')!.props.onPatch({ serviceId: 'database-new' }));
+    await act(async () => run()!.props.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(link()).toBeDefined(); });
+    expect(calls).toEqual([
+      expect.objectContaining({ action: 'create', input: expect.objectContaining(scope) }),
+      expect.objectContaining({ action: 'inspect', input: expect.objectContaining({ ...scope, serviceId: 'database-new' }) }),
+    ]);
+    expect(links).toEqual([]);
+    expect(screen.getTextContent()).toContain('database-new');
+    await act(async () => link()!.props.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(onClose).toHaveBeenCalledOnce(); });
+    expect(links).toEqual([expect.objectContaining({ environmentId: detail.environment.id, role: 'data',
+      provider: expect.objectContaining({ providerIdentity, providerEnvironment }) })]);
+  } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
+});
+
 it('pages native branches and creates from a linked target with recorded custody and host request identity', async () => {
   const pluginId = 'com.example.managed-branches';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;

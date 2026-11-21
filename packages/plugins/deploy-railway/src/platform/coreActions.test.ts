@@ -140,16 +140,18 @@ it('leaves a lost deletion reply unknown and observes the selected instance with
   expect(requests[1]?.variables).toMatchObject({ projectId: coordinates.projectId, environmentId: coordinates.environmentId });
 }));
 
-it('leaves service removal uncertain after one incomplete Environment inventory read', () => withVendor(request => {
+it('leaves service removal uncertain when a later Environment inventory page contains the service', () => withVendor(request => {
   if (request.query.includes('serviceDelete')) return { data: { serviceDelete: false } };
   return { data: { environment: { id: coordinates.environmentId, projectId: coordinates.projectId,
-    serviceInstances: { edges: [{ node: { serviceId: 'other-service', serviceName: 'Other', deletedAt: null } }],
+    serviceInstances: { edges: [{ node: { serviceId: request.variables.after === null ? 'other-service' : coordinates.serviceId, serviceName: 'Service', deletedAt: null } }],
       pageInfo: { hasNextPage: request.variables.after === null, endCursor: 'next-page' } } } } };
 }, async (kit, requests) => {
   await expect(kit.invokeAction('teardown', { ...lifecycle, operation: 'teardown' }))
     .rejects.toMatchObject({ code: 'outcome_unknown' });
-  expect(requests).toHaveLength(2);
-  expect(requests[1]?.variables).toEqual({ projectId: coordinates.projectId, environmentId: coordinates.environmentId, after: null });
+  expect(requests).toHaveLength(3);
+  expect(requests.slice(1).map(request => request.variables)).toEqual([null, 'next-page'].map(after => ({
+    projectId: coordinates.projectId, environmentId: coordinates.environmentId, after,
+  })));
 }));
 
 it('creates the Git-connected service in one mutation using the selected branch', () => withVendor(() => ({

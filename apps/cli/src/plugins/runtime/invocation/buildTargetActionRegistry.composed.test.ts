@@ -12,7 +12,7 @@ import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/c
 import { registerAccountArtifactRoutes, registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
@@ -103,13 +103,20 @@ import { managedDataQueryPostgresAvailable, managedQueryEndpoint, managedQueryPr
     managedQueryRolePassword, startManagedQueryPostgres } from './managedDataQueryPostgresql.testkit';
 import * as supabaseEntry from '../../../../../../packages/plugins/deployment-supabase/src/index.js';
 import * as neonEntry from '../../../../../../packages/plugins/deployment-neon/src/index.js';
+import * as railwayDataEntry from '../../../../../../packages/plugins/deployment-railway/src/index.js';
+import { PLUGIN_MANIFEST as RAILWAY_ACCOUNT_MANIFEST } from '../../../../../../packages/plugins/machine-railway/src/manifest.js';
+import { listDeploymentTargetsFromManifestsV1 } from '@happier-dev/deployments';
 import { plugin as databaseWorkbench } from '../../../../../../packages/plugins/database-workbench/src/manifest.js';
 import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { type DatabaseValueV1 } from '@happier-dev/plugin-sdk/database';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { createDeploymentDatabasesInvocationServicesForHost } from '@/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
-import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentTargetLinkInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import * as vercelEntry from '../../../../../../packages/plugins/deploy-vercel/src/index.js';
 import * as cloudflareEntry from '../../../../../../packages/plugins/deploy-cloudflare/src/index.js';
 import { PLUGIN_MANIFEST as VERCEL_ACCOUNT_MANIFEST } from '../../../../../../packages/plugins/machine-vercel/src/manifest.js';
@@ -1430,7 +1437,7 @@ describe('buildTargetActionInvocationRegistry', () => {
                     purpose: { consumer: { pluginId, localId: 'projects-link' }, purpose: 'deploy-manage' },
                     target: { kind: 'account' as const, account } };
                 const providerIdentity = { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'preview-ref' };
-                const providerEnvironment = { kind: 'custom' as const, id: 'preview-ref' };
+                const providerEnvironment = { kind: 'native' as const, selection: { branchId: 'preview-ref' } };
                 const selected = stored.state.environment.targetLinks[0]!;
                 selected.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: 'database' } };
                 selected.targetLink.targetKind = provider === 'Neon' ? 'neon' : 'supabase';
@@ -1500,7 +1507,7 @@ describe('buildTargetActionInvocationRegistry', () => {
                         sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'immutable-alpha', installSource: 'archive' as const } } } : {}) });
                 if (variant === 'owner' || variant === 'mutation') {
                     expect(result, JSON.stringify(result)).toMatchObject({ status: 'executed', value: variant === 'mutation'
-                        ? { status: 'provisioned', branchId: 'branch-native', providerEnvironment: { kind: 'custom', id: 'preview-ref' } }
+                        ? { status: 'provisioned', branchId: 'branch-native', providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } } }
                         : { branches: [{ branchId: 'branch-native', ...(provider === 'Neon'
                             ? { providerProjectId: 'parent-ref' } : { projectRef: 'preview-ref' }) }] } });
                     expect(requests).toEqual([provider === 'Neon' ? 'https://console.neon.tech/api/v2/projects/parent-ref/branches'
@@ -1563,6 +1570,281 @@ describe('buildTargetActionInvocationRegistry', () => {
                 target?.dispose(); await kit.dispose();
             }
         });
+    it('offers Railway databases beside Neon and Supabase in the shared managed data catalog', () => {
+        const targets = listDeploymentTargetsFromManifestsV1([
+            { manifest: neonEntry.manifest }, { manifest: supabaseEntry.manifest }, { manifest: railwayDataEntry.manifest },
+        ]);
+        const data = targets.flatMap(target => target.role === 'data' ? [target.targetKind] : []);
+        expect(data.sort()).toEqual(['neon', 'railway-mysql', 'railway-postgresql', 'supabase']);
+    });
+
+    it('composes Railway template creation and exact service adoption through the managed data host', async () => {
+        const pluginManifest = normalizePluginManifestV2(railwayDataEntry.manifest);
+        const accountManifest = normalizePluginManifestV2(RAILWAY_ACCOUNT_MANIFEST);
+        const pluginId = pluginManifest.id;
+        const descriptor = accountManifest.contributes.connectedAccountDescriptors.find(entry => entry.id === 'railway-account');
+        if (!descriptor) throw new Error('Expected the contributed Railway Account');
+        const service = { pluginId: accountManifest.id, localId: descriptor.id };
+        const account = { service, accountId: 'selected-account' };
+        const revision = 'csr_abcdefghijklmnopqrstuv';
+        const token = 'fixture-railway-provider-credential';
+        const vendorPrivateValue = 'fixture-private-railway-response';
+        const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, status: 'connected',
+            authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: revision,
+            configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null,
+            displayName: 'Railway Account', scopes: [] });
+        const unsupported = async (): Promise<never> => { throw new Error('The managed data journey never authors a credential'); };
+        const stored = createDeploymentTargetRoleAdmissionFixture('projects.link');
+        stored.state.environment.targetLinks.length = 0;
+        delete stored.state.environment.environment.runtimeTargetLinkId;
+        const principalAccountId = stored.host.credentialOwnerAccountId;
+        let acquisitions = 0;
+        const owner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: principalAccountId,
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unsupported, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unsupported,
+            resolveTarget: createPurposeTargetResolver({ available: true,
+                resolveService: async () => ({ service, authentication: descriptor.authentication }), listAccounts: async () => [profile] }),
+            resolveCredentialRevision: async () => revision,
+            materializeAccount: async ({ request, credentialRevisionBasis }) => {
+                acquisitions++;
+                credentialRevisionBasis?.captureCredentialRevision(revision);
+                if (request.kind === 'environment') return { kind: 'environment' as const, env: {} };
+                return { kind: 'httpHeaders' as const, headers: { authorization: `Bearer ${token}` } };
+            }, projectTargetAccounts: unsupported, assertTargetAccountMaterializable: unsupported,
+        });
+        const projectId = 'project-one';
+        const workspaceId = 'workspace-one';
+        const railwayEnvironmentId = 'production';
+        const serviceId = 'database-one';
+        const otherServiceId = 'database-two';
+        const template = { id: 'template-pg', serializedConfig: vendorPrivateValue };
+        const project = { id: projectId, workspaceId };
+        const environment = { id: railwayEnvironmentId, projectId };
+        const instance = { serviceId, serviceName: 'Database', environmentId: railwayEnvironmentId, deletedAt: null,
+            service: { templateId: template.id, projectId, project: { workspaceId } } };
+        const requests: { query: string; variables: unknown }[] = [];
+        const optionFailures: { field: unknown; code: string }[] = [];
+        const providerChoice = (id: string, name: string) => ({
+            edges: [{ node: { id, name } }], pageInfo: { hasNextPage: false, endCursor: null },
+        });
+        let inspectedEnvironment = railwayEnvironmentId;
+        let approvedIntentCount = 0;
+        const logs: PluginInvocationLogRecord[] = [];
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write(entry) { logs.push(entry); } },
+            connectedAccounts: owner,
+            http: createStablePluginHttpHost({
+                purposeHost: createConnectedAccountPluginHttpPurposeHost(owner, { registerRawForRedaction() {} }),
+                adapter: {
+                    async request(request) {
+                        expect(request.method).toBe('POST');
+                        expect(request.headers?.authorization === `Bearer ${token}`).toBe(true);
+                        const body = JSON.parse(new TextDecoder().decode(request.body)) as { query: string; variables: unknown };
+                        requests.push(body);
+                        let data: unknown;
+                        if (body.query.includes('templateDeployV2(')) {
+                            expect(approvedIntentCount).toBe(1);
+                            data = { templateDeployV2: { projectId, workflowId: 'workflow-one' } };
+                        } else if (body.query.includes('serviceInstances(')) {
+                            const matching = [otherServiceId, serviceId].map(id => ({ serviceId: id, serviceName: 'Database',
+                                deletedAt: null, service: { templateId: template.id } }));
+                            data = { template: { id: template.id }, environment: { ...environment, serviceInstances: {
+                                edges: [...matching, { serviceId: 'custom-service', serviceName: 'Database', deletedAt: null,
+                                    service: { templateId: null } }].map(node => ({ node })),
+                                pageInfo: { hasNextPage: false, endCursor: null },
+                            } } };
+                        } else if (body.query.includes('serviceInstance(')) {
+                            data = { template: { id: template.id }, serviceInstance: { ...instance, environmentId: inspectedEnvironment } };
+                        } else if (body.query.includes('serializedConfig')) {
+                            data = { template, project, environment };
+                        } else if (body.query.includes('externalWorkspaces')) {
+                            data = { externalWorkspaces: [] };
+                        } else if (body.query.includes('me { workspaces')) {
+                            data = { me: { workspaces: [{ id: workspaceId, name: 'Workspace' }] } };
+                        } else if (body.query.includes('projects(')) {
+                            data = { projects: providerChoice(projectId, 'Project') };
+                        } else if (body.query.includes('environments(')) {
+                            data = { project: { environments: providerChoice(railwayEnvironmentId, 'Production') } };
+                        } else {
+                            throw new Error('Unexpected Railway GraphQL request');
+                        }
+                        return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data })) };
+                    },
+                    async openWebSocket() { throw new Error('No WebSocket requested'); },
+                },
+            }),
+        });
+        const kit = await createPluginTestkit({ manifest: railwayDataEntry.manifest, module: railwayDataEntry });
+        const home = fastify();
+        let restoreHomeHttp: (() => void) | undefined;
+        let target: ReturnType<typeof buildRegistry> | undefined;
+        let resourceOwner: Awaited<ReturnType<typeof createStablePluginResourcesOwner>> | undefined;
+        const resourceLifetime = new AbortController();
+        try {
+            const contributes = registry({ pluginManifest, referenceManifests: [accountManifest] });
+            const dataTarget = listDeploymentTargetsFromManifestsV1([{ manifest: railwayDataEntry.manifest }])
+                .find(entry => entry.targetKind === 'railway-postgresql');
+            if (dataTarget?.role !== 'data') throw new Error('Expected the admitted PostgreSQL target');
+            const projectActions = dataTarget.dataV1?.projects;
+            const localAction = (ref: NonNullable<typeof projectActions>['provision']) => {
+                const action = ref?.kind === 'plugin' ? parseQualifiedPluginActionId(ref.actionId) : null;
+                if (!action || action.pluginId !== pluginId) throw new Error('Expected a Railway data role Action');
+                return action.localId;
+            };
+            const provision = localAction(projectActions?.provision);
+            const list = localAction(projectActions?.listAction);
+            const link = localAction(projectActions?.link);
+            const actions = pluginManifest.contributes.actions.map(({ id }) => ({ family: 'actions' as const, localId: id }));
+            const readUiResource: NonNullable<ResolvedExecutablePluginRuntimeRegistry['readUiResource']> = async request => {
+                if (!resourceOwner) throw new Error('Expected an active Railway Resource owner');
+                const resources = await resourceOwner.bindForResource({ pluginId: request.callerPluginId,
+                    resourceId: request.resourceId, query: request.query, signal: request.signal ?? resourceLifetime.signal,
+                    isOccurrenceCurrent: () => true, ...(request.context ? { context: request.context } : {}) });
+                return resources.read(request.resourceId, { signal: request.signal });
+            };
+            target = buildRegistry({ ...owners, contributes, executionRealm: 'account', actionFormConnectedAccounts: owner,
+                readRuntimeRegistry: () => ({ contributes, readUiResource }),
+                readDeploymentTargetRoleAdmissionHost: async () => stored.host,
+                targetActivationFacts: [fact({ pluginId, pluginVersion: pluginManifest.version, required: actions, bound: actions })],
+                targetRegistrations: actions.map(action => {
+                    const value = kit.registration('actions', action.localId);
+                    if (!value) throw new Error(`Actual Railway data Action did not activate: ${action.localId}`);
+                    return { pluginId, occurrenceId: '7', registration: { ...action, value } };
+                }),
+            });
+            const admittedTarget = target;
+            const dynamicResources = contributes.resources.filter(resource => isDynamicPluginResourceContributionV2(resource.definition));
+            resourceOwner = await createStablePluginResourcesOwner({ registry: { resources: dynamicResources }, generations: new Map(),
+                dynamicOccurrenceIdsByPluginId: new Map([[pluginId, '7']]),
+                dynamicProducers: dynamicResources.map(resource => {
+                    const runtime = kit.registration('resources', resource.definition.id);
+                    if (!runtime) throw new Error('Railway database Resource did not activate');
+                    return { pluginId, localId: resource.definition.id, runtime, prepareRuntime: async () => {} };
+                }),
+                bindDynamicResourceActions: binding => createDynamicResourceActionBinding({ binding,
+                    readCaller: () => ({ kind: 'plugin', pluginId, occurrenceId: binding.occurrenceId,
+                        contribution: { id: binding.resourceId, qualifiedId: `${pluginId}/resources/${binding.resourceId}` },
+                        sourceCustody: { kind: 'managed', immutableGenerationId: 'immutable-alpha', installSource: 'archive' } }),
+                    invoke: async ({ action, ...invocation }) => {
+                        const result = await admittedTarget.invoke({ ...invocation, pluginId: action.pluginId, localId: action.localId });
+                        if (result.status === 'deferred') throw new Error('Read-only Resource Actions must settle without deferred approval');
+                        if (result.status !== 'executed') {
+                            const field = invocation.input && typeof invocation.input === 'object'
+                                ? Reflect.get(invocation.input, 'fieldPath') : undefined;
+                            optionFailures.push({ field, code: result.code });
+                        }
+                        return result;
+                    },
+                }),
+            });
+            await resourceOwner.preparePlugin(pluginId);
+            const credentialPrincipal = (localId: string, accountId = principalAccountId) => ({ kind: 'account' as const,
+                accountId, purpose: { consumer: { pluginId, localId }, purpose: 'cloud-api' },
+                target: { kind: 'account' as const, account } });
+            const invoke = (localId: string, operands: Record<string, string>, accountId = principalAccountId) => admittedTarget.invoke({
+                pluginId, localId, surface: 'cli', input: { v: 1, serverId: 'home', environmentId: stored.input.environmentId,
+                    expectedRevision: stored.input.expectedRevision, credentialRef: account,
+                    credentialPrincipal: credentialPrincipal(localId, accountId),
+                    providerEnvironment: { kind: 'native', selection: {} }, providerAccountId: workspaceId,
+                    workspaceId, projectId, railwayEnvironmentId, ...operands },
+                requestCurrentIntent: async ({ fingerprint }) => {
+                    approvedIntentCount++;
+                    return { status: 'approved', fingerprint };
+                },
+            });
+            const provisioned = await invoke(provision, {});
+            expect(provisioned.status, 'code' in provisioned ? JSON.stringify({ code: provisioned.code,
+                handlerInvocation: provisioned.actionHandlerInvocation, vendorRequests: requests.length, acquisitions, optionFailures }) : undefined).toBe('executed');
+            if (provisioned.status !== 'executed') throw new Error('Expected the actual Railway workflow receipt');
+            expect(provisioned.value).toEqual({ status: 'adoption_required', workflowId: 'workflow-one', workspaceId, projectId, railwayEnvironmentId });
+            expect(requests).toHaveLength(6);
+            const mutations = requests.filter(({ query }) => query.includes('mutation'));
+            expect(mutations).toHaveLength(1);
+            expect(mutations[0]?.variables).toEqual({ input: { templateId: template.id, serializedConfig: template.serializedConfig,
+                workspaceId, projectId, environmentId: railwayEnvironmentId } });
+
+            expect(await invoke(list, {})).toMatchObject({
+                status: 'executed', value: { databases: [{ id: otherServiceId, name: 'Database' }, { id: serviceId, name: 'Database' }] },
+            });
+            expect(requests).toHaveLength(11);
+            const adopted = await invoke(link, { serviceId });
+            expect(adopted).toMatchObject({ status: 'executed', value: {
+                engine: 'postgresql',
+                providerIdentity: { providerAccountId: projectId, providerResourceId: serviceId, providerEnvironment: railwayEnvironmentId },
+                providerEnvironment: { kind: 'native', selection: { projectId, environmentId: railwayEnvironmentId, serviceId } },
+            } });
+            expect(requests).toHaveLength(17);
+            expect(requests.at(-1)?.variables).toMatchObject({ serviceId, environmentId: railwayEnvironmentId });
+            const acquiredBeforeForeign = acquisitions;
+            expect(await invoke(link, { serviceId }, 'foreign-owner'))
+                .toMatchObject({ status: 'failed', code: 'deployment_access_denied' });
+            expect(requests).toHaveLength(17);
+            expect(acquisitions).toBe(acquiredBeforeForeign);
+            inspectedEnvironment = 'other-environment';
+            const adjacent = await invoke(link, { serviceId });
+            expect(adjacent).toMatchObject({ status: 'failed', code: 'target_mismatch' });
+            expect(requests).toHaveLength(23);
+            expect(JSON.stringify([provisioned, adopted, adjacent]).includes(token)).toBe(false);
+            expect(JSON.stringify([provisioned, adopted, adjacent]).includes(vendorPrivateValue)).toBe(false);
+
+            if (adopted.status !== 'executed' || !adopted.value || typeof adopted.value !== 'object'
+                || Array.isArray(adopted.value)) throw new Error('Expected inspected provider facts');
+            const provider = DeploymentTargetLinkProviderContentV1Schema.parse({
+                credentialPrincipal: credentialPrincipal(link),
+                providerIdentity: Reflect.get(adopted.value, 'providerIdentity'),
+                providerEnvironment: Reflect.get(adopted.value, 'providerEnvironment'),
+                data: { engine: Reflect.get(adopted.value, 'engine'), providerConsole: Reflect.get(adopted.value, 'providerConsole') },
+            });
+            const recordedEnvironment = stored.state.environment.environment;
+            registerAccountHomeHttp(home, { accountId: principalAccountId, serverId: stored.host.serverId });
+            const artifacts = registerAccountArtifactRoutes(home, principalAccountId, { encryptionMode: 'plain' });
+            home.get('/v1/deployments/environments/:environmentId', async () => ({
+                ok: true, environment: recordedEnvironment, targetLinks: [],
+            }));
+            home.post('/v1/deployments/targets/list', async () => ({ ok: true, items: [], nextCursor: null, coverage: 'complete' }));
+            const associations: ReturnType<typeof DeploymentTargetLinkInputV1Schema.parse>[] = [];
+            home.post('/v1/deployments/environments/:environmentId/targets', async request => {
+                const linked = DeploymentTargetLinkInputV1Schema.parse(request.body);
+                associations.push(linked);
+                return { ok: true, environmentId: recordedEnvironment.id, revision: 2, targetLinkId: 'railway-data-link', targetLinkRevision: 1 };
+            });
+            restoreHomeHttp = installAxiosFastifyAdapter({ app: home, origin: stored.host.serverHttpBaseUrl });
+            const host = createDaemonDeploymentActionDeps({ ...stored.host,
+                credentials: { token: `fixture.${Buffer.from(JSON.stringify({ sub: principalAccountId })).toString('base64url')}.signature`,
+                    encryption: null },
+                runtime: { async acquire() { throw new Error('Adoption must use the shared host Link writer'); } },
+            });
+            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...host });
+            const linked = await executor.execute(DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, {
+                serverId: stored.host.serverId, environmentId: recordedEnvironment.id, expectedRevision: recordedEnvironment.revision,
+                targetId: dataTarget.id, targetKind: dataTarget.targetKind, role: 'data', source: dataTarget.source, machines: [],
+                provider, requestKey: 'adopt-railway-template',
+            }, { surface: 'cli', authority: 'present_user', runtimeAccountId: principalAccountId,
+                serverId: stored.host.serverId, actionCaller: { kind: 'host' },
+                presentUserConfirmation: { actionId: DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } });
+            expect(linked).toMatchObject({ ok: true, result: { targetLinkId: 'railway-data-link' } });
+            expect(associations).toHaveLength(1);
+            const artifactId = associations[0]?.contentArtifactId;
+            if (!artifactId) throw new Error('Expected the host to associate a private Link Artifact');
+            const artifact = artifacts.read(artifactId);
+            const storedContent = artifact && decodePlainArtifactStoredContent(artifact.body);
+            if (!storedContent || typeof storedContent !== 'object' || !('body' in storedContent) || typeof storedContent.body !== 'string') {
+                throw new Error('Expected the Link carrier to retain provider facts');
+            }
+            expect(JSON.parse(storedContent.body)).toEqual(provider);
+            expect(requests).toHaveLength(23);
+            expect(approvedIntentCount).toBe(1);
+            expect(JSON.stringify(logs).includes(token)).toBe(false);
+            expect(JSON.stringify(logs).includes(vendorPrivateValue)).toBe(false);
+        } finally {
+            resourceLifetime.abort();
+            resourceOwner?.retirePlugin(pluginId);
+            restoreHomeHttp?.();
+            await home.close();
+            target?.dispose();
+            await kit.dispose();
+        }
+    });
+
     it.skipIf(!managedDataQueryPostgresAvailable)('composes the semantic Neon statement Action through real P42 role opening and a database-enforced role', async () => {
         const postgres = await startManagedQueryPostgres();
         console.info(`[managedDataQuery.postgresql] started owned PostgreSQL PID ${postgres.pid}`);

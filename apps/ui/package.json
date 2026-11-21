@@ -187,6 +187,7 @@
     "@happier-dev/plugins-deploy-railway": "0.0.0",
     "@happier-dev/plugins-deploy-vercel": "0.0.0",
     "@happier-dev/plugins-deployment-neon": "0.0.0",
+    "@happier-dev/plugins-deployment-railway": "0.0.0",
     "@happier-dev/plugins-deployment-supabase": "0.0.0",
     "@happier-dev/plugins-devcontainer": "0.0.0",
     "@happier-dev/plugins-devin": "0.0.0",

@@ -42,9 +42,18 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
 export type ManagedDataTarget = ReturnType<typeof managedDataTargets>[number];
 export type ManagedDataOperation = ManagedDataTarget['operations'][number];
 
+export function readManagedDataAdoptionReceipt(value: unknown) {
+  if (!isRecord(value) || value.status !== 'adoption_required') return null;
+  const { workflowId, workspaceId, projectId, railwayEnvironmentId } = value;
+  if (typeof workflowId !== 'string' || !workflowId || typeof projectId !== 'string' || !projectId
+    || typeof railwayEnvironmentId !== 'string' || !railwayEnvironmentId) return null;
+  return { workflowId, scope: { projectId, railwayEnvironmentId,
+    ...(typeof workspaceId === 'string' && workspaceId ? { workspaceId } : {}) } };
+}
+
 /** Only actual provider identities can be linked; ambiguous provision results remain recovery. */
 export function managedDataLinkContent(credentialPrincipal: unknown, value: unknown) {
-  if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable') return null;
+  if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable' || value.status === 'adoption_required') return null;
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse({ credentialPrincipal,
     providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment,
     ...(typeof value.engine === 'string' ? { data: { engine: value.engine,

@@ -209,7 +209,7 @@ async function observe(input: DeploymentTargetObserveInputV1, context: PluginAcc
 
 function removeServiceInstance(input: DeploymentTargetObserveInputV1, context: PluginAccountActionContext, observeOnly: boolean) {
   const { projectId, environmentId, serviceId } = readRailwayCoordinates(input);
-  const { deleteServiceInstance, readEnvironmentServicesPage } = createRailwayProjectOperations(railwayRequest(context), context.signal);
+  const { deleteServiceInstance, observeServiceAbsent } = createRailwayProjectOperations(railwayRequest(context), context.signal);
   return settleDeploymentTargetResourceRemovalV1({
     ...(observeOnly ? {} : { remove: async () => {
       try {
@@ -218,11 +218,7 @@ function removeServiceInstance(input: DeploymentTargetObserveInputV1, context: P
         return projectRailwayFailure(error, context, 'teardown.send', true);
       }
     } }),
-    observeAbsent: async () => {
-      // The exact GraphQL lookup is non-null. Only a complete scoped page can prove absence.
-      const { choices, nextCursor } = await readEnvironmentServicesPage(projectId, environmentId, null);
-      return nextCursor === null && !choices.some(service => service.id === serviceId);
-    },
+    observeAbsent: () => observeServiceAbsent({ projectId, environmentId, serviceId }),
     now: Date.now,
     providerDeploymentId: input.providerDeploymentId,
   });
