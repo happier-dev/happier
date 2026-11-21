@@ -8,7 +8,7 @@ await vi.hoisted(async () => {
   installDisconnectedServerSocketBoundary();
 });
 
-import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainProjectAccountRowListFixture, createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -109,6 +109,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
         return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
       }
       return schemas.ProjectSourcesCreateOutputV1Schema.parse(await respond('projects.sources.create', input));
+    },
+    linkCreatedProjectSource: async ({ checkout }) => {
+      shared.calls.push({ actionId: 'link-checkout', input: checkout });
+      return { status: 'linked', workspaceId: checkout.workspaceId };
     },
     projectSourcesDelete: async input => schemas.ProjectSourcesDeleteOutputV1Schema.parse(await respond('projects.sources.delete', input)),
     scmActionExecute: ({ actionId, input }) => respond(actionId, input),
@@ -576,6 +580,37 @@ describe('Projects › Sources', () => {
     );
   });
 
+  it('links the exact managed checkout through the Source creation Action', async () => {
+    signIn();
+    const checkout = {
+      v: 2, kind: 'managed', id: 'guest-checkout', serverId: 'server-1', rootPath: '/repo', createdAtMs: 1,
+      managedId: 'guest', controller: { machineId: 'm1', installationId: 'controller-installation' },
+    } as const;
+    const { useProjectsSourcesComposition } = await import('../useProjectsSourcesComposition');
+    const openedSourceIds = new Set<string>();
+    const composition = await renderHook(() => useProjectsSourcesComposition(openedSourceIds));
+    try {
+      await act(async () => {
+        const outcome = await composition.getCurrent().saveAsSource(checkout, {
+          name: 'billing', audience: [], repository: {
+            provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: 'acme/billing' },
+            protocol: 'https',
+          },
+        });
+        expect(outcome).toMatchObject({ kind: 'saved', source: { id: 'created' } });
+      });
+      expect(shared.calls.filter(({ actionId }) => actionId === 'link-checkout')).toEqual([{
+        actionId: 'link-checkout', input: {
+          v: 2, kind: 'managed', workspaceId: 'guest-checkout', serverId: 'server-1', rootPath: '/repo',
+          managedId: 'guest', controller: { machineId: 'm1', installationId: 'controller-installation' },
+        },
+      }]);
+    } finally {
+      await composition.unmount();
+    }
+  });
+
   it('recovers an unconfirmed create only after a complete inspection, retrying the same request', async () => {
     signIn();
     await publishAddressMachine();
@@ -724,13 +759,16 @@ describe('Projects › Sources', () => {
     await vi.waitFor(() => expect(select()!.props.selectedId).toBe('ref:develop'));
     expect(screen.findByTestId('projects.sources.detail.save')).toBeTruthy();
   });
-  it.each([{ foreign: true, bound: true }, { foreign: false, bound: true }, { foreign: true, bound: false }])
-  ('opens an independently admitted dashboard directly or through retained Source Open (%j)', async ({ foreign, bound }) => {
+  it.each([{ foreign: true, bound: true, managed: false }, { foreign: false, bound: true, managed: false },
+    { foreign: true, bound: false, managed: false }, { foreign: true, bound: true, managed: true }])
+  ('opens an independently admitted dashboard directly or through retained Source Open (%j)', async ({ foreign, bound, managed }) => {
     const releaseFirstRead = createDeferred<void>();
     const documentReads: AbortSignal[] = [];
-    const projectRows = createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'foreign-checkout',
-      serverId: 'srv_source_dashboards', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
-      projectKey: 'personal-project', ...(bound ? { source: { sourceId: 'foreign-source', revision: 1 } } : {}) }] });
+    const checkout = { id: 'foreign-checkout', serverId: 'srv_source_dashboards', rootPath: '/repo', createdAtMs: 1,
+      projectKey: 'personal-project', ...(bound ? { source: { sourceId: 'foreign-source', revision: 1 } } : {}),
+      ...(managed ? { kind: 'managed' as const, v: 2 as const, managedId: 'guest', controller: { machineId: 'machine', installationId: 'install' } }
+        : { machineId: 'machine' }) };
+    const projectRows = createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] });
     const homes = await serveAccountHomes({ homes: [
       { key: 'foreign', serverUrl: 'https://rf10-source-foreign.example', accountId: 'foreign-viewer' },
       { key: 'source', serverUrl: 'https://rf10-source-local.example', accountId: 'source-viewer', serverIdentityId: 'srv_source_dashboards' },
@@ -757,8 +795,7 @@ describe('Projects › Sources', () => {
     document.setGrants([{ principal: { kind: 'team', teamId: 'studio' }, accessLevel: 'view',
       createdByAccountId: 'dashboard-owner', createdAt: 1, display: { name: 'Studio' } }]);
     storage.setState({ projectAccountRows: createProjectAccountRowsFixture({ serverId, accountId: 'source-viewer' }, {
-      workspaceRefs: [{ id: 'foreign-checkout', serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
-        projectKey: 'personal-project', ...(bound ? { source: { sourceId: 'foreign-source', revision: 1 } } : {}) }],
+      workspaceRefs: [{ ...checkout, serverId }],
     }), artifacts: { [artifactId]: { id: artifactId, title: 'Local release', isDecrypted: true, access: 'edit',
       headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } } });
     shared.sources = [{ id: 'foreign-source', revision: 1, name: 'Repository', audience: [], createdByAccountId: 'source-owner',

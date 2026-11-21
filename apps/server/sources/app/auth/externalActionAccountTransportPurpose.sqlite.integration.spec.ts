@@ -14,6 +14,10 @@ import {
   encodePlainMachineStoredContent,
 } from '@happier-dev/protocol';
 import {
+  EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
   ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionRequestEnvelopeV1Schema,
   bindExternalActionExecutionAuthorizationHttpPathV1,
@@ -38,6 +42,9 @@ import {
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { mutateProjectAccountRows } from '@/app/projects/projectAccountRowService';
 
 // An installed Machine executes an admitted Account-placement root over that
 // Action's declared server transport. The signed proof must spend exactly that
@@ -60,6 +67,108 @@ afterAll(async () => {
 });
 
 describe('signed Account Action transport purpose', () => {
+  it('confines Source creation and checkout linking to the requester’s existing checkout row', async () => {
+    const homeId = await getOrCreateServerIdentityId();
+    const actionId = 'projects.sources.create';
+    const key = { kind: 'workspace-ref', serverId: homeId, id: crypto.randomUUID() } as const;
+    const otherKey = { ...key, id: crypto.randomUUID() };
+    const createRequester = async () => {
+      const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+      const signer = tweetnacl.sign.keyPair();
+      const machine = await db.machine.create({ data: {
+        id: crypto.randomUUID(), accountId: account.id,
+        metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
+          homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }), metadataVersion: 1,
+        dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), daemonState: null, daemonStateVersion: 0,
+        installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(signer.publicKey),
+      } });
+      return { account, machine, signer, token: await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' }) };
+    };
+    const owner = await createRequester();
+    const nonCustodian = await createRequester();
+    const workspace = { v: 2, kind: 'managed', id: key.id, serverId: homeId, managedId: 'guest',
+      controller: { machineId: owner.machine.id, installationId: owner.machine.installationId! }, rootPath: '/guest/repo', createdAtMs: 1 } as const;
+    const content = { t: 'plain', v: { key, value: workspace } } as const;
+    const graph = { kind: 'relationship-graph' } as const;
+    const seeded = await mutateProjectAccountRows({ accountId: owner.account.id,
+      request: { mutations: [{ key, expectedRevision: 'absent', content }, { key: graph, expectedRevision: 'absent',
+        content: { t: 'plain', v: { key: graph, value: { relationships: [] } } } }], expectedRefs: [], topologyChange: true } });
+    expect(seeded).toMatchObject({ status: 'updated' });
+    if (seeded.status !== 'updated') throw new Error('Failed to seed the custodian checkout');
+    const checkout = { v: 2, kind: 'managed', workspaceId: key.id, serverId: homeId,
+      managedId: workspace.managedId, controller: workspace.controller, rootPath: workspace.rootPath } as const;
+    const source = { serverId: homeId, name: 'Example repository', requestKey: 'connect-repository', repository: {
+      provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'example/repo', cloneUrl: 'https://github.com/example/repo.git', visibility: 'private' }, protocol: 'https',
+    } };
+    const app = Fastify().withTypeProvider<ZodTypeProvider>() as AppFastify;
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    enableAuthentication(app);
+    registerExternalActionRoutes(app, { dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }) });
+    registerProjectAccountRowRoutes(app);
+    try {
+      const bind = (requester: typeof owner) => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+        headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: requester.machine.id,
+          envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: requester.machine.id },
+            input: { ...source, checkout } } } });
+      const accepted = await bind(owner);
+      expect(accepted.statusCode, accepted.body).toBe(200);
+      const root = ExternalActionExecutionAuthorizationV1Schema.parse(accepted.json());
+      const signature = (path: string, body: unknown, requester = owner, authorization = root) => signExternalActionMachineRequestV1({
+        authorizationToken: authorization.token, effectActionId: actionId, target: authorization.binding.target,
+        installationId: requester.machine.installationId!, requestId: authorization.binding.requestId,
+        method: 'POST', path, body, privateKey: requester.signer.secretKey,
+      });
+      const verify = async (path: string, body: unknown, routeInput = body) => (await verifyExternalActionDomainExecutionRequest({
+        authorizationToken: root.token, effectActionId: actionId, encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target),
+        method: 'POST', path, body, routeInput, machineSignature: signature(path, body),
+      })) !== null;
+      const postRow = (operation: 'read' | 'mutate', body: object, requester = owner, authorization = root) => {
+        const url = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/${operation}`;
+        return app.inject({ method: 'POST', url, payload: body, headers: {
+          [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+          [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+          [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+          [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signature(url, body, requester, authorization),
+        } });
+      };
+      const mutation = { mutations: [{ key, expectedRevision: seeded.rows[0]!.revision,
+        content: { ...content, v: { key, value: { ...workspace, source: { sourceId: 'new-source', revision: 1 } } } } }],
+      expectedRefs: [], topologyChange: false };
+      expect(await verify('/v1/projects/sources', source)).toBe(true);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, { key })).toBe(true);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, mutation)).toBe(true);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { serverId: homeId })).toBe(false);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, { key: otherKey })).toBe(false);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, { key }, { key: otherKey })).toBe(false);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { ...mutation, topologyChange: true })).toBe(false);
+      expect(await verify(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { ...mutation,
+        mutations: [{ ...mutation.mutations[0], key: otherKey }] })).toBe(false);
+      expect((await postRow('read', { key })).json()).toMatchObject({ status: 'present', row: { key, content } });
+      const rejectedRead = await postRow('read', { key: otherKey });
+      expect(rejectedRead.statusCode).toBe(401);
+      expect(rejectedRead.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
+      const changedController = { ...workspace, controller: { ...workspace.controller, installationId: 'other-installation' } };
+      expect((await postRow('mutate', { ...mutation, mutations: [{ ...mutation.mutations[0],
+        content: { ...content, v: { key, value: changedController } } }] })).json()).toEqual({ status: 'graph-required' });
+      expect((await postRow('mutate', mutation)).json()).toMatchObject({
+        status: 'updated', rows: [{ key, revision: seeded.rows[0]!.revision + 1 }],
+      });
+      const otherAdmission = await bind(nonCustodian);
+      expect(otherAdmission.statusCode, otherAdmission.body).toBe(200);
+      const otherRoot = ExternalActionExecutionAuthorizationV1Schema.parse(otherAdmission.json());
+      const otherRead = await postRow('read', { key }, nonCustodian, otherRoot);
+      expect(otherRead.statusCode, otherRead.body).toBe(200);
+      expect(otherRead.json()).toEqual({ status: 'absent' });
+      const otherWrite = await postRow('mutate', mutation, nonCustodian, otherRoot);
+      expect(otherWrite.json()).toMatchObject({ status: 'conflict' });
+      expect((await postRow('read', { key })).json()).toMatchObject({
+        status: 'present', row: { key, revision: seeded.rows[0]!.revision + 1 },
+      });
+    } finally { await app.close(); }
+  });
+
   it('refuses a Can-use member Archive carrier before disclosing credentials and retains custodian Archive', async () => {
     const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const member = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });

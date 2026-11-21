@@ -5,7 +5,7 @@ import { actionInputServerId } from './definition.js';
 import {
   ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
   ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
-  ProjectSourcesCreateInputV1Schema, ProjectSourcesCreateOutputV1Schema,
+  ProjectSourcesCreateActionInputV1Schema, ProjectSourcesCreateActionOutputV1Schema,
   ProjectSourcesUpdateInputV1Schema, ProjectSourcesUpdateOutputV1Schema,
   ProjectSourcesDeleteInputV1Schema, ProjectSourcesDeleteOutputV1Schema,
   ProjectSourcesMoveToTeamInputV1Schema, ProjectSourcesMoveToTeamOutputV1Schema,
@@ -24,7 +24,7 @@ type ProjectSourceActionSchemas = {
   'projects.sources.list': { inputSchema: typeof ProjectSourcesListInputV1Schema; outputSchema: typeof ProjectSourcesListOutputV1Schema };
   'projects.sources.read': { inputSchema: typeof ProjectSourcesReadInputV1Schema; outputSchema: typeof ProjectSourcesReadOutputV1Schema };
   [PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1]: { inputSchema: typeof ProjectSourcesReadInputV1Schema; outputSchema: typeof SourceSetupRequirementsV1Schema };
-  'projects.sources.create': { inputSchema: typeof ProjectSourcesCreateInputV1Schema; outputSchema: typeof ProjectSourcesCreateOutputV1Schema };
+  'projects.sources.create': { inputSchema: typeof ProjectSourcesCreateActionInputV1Schema; outputSchema: typeof ProjectSourcesCreateActionOutputV1Schema };
   'projects.sources.update': { inputSchema: typeof ProjectSourcesUpdateInputV1Schema; outputSchema: typeof ProjectSourcesUpdateOutputV1Schema };
   'projects.sources.delete': { inputSchema: typeof ProjectSourcesDeleteInputV1Schema; outputSchema: typeof ProjectSourcesDeleteOutputV1Schema };
   'projects.sources.moveToTeam': { inputSchema: typeof ProjectSourcesMoveToTeamInputV1Schema; outputSchema: typeof ProjectSourcesMoveToTeamOutputV1Schema };
@@ -122,15 +122,16 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
   },
   {
     ...common, id: 'projects.sources.create', approval: {result: 'required'}, title: 'Save repository source',
-    description: 'Save credential-free repository metadata for its selected audience. Code, setup commands and credentials remain separate.',
+    description: 'Save credential-free repository metadata for its selected audience and optionally link an accepted checkout on this Home.',
     safety: 'danger', sideEffectClass: 'write',
     bindings: { mcpToolName: 'projects_sources_create', voiceClientToolName: 'createProjectSource' },
-    inputSchema: ProjectSourcesCreateInputV1Schema, outputSchema: ProjectSourcesCreateOutputV1Schema,
-    invocationServerIdForInput: actionInputServerId(ProjectSourcesCreateInputV1Schema, input => input.serverId),
+    inputSchema: ProjectSourcesCreateActionInputV1Schema, outputSchema: ProjectSourcesCreateActionOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesCreateActionInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'requestKey', title: 'Create intent key', widget: 'text', required: true },
       { path: 'name', title: 'Name', widget: 'text', required: true },
       { path: 'repository', title: 'Repository selector', widget: 'json' },
+      { path: 'checkout', title: 'Accepted checkout on this Home', widget: 'json' },
       { path: 'defaultRef', title: 'Default revision', widget: 'text' }, { path: 'subdir', title: 'Contained folder', widget: 'text' },
       { path: 'audience', title: 'Audience', widget: 'json' }] },
   },

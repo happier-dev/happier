@@ -7,8 +7,9 @@ import type {
   SourceAttachmentV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { PromptArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -112,14 +113,14 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
     canChooseCheckout: boolean;
     canDetach: boolean;
     onDetach: (reference: PromptArtifactRefV1) => void;
-    onOpen?: (reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV1) => void;
+    onOpen?: (reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV2) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const refs = useWorkspaceRefs();
   const [open, setOpen] = React.useState(false);
   const checkouts = React.useMemo(() => selectSourceCheckoutWorkspaceRefs(refs, props.sourceId, props.serverId)
-      .filter(ref => resolveWorkspaceRefByAddress(refs, workspaceAddressFromRefV1(ref)).kind === 'resolved'),
+      .filter(ref => resolveWorkspaceRefByAddress(refs, workspaceAddressFromRefV2(ref)).kind === 'resolved'),
     [props.serverId, props.sourceId, refs]);
   const elsewhere =
     props.reference.serverId !== undefined &&
@@ -174,7 +175,7 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
       showChevron={canOpen}
       {...(canOpen ? { onPress: () => {
         if (checkouts.length === 0) props.onOpen?.(props.reference);
-        else if (checkouts.length === 1) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkouts[0]!));
+        else if (checkouts.length === 1) props.onOpen?.(props.reference, workspaceAddressFromRefV2(checkouts[0]!));
         else showPicker?.();
       } } : {})}
       rightElementOutsidePressable={props.canDetach}
@@ -200,7 +201,7 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
     onSelect={id => {
       setOpen(false);
       const checkout = checkouts[Number(id)];
-      if (checkout) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkout));
+      if (checkout) props.onOpen?.(props.reference, workspaceAddressFromRefV2(checkout));
     }} /> : row();
 });
 
@@ -221,18 +222,18 @@ const SourceCheckouts = React.memo(function SourceCheckouts(
     // when this Home no longer lists one; never its raw id.
     const names = resolveMachineDisplayNames([
       ...machines,
-      ...[...new Set(list.map((ref) => ref.machineId))]
+      ...[...new Set(list.map(resolveWorkspaceSyncExecutionMachineIdV1))]
         .filter((id) => !machines.some((machine) => machine.id === id))
         .map((id) => ({ id, absence: 'unlisted' as const })),
     ]);
     return list.map((primary) => {
-      const machineId = primary.machineId;
+      const machineId = resolveWorkspaceSyncExecutionMachineIdV1(primary);
       const machine =
         machines.find((candidate) => candidate.id === machineId) ?? null;
       return {
         machineId,
         name: names.get(machineId) ?? getMachineDisplayName({ id: machineId, absence: 'unlisted' }),
-        homeDir: machine?.metadata?.homeDir ?? undefined,
+        homeDir: isManagedWorkspaceRefV2(primary) ? undefined : machine?.metadata?.homeDir ?? undefined,
         primary,
       };
     });
@@ -242,7 +243,7 @@ const SourceCheckouts = React.memo(function SourceCheckouts(
     <ItemGroup title={t('projects.sources.checkoutsTitle')}>
       {rows.map((row) => (
         <Item
-          key={`${row.primary.serverId}:${row.primary.machineId}:${row.primary.id}:${row.primary.rootPath}`}
+          key={`${row.primary.serverId}:${row.machineId}:${row.primary.id}:${row.primary.rootPath}`}
           testID={`projects.sources.checkout.${row.machineId}`}
           icon={
             <Icon
@@ -254,12 +255,7 @@ const SourceCheckouts = React.memo(function SourceCheckouts(
           title={row.name}
           subtitle={formatPathRelativeToHome(row.primary.rootPath, row.homeDir)}
           onPress={() => {
-            const resolved = resolveWorkspaceRefByAddress(refs, {
-              serverId: row.primary.serverId,
-              workspaceId: row.primary.id,
-              machineId: row.primary.machineId,
-              rootPath: row.primary.rootPath,
-            });
+            const resolved = resolveWorkspaceRefByAddress(refs, workspaceAddressFromRefV2(row.primary));
             if (resolved.kind === 'resolved')
               props.onOpenCheckout(resolved.ref.id);
           }}
@@ -281,7 +277,7 @@ export type ProjectSourceDetailProps = Readonly<{
   onDiscardCreate: () => void;
   onOpen: (source: ProjectSourceV1) => void;
   onOpenCheckout: (workspaceRefId: string) => void;
-  onOpenDashboard?: (source: ProjectSourceV1, reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV1) => void;
+  onOpenDashboard?: (source: ProjectSourceV1, reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV2) => void;
   onDeleted: () => void;
   /** Leaves the page for the list where the detail stands alone (a phone); the hosted web page has no native header to do it. */
   onBack?: () => void;

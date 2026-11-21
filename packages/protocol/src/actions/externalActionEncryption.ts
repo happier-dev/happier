@@ -40,6 +40,7 @@ import {
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
   projectExternalActionDeploymentMetadataReceiptIdV1,
   projectExternalActionProjectSessionDefaultsAdmissionV1,
+  projectExternalActionProjectSourceCheckoutIdV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
   type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
@@ -188,6 +189,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const deploymentNativeAdmission = projectDeploymentNativeAdmissionV1(payload.actionId, payload.input);
   const registryAppUpdateAdmission = projectRegistryAppUpdateAdmissionV1(payload.actionId, payload.input);
   const projectSessionDefaultsAdmission = projectExternalActionProjectSessionDefaultsAdmissionV1(payload.actionId, payload.input);
+  const projectSourceCheckoutId = projectExternalActionProjectSourceCheckoutIdV1(payload.actionId, payload.input);
   const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
   const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const browserSessionId = projectExternalActionBrowserSessionIdV1(payload.actionId, payload.input);
@@ -210,6 +212,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
     ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
+    ...(projectSourceCheckoutId === undefined ? {} : { projectSourceCheckoutId }),
     ...(payload.actionId === 'approval.request.decide'
       ? { approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(payload.input) } : {}),
     ...(payload.actionId === 'session.pending.resetStart.set'
@@ -313,6 +316,8 @@ export function openExternalActionRequestV2(params: Readonly<{
     phase = 'project_session_defaults_admission';
     if (!sameStrictJsonValue(projectExternalActionProjectSessionDefaultsAdmissionV1(decoded.data.actionId, decoded.data.input),
       envelope.projectSessionDefaultsAdmission)) return refused();
+    if (projectExternalActionProjectSourceCheckoutIdV1(decoded.data.actionId, decoded.data.input)
+      !== envelope.projectSourceCheckoutId) return refused();
     phase = 'plaintext_limit';
     const operands = { ...(decoded.data.workflowPreparation ? { workflowPreparation: decoded.data.workflowPreparation } : {}),
       ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),

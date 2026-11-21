@@ -178,10 +178,10 @@ export { readExternalActionBindingAuthority } from '@happier-dev/protocol/action
 import { hasCurrentSessionActionRpcSourceBinding, hasCurrentSessionActionRpcSourceBindingInTx,
     hasCurrentSessionScopedMachineAccessInTx, hasCurrentMachineAccessForSessionInTx } from '@/app/api/socket/sessionScopedBinding';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema,
-    ProjectAccountRowListRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+    ProjectAccountRowListRequestV1Schema, ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema, ProjectSourcePublicationPatchV1Schema,
     ProjectSourcesDeleteInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { PROJECT_SOURCE_LIST_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { PROJECT_SOURCE_CREATE_ACTION_ID_V1, PROJECT_SOURCE_LIST_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, PROJECT_TRUST_ROUTE_V1, computeProjectCheckoutTeardownTrustReadDigestV1,
     ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema, ProjectTrustListRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
@@ -2858,6 +2858,21 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     }
     const sourcePath = '/v1/projects/sources';
     if (actionId.startsWith('projects.sources.')) {
+        const checkoutId = verified.binding.projectSourceCheckoutId;
+        if (checkoutId !== undefined && url.pathname.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`)) {
+            if (method !== 'POST' || url.search !== '' || url.hash !== ''
+                || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, proof.body)) return false;
+            const key = { kind: 'workspace-ref', serverId: verified.binding.serverIdentityId, id: checkoutId };
+            if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) {
+                const read = ProjectAccountRowReadRequestV1Schema.safeParse(proof.body);
+                return read.success && read.data.includeAuthoringSession === undefined && sameManagedInput(read.data.key, key);
+            }
+            if (url.pathname !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`) return false;
+            const write = ProjectAccountRowMutationRequestV1Schema.safeParse(proof.body);
+            if (!write.success || write.data.topologyChange || write.data.expectedRefs.length !== 0 || write.data.mutations.length !== 1) return false;
+            const mutation = write.data.mutations[0]!;
+            return mutation.expectedRevision !== 'absent' && mutation.content !== null && sameManagedInput(mutation.key, key);
+        }
         if (actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1 && isProjectSourceSetupPreparationHttpPurpose(proof)) return true;
         if ((actionId === PROJECT_SOURCE_READ_ACTION_ID_V1 || actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1)
             && isSelectedProjectSourceReadHttpPurpose(verified.binding.serverIdentityId, proof)) return true;
@@ -2868,7 +2883,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
             return actionId === PROJECT_SOURCE_LIST_ACTION_ID_V1 && url.pathname === sourcePath;
         }
         if (url.search !== '') return false;
-        const create = actionId === 'projects.sources.create' && method === 'POST' && url.pathname === sourcePath
+        const create = actionId === PROJECT_SOURCE_CREATE_ACTION_ID_V1 && method === 'POST' && url.pathname === sourcePath
             ? ProjectSourcesCreateInputV1Schema.safeParse(proof.body) : null;
         const mutation = actionId === 'projects.sources.update' && method === 'PATCH'
             ? ProjectSourcesUpdateInputV1Schema.safeParse(proof.body)

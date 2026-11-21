@@ -36,7 +36,9 @@ export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
-import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
+import { ProjectSourceOwnerV1Schema, ProjectSourcesCreateActionInputV1Schema } from '../projects/sources/projectSourceV1.js';
+import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
+import { PROJECT_SOURCE_CREATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import type { ProjectSourceArtifactReadOptionsV1 } from '../projects/sources/projectSourceAttachmentAdmissionV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
@@ -1024,6 +1026,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
   registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
   projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),
+  projectSourceCheckoutId: z.optional(ProjectAccountWorkspaceRefKeyV1Schema.shape.id),
 }));
 export type ExternalActionRequestEnvelopeV2 = z.infer<typeof ExternalActionRequestEnvelopeV2Schema>;
 export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
@@ -1127,6 +1130,23 @@ export function projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(i
   return input.envelope.projectSessionDefaultsAdmission === undefined ? undefined
     : (input.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? ProjectSessionDefaultsGetInputV1Schema
       : ProjectSessionDefaultsAdmissionV1Schema).parse(input.envelope.projectSessionDefaultsAdmission);
+}
+
+/** The Home signs the checkout row id. The managed address stays inside the Action input. */
+export function projectExternalActionProjectSourceCheckoutIdV1(actionId: string, input: unknown): string | undefined {
+  if (actionId !== PROJECT_SOURCE_CREATE_ACTION_ID_V1 || input === null || typeof input !== 'object'
+    || !Object.hasOwn(input, 'checkout') || Reflect.get(input, 'checkout') === undefined) return undefined;
+  return ProjectSourcesCreateActionInputV1Schema.parse(input).checkout?.workspaceId;
+}
+
+export function projectExternalActionProjectSourceCheckoutEnvelopeIdV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): string | undefined {
+  if (input.envelope.v === 1) return projectExternalActionProjectSourceCheckoutIdV1(input.actionId, input.envelope.input);
+  if (input.actionId !== PROJECT_SOURCE_CREATE_ACTION_ID_V1 && input.envelope.projectSourceCheckoutId !== undefined) {
+    throw new TypeError('Unexpected Project Source checkout admission');
+  }
+  return input.envelope.projectSourceCheckoutId;
 }
 
 export function projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1(input: Readonly<{
@@ -1466,6 +1486,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
     projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),
+    projectSourceCheckoutId: z.optional(ProjectAccountWorkspaceRefKeyV1Schema.shape.id),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionApiTokenServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
@@ -1493,6 +1514,9 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     || [projectDefaults.projectRef, projectDefaults.sourceRef].some(ref => ref && ref.serverId !== value.serverIdentityId)
     : value.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
     context.addIssue({ code: 'custom', path: ['projectSessionDefaultsAdmission'], message: 'Project defaults bind their exact selected Home operands.' });
+  }
+  if (value.projectSourceCheckoutId !== undefined && value.actionId !== PROJECT_SOURCE_CREATE_ACTION_ID_V1) {
+    context.addIssue({ code: 'custom', path: ['projectSourceCheckoutId'], message: 'Only Source creation can bind a checkout.' });
   }
   if (value.workspaceSyncAdmission && (!isProjectWorkspaceSyncOpenActionV1(value.actionId) && !isProjectWorkspaceSyncPreparationActionV1(value.actionId)
     || value.workspaceSyncAdmission.source.actorAccountId !== value.accountId)) {

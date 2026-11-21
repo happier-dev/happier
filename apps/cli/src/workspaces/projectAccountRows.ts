@@ -742,7 +742,7 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
       const prior = resolveWorkspaceRefById(before.workspaceRefs, ref.id, ref.serverId) ?? undefined;
       const value = resolveWorkspaceRefById(next.workspaceRefs, ref.id, ref.serverId) ?? undefined;
       if (isDeepStrictEqual(prior, value)) continue;
-      if (!prior || !value || prior.machineId !== value.machineId || prior.rootPath !== value.rootPath) topologyChange = true;
+      if (!prior || !value || !isDeepStrictEqual(workspaceAddressFromRefV2(prior), workspaceAddressFromRefV2(value))) topologyChange = true;
       mutations.push({ key, expectedRevision: byKey.get(identity)?.revision ?? 'absent', payload: value ? { key, value } : null });
     }
     // Narrow mitigation while retained Home/Artifact repair is owed: a known

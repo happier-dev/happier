@@ -29,6 +29,27 @@ describe('Project Account rows (SQLite integration)', () => {
     afterEach(async () => { await db.account.deleteMany(); });
     afterAll(async () => { await harness?.close(); });
 
+    it('requires the graph to replace an admitted managed checkout controller at the same path', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const key = refKey('managed-checkout');
+        const original = { v: 2, kind: 'managed', id: key.id, serverId: key.serverId, managedId: 'managed-workspace',
+            controller: { machineId: 'controller', installationId: 'accepted-installation' }, rootPath: '/work/repo', createdAtMs: 1 };
+        const replacement = { ...original, controller: { ...original.controller, installationId: 'different-installation' } };
+        await withAuthenticatedTestApp(registerProjectAccountRowRoutes, async app => {
+            const send = async (operation: string, payload: unknown) => (await app.inject({
+                method: 'POST', url: `/v1/account/project-rows/${operation}`, headers: { 'x-test-user-id': account.id }, payload,
+            })).json();
+            expect(await send('mutate', { expectedRefs: [], topologyChange: true, mutations: [
+                mutation(key, 'absent', original), mutation(graphKey, 'absent', { relationships: [] }),
+            ] })).toMatchObject({ status: 'updated' });
+            expect(await send('mutate', { expectedRefs: [], topologyChange: false,
+                mutations: [mutation(key, 0, replacement)] })).toEqual({ status: 'graph-required' });
+            expect(await send('read', { key })).toMatchObject({ status: 'present', row: { revision: 0, content: plain(key, original) } });
+            expect(await send('mutate', { expectedRefs: [], topologyChange: false,
+                mutations: [mutation(key, 0, { ...original, label: 'Renamed' })] })).toMatchObject({ status: 'updated' });
+        });
+    });
+
     it('records an exact checkout authoring relation once, opts in disclosure, preserves edits and clears on Forget', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });

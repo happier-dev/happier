@@ -3597,6 +3597,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       return createUiProjectAccountRowsClient(accountContext).updateWorkspace({ ...input, signal: context?.signal }, context);
     },
+    linkCreatedProjectSource: async ({ checkout, source }, context) => {
+      if (!accountContext) return { status: 'unlinked', errorCode: 'not_authenticated' };
+      const result = await createUiProjectAccountRowsClient(accountContext).recordWorkspaceSource(checkout,
+        { sourceId: source.id, revision: source.revision }, context.signal, context);
+      return result.ok ? { status: 'linked', workspaceId: result.workspaceId } : { status: 'unlinked', errorCode: result.errorCode };
+    },
     projectsServicesPin: async (input, context) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const result = await createUiProjectAccountRowsClient(accountContext).setEnvironmentPinned({ ...input, signal: context?.signal }, context);

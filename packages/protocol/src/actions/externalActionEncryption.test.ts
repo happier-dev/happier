@@ -244,6 +244,30 @@ describe('whole external Action encryption', () => {
           binding: preparationBinding, material })).toBeNull();
       }
     });
+  it('binds only the accepted checkout row outside sealed Source creation', () => {
+    const sourceBinding = { ...binding, actionId: 'projects.sources.create' };
+    const input = {
+      serverId: binding.serverIdentityId, name: 'Repository', requestKey: 'link-repo',
+      repository: {
+        provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'example/repo', cloneUrl: 'https://github.com/example/repo.git', visibility: 'private' },
+        protocol: 'https',
+      },
+      checkout: { v: 2, kind: 'managed', serverId: binding.serverIdentityId, workspaceId: 'accepted-checkout',
+        managedId: 'private-managed-identity', controller: { machineId: 'private-controller', installationId: 'private-installation' },
+        rootPath: '/guest/private-path' },
+    };
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: sourceBinding, input, material, randomBytes });
+    expect(envelope).toMatchObject({ projectSourceCheckoutId: input.checkout.workspaceId });
+    expect(JSON.stringify(envelope)).not.toMatch(/private-(?:path|controller|installation|managed-identity)/u);
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope, binding: sourceBinding, material })).toEqual({ input });
+    for (const projectSourceCheckoutId of ['another-checkout', undefined]) {
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: { ...envelope, projectSourceCheckoutId }, binding: sourceBinding, material })).toBeNull();
+    }
+  });
   it('binds Link Environment routing without exposing sealed provider content', () => {
     const linkBinding = { ...binding, actionId: 'deployments.targets.link' };
     const input = { serverId: binding.serverIdentityId, environmentId: 'admitted-environment',

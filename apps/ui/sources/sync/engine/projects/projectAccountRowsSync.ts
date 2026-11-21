@@ -368,7 +368,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
     }
     /** Accepted Source/SCM observations patch only the exact checkout already owned by this Account. */
     async function recordWorkspaceFacts(
-        address: WorkspaceAddressV1, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'> & Readonly<{
+        address: WorkspaceAddressV2, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'> & Readonly<{
             repositoryObservation?: ProjectRepositoryObservationV1;
         }>, signal?: AbortSignal,
     ): Promise<Readonly<{ ok: true; workspaceRefId: string }> | Extract<WorkspaceRefAccountMutationResult, { ok: false }>> {
@@ -463,7 +463,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         }
     }
     return { read, refresh, refreshKeys, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
-        recordWorkspaceSource: (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
+        recordWorkspaceSource: (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { repositoryIdentity }, signal),

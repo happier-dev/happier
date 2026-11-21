@@ -9,7 +9,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -51,7 +51,7 @@ export function createUiProjectAccountRowsClient(account: Account) {
       readRecency: ref => {
         const current = readCurrentProjectAccountRows(storage.getState());
         if (current?.scope.serverId !== scope.serverId || current.scope.accountId !== scope.accountId) return undefined;
-        const resolved = resolveWorkspaceRefByAddress(current.workspaceRefs, workspaceAddressFromRefV1(ref));
+        const resolved = resolveWorkspaceRefByAddress(current.workspaceRefs, workspaceAddressFromRefV2(ref));
         return resolved.kind === 'resolved' ? resolved.ref.lastOpenedAtMs ?? undefined : undefined;
       },
       transport: createApiProjectAccountRowsTransport({ request: account.request }),
@@ -92,8 +92,8 @@ export function createUiProjectAccountRowsClient(account: Account) {
       try { return { ok: true as const, ...await (await getOwner()).mutateWorkspaceMetadata(input) }; }
       catch (error) { return mutationFailure(error, input.signal); }
     },
-    recordWorkspaceSource: async (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) => {
-      if (!canUsePrivateProjectAccountAction(account)) return refused('project_account_access_denied');
+    recordWorkspaceSource: async (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal, context?: Caller) => {
+      if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
       try {
         const result = await (await getOwner()).recordWorkspaceSource(address, source, signal);
         return result.ok ? { ok: true as const, workspaceId: result.workspaceRefId } : refused(result.code);

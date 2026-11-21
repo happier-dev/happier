@@ -2712,6 +2712,16 @@ definition remains sealed for E2EE Accounts. The Home sends its own webhook
 signing secret to the admitted Machine through the private server-origin
 Machine RPC for the registration. The secret is excluded from Action results.
 
+When Connect a repository starts from an existing managed checkout, the Source
+creation Action also records the Source attachment on that checkout. The only
+checkout detail in the signed routing facts is its exact requester-owned row ID.
+For E2EE Accounts, the controller, guest identity and directory stay encrypted
+in the Action input and Account row. The admitted Action can read that row and
+submit a revision-checked attachment update for it. The grant provides no
+Project census or topology-write authority. If the Source is created but the
+checkout cannot be linked, the Action returns the Source and an explicit
+unlinked outcome.
+
 A signed creation without requester Account context omits that private row and private
 member preferences; it does not read them with the Machine custodian's credentials.
 Public defaults still use the original signed creation selection and each resource's

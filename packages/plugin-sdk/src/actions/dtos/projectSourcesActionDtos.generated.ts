@@ -102,6 +102,24 @@ export type ProjectSourcesActionInputById = {
         name: string;
         serverId: string;
         requestKey: string;
+        checkout?: undefined | {
+            serverId: string;
+            workspaceId: string;
+            machineId: string;
+            rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
         owner?: undefined | {
             kind: 'account';
             accountId: string;
@@ -1807,6 +1825,13 @@ export type ProjectSourcesActionResultById = {
             };
         };
         canManage: boolean;
+        checkout?: undefined | {
+            status: 'linked';
+            workspaceId: string;
+        } | {
+            status: 'unlinked';
+            errorCode: string;
+        };
         canManageSessionDefaults?: boolean | undefined;
         sessionDefaults?: undefined | {
             revision: number;

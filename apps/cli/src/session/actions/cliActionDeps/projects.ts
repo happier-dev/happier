@@ -44,13 +44,14 @@ function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is 
 }
 export function createCliProjectActionDeps(
   params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
-  { readAdmittedProjectRows, actionOperationAction, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
+  { readAdmittedProjectRows, actionOperationAction, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
     readAdmittedProjectRows: CliAdmittedProjectRowsReader;
     actionOperationAction: NonNullable<ActionExecutorDeps['actionOperationAction']>;
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
     isExecutionRunActionAbort: (error: unknown, signal?: AbortSignal) => boolean;
+    projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
     projectAccountAdmission: CliProjectAdmission['projectAccountAdmission'];
     projectRowsAuthority: CliProjectAdmission['projectRowsAuthority'];
     readProjectRows: CliProjectAdmission['readProjectRows'];
@@ -66,8 +67,37 @@ export function createCliProjectActionDeps(
     approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
     exactHome: CliActionExactHomeTarget;
   }>,
-): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'projectsServicesPin' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsSetupSet' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
+): Pick<ActionExecutorDeps, 'projectsWorkspaceUpdate' | 'linkCreatedProjectSource' | 'projectsServicesPin' | 'projectsWorkspaceForget' | 'projectsContextUpdate' | 'projectAction' | 'projectsOrganizationUpdate' | 'projectsSetupSet' | 'projectsVisibilitySet' | 'projectsList' | 'projectWorkspaceRefs' | 'projectWorkerAction' | 'projectDefinitionAction' | 'projectsOpen'> {
   return {
+    linkCreatedProjectSource: async ({ checkout, source }, context) => {
+      const unlinked = (errorCode: string) => ({ status: 'unlinked' as const, errorCode });
+      const signal = context.signal;
+      try {
+        const refused = await projectHomeAdmission(checkout.serverId, context);
+        if (refused) return unlinked(refused.errorCode);
+        const homeId = await resolveProjectHomeIdentity();
+        const key = { kind: 'workspace-ref' as const, serverId: homeId, id: checkout.workspaceId };
+        const before = await readProjectRows({ key }, signal, context, 'projects.sources.create');
+        const resolved = resolveWorkspaceRefV1(before.workspaceRefs, { ...checkout, serverId: homeId });
+        if (resolved.kind !== 'resolved') return unlinked(`workspace_ref_${resolved.kind}`);
+        const ref = resolved.ref;
+        if (ref.source?.sourceId === source.id && ref.source.revision === source.revision) {
+          return { status: 'linked', workspaceId: ref.id };
+        }
+        const row = before.rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
+        if (!row) return unlinked('workspace_ref_not_found');
+        const { lastOpenedAtMs: _recency, ...structural } = ref;
+        const value = ProjectAccountWorkspaceRefV1Schema.parse({ ...structural, source: { sourceId: source.id, revision: source.revision } });
+        const { mutateProjectAccountRows } = await import('@/workspaces/projectAccountRows');
+        const result = await withProjectHome(() => mutateProjectAccountRows({
+          ...projectRowsAuthority(context, 'projects.sources.create', signal),
+          request: { mutations: [{ key, expectedRevision: row.revision, payload: { key, value } }], expectedRefs: [], topologyChange: false },
+        }));
+        return result.status === 'updated' ? { status: 'linked', workspaceId: ref.id } : unlinked(`project_account_rows_${result.status}`);
+      } catch (error) {
+        return unlinked(isExecutionRunActionAbort(error, signal) ? 'cancelled' : readRpcErrorCode(error) ?? 'project_account_rows_unavailable');
+      }
+    },
     projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
       const refused = await projectAccountAdmission(input.projectRef.serverId, context);
       if (refused) return { ok: false, errorCode: refused.errorCode,

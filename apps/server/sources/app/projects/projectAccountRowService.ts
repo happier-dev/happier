@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import {
     PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1,
     PROJECT_ACCOUNT_ROW_DEFAULT_LIST_KINDS_V1,
@@ -17,6 +18,7 @@ import {
     type ProjectAccountRowReadResponseV1,
     type ProjectAccountRowV1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import {
@@ -83,9 +85,9 @@ class ProjectAccountRowTransactionAbort extends Error {
 function abort(result: ProjectAccountRowFailureV1): never { throw new ProjectAccountRowTransactionAbort(result); }
 type ReadyRow = Extract<ProjectAccountRowReadResponseV1, { status: 'present' | 'deleted' | 'absent' }>;
 function revisionOf(row: ReadyRow): number { return row.status === 'present' ? row.row.revision : row.status === 'deleted' ? row.revision : -1; }
-function plainRefTopology(content: ProjectAccountRowContentV1 | null) {
+function plainRefAddress(content: ProjectAccountRowContentV1 | null) {
     if (content?.t !== 'plain' || !('rootPath' in content.v.value)) return null;
-    return { rootPath: content.v.value.rootPath, machineId: content.v.value.machineId };
+    return workspaceAddressFromRefV2(content.v.value);
 }
 
 /**
@@ -138,10 +140,10 @@ export async function mutateProjectAccountRows(input: Readonly<{ accountId: stri
                 const row = await read(mutation.key);
                 checkRevision(mutation.key, row, mutation.expectedRevision);
                 if (mutation.key.kind === 'workspace-ref') {
-                    const previous = row.status === 'present' ? plainRefTopology(row.row.content) : null;
-                    const next = plainRefTopology(mutation.content);
+                    const previous = row.status === 'present' ? plainRefAddress(row.row.content) : null;
+                    const next = plainRefAddress(mutation.content);
                     if (mutation.content === null || row.status !== 'present' || (previous && next
-                        && (previous.rootPath !== next.rootPath || previous.machineId !== next.machineId))) needsGraph = true;
+                        && !isDeepStrictEqual(previous, next))) needsGraph = true;
                 }
             }
             if (needsGraph && !hasGraph) abort({ status: 'graph-required' });

@@ -53,7 +53,7 @@ import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/aut
 import { resolveApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { projectExternalActionProjectSessionDefaultsAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionProjectSessionDefaultsAdmissionV1, projectExternalActionProjectSourceCheckoutIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx } from './externalActionHandoffAdmission';
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -869,10 +869,16 @@ class AuthModule {
             && !sameStrictJsonValue(input.projectSessionDefaultsAdmission, projectSessionDefaultsAdmission)) {
             throw refuse('project_session_defaults');
         }
+        const projectSourceCheckoutId = context.input === undefined ? input.projectSourceCheckoutId
+            : projectExternalActionProjectSourceCheckoutIdV1(input.actionId, context.input);
+        if (input.projectSourceCheckoutId !== undefined && projectSourceCheckoutId !== input.projectSourceCheckoutId) {
+            throw refuse('project_source_checkout');
+        }
         const parsedBinding = requesterBinding ?? ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
             ...input, ...bindingIdentity,
             ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
             ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
+            ...(projectSourceCheckoutId === undefined ? {} : { projectSourceCheckoutId }),
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
             ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),

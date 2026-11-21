@@ -18,7 +18,7 @@ import { projectNativeJsonValueForTransport } from '../../../json/strictJsonValu
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../../rpc/errors.js';
 import { isPluginError } from '../../../plugins/errors.js';
 import { type ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../../projects/projectOrganizationV1.js';
-import type { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema } from '../../../projects/sources/projectSourceV1.js';
+import type { ProjectSourcesUpdateInputV1Schema } from '../../../projects/sources/projectSourceV1.js';
 import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, AdmittedClientActionContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
@@ -227,8 +227,13 @@ export async function dispatchProjectsDispatch3(inv: Pick<CoreInvocation, 'actio
         }
         if (actionId === 'projects.sources.create') {
           if (!deps.projectSourcesCreate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const result = await deps.projectSourcesCreate(data as z.infer<typeof ProjectSourcesCreateInputV1Schema>, ctx);
-          return 'errorCode' in result ? result : { ok: true, result };
+          const { checkout, ...sourceInput } = data as AdmittedActionInputById['projects.sources.create'];
+          if (checkout && !deps.linkCreatedProjectSource) return clientActionUnavailable(actionId);
+          const result = await deps.projectSourcesCreate(sourceInput, ctx);
+          if ('errorCode' in result) return result;
+          if (!checkout || !result.ok || !deps.linkCreatedProjectSource) return { ok: true, result };
+          const link = await deps.linkCreatedProjectSource({ checkout, source: result.source }, ctx);
+          return { ok: true, result: { ...result, checkout: link } };
         }
         if (actionId === 'projects.sources.update') {
           if (!deps.projectSourcesUpdate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

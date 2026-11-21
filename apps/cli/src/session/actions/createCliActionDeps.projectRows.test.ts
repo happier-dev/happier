@@ -5,6 +5,8 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import {
   ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1,
   type ProjectAccountRowV1,
@@ -62,7 +64,7 @@ function accountRows(rows: ProjectAccountRowV1[], options?: Readonly<{ rejectAft
   });
   return { get, post, writes: () => post.mock.calls.filter(([url]) => String(url).endsWith('/mutate')) };
 }
-function refRow(value = ref): ProjectAccountRowV1 {
+function refRow(value: WorkspaceRefV1 = ref): ProjectAccountRowV1 {
   const key = { kind: 'workspace-ref' as const, serverId: value.serverId, id: value.id };
   return { key, revision: 2, content: { t: 'plain', v: { key, value } } };
 }
@@ -84,6 +86,45 @@ function graphRow(): ProjectAccountRowV1 {
 }
 
 describe('credentialed Session Project mutation and Sync row ports', () => {
+  it.each([
+    { scenario: 'matching', present: true, sameHome: true, errorCode: null },
+    { scenario: 'missing', present: false, sameHome: true, errorCode: 'workspace_ref_missing' },
+    { scenario: 'different Home', present: true, sameHome: false, errorCode: 'server_scope_mismatch' },
+  ])('links only the selected managed checkout through the Source Action ($scenario)', async ({ present, sameHome, errorCode }) => {
+    const guest = { v: 2, kind: 'managed', id: 'guest-row', serverId: ref.serverId,
+      rootPath: ref.rootPath, managedId: 'managed-a', controller: { machineId: ref.machineId, installationId: 'install-a' },
+      createdAtMs: 1 } satisfies WorkspaceRefV1;
+    const rows = present ? [refRow(), refRow(guest)] : [refRow()];
+    const boundary = accountRows(rows);
+    const repository = {
+      provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'acme/repo', cloneUrl: 'https://github.com/acme/repo.git', visibility: 'private' },
+      protocol: 'https',
+    };
+    const sourceInput = { serverId: ref.serverId, name: 'Acme repository', requestKey: 'confirm-repository', repository };
+    const acceptedSource = { id: 'confirmed-source', name: sourceInput.name, repository, revision: 2,
+      owner: { kind: 'account', accountId: 'account-a' }, audience: [], createdByAccountId: 'account-a' };
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+      expect(request.url).toBe('https://home-a.example.test/v1/projects/sources');
+      expect(request.data).toEqual(sourceInput);
+      return { status: 201, data: { ok: true, source: acceptedSource, canManage: true } };
+    });
+
+    await expect(createActionExecutor(dependencies()).execute('projects.sources.create',
+      { ...sourceInput, checkout: workspaceAddressFromRefV2(sameHome ? guest : { ...guest, serverId: 'home-b' }) },
+      { surface: 'cli', bypassApprovals: true })).resolves.toMatchObject({
+      ok: true, result: { ok: true, source: acceptedSource, checkout: errorCode
+        ? { status: 'unlinked', errorCode }
+        : { status: 'linked', workspaceId: guest.id } },
+    });
+    expect(rows[0]).toEqual(refRow());
+    expect(boundary.post.mock.calls.filter(([url]) => String(url).endsWith('/read')).map(([, body]) => body))
+      .toEqual(sameHome ? [{ key: refRow(guest).key }] : []);
+    const expectedGuest = errorCode ? guest : { ...guest, source: { sourceId: acceptedSource.id, revision: acceptedSource.revision } };
+    expect(rows[1]?.content).toEqual(present ? { t: 'plain', v: { key: refRow(guest).key, value: expectedGuest } } : undefined);
+    expect(boundary.writes()).toHaveLength(errorCode ? 0 : 1);
+  });
+
   it('admits portable Home Account listing and exact Workspace reads while refusing lost bindings', async () => {
     await withTempDir('project-rows-portable-', async home => {
       const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);

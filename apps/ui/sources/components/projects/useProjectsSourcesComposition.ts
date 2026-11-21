@@ -16,9 +16,8 @@ import { useProjectSources } from './sources/useProjectSources';
 import { groupProjectSources } from './sources/projectSourceGroups';
 import type { ProjectSourceDraft } from './sources/projectSourcesController';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { describeProjectSourceRow, formatRepositoryIdentityAddress } from './sources/projectSourceAddress';
 
@@ -38,34 +37,29 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
     const teamServerIds = React.useMemo(() => (accountScope ? [accountScope.serverId] : []), [accountScope?.serverId]);
     const teamsDirectory = useTeamsDirectory({ serverIds: teamServerIds, enabled: accountScope != null });
     const teamName = React.useCallback((teamId: string) => teamsDirectory.rows.find(row => row.team.id === teamId)?.team.name ?? null, [teamsDirectory.rows]);
-    const creationTarget = React.useRef<Readonly<{ ref: WorkspaceRefV1; lifetime: NonNullable<ReturnType<typeof captureActiveServerAccountScopeLifetime>> }> | null>(null);
+    const creation = React.useRef<{ lifetime: NonNullable<ReturnType<typeof captureActiveServerAccountScopeLifetime>> } | null>(null);
     const saveSourceCreation = React.useCallback(async () => {
-        const target = creationTarget.current;
+        const target = creation.current;
         if (!target?.lifetime.isCurrent()) return { kind: 'unavailable' as const };
         const created = sources.controller.getSnapshot().creationDraft ? await sources.controller.save() : sources.controller.getSnapshot().current;
         if (!created) return { kind: 'not_saved' as const, issue: sources.controller.getSnapshot().issue };
-        if (!target.lifetime.isCurrent() || creationTarget.current !== target) return { kind: 'unavailable' as const };
-        const account = await captureLazyActionAccountContext(target.lifetime.scope.serverId);
-        try {
-            if (!target.lifetime.isCurrent() || account.accountId !== target.lifetime.scope.accountId) return { kind: 'unavailable' as const };
-            const recorded = await createUiProjectAccountRowsClient(account).recordWorkspaceSource(workspaceAddressFromRefV1(target.ref),
-                { sourceId: created.id, revision: created.revision });
-            if (!recorded.ok) return { kind: 'provenance_not_saved' as const, source: created, issue: recorded.errorCode };
-            creationTarget.current = null;
-            return { kind: 'saved' as const, source: created };
-        } finally { account.dispose(); }
-    }, [sources.controller, sources.state.creationDraft]);
+        if (!target.lifetime.isCurrent() || creation.current !== target) return { kind: 'unavailable' as const };
+        const link = sources.controller.getCreatedCheckout();
+        creation.current = null;
+        return link?.status === 'linked' ? { kind: 'saved' as const, source: created }
+            : { kind: 'provenance_not_saved' as const, source: created, issue: link?.errorCode ?? 'checkout_link_unavailable' };
+    }, [sources.controller]);
     const saveAsSource = React.useCallback(async (ref: WorkspaceRefV1, draft?: ProjectSourceDraft) => {
         if (sources.controller.getSnapshot().mutation !== 'idle' || sources.controller.getSnapshot().uncertainCreate)
             return { kind: 'not_saved' as const, issue: sources.controller.getSnapshot().issue };
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime?.isCurrent() || lifetime.scope.serverId !== ref.serverId || lifetime.scope.accountId !== accountScope?.accountId)
             return { kind: 'unavailable' as const };
-        creationTarget.current = { ref, lifetime };
+        creation.current = { lifetime };
         // A checkout whose repository its SCM owner already resolved (a clone) starts on that address, read on its Machine.
         const address = !draft && ref.repositoryIdentity ? formatRepositoryIdentityAddress(ref.repositoryIdentity) : null;
         sources.controller.beginCreate({ ...(draft ?? { name: resolveWorkspaceRefDisplayName(ref), ...(address ? { address } : {}) }),
-            checkoutMachineId: ref.machineId });
+            checkoutMachineId: resolveWorkspaceSyncExecutionMachineIdV1(ref) }, workspaceAddressFromRefV2(ref));
         if (!draft) {
             if (address) fireAndForget(sources.controller.resolveAddress(address), { tag: 'projects.saveAsSource.address' });
             return { kind: 'editing' as const };
@@ -116,7 +110,7 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
     }, [navigateToOpen]);
 
     const dismissSourceCreation = React.useCallback(() => {
-        creationTarget.current = null;
+        creation.current = null;
         sources.controller.discard();
     }, [sources.controller]);
     return { addSources, saved, cloneRepository, sources: sources.state.rows, teamName, saveAsSource, saveSourceCreation,

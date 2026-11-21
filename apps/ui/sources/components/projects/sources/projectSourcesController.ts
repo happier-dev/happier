@@ -1,9 +1,9 @@
 import { z } from 'zod/mini';
 import {
-    ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema, ProjectSourcesCreateInputV1Schema,
-    ProjectSourcesCreateOutputV1Schema, ProjectSourcesUpdateOutputV1Schema, ProjectSourcesDeleteOutputV1Schema,
+    ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema, ProjectSourcesCreateActionInputV1Schema,
+    ProjectSourcesCreateActionOutputV1Schema, ProjectSourcesUpdateOutputV1Schema, ProjectSourcesDeleteOutputV1Schema,
     type ProjectSourceV1, type ProjectSourceListItemV1, type ProjectSourcesCreateInputV1, type ProjectSourcesUpdateInputV1,
-    type ProjectSourcesListInputV1,
+    type ProjectSourcesListInputV1, type ProjectSourcesCreateActionInputV1, type ProjectSourceCheckoutLinkV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -132,7 +132,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     let uncertainDraft: ProjectSourceDraft | null = null;
     // One interactive create intent uses the incumbent server RetryKey. A lost
     // acknowledgement retains both key and payload; newer typing stays a draft.
-    let createIntent: Readonly<{ input: ProjectSourcesCreateInputV1; draft: ProjectSourceDraft }> | null = null;
+    let createIntent: Readonly<{ input: ProjectSourcesCreateActionInputV1; draft: ProjectSourceDraft }> | null = null;
     let inspectedCreateAbsence = false;
     let createRetryConfirmed = false;
     let listRequest: AbortController | null = null;
@@ -140,6 +140,8 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     let detailRequest: AbortController | null = null;
     let addressRequest: AbortController | null = null;
     let creationCheckoutMachineId: string | null = null;
+    let creationCheckout: ProjectSourcesCreateActionInputV1['checkout'];
+    let createdCheckout: ProjectSourceCheckoutLinkV1 | undefined;
     let disposed = false;
     const publish = (patch: Partial<ProjectSourcesState>) => {
         if (disposed) return;
@@ -383,10 +385,14 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                 }
             } finally { if (detailRequest === request) detailRequest = null; }
         },
-        beginCreate(draft: Partial<ProjectSourceDraft> & Readonly<{ address?: string; checkoutMachineId?: string }> = {}) {
+        getCreatedCheckout() { return createdCheckout; },
+        beginCreate(draft: Partial<ProjectSourceDraft> & Readonly<{ address?: string; checkoutMachineId?: string }> = {},
+            checkout?: ProjectSourcesCreateActionInputV1['checkout']) {
             detailRequest?.abort(); detailRequest = null;
             // Saving a checkout as a Source reads its address where that checkout lives.
             creationCheckoutMachineId = draft.checkoutMachineId ?? null;
+            creationCheckout = checkout;
+            createdCheckout = undefined;
             resetAddress();
             const repository = draft.repository ?? null;
             publish({ selectedId: null, current: null, canManage: true, detailStatus: 'ready', draft: null,
@@ -443,13 +449,15 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             if (target && (!current || !state.canManage)) return;
             publish({ mutation: 'saving', issue: null });
             try {
-                if (!current && !createIntent) createIntent = { draft, input: ProjectSourcesCreateInputV1Schema.parse({ serverId: scope.serverId, ...draft, requestKey: randomUUID() }) };
+                if (!current && !createIntent) createIntent = { draft, input: ProjectSourcesCreateActionInputV1Schema.parse({
+                    serverId: scope.serverId, ...draft, requestKey: randomUUID(), ...(creationCheckout ? { checkout: creationCheckout } : {}),
+                }) };
                 const submittedDraft = current ? draft : createIntent!.draft;
                 const basis = current ? draftBases.get(current.id) ?? draftOf(current) : submittedDraft;
                 const result = current
                     ? ProjectSourcesUpdateOutputV1Schema.parse(await invoke('projects.sources.update', { serverId: scope.serverId, sourceId: current.id, expectedRevision: current.revision,
                         patch: editedFields(draft, basis) }))
-                    : ProjectSourcesCreateOutputV1Schema.parse(await invoke('projects.sources.create', createIntent!.input, undefined, createIntent!.input.requestKey));
+                    : ProjectSourcesCreateActionOutputV1Schema.parse(await invoke('projects.sources.create', createIntent!.input, undefined, createIntent!.input.requestKey));
                 if (disposed) return;
                 if (result.ok) {
                     const latest = target ? drafts.get(target) : materializeCreationDraft(state.creationDraft);
@@ -461,7 +469,11 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                     if (target) draftBases.delete(target);
                     if (retained) { drafts.set(result.source.id, retained); draftBases.set(result.source.id, draftOf(result.source)); }
                     if (state.selectedId === target) publish({ selectedId: result.source.id, draft: retained });
-                    if (!current) { createIntent = null; uncertainDraft = null; inspectedCreateAbsence = false; createRetryConfirmed = false; publish({ uncertainCreate: false, creationDraft: null }); }
+                    if (!current) {
+                        createdCheckout = 'checkout' in result ? result.checkout : undefined;
+                        createIntent = null; uncertainDraft = null; inspectedCreateAbsence = false; createRetryConfirmed = false;
+                        publish({ uncertainCreate: false, creationDraft: null });
+                    }
                     acknowledge(result.source, result.canManage, !current);
                     publish({ mutation: 'idle' });
                     return result.source;

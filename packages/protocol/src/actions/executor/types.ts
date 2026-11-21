@@ -90,6 +90,7 @@ import type { ProjectsListInputSchema } from '../specs/projects.js';
 import type { AccountHomeContinuationInputV1 } from '../accountHomeContinuationV1.js';
 import type {
   ProjectSourcesListInputV1, ProjectSourcesReadInputV1, ProjectSourcesCreateInputV1,
+  ProjectSourcesCreateActionInputV1, ProjectSourceCheckoutLinkV1, ProjectSourceV1,
   ProjectSourcesUpdateInputV1, ProjectSourcesDeleteInputV1,
   ProjectSourcesMoveToTeamInputV1, ProjectSourcesMoveToTeamOutputV1,
   ProjectSourcesListOutputV1, ProjectSourcesReadOutputV1, ProjectSourcesCreateOutputV1,
@@ -2298,6 +2299,10 @@ export type ActionExecutorDeps = Readonly<{
   projectSourcesList?: (input: ProjectSourcesListInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesListOutputV1 | ActionExecuteFailure>;
   projectSourcesRead?: (input: ProjectSourcesReadInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesReadOutputV1 | ActionExecuteFailure>;
   projectSourcesCreate?: (input: ProjectSourcesCreateInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesCreateOutputV1 | ActionExecuteFailure>;
+  linkCreatedProjectSource?: (input: Readonly<{
+    checkout: NonNullable<ProjectSourcesCreateActionInputV1['checkout']>;
+    source: Pick<ProjectSourceV1, 'id' | 'revision'>;
+  }>, context: ActionExecutorContext) => Promise<ProjectSourceCheckoutLinkV1>;
   projectSourcesUpdate?: (input: ProjectSourcesUpdateInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesUpdateOutputV1 | ActionExecuteFailure>;
   projectSourcesDelete?: (input: ProjectSourcesDeleteInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesDeleteOutputV1 | ActionExecuteFailure>;
   projectSourcesMoveToTeam?: (input: ProjectSourcesMoveToTeamInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesMoveToTeamOutputV1 | ActionExecuteFailure>;
