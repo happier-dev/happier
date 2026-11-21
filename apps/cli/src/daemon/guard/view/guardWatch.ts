@@ -1,5 +1,6 @@
 import type { MachineGuardViewV1, MachineGuardWatchInputV1, MachineGuardWatchResultV1 } from '@happier-dev/protocol/machines/guard/guardRpcV1';
 import type { MachineGuardStateV1 } from '@happier-dev/protocol/machines/guard/guardStateV1';
+import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import type { MachineVitalsSampler } from '../../vitals/createMachineVitalsSampler';
 import type { MachineResourcesPolicyRuntime } from '../../resources/machineResourcesPolicy';
 import type { createProcessOwnershipRuntime } from '../../processes/ownership/processOwnershipRuntime';
@@ -26,7 +27,7 @@ export type GuardTerminalPreview = Readonly<{
 
 export type GuardViewRequester = Readonly<{ serverId: string; accountId: string; isCustodian: boolean; machineId?: string; installationId?: string }>;
 export type GuardWatchInput = Readonly<{
-  policy: Pick<MachineResourcesPolicyRuntime, 'read' | 'subscribe'>;
+  policy: Pick<MachineResourcesPolicyRuntime, 'read' | 'subscribeKey'>;
   sampler: Pick<MachineVitalsSampler, 'latest' | 'demand' | 'subscribe' | 'samplesSince'>;
   ownership: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'readOwners'>;
   /** Fresh when `scope` is omitted; `changed` only for the Guard's own planning tick. */
@@ -49,24 +50,47 @@ export class GuardViewUnavailableError extends Error {
 }
 export function createGuardWatch(input: GuardWatchInput) {
   const nowMs = input.nowMs ?? Date.now;
-  type Read = Readonly<{ facts: GuardFacts; view: MachineGuardViewV1; since: number; now: number; terminalRows?: readonly GuardTerminalPreview[] }>;
+  type Read = Readonly<{ facts: GuardFacts; view: MachineGuardViewV1; now: number; terminalRows?: readonly GuardTerminalPreview[] }>;
   type Watcher = { requester: GuardViewRequester; view: MachineGuardViewV1; since: number;
     error?: unknown; notify: () => void };
   const watchers = new Set<Watcher>();
   const lifetime = new AbortController();
   let stopped = false;
-  // Only the comparison value survives an answer; no census table or planner facts are resident.
+  // Only comparison values survive an answer; no census table or planner facts are resident.
   let fingerprint: string | undefined;
+  let measurementFingerprint: string | undefined;
   let since = 0;
   let releases: Array<() => void> = [];
   let observation: AbortController | undefined;
   let refreshing: Promise<void> | null = null;
   let refreshAgain = false;
-  const comparison = (view: MachineGuardViewV1) => JSON.stringify({ ...view,
-    // Elapsed display time is not an owner change and must not prevent a watch from parking.
-    idle: view.idle.map(({ idleMs: _idleMs, ...row }) => row),
-    idleTerminals: view.idleTerminals?.map(({ idleMs: _idleMs, ...row }) => row),
-  });
+  let pendingSummary: MachineVitalsSampleV1 | undefined;
+  const byRef = (a: { ref: string }, b: { ref: string }) => a.ref.localeCompare(b.ref);
+  const publish = (view: MachineGuardViewV1, fromSummary = false): number => {
+    const { policyRevision: _policyRevision, ladder, leftBehind, ...guard } = view;
+    // Native RSS, footprint ordering, and host memory estimates advance on the sampler's summary cadence.
+    const next = JSON.stringify({ ...guard,
+      idle: view.idle.map(({ idleMs: _idleMs, ...row }) => row),
+      idleTerminals: view.idleTerminals?.map(({ idleMs: _idleMs, ...row }) => row),
+      leftBehind: { count: leftBehind.count, footprintReported: leftBehind.footprintBytes !== null },
+      ladder: {
+        steps: ladder.steps.map(({ freesAboutBytes: _bytes, candidates, ...step }) => ({ ...step,
+          candidates: candidates.map(({ footprintBytes: _footprint, ...row }) => row).sort(byRef),
+        })),
+        excluded: ladder.excluded.map(({ footprintBytes, ...row }) => ({ ...row, footprintReported: footprintBytes !== null })).sort(byRef),
+        workingSessions: ladder.summary.workingSessions,
+        leftAloneSessions: ladder.summary.leftAloneSessions,
+      },
+    });
+    if (next === fingerprint && !fromSummary) return since;
+    const measurements = JSON.stringify([ladder, leftBehind.footprintBytes]);
+    if (next !== fingerprint || measurements !== measurementFingerprint) {
+      fingerprint = next;
+      measurementFingerprint = measurements;
+      since++;
+    }
+    return since;
+  };
 
   const assertAvailable = (signal?: AbortSignal) => {
     if (stopped) throw new GuardViewUnavailableError('stopped');
@@ -112,7 +136,7 @@ export function createGuardWatch(input: GuardWatchInput) {
         + (read.terminalRows?.length ?? 0) - (terminals?.length ?? 0),
       leftBehind: { ...read.view.leftBehind, footprintBytes: null } };
   };
-  const read = async (signal?: AbortSignal): Promise<Read> => {
+  const read = async (signal?: AbortSignal, summarySample?: MachineVitalsSampleV1): Promise<Read> => {
     const combined = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
     assertAvailable(combined);
     let result!: Read;
@@ -126,7 +150,7 @@ export function createGuardWatch(input: GuardWatchInput) {
       const policy = input.policy.read();
       if (policy.status !== 'ready') throw new GuardViewUnavailableError('policy_unavailable');
       let facts = input.sessionState.observeFacts(capturedFacts);
-      const memory = input.sampler.latest()?.memory;
+      const memory = (summarySample ?? input.sampler.latest())?.memory;
       if (memory?.reported && ownership.status === 'ok') {
         const native = new Map(ownership.snapshot.rows.map(row => [row.pid, row]));
         const totals = (rows: typeof ownership.rows) => processTotals(rows.map(row => ({ memoryBytes: native.get(row.pid)?.memory?.bytes ?? null })));
@@ -165,9 +189,7 @@ export function createGuardWatch(input: GuardWatchInput) {
         leftBehind: input.readLeftBehind(ownership), keepAwake: { holding: state.keepAwakeHolding, workingSessions: ladder.summary.workingSessions },
         ...(retentionRef ? { managed: { retentionRef } } : {}), recentActivity: activity.entries, recentActivityOthers: 0,
         othersWorkCount: 0 };
-      const next = comparison(view);
-      if (next !== fingerprint) { fingerprint = next; since++; }
-      result = { facts, view, since, now, terminalRows };
+      result = { facts, view, now, terminalRows };
     } });
     // With no deadline, a non-cancelled wait returns only after the whole read assigned its result.
     assertAvailable(combined);
@@ -181,6 +203,7 @@ export function createGuardWatch(input: GuardWatchInput) {
   };
   const releaseObservation = () => {
     observation?.abort(); observation = undefined;
+    pendingSummary = undefined;
     for (const release of releases.splice(0)) release();
   };
   const refresh = () => {
@@ -191,13 +214,16 @@ export function createGuardWatch(input: GuardWatchInput) {
         refreshAgain = false;
         const signal = observation?.signal;
         if (!signal) return;
+        const summarySample = pendingSummary;
+        pendingSummary = undefined;
         try {
-          const next = await read(signal);
+          const next = await read(signal, summarySample);
           if (signal.aborted) continue;
+          const revision = publish(next.view, summarySample !== undefined);
           for (const watcher of watchers) {
-            const view = { ...project(next, watcher.requester), otherMemoryGuards: watcher.view.otherMemoryGuards };
-            if (next.since > watcher.since) {
-              watcher.view = view; watcher.since = next.since; watcher.notify();
+            if (revision > watcher.since) {
+              watcher.view = { ...project(next, watcher.requester), otherMemoryGuards: watcher.view.otherMemoryGuards };
+              watcher.since = revision; watcher.notify();
             }
           }
         } catch (error) {
@@ -222,9 +248,10 @@ export function createGuardWatch(input: GuardWatchInput) {
       const sample = input.sampler.samplesSince(sampleCursor, 'summary').at(-1);
       if (!sample) return;
       sampleCursor = sample.sampledAt;
+      pendingSummary = sample;
       refresh();
     }),
-      input.policy.subscribe(refresh), input.subscribe(refresh)];
+      input.policy.subscribeKey('guard', refresh), input.subscribe(refresh)];
     refresh();
   } });
   return {
@@ -245,7 +272,7 @@ export function createGuardWatch(input: GuardWatchInput) {
         if (signal?.aborted || stopped) return { changed: false };
         throw error;
       }
-      const watcher: Watcher = { requester, since: next.since,
+      const watcher: Watcher = { requester, since: publish(next.view),
         view: { ...project(next, requester), otherMemoryGuards: otherMemoryGuards(next.facts) }, notify: () => {} };
       const combined = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
       const result = await park.parkWatch({ signal: combined,

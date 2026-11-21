@@ -206,6 +206,11 @@ describe('Guard requester view and parked watch', () => {
       },
       nativeReads: () => nativeReads, rootReads: () => rootReads, setGuardName: (name: string) => { guardName = name; },
       setMemory: (pages: number) => { memoryPages = pages; }, listeners: () => changes.size,
+      notifyWorkChange: () => { for (const listener of changes) listener(); },
+      refreshUnrelatedMetadata: async () => {
+        metadata = { ...metadata, idleWatchFixture: ++metadataVersion };
+        await policy.reload();
+      },
       onSubscribe: (callback: () => void) => { onSubscribe = callback; },
       parked: () => changes.size ? Promise.resolve() : new Promise<void>(resolve => { waitingForPark.add(resolve); }),
       enableMemory: async () => {
@@ -344,6 +349,50 @@ describe('Guard requester view and parked watch', () => {
     expect(publications).toBe(1);
     expect(changed).toMatchObject({ changed: true, view: { policy: { memoryGuard: { enabled: true } } } });
     controller.abort();
+  });
+
+  it('returns zero times in five visible idle minutes with interim RSS and metadata churn', async () => {
+    const h = await setup('bob', 'settled', false, false, false, 2_000);
+    const first = await h.view.watch({ machineId: 'machine' }, requester);
+    if (!first.changed) throw new Error('Expected initial view');
+    const controller = new AbortController();
+    const releaseOverview = h.sampler.demandOverview();
+    const replies: Array<typeof first> = [];
+    const watching = (async () => {
+      let since = first.since;
+      while (!controller.signal.aborted) {
+        const answer = await h.view.watch({ machineId: 'machine', since }, requester, controller.signal);
+        if (!answer.changed) return;
+        replies.push(answer);
+        since = answer.since;
+      }
+    })();
+    const drain = async () => {
+      await h.sampler.start();
+      for (let run = 0; run < 4; run++) await h.activityLog.list({ range: 'today' });
+    };
+    try {
+      await h.parked();
+      for (let sample = 1; sample <= 150; sample++) {
+        // The selected 2 s clock only supplies a summary every eighth sample.
+        // Keep that observation stable while exercising the other producer signals.
+        h.setMemory(sample % 8 === 0 ? 1 : 2 + sample % 2);
+        await vi.advanceTimersByTimeAsync(2_000);
+        await h.refreshUnrelatedMetadata();
+        h.notifyWorkChange();
+        await drain();
+      }
+      expect(replies).toHaveLength(0);
+
+      await h.enableMemory();
+      await drain();
+      expect(replies).toHaveLength(1);
+      expect(replies[0]?.view.policy.memoryGuard.enabled).toBe(true);
+    } finally {
+      controller.abort();
+      releaseOverview();
+      await watching;
+    }
   });
 
   it('refreshes parked previews at the summary cadence and releases observations on cancellation', async () => {
@@ -520,11 +569,11 @@ describe('Guard requester view and parked watch', () => {
     const h = await setup();
     const first = await h.view.watch({ machineId: 'machine' }, requester);
     if (!first.changed) throw new Error('Expected initial view');
-    h.onSubscribe(() => h.setMemory(3));
+    h.onSubscribe(() => { h.tracked[0]!.happySessionId = 'new-session'; });
     const gap = await h.view.watch({ machineId: 'machine', since: first.since }, requester);
     expect(gap.changed).toBe(true);
     if (!gap.changed) throw new Error('Expected gap-closing view');
-    expect(gap.view.ladder.summary.candidatesBytes).toBeGreaterThan(first.view.ladder.summary.candidatesBytes);
+    expect(gap.view.idle.map(row => row.sessionRef)).toEqual(['new-session']);
     const pending = h.view.watch({ machineId: 'machine', since: gap.since }, requester);
     await h.parked();
     await h.activityLog.append({ v: 1, id: 'new', at: epoch, kind: 'housekeeping', rule: 'housekeeping', outcome: 'done', attribution });
