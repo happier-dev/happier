@@ -67,10 +67,8 @@ export const FIRST_PARTY_RELEASE_ARCHIVE_EXTRACTION_LIMITS: ArchiveExtractionLim
 
 type ArchiveEntryKind = 'directory' | 'file';
 /**
- * Kinds the entry-path validator understands. `symlink` is a ZIP-only kind: a macOS `.app` bundle
- * cannot exist without `Versions/Current` and the aliases that point through it, so the managed
- * Chrome-for-Testing archive is unextractable without it. It is deliberately NOT part of the
- * exported `InspectedTarArchiveEntry.kind` union — the tar paths still reject or skip links.
+ * Kinds the entry-path validator understands. The exported tar inventory used
+ * by file-only consumers still rejects links.
  *
  * For every ownership rule below (prefix conflicts, duplicate paths) a symlink behaves as a
  * NON-DIRECTORY: nothing in the archive may be declared beneath one.
@@ -362,6 +360,7 @@ function createArchiveEntryValidator(
 
 type TarArchiveEntry = Readonly<{
   gid?: number | null;
+  linkpath?: string;
   meta: boolean;
   mode?: number | null;
   path: string;
@@ -375,7 +374,18 @@ type TarEntryValidator = Readonly<{
   assertValid: () => void;
 }>;
 
-type TarLinkPolicy = 'reject' | 'skip';
+type TarLinkPolicy = 'reject' | 'skip' | 'allow-symlinks';
+
+function assertArchiveSymlinkSupported(path: string, byteLength: number): void {
+  // Windows needs privilege and an explicit file/directory link type. Refuse
+  // consistently rather than publishing a runtime with missing links.
+  if (process.platform === 'win32') {
+    throw new Error(`[release-runtime] archive symlink entries are not supported on Windows (${path})`);
+  }
+  if (byteLength > MAX_SYMLINK_TARGET_BYTES) {
+    throw new Error(`[release-runtime] archive symlink target exceeds its length limit (${path})`);
+  }
+}
 
 function createTarEntryValidator(
   linkPolicy: TarLinkPolicy,
@@ -383,6 +393,7 @@ function createTarEntryValidator(
   allowedEntryRoots?: readonly string[],
   onFailure?: (error: Error) => void,
   onEntry?: (entry: InspectedTarArchiveEntry) => void,
+  symlinkTargetsByPath?: Map<string, string>,
 ): TarEntryValidator {
   const validatePath = createArchiveEntryValidator(allowedEntryRoots);
   let firstError: Error | null = null;
@@ -417,6 +428,16 @@ function createTarEntryValidator(
             });
           }
           return true;
+        }
+        if (symlinkTargetsByPath && entry.type === 'SymbolicLink') {
+          const target = entry.linkpath ?? '';
+          const byteLength = Buffer.byteLength(target, 'utf8');
+          assertArchiveSymlinkSupported(entry.path, byteLength);
+          budget.account('file', byteLength);
+          const path = validatePath(entry.path, 'symlink');
+          if (path !== null) symlinkTargetsByPath.set(path, target);
+          // node-tar only writes directories and files under this policy.
+          return false;
         }
         if (linkPolicy === 'skip' && (entry.type === 'SymbolicLink' || entry.type === 'Link')) {
           budget.account('file', 0);
@@ -700,20 +721,7 @@ function createZipEntryValidator(params: Readonly<{
           `[release-runtime] archive symlink entry also declares a directory (${entry.fileName})`,
         );
       }
-      if (process.platform === 'win32') {
-        // Windows symlink creation needs SeCreateSymbolicLinkPrivilege or Developer Mode, so it is
-        // privilege-dependent rather than reliable, and the created link's file/directory type has
-        // to be chosen up front. Refuse loudly instead of silently producing a bundle whose links
-        // are missing — a half-built `.app` is exactly the failure-without-saying-so shape.
-        throw new Error(
-          `[release-runtime] archive symlink entries are not supported on Windows (${entry.fileName})`,
-        );
-      }
-      if (entry.uncompressedSize > MAX_SYMLINK_TARGET_BYTES) {
-        throw new Error(
-          `[release-runtime] archive symlink target exceeds its length limit (${entry.fileName})`,
-        );
-      }
+      assertArchiveSymlinkSupported(entry.fileName, entry.uncompressedSize);
       // A symlink takes a name and an inode exactly like a file, and its target string is its
       // expanded payload, so it is accounted as one rather than as a free directory.
       params.budget?.account('file', entry.uncompressedSize);
@@ -837,11 +845,14 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     archiveBytes: params.archiveBytes,
     limits: params.limits,
   });
+  const symlinkTargetsByPath = params.linkPolicy === 'allow-symlinks' ? new Map<string, string>() : undefined;
   const validateEntry = createTarEntryValidator(
     params.linkPolicy,
     budget,
     params.allowedEntryRoots,
     params.abortContext.abort,
+    undefined,
+    symlinkTargetsByPath,
   );
   const pendingEntries = new Set<tar.ReadEntry>();
   const acceptedRoots = new Set<string>();
@@ -865,7 +876,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     // Every accepted path and entry type has already passed the canonical
     // archive validator, and extraction targets a fresh private staging tree.
     // Let node-tar use recursive mkdir instead of re-statting every parent for
-    // every file; link entries never reach the filesystem.
+    // every file. Symbolic links are written only after the tar parser drains.
     preservePaths: true,
     preserveOwner: false,
     strict: true,
@@ -919,6 +930,14 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     } else {
       await unpackFinished;
     }
+  }
+  if (!symlinkTargetsByPath) return;
+  assertArchiveSymlinkTargetsAreContained(symlinkTargetsByPath);
+  for (const [path, target] of symlinkTargetsByPath) {
+    params.abortContext.throwIfAborted();
+    const outputPath = join(params.extractDir, path);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await symlink(target, outputPath);
   }
 }
 

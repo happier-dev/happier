@@ -610,6 +610,12 @@ normalization never acquires or substitutes managed pnpm, uv, or a JavaScript
 runtime, including after execution errors. Happier-owned bridges and managed
 package definitions retain their own runtime and installation flows.
 
+Checksum-pinned runtime archives that retain the full extraction root, including
+Lima, preserve contained tar symlinks on Linux and macOS in 0.3 development.
+The shared extractor validates the link graph before publication and refuses
+escaping targets with `archive-symlink-target-outside-root`. On Windows it
+refuses archives that require symlinks, consistent with its ZIP handling.
+
 Registry uv Agent installation uses Happier-managed uv. Its pinned release assets
 and publisher SHA-256 digests are
 owned by `packages/cli-common/src/agents/managedUv.ts`; acquisition uses the

@@ -1464,6 +1464,40 @@ test('extractArchivePayloadToDirectory rejects standalone tar symlinks and hardl
   }
 });
 
+test('extractArchivePayloadToDirectory keeps contained tar symlinks and refuses targets outside staging', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-tar-symlinks-'));
+  try {
+    const archivePath = join(rootDir, 'lima.tar.gz');
+    const extractDir = join(rootDir, 'extract');
+    const entries = [
+      { name: './share/doc/lima/templates', type: '2', linkpath: '../../lima/templates' },
+      { name: './share/lima/templates/default.yaml', contents: 'template' },
+    ];
+    const extract = () => extractArchivePayloadToDirectory({
+      archiveName: 'lima.tar.gz', archivePath, extractDir, tarLinkPolicy: 'allow-symlinks',
+    });
+    await writeFile(archivePath, createTarGzip(entries));
+    if (process.platform === 'win32') {
+      await assert.rejects(extract(), /symlink entries are not supported on Windows/u);
+      return;
+    }
+    await extract();
+    const link = join(extractDir, 'share/doc/lima/templates');
+    assert.equal(await readlink(link), '../../lima/templates');
+    assert.equal(await readFile(join(link, 'default.yaml'), 'utf8'), 'template');
+    await rm(extractDir, { recursive: true });
+
+    await writeFile(archivePath, createTarGzip([
+      ...entries,
+      { name: 'outside', type: '2', linkpath: '../outside' },
+    ]));
+    await assert.rejects(extract(), { code: 'archive-symlink-target-outside-root' });
+    assert.deepEqual(await readdir(rootDir), ['lima.tar.gz']);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('extractArchivePayloadToDirectory can skip tar links for a verified runtime archive while retaining regular files', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-skip-links-'));
   const payloadDir = join(rootDir, 'payload');

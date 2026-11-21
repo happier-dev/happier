@@ -11,6 +11,15 @@
 // otherwise never terminate. Matches the SYMLOOP_MAX that kernels apply for the same reason.
 export const MAX_SYMLINK_RESOLUTION_HOPS = 40;
 
+export class ArchiveSymlinkTargetOutsideRootError extends Error {
+  readonly code = 'archive-symlink-target-outside-root';
+
+  constructor(message: string) {
+    super(`[release-runtime] ${message}`);
+    this.name = 'ArchiveSymlinkTargetOutsideRootError';
+  }
+}
+
 function splitPortableSymlinkTarget(rawTarget: string, linkPath: string): readonly string[] {
   if (rawTarget.length === 0) {
     throw new Error(`[release-runtime] archive symlink has an empty target: ${linkPath}`);
@@ -24,8 +33,8 @@ function splitPortableSymlinkTarget(rawTarget: string, linkPath: string): readon
     );
   }
   if (rawTarget.startsWith('/') || /^[a-z]:/iu.test(rawTarget)) {
-    throw new Error(
-      `[release-runtime] archive symlink target is absolute: ${linkPath} -> ${rawTarget}`,
+    throw new ArchiveSymlinkTargetOutsideRootError(
+      `archive symlink target is absolute: ${linkPath} -> ${rawTarget}`,
     );
   }
   return rawTarget.split('/');
@@ -60,15 +69,15 @@ function resolveSingleArchiveSymlinkTarget(params: Readonly<{
     if (segment === '' || segment === '.') continue;
     if (segment === '..') {
       if (resolvedSegments.length === 0) {
-        throw new Error(
-          `[release-runtime] archive symlink target leaves the extraction root: ${params.linkPath} -> ${params.rawTarget}`,
+        throw new ArchiveSymlinkTargetOutsideRootError(
+          `archive symlink target leaves the extraction root: ${params.linkPath} -> ${params.rawTarget}`,
         );
       }
       resolvedSegments.pop();
       continue;
     }
     resolvedSegments.push(segment);
-    const nestedTarget = params.targetsByFoldedPath.get(resolvedSegments.join('/').toLowerCase());
+    const nestedTarget = params.targetsByFoldedPath.get(resolvedSegments.join('/').normalize('NFC').toLowerCase());
     if (nestedTarget === undefined) continue;
     followedLinks += 1;
     if (followedLinks > MAX_SYMLINK_RESOLUTION_HOPS) {
@@ -96,7 +105,7 @@ export function resolveArchiveSymlinkTargets(
 ): Map<string, string> {
   const targetsByFoldedPath = new Map<string, string>();
   for (const [portablePath, rawTarget] of targetsByPortablePath) {
-    targetsByFoldedPath.set(portablePath.toLowerCase(), rawTarget);
+    targetsByFoldedPath.set(portablePath.normalize('NFC').toLowerCase(), rawTarget);
   }
   const resolved = new Map<string, string>();
   for (const [linkPath, rawTarget] of targetsByPortablePath) {

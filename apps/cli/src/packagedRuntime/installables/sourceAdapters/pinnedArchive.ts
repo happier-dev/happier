@@ -184,6 +184,7 @@ export async function installPinnedArchive(params: Readonly<{
         archiveName,
         extractDir,
         limits: params.archiveExtractionLimits,
+        tarLinkPolicy: integrityDigest ? 'allow-symlinks' : 'reject',
       });
       params.signal?.throwIfAborted();
       // Keep the archive root so companion files and explicit wrapper paths agree.
