@@ -56,14 +56,23 @@ export async function readReviewAttentionV1(input: TriageReadAttentionInputV1, c
         nextPage: result.cursor !== null, ...(result.cursor === null ? {} : { cursor: { v: 1, token: result.cursor } }) };
 }
 
+/**
+ * The same Review fact as the Inbox byline: a request is the reader's requested review (said by Triage's one
+ * involvement reason, as for every source); without one, a pending finding needs their decision.
+ */
+function viewer(facts: Facts): Extract<TriageGetResultV1, { kind: 'present' }>['viewer'] {
+    if (facts.needsYou && facts.requestedVerdict) return { involvement: ['reviewRequested'] };
+    return { involvement: [], sourceAttention: facts.needsYou
+        ? { level: 'required', reasonId: facts.reason, reasonLabel: 'Needs your decision' } : { level: 'none' } };
+}
 function observation(review: Omit<Review, 'needsYou'>, facts: Facts, titles: ReadonlyMap<string, string>): Extract<TriageGetResultV1, { kind: 'present' }> {
     return { kind: 'present', localRef: reviewTriageLocalRefV1(review.reviewId),
-        locator: { v: 1, displayPath: review.reviewId, routingToken: review.reviewId },
+        // The place is the Reviews list itself; the id only routes (a raw id is never a place).
+        locator: { v: 1, displayPath: 'Reviews', routingToken: review.reviewId },
         snapshot: { v: 1, title: title(review.reviewId, titles), scopeLabel: 'Reviews', facts: [],
             state: { presentation: facts.needsYou ? 'active' : 'resolved', nativeLabel: facts.needsYou ? 'Needs you' : 'Reviewed' },
             createdAtMs: review.createdAt },
-        viewer: { involvement: [], sourceAttention: facts.needsYou
-            ? { level: 'required', reasonId: facts.reason, reasonLabel: 'Review needs you' } : { level: 'none' } }, sourceUpdatedAtMs: review.updatedAt };
+        viewer: viewer(facts), sourceUpdatedAtMs: review.updatedAt };
 }
 export async function getReviewV1(input: TriageGetInputV1, context: Context): Promise<TriageGetResultV1> {
     const result = await context.services.actions.execute('review.get', { reviewId: input.localRef.entryId }, { signal: context.signal });

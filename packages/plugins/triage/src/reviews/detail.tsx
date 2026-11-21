@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
-import { Button, ErrorState, defineUiSurface, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ErrorState, defineUiSurface, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { HappierReviewSummaryHost, type HappierReviewSummaryHandle } from '@happier-dev/plugin-ui/components';
+import { useTriagePageRefresh } from '@happier-dev/triage-sources/ui';
 import { isReviewTriageEntryRefV1, TriageDetailSurfaceInputV1Schema, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 
 export function readReviewDetailInput(value: unknown): TriageDetailSurfaceInputV1 | null {
@@ -10,13 +12,22 @@ export function readReviewDetailInput(value: unknown): TriageDetailSurfaceInputV
     return isReviewTriageEntryRefV1(ref) ? parsed.data : null;
 }
 
-/** Triage owns the entry heading; the Artifact viewer owns Review content and decisions. */
-export function ReviewDetail({ context, input }: Readonly<{ context: RenderContext; input: TriageDetailSurfaceInputV1 | null }>): React.ReactElement {
-    const host = usePluginHostApi();
+/**
+ * Triage owns the entry heading and its actions; the body is the shared Review summary (the same one a pull
+ * request embeds), whose own secondary link opens the Review. Review content and decisions stay in the Review.
+ */
+export function ReviewDetail({ input }: Readonly<{ context: RenderContext; input: TriageDetailSurfaceInputV1 | null }>): React.ReactElement {
     const text = usePluginTranslation();
     if (input === null) return <ErrorState title={text('plugins.triage.reviews.unavailable', 'This Review could not be opened')} />;
-    return <Button title={text('plugins.triage.reviews.open', 'Open Review')}
-        onPress={() => host.openResource({ kind: 'artifact', artifactId: input.observation.entryRef.entryId }, { signal: context.signal })} />;
+    const reviewId = input.observation.entryRef.entryId;
+    return <ReviewSummary key={reviewId} reviewId={reviewId} />;
+}
+
+function ReviewSummary({ reviewId }: Readonly<{ reviewId: string }>): React.ReactElement {
+    const summary = React.useRef<HappierReviewSummaryHandle>(null);
+    const refresh = React.useCallback(async () => { await summary.current?.refresh(); }, []);
+    useTriagePageRefresh(refresh);
+    return <HappierReviewSummaryHost ref={summary} reviewId={reviewId} />;
 }
 
 export const renderSurface: RenderSurface = defineUiSurface(context => <ReviewDetail context={context} input={readReviewDetailInput(context.launchInput)} />);
