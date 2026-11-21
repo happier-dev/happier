@@ -20,15 +20,21 @@ const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerI
 function retryGuest(operation: AbortController | undefined, readyAtMs: number, standaloneSignal?: AbortSignal) {
   let statusReads = 0;
   let installations = 0;
+  const progress: string[] = [];
   const result = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable',
     ...(operation ? { operationId: 'admitted-retry', signal: operation.signal } : { signal: standaloneSignal }),
+    onEvent: ({ type, stepId }) => { if (type === 'progress' && stepId) progress.push(stepId); },
     carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
   }, {
     readCurrentManagedRow: async () => machine,
     createPromptId: () => 'unused',
     runTask: async () => { throw new Error('Retained retry must not pair again'); },
     approveLocalAuthRequest: async () => { throw new Error('Retained retry must not approve auth again'); },
-    installNativePayload: async () => { installations++; return { binaryPath: '/home/guest/.happier/cli/current/happier' }; },
+    installNativePayload: async ({ onPhase }) => {
+      installations++;
+      onPhase?.('transfer');
+      return { binaryPath: '/home/guest/.happier/cli/current/happier' };
+    },
     native: { putFile: async () => {}, exec: async ({ command, signal }) => {
       signal?.throwIfAborted();
       if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
@@ -41,7 +47,7 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number, s
       return { status: 0, stdout: '', stderr: '' };
     } },
   });
-  return { result, reads: () => statusReads, installations: () => installations };
+  return { result, progress, reads: () => statusReads, installations: () => installations };
 }
 
 describe('retained native bootstrap readiness lifetime', () => {
@@ -151,6 +157,9 @@ describe('retained native bootstrap readiness lifetime', () => {
     const settled = retry.result.then(value => { outcome = 'ready'; return value; }, error => { outcome = 'failed'; return error as unknown; });
     await vi.advanceTimersByTimeAsync(15_000);
     expect(outcome).toBe('pending');
+    expect(retry.progress).toContain('ssh.installCli.transfer');
+    expect(retry.progress).toContain('daemon.service.restart');
+    expect(retry.progress.at(-1)).toBe('daemon.control.wait');
     await vi.advanceTimersByTimeAsync(41_000);
     await expect(settled).resolves.toEqual({ machineId: 'same-machine' });
     expect(operation.signal.aborted).toBe(false);

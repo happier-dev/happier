@@ -7,7 +7,7 @@ import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machin
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import type { InteractiveSystemTaskContext, InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
+import type { InteractiveSystemTaskContext, InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 import { createRemoteNativeBootstrapMachineTaskKind } from './remoteSshBootstrapMachineKind.js';
 import type { PrepareManagedDedicatedBootstrap } from '../ssh/installRemoteCli.js';
 import { installRemoteDaemonLifecycle } from './remoteDaemonLifecycle.js';
@@ -71,6 +71,8 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   guestCli?: GuestCliIdentityV1;
   /** Persist successful installation before ordinary Account pairing starts. */
   onInstalled?(): Promise<void>;
+  /** Progress for retained native operations that do not start a pairing task. */
+  onEvent?: (event: InteractiveSystemTaskEventInput) => void;
   /** Host-private admitted Create carrier; never part of task params or a wire input. */
   reviewedChild?: HostReviewedChildPortV1;
   /** The controller's qualified provisioner capability for the retained launch. */
@@ -268,6 +270,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   }
   let binaryPath = '';
   const installRemoteCli = async (signal?: AbortSignal, context?: Pick<InteractiveSystemTaskContext, 'taskId' | 'emit' | 'prompt'>) => {
+    const emit = context?.emit ?? input.onEvent;
     await installSharedRemoteCli({ channel: configuration.channel, signal,
       bootstrap: { parsed: configuration, context, enrolledMachineId: row.enrolledMachineId,
         bootstrapInstalled: row.bootstrapInstalled, createPromptId: deps.createPromptId,
@@ -287,10 +290,10 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
             // Progress words a person reads on the machine's page: what happens, not how it is shipped.
             const message = { prepare: 'Preparing Happier for this machine', archive: 'Packing Happier for this machine',
               transfer: 'Copying Happier to this machine', promote: 'Installing Happier' }[phase];
-            context?.emit({ type: 'progress', stepId: `ssh.installCli.${phase}`, message });
+            emit?.({ type: 'progress', stepId: `ssh.installCli.${phase}`, message });
           },
           onTransferProgress: ({ transferredBytes, totalBytes }: Readonly<{ transferredBytes: number; totalBytes: number }>) => {
-            context?.emit({ type: 'progress', stepId: 'ssh.installCli.transfer',
+            emit?.({ type: 'progress', stepId: 'ssh.installCli.transfer',
               message: `Copying Happier to this machine: ${Math.floor(transferredBytes / 1048576)} of ${Math.max(1, Math.ceil(totalBytes / 1048576))} MB` });
           } };
         if (!deps.installNativePayload) throw new SystemTaskExecutionError('guest_payload_missing', 'This app cannot read the Home guest CLI payload. Choose a connected controller to install this machine, then retry.');
@@ -311,8 +314,12 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // Enrolled guests can update the installed CLI without issuing a new
     // sign-in or changing the existing Machine. Native-process boot recovery is
     // handled above and continues to reuse its retained installation.
+    const reportProgress = (stepId: string, message: string) => input.onEvent?.({ type: 'progress', stepId, message });
+    reportProgress('ssh.installCli', 'Preparing the guest update');
     await installRemoteCli(input.signal);
     const runCommand = async (step: 'install' | 'restart', process: boolean) => {
+      if (step === 'install') reportProgress('daemon.service.install', 'Installing background service');
+      else reportProgress('daemon.service.restart', 'Restarting the guest daemon');
       const args = process ? ['daemon', 'restart', '--json']
         : ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'];
       const invocation = { binaryPath, args, channel: configuration.channel };
@@ -338,11 +345,11 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // Installation can replace the guest daemon before Home acknowledges its
     // new control socket. Reuse enrollment's native readiness owner before the
     // retained controller dispatches policy children; never retry installation.
+    reportProgress('daemon.control.wait', 'Waiting for the guest daemon to connect to Home');
     const ready = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).waitForReadyDaemon!({
       signal: input.signal, requireMachineControlReady: true,
-      // Retained retries have no fresh pairing deadline. Their admitted operation
-      // already owns cancellation (including its deadline); standalone calls keep
-      // the readiness owner's default instead of inventing a second lifetime.
+      // Retained operations follow the caller's cancellation. Standalone calls
+      // use the readiness owner's default.
       timeoutMs: input.operationId && input.signal ? null : undefined,
       requireServiceInstalled: !nativeProcess,
     });
