@@ -100,6 +100,10 @@ type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
   onClose: () => void;
 }>;
 
+const signsInAgain = (choice: Readonly<{ selectable: boolean; target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
+  presentation: Readonly<{ unavailableReasonCode?: string }> }>): boolean =>
+  !choice.selectable && choice.target?.kind === 'account' && choice.presentation.unavailableReasonCode === 'accountReconnect';
+
 function ConnectedAccountPurposeTargetPickerModalContent(
   props: ConnectedAccountPurposeTargetPickerModalContentProps,
 ) {
@@ -126,7 +130,8 @@ function ConnectedAccountPurposeTargetPickerModalContent(
         label: choice.presentation.primaryLabel,
         ...(choice.presentation.secondaryLabel ? { subtitle: choice.presentation.secondaryLabel } : {}),
         accessibilityLabel: choice.presentation.accessibilityLabel,
-        disabled: !choice.selectable,
+        // A signed-out account is the way to sign it in again, not a disabled dead end (PAGE-ACCEPT-176 R8-D6).
+        disabled: !choice.selectable && !signsInAgain(choice),
       })),
     }],
   }), [choices, locale, props.restriction, props.testID]);
@@ -145,6 +150,13 @@ function ConnectedAccountPurposeTargetPickerModalContent(
           props.onClose();
           const choice = choices.find(candidate => candidate.id === optionId);
           if (choice?.selectable) props.onSelect(choice.target, choice.teamResource);
+          else if (choice && signsInAgain(choice) && choice.target?.kind === 'account') {
+            const target = choice.target;
+            // The connect sheet's own sign-in-again (Settings › Connected services uses it); the picker owns no second flow.
+            void import('../setup/ConnectedServiceSetupModal').then(({ presentConnectSheet }) => presentConnectSheet({
+              intent: 'reconnect', service: target.account.service, account: target.account,
+            })).then(result => { if (result.kind !== 'dismissed') props.onSelect(target, null); });
+          }
         }}
       />
       {props.refresh ? (
