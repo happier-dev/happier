@@ -2,6 +2,12 @@ import * as React from 'react';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { StorePresetChoice } from './StoreAddToPreset';
+import type { StorePresetDoorItem } from './storePresetDoor';
+
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -17,6 +23,81 @@ afterEach(() => standardCleanup());
 
 const item = { kind: 'softwareRecipe' as const,
     selection: { ref: { pluginId: 'happier.machine.recipes', recipeId: 'google-chrome', revision: '1' }, inputs: {} } };
+
+it('opens Machine review or the preset Setup editor from the same installed recipe control', async () => {
+    const { PluginSetupSection } = await import('@/components/settings/plugins/detail/PluginSetupSection');
+    const { MachineProvisionerPicker } = await import('@/components/settings/machines/managed/MachineProvisionerPicker');
+    const { ManagedMachineConfigurationView } = await import('@/components/settings/machines/managed/ManagedMachineConfigurationView');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { Modal } = await import('@/modal');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } =
+        await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { pluginId, recipeId, revision } = item.selection.ref;
+    const serverIdentityId = 'srv_installed_recipe';
+    const serverId = await home.addHome({ name: 'Recipe Home', serverUrl: 'https://installed-recipe.test',
+        serverIdentityId, accountId: 'owner', currentAccount: true });
+    const scope = { serverId, accountId: 'owner' };
+    await act(async () => {
+        storage.getState().activateProfileScope(scope);
+        await storage.getState().activateSettingsScope(scope);
+        await publishMachineInventoryForTest(scope, [
+            createMachineFixture({ id: 'first-machine', activeAt: Date.now() }),
+            createMachineFixture({ id: 'chosen-machine', activeAt: Date.now() }),
+        ]);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    });
+    onTestFinished(() => { publishAppliedActiveServerRuntimeAvailability(false); });
+    const projection = PluginProjectionV2Schema.parse({
+        v: 2, generation: 1, agentsById: {}, familiesById: {
+            machineRecipes: { family: 'machineRecipes', entriesById: {
+                [`${pluginId}/${recipeId}`]: {
+                    id: `${pluginId}/${recipeId}`, pluginId, pluginVersion: '1.0.0',
+                    definition: { id: recipeId, revision, title: 'Set up browser', software: true,
+                        inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [] },
+                },
+            } },
+        },
+    });
+    const showModal = vi.fn(() => 'recipe-review');
+    const releaseHost = Modal.registerProvider({
+        showModal, hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
+    });
+    onTestFinished(releaseHost);
+    function InstalledRecipe() {
+        const [preset, setPreset] = React.useState<Readonly<{ choice: StorePresetChoice; item: StorePresetDoorItem }> | null>(null);
+        return preset
+            ? <StorePresetEditorHandoff {...preset} onReturn={() => setPreset(null)} />
+            : <PluginSetupSection pluginId={pluginId} title="Machine tools" host="app" projection={projection}
+                machineId="first-machine" serverId={serverId} settings={[]} testID="recipe-setup"
+                onAddToPreset={(choice, item) => setPreset({ choice, item })} />;
+    }
+    const screen = await renderScreen(<InstalledRecipe />);
+    const trigger = screen.root.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('recipe-setup.') && node.props.testID.endsWith('.use')
+        && typeof node.props.onPress === 'function')[0];
+    expect(trigger).toBeDefined();
+    const prefix = trigger!.props.testID as string;
+    await act(async () => screen.pressByTestId(prefix));
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.machine.chosen-machine`)).not.toBeNull());
+    await act(async () => screen.pressByTestId(`${prefix}.machine.chosen-machine`));
+    await waitForHomeGovernance(() => expect(showModal).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+        intent: 'recipe', item, scope: { serverId: serverIdentityId, accountId: scope.accountId }, machineId: 'chosen-machine',
+    }) })));
+
+    await act(async () => screen.pressByTestId(prefix));
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.new`)).not.toBeNull());
+    await act(async () => screen.pressByTestId(`${prefix}.new`));
+    const pickers = () => screen.findAllByType(MachineProvisionerPicker);
+    await waitForHomeGovernance(() => expect(pickers()[0]?.props).toMatchObject({ serverId: serverIdentityId, presetOnly: true }));
+    const provisioner = 'acme.cloud/vm';
+    await act(async () => pickers()[0]?.props.onSelectProvisioner?.({ serverId: serverIdentityId, provisioner }));
+    expect(screen.findAllByType(ManagedMachineConfigurationView)[0]?.props).toMatchObject({
+        serverId: serverIdentityId, provisioner, presetOnly: true, presetContinuation: { item, draft: { name: '' } },
+    });
+});
 
 it('says why its presets could not be read, with Retry, instead of an empty menu', async () => {
     const door = await renderScreen(<StoreAddToPresetButton serverId="srv" item={item} name="Google Chrome"
