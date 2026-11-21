@@ -15,6 +15,7 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export function sessionTerminalActionFailure(errorCode: string) {
     return { ok: false as const, errorCode, error: errorCode };
@@ -103,17 +104,23 @@ export async function invokeSessionTerminalAction(request: Readonly<{
                 : { kind: 'machine_shell', machineId: terminalData.machineId, cwd: terminalData.cwd,
                     launch: { kind: 'package_script', runTargetId: terminalData.runTargetId } };
             if (project) {
-                if (target.kind === 'session_attach') return sessionTerminalActionFailure('terminal_target_unavailable');
+                if (target.kind === 'session_attach'
+                    || isManagedWorkspaceRefV2(project.workspace) && target.kind === 'machine_shell') {
+                    return sessionTerminalActionFailure('terminal_target_unavailable');
+                }
                 const selected = target.kind === 'workspace_shell' || target.kind === 'terminal_view' && target.workspace ? target.workspace
                     : { ...project.workspace, machineId: target.machineId, rootPath: target.cwd };
                 const admitted = resolveProjectTerminalScope(data.scopeId, selected);
                 if (!admitted) return sessionTerminalActionFailure('terminal_target_unavailable');
                 if (target.kind === 'terminal_view') {
-                    if (target.machineId !== admitted.workspace.machineId
+                    if (isManagedWorkspaceRefV2(admitted.workspace) || target.machineId !== admitted.machineId
                         || !isWorkspacePathWithinRootV1(target.cwd, admitted.workspace.rootPath)) return sessionTerminalActionFailure('terminal_target_unavailable');
                     target = { ...target, workspace: admitted.workspace };
                 }
-                if (target.kind === 'workspace_shell') target = { ...target, workspace: admitted.workspace };
+                if (target.kind === 'workspace_shell') {
+                    if (isManagedWorkspaceRefV2(admitted.workspace) && target.launch) return sessionTerminalActionFailure('terminal_target_unavailable');
+                    target = { ...target, workspace: admitted.workspace };
+                }
                 else if (target.kind === 'machine_shell') {
                     target = { kind: 'workspace_shell', workspace: admitted.workspace,
                         ...(target.launch === undefined ? {} : { launch: target.launch }) };

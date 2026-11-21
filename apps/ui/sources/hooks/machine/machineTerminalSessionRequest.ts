@@ -1,5 +1,5 @@
 import type { DaemonTerminalEnsureRequest, DaemonTerminalLaunchIntent } from '@happier-dev/protocol/daemon/terminal';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export function buildMachineTerminalSessionRequest(input: Readonly<{
     terminalKey: string;
@@ -7,7 +7,7 @@ export function buildMachineTerminalSessionRequest(input: Readonly<{
     cols?: number;
     rows?: number;
     launch?: DaemonTerminalLaunchIntent | null;
-    workspace?: WorkspaceAddressV1;
+    workspace?: WorkspaceAddressV2;
 }>): DaemonTerminalEnsureRequest {
     // This object also enters the signed Action envelope before JSON encoding.
     // Absent options must be omitted at their producer, not serialized as undefined.

@@ -1,4 +1,6 @@
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -12,7 +14,7 @@ import * as React from 'react';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 /** Keep Account withdrawal reactive even when the retained terminal is hidden. */
-export function useProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV1): ProjectTerminalScope | null {
+export function useProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV2): ProjectTerminalScope | null {
     const select = React.useMemo(() => {
         let previous: ProjectTerminalScope | null = null;
         return (state: ReturnType<typeof storage.getState>) => {
@@ -25,15 +27,16 @@ export function useProjectTerminalScope(scopeId: string, selected?: WorkspaceAdd
 
 export type ProjectTerminalScope = Readonly<{
     scope: ServerAccountScope;
-    workspace: WorkspaceAddressV1;
+    workspace: WorkspaceAddressV2;
+    machineId: string;
     lifetime: ActiveServerAccountScopeLifetime;
 }>;
 
 /** Presentation/process key qualified by the actual requester and captured checkout. */
-export function buildProjectTerminalKey(scope: ServerAccountScope, workspace: WorkspaceAddressV1, terminalId: string): string {
+export function buildProjectTerminalKey(scope: ServerAccountScope, workspace: WorkspaceAddressV2, terminalId: string): string {
     // The accepted Workspace id names the checkout; its exact root travels in the
     // admitted address and is rechecked by the daemon, not copied into the key budget.
-    return ['project-terminal', scope.serverId, scope.accountId, workspace.machineId, workspace.workspaceId,
+    return ['project-terminal', scope.serverId, scope.accountId, resolveWorkspaceSyncExecutionMachineIdV1(workspace), workspace.workspaceId,
         terminalId].map(encodeURIComponent).join(':');
 }
 
@@ -54,14 +57,13 @@ export function resolveRunningProjectTerminalMember(scopeId: string, authority: 
     try { workspaceId = decodeURIComponent(parts[4]); memberId = decodeURIComponent(parts[5]); }
     catch { return null; }
     if (!memberId.trim()) return null;
-    const checkout = resolveProjectTerminalScope(scopeId, { serverId: authority.workspace.serverId,
-        machineId: authority.workspace.machineId, workspaceId, rootPath: entry.cwd });
+    const checkout = resolveProjectTerminalScope(scopeId, { ...authority.workspace, workspaceId, rootPath: entry.cwd });
     return checkout && entry.terminalKey === buildProjectTerminalKey(authority.scope, checkout.workspace, memberId)
         ? { id: memberId, target: { kind: 'workspace_shell', workspace: checkout.workspace } } : null;
 }
 
 /** Resolve the incumbent pane against the current Account's accepted checkouts, never a path guess. */
-export function resolveProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV1,
+export function resolveProjectTerminalScope(scopeId: string, selected?: WorkspaceAddressV2,
     state = storage.getState()): ProjectTerminalScope | null {
     const identity = parseProjectPaneScopeId(scopeId);
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -71,10 +73,9 @@ export function resolveProjectTerminalScope(scopeId: string, selected?: Workspac
     if (!rows || rows.status !== 'ready') return null;
     const project = resolveWorkspaceRefById(rows.workspaceRefs, identity.workspaceRefId, identity.serverId);
     if (project.kind !== 'resolved') return null;
-    const address = selected ?? { serverId: project.ref.serverId, workspaceId: project.ref.id,
-        machineId: project.ref.machineId, rootPath: project.ref.rootPath };
+    const address = selected ?? workspaceAddressFromRefV2(project.ref);
     const checkout = resolveWorkspaceRefByAddress(rows.workspaceRefs, address);
     if (checkout.kind !== 'resolved' || !sameWorkspaceProject(checkout.ref, project.ref)) return null;
-    return { scope: lifetime.scope, workspace: { serverId: checkout.ref.serverId, workspaceId: checkout.ref.id,
-        machineId: checkout.ref.machineId, rootPath: checkout.ref.rootPath }, lifetime };
+    const workspace = workspaceAddressFromRefV2(checkout.ref);
+    return { scope: lifetime.scope, workspace, machineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace), lifetime };
 }

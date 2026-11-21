@@ -4,6 +4,7 @@ import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { EMPTY_TERMINAL_WORKSPACE, reduceSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { resolveRunningProjectTerminalMember, type ProjectTerminalScope } from './projectTerminalScope';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export type ProjectRunningTerminalsState = Readonly<{
     status: 'idle' | 'loading' | 'ready' | 'unavailable';
@@ -25,7 +26,7 @@ export function useProjectRunningTerminals(scopeId: string, authority: ProjectTe
                 // The Machine census includes every accepted checkout. The Project owner below
                 // selects this Project's members, including sibling checkouts on this Machine.
                 const result = await execute('machines.terminal.list', { serverId: authority.workspace.serverId,
-                    machineId: authority.workspace.machineId }, {
+                    machineId: authority.machineId, ...(isManagedWorkspaceRefV2(authority.workspace) ? { workspace: authority.workspace } : {}) }, {
                     surface: 'ui', authority: 'present_user', serverId: authority.workspace.serverId,
                     expectedAccountId: authority.scope.accountId, signal: controller.signal,
                 });

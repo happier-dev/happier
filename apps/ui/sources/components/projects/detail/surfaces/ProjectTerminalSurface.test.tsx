@@ -29,7 +29,7 @@ import { readVisibleSessionTerminalTabsForScope } from '@/components/sessions/te
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -133,7 +133,7 @@ async function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[]
     return home;
 }
 
-function RoutedProjectTerminal(props: Readonly<{ scopeId: string; workspace: WorkspaceAddressV1; workspaceRef: WorkspaceRefV1; phone: boolean }>) {
+function RoutedProjectTerminal(props: Readonly<{ scopeId: string; workspace: WorkspaceAddressV2; workspaceRef: WorkspaceRefV1; phone: boolean }>) {
     const { dispatch } = useAppPaneContext();
     useProjectRouteSurfaceSync({ scopeId: props.scopeId, workspaceRef: props.workspaceRef, activeRootPath: props.workspace.rootPath,
         isFocused: true, surface: props.phone ? 'terminal' : 'overview' });
@@ -141,11 +141,41 @@ function RoutedProjectTerminal(props: Readonly<{ scopeId: string; workspace: Wor
         if (!props.phone) dispatch({ type: 'openRight', scopeId: props.scopeId, tabId: 'terminal' });
     }, [dispatch, props.phone, props.scopeId]);
     return <ProjectTerminalSurface scopeId={props.scopeId} workspaceRefId={props.workspaceRef.id} workspace={props.workspace}
-        machineId={props.workspace.machineId} serverId={props.workspace.serverId} rootPath={props.workspace.rootPath}
+        machineId={isManagedWorkspaceRefV2(props.workspace) ? props.workspace.controller.machineId : props.workspace.machineId}
+        serverId={props.workspace.serverId} rootPath={props.workspace.rootPath}
         presentation={props.phone ? 'page' : 'right'} />;
 }
 
 describe('Project terminal through the incumbent pane workspace', () => {
+    it('keeps a managed shell on the accepted guest checkout when the controller shell is unavailable', async () => {
+        const serverId = 'srv_project_terminal_managed';
+        const controller = { machineId: 'machine', installationId: 'installation' };
+        const ref = { v: 2, kind: 'managed', id: 'accepted', serverId, managedId: 'guest', controller,
+            rootPath: '/guest/project', projectKey: 'project', createdAtMs: 1 } as const;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: ref.id, managedId: ref.managedId,
+            controller, rootPath: ref.rootPath } as const;
+        const home = await serveCensusHome(serverId, [ref]);
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs: [ref] }));
+            observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [controller.machineId]);
+            const scopeId = buildProjectPaneScopeId(ref.id, serverId);
+            outputRpc.mockResolvedValue({ ok: true, terminals: [], machineShell: { ok: false, errorCode: 'terminal_forbidden', error: 'terminal_forbidden' } });
+            screen = await renderScreen(<AppPaneProvider><RoutedProjectTerminal scopeId={scopeId} workspace={workspace}
+                workspaceRef={ref} phone={false} /></AppPaneProvider>);
+            await vi.waitFor(() => expect(screen!.findAllByType(SessionTerminalWorkspaceView)).toHaveLength(1));
+            await act(async () => screen!.findAllByType(SessionTerminalWorkspaceView)[0]!.props.onNewShell());
+            await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId, EMPTY_TERMINAL_WORKSPACE)?.tabs[0]?.terminals[0]?.target)
+                .toEqual({ kind: 'workspace_shell', workspace }));
+            await vi.waitFor(() => expect(screen!.findAllByType(WorkspaceEmbeddedTerminalPane)[0]?.props)
+                .toMatchObject({ workspace, machineId: controller.machineId, rootPath: workspace.rootPath }));
+            expect(outputRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_LIST
+                && request.payload.workspace?.managedId === workspace.managedId)).toBe(true);
+            expect(outputRpc.mock.calls.some(([request]) => request.payload.machineShell === true)).toBe(false);
+        } finally { await screen?.unmount(); await home.dispose(); }
+    });
+
     it('discloses the actual Machine placement before opening a Project Shell', async () => {
         const serverId = 'srv_project_terminal_trust';
         const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };

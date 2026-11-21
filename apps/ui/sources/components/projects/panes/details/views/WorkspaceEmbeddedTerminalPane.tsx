@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -23,7 +23,7 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     operationStopPending?: boolean;
     toolbarActionsStart?: React.ReactNode;
     closeOnUnmount?: boolean;
-    workspace?: WorkspaceAddressV1;
+    workspace?: WorkspaceAddressV2;
     terminalKey: string;
     title?: string;
     focused?: boolean;
@@ -69,10 +69,11 @@ const WorkspaceEmbeddedTerminalPaneContent = React.memo(function WorkspaceEmbedd
     const surfaceController = React.useMemo(() => ({ ...controller, operationStopPending: props.operationStopPending,
         requestRestart: restart, onOpenApproval: presentation.onOpenApproval }), [controller, props.operationStopPending, restart, presentation.onOpenApproval]);
     // No Session here: Ask goes where the Account's "Ask without a session" setting says (D-3).
-    const askSelection = React.useMemo(() => props.rootPath
+    const managedWorkspace = Boolean(props.workspace && isManagedWorkspaceRefV2(props.workspace));
+    const askSelection = React.useMemo(() => props.rootPath && !managedWorkspace
         ? { scopeId: props.scopeId, sessionId: null,
             workspaceScope: { serverId: props.serverId, machineId: props.machineId, rootPath: props.rootPath } }
-        : null, [props.machineId, props.rootPath, props.scopeId, props.serverId]);
+        : null, [managedWorkspace, props.machineId, props.rootPath, props.scopeId, props.serverId]);
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

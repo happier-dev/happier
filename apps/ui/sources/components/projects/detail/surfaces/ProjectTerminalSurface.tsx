@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { SessionTerminalMemberV1 } from '@happier-dev/protocol/terminal/workspace';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useUnistyles } from 'react-native-unistyles';
 import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
@@ -42,7 +43,7 @@ import { isTerminalTargetReadOnly } from '@/components/sessions/terminal/termina
 export const ProjectTerminalSurface = React.memo((props: Readonly<{
     scopeId: string; workspaceRefId: string; machineId: string; rootPath: string; serverId: string;
     terminalInstanceId?: string; closeOnUnmount?: boolean;
-    workspace?: WorkspaceAddressV1 | null;
+    workspace?: WorkspaceAddressV2 | null;
     presentation?: SessionTerminalWorkspaceHost;
     onHideWorkspace?: () => void;
 }>) => {
@@ -60,24 +61,25 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const authority = useProjectTerminalScope(props.scopeId, props.workspace ?? undefined);
     const [retired, setRetired] = React.useState(false);
     const dispatch = useAppPaneContext(value => value.dispatch);
+    const managed = authority !== null && isManagedWorkspaceRefV2(authority.workspace);
     const running = useProjectRunningTerminals(props.scopeId, authority, renderTerminals && !retired && workspace.tabs.length === 0);
     const shell = useMachineShellAvailability({
         serverId: authority?.workspace.serverId ?? props.serverId,
-        machineId: authority?.workspace.machineId ?? props.machineId,
-        enabled: renderTerminals && !retired && workspace.tabs.length === 0 && Boolean(authority),
+        machineId: authority?.machineId ?? props.machineId,
+        enabled: !managed && renderTerminals && !retired && workspace.tabs.length === 0 && Boolean(authority),
     });
     const recovering = workspace.tabs.length === 0 && running.status === 'ready' && running.workspace.tabs.length > 0;
     const presentedWorkspace = recovering ? running.workspace : workspace;
     const labelMachineIds = React.useMemo(() => [
-        ...(authority ? [authority.workspace.machineId] : []),
+        ...(authority ? [authority.machineId] : []),
         ...presentedWorkspace.tabs.flatMap(tab => tab.terminals.flatMap(member =>
             member.target.kind === 'machine_shell' || member.target.kind === 'terminal_view' ? [member.target.machineId]
-                : member.target.kind === 'workspace_shell' && member.target.workspace ? [member.target.workspace.machineId] : [])),
+                : member.target.kind === 'workspace_shell' && member.target.workspace ? [resolveWorkspaceSyncExecutionMachineIdV1(member.target.workspace)] : [])),
     ], [authority, presentedWorkspace.tabs]);
     const names = useMachineDisplayNamesById(labelMachineIds, {
         serverId: props.workspace?.serverId ?? props.serverId, presented: presented && renderTerminals,
     });
-    const targetMachineId = authority?.workspace.machineId ?? '';
+    const targetMachineId = authority?.machineId ?? '';
     const targetServerId = authority?.workspace.serverId ?? props.serverId;
     const [platform, isolationPolicy, isolation] = useServerScopedMachine(targetServerId, targetMachineId,
         useShallow(machine => [machine?.metadata?.platform, machine?.metadata?.agentIsolation, machine?.daemonState?.agentIsolation] as const));
@@ -99,7 +101,7 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
         return () => subscription?.dispose();
     }, [authority, clearPrivatePresentation]);
     const context = React.useMemo((): SessionTerminalDescribeContext => {
-        const machineId = authority?.workspace.machineId ?? null;
+        const machineId = authority?.machineId ?? null;
         return { agentId: null, agentName: null, agentAsking: false, agentTerminalHost: null,
             sessionMachineId: machineId, sessionMachineName: machineId ? names[machineId] ?? null : null,
             machineName: id => names[id] ?? null };
@@ -150,12 +152,13 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
         if (!authority) return null;
         const selected = member.target.kind === 'workspace_shell' || member.target.kind === 'terminal_view'
             ? member.target.workspace ?? authority.workspace : authority.workspace;
-        const captured = resolveProjectTerminalScope(props.scopeId, selected)?.workspace;
-        if (!captured || member.target.kind === 'terminal_view' && (member.target.machineId !== captured.machineId
+        const checkout = resolveProjectTerminalScope(props.scopeId, selected);
+        const captured = checkout?.workspace;
+        if (!checkout || !captured || member.target.kind === 'terminal_view' && (member.target.machineId !== checkout.machineId
             || !isWorkspacePathWithinRootV1(member.target.cwd, captured.rootPath))) return null;
         return <WorkspaceEmbeddedTerminalPane scopeId={props.scopeId} workspaceRefId={captured.workspaceId}
             presentationId={tabMenu.presentationId}
-            machineId={member.target.kind === 'terminal_view' ? member.target.machineId : captured.machineId}
+            machineId={checkout.machineId}
             rootPath={member.target.kind === 'terminal_view' ? member.target.cwd : captured.rootPath} serverId={captured.serverId}
             workspace={captured} terminalInstanceId={member.id} terminalKey={buildProjectTerminalKey(authority.scope, captured, member.id)}
             {...(member.target.kind === 'terminal_view' ? { attachedTerminalId: member.target.terminalId,
@@ -163,10 +166,10 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
             title={state.descriptor?.title} focused={state.focused} chrome="none" />;
     }, [authority, props.scopeId, tabMenu.presentationId]);
     const terminalMachine = context.sessionMachineName ?? props.machineId;
-    const canOpenNewShell = shell.state.kind === 'available';
-    const shellStateBlocksEmpty = workspace.tabs.length === 0 && shell.state.kind !== 'available';
+    const canOpenNewShell = managed ? running.status === 'ready' || workspace.tabs.length > 0 : shell.state.kind === 'available';
+    const shellStateBlocksEmpty = !managed && workspace.tabs.length === 0 && shell.state.kind !== 'available';
     if (!authority || retired || running.status === 'loading' || running.status === 'unavailable' || shellStateBlocksEmpty) {
-        const loading = authority && !retired && (running.status === 'loading' || shell.state.kind === 'loading');
+        const loading = authority && !retired && (running.status === 'loading' || !managed && shell.state.kind === 'loading');
         const shellFailure = authority && !retired && !loading && shell.state.kind === 'unavailable' ? shell.failure : null;
         const failureDetails = shellFailure ? readSafeFailureDetails(shellFailure.details) : {};
         return <SurfaceStateCard kind={loading ? 'loading' : 'unavailable'} iconName="terminal"
@@ -183,9 +186,9 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
         machine: terminalMachine, count: presentedWorkspace.tabs.reduce((total, tab) => total + tab.terminals.length, 0) }) : undefined;
     const { separateUsers } = presentMachineAuthorityV1({ platform: platform ?? undefined,
         isolationPolicy: isolationPolicy ?? undefined, isolation: isolation ?? undefined });
-    const notice = describeMachineShareTrust(separateUsers.placement, true, terminalMachine);
+    const notice = managed ? undefined : describeMachineShareTrust(separateUsers.placement, true, terminalMachine);
     // The desktop pane carries the line in its own strip; a page without a strip carries it as one quiet row.
-    const noticeRow = <View style={{ paddingHorizontal: 12, paddingVertical: 6 }}><SessionTerminalTrustNotice notice={notice} /></View>;
+    const noticeRow = notice ? <View style={{ paddingHorizontal: 12, paddingVertical: 6 }}><SessionTerminalTrustNotice notice={notice} /></View> : null;
     if (props.terminalInstanceId) {
         if (!renderTerminals) return null;
         const member = workspace.tabs.flatMap(tab => tab.terminals).find(candidate => candidate.id === props.terminalInstanceId);

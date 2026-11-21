@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { DaemonTerminalLaunchIntentSchema } from '../daemon/terminal.js';
-import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
+import { isManagedWorkspaceRefV2, WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 const id = z.string().check(z.trim(), z.minLength(1));
 const shellLaunch = {
@@ -17,7 +17,7 @@ export const SessionTerminalViewTargetV1Schema = lazyZodSchema(() => z.strictObj
 })));
 export type SessionTerminalViewTargetV1 = z.infer<typeof SessionTerminalViewTargetV1Schema>;
 export const SessionTerminalTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('workspace_shell'), workspace: z.optional(WorkspaceAddressV1Schema), ...shellLaunch }),
+  z.strictObject({ kind: z.literal('workspace_shell'), workspace: z.optional(WorkspaceAddressV2Schema), ...shellLaunch }),
   z.strictObject({ kind: z.literal('session_attach') }),
   z.strictObject({ kind: z.literal('machine_shell'), machineId: id, cwd: id, ...shellLaunch }),
   SessionTerminalViewTargetV1Schema,
@@ -25,6 +25,9 @@ export const SessionTerminalTargetV1Schema = lazyZodSchema(() => z.discriminated
   message: 'Agent attachments use the dedicated target',
 }), z.refine(target => !('launch' in target && target.launch?.kind === 'service_shell'), {
   message: 'Service shells use the Machine terminal owner',
+}), z.refine(target => target.kind !== 'workspace_shell' || !target.workspace
+  || !isManagedWorkspaceRefV2(target.workspace) || target.launch === undefined, {
+  message: 'Managed Project terminals launch an interactive guest shell',
 })));
 export type SessionTerminalTargetV1 = z.infer<typeof SessionTerminalTargetV1Schema>;
 /** Reference only: the existing approval Artifact owns the original strict Action input and receipt. */

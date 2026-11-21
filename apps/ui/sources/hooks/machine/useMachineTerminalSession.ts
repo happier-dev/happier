@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { TERMINAL_STREAM_MAX_READ_BYTES } from '@happier-dev/protocol/terminal/stream';
 import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol/daemon/terminal';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { EmbeddedTerminalPaneStatus } from '@/components/terminal/embedded/types';
 
@@ -89,7 +89,7 @@ export function useMachineTerminalSession(params: Readonly<{
     sessionId?: string;
     scopeId?: string;
     memberId?: string;
-    workspace?: WorkspaceAddressV1;
+    workspace?: WorkspaceAddressV2;
     /** A borrowed view may read output, but never mutate its owning process. */
     readOnly?: boolean;
     /** An existing process owned by another lifecycle. Null waits for that owner;
@@ -97,10 +97,9 @@ export function useMachineTerminalSession(params: Readonly<{
     attachedTerminalId?: string | null;
 }>) {
     const rendererInstanceId = React.useId();
-    const workspace = React.useMemo(() => params.workspace, [params.workspace?.serverId, params.workspace?.machineId,
-        params.workspace?.workspaceId, params.workspace?.rootPath]);
-    const admission = useMachineTerminalActionAdmission({ terminalKey: params.terminalKey, workspace,
+    const admission = useMachineTerminalActionAdmission({ terminalKey: params.terminalKey, workspace: params.workspace,
         machineId: params.machineId, serverId: params.serverId, scopeId: params.scopeId, memberId: params.memberId });
+    const { workspace } = admission;
     const admissionRef = React.useRef(admission);
     const writeClipboard = useClipboardWrite(admission.lifetime?.scope ?? null);
     admissionRef.current = admission;

@@ -2,7 +2,8 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, type DaemonTerminalEnsureRequest, type DaemonTerminalEnsureResponse } from '@happier-dev/protocol/daemon/terminal';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createActionApprovalContinuation, awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
@@ -25,11 +26,13 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 /** The mounted controller consumes the original Action result, never replays an approved open. */
 export type MachineTerminalAdmissionResult = Extract<DaemonTerminalEnsureResponse, { ok: true }>
     | Readonly<{ ok: false; errorCode: string; error: string; cancelled?: true }>;
-export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey: string; workspace?: WorkspaceAddressV1;
+export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey: string; workspace?: WorkspaceAddressV2;
     serverId?: string | null; machineId?: string | null; scopeId?: string; memberId?: string }>) {
     const router = useRouter();
-    const workspace = React.useMemo(() => input.workspace, [input.workspace?.serverId, input.workspace?.machineId,
-        input.workspace?.workspaceId, input.workspace?.rootPath]);
+    const managed = input.workspace && isManagedWorkspaceRefV2(input.workspace) ? input.workspace : undefined;
+    const machineId = input.workspace ? resolveWorkspaceSyncExecutionMachineIdV1(input.workspace) : input.machineId;
+    const workspace = React.useMemo(() => input.workspace, [input.workspace?.serverId, machineId,
+        input.workspace?.workspaceId, input.workspace?.rootPath, managed?.managedId, managed?.controller.installationId]);
     const lifetime = React.useMemo(() => workspace ? captureActiveServerAccountScopeLifetime() : null,
         [input.terminalKey, workspace]);
     const serverId = React.useMemo(() => workspace?.serverId ?? input.serverId ?? getActiveServerSnapshot().serverId,
@@ -39,14 +42,13 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
         const captured = accountContext.current;
         accountContext.current = null;
         if (!captured) return;
-        const machineId = workspace?.machineId ?? input.machineId;
         // The existing in-flight creation owner, not the mounted view, keeps
         // credential retirement observed until issued receipt custody settles.
         if (machineId) void awaitPendingMachineTerminalCreation(machineId, input.terminalKey, {
             serverId: captured.serverId, accountId: captured.accountId,
         }).then(() => captured.dispose(), () => captured.dispose());
         else captured.dispose();
-    }, [input.terminalKey, input.machineId, serverId, workspace]);
+    }, [input.terminalKey, machineId, serverId, workspace]);
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const approval = useActionApprovalContinuation({ scopeKey: input.terminalKey,
         serverId, onExecuted: () => {} });
@@ -94,7 +96,6 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
         if (context?.runtimeAccountId && context.runtimeAccountId !== capturedAuthority.accountId) return fail('terminal_access_denied');
         if (context?.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, capturedAuthority.serverId)) return fail('terminal_access_denied');
         if (!capturedAuthority.accountLifetime.isCurrent()) return fail('terminal_access_denied');
-        const machineId = workspace?.machineId ?? input.machineId;
         if (!machineId) return fail('terminal_missing_machine_target');
         // Starting a process gives this destination durable member/approval
         // custody. A later preview must not replace its pane and terminal key.
@@ -257,8 +258,8 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
                 return { approvalPending: true as const };
             }, { serverId: capturedAuthority.serverId, accountId: capturedAuthority.accountId }),
         });
-    }, [approval.requestApproval, capture, execute, workspace, lifetime, input.machineId, input.scopeId, input.memberId, readMember, router]);
-    return { admit, capture, approvalId: approval.approvalId, approvalPending: approval.approvalPending, approvalServerId: serverId,
+    }, [approval.requestApproval, capture, execute, workspace, lifetime, machineId, input.scopeId, input.memberId, readMember, router]);
+    return { admit, capture, workspace, approvalId: approval.approvalId, approvalPending: approval.approvalPending, approvalServerId: serverId,
         get openCancelled() { return readMember()?.openCancelled === true; },
         get lifetime() { return lifetime ?? accountContext.current?.accountLifetime ?? null; } };
 }

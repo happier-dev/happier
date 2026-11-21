@@ -14,7 +14,7 @@ export async function resolveSessionTerminalRequest(scopeId: string, member: Ses
         if (!project || !project.lifetime.isCurrent()) return null;
         const terminalKey = buildProjectTerminalKey(project.scope, project.workspace, member.id);
         return { serverId: project.scope.serverId, accountId: project.scope.accountId,
-            machineId: project.workspace.machineId, terminalKey, isCurrent: project.lifetime.isCurrent,
+            machineId: project.machineId, terminalKey, isCurrent: project.lifetime.isCurrent,
             request: buildMachineTerminalSessionRequest({ terminalKey, cwd: project.workspace.rootPath,
                 workspace: project.workspace, launch: member.target.launch }) };
     }
