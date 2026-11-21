@@ -45,8 +45,9 @@ const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   breakdowns: { model: [{ key: 'private-id', label: 'Private Model', eventCount: 1,
     tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 }, cost: { reportedUsd: 99, estimatedUsd: 0, currency: 'USD' } }] } };
 async function context(denied = false, route?: Parameters<typeof serveAccountHomes>[0]['route']) {
-  const sessionBatch = createSessionReadBatchHttpBoundary(async request => (await route?.(request)) ?? (request.path === '/v2/usage/query'
-    ? denied ? new Response('denied', { status: 403 }) : Response.json(accounting) : undefined));
+  const sessionBatch = createSessionReadBatchHttpBoundary(async request => (await route?.(request))
+    ?? (denied && request.path === '/v2/usage/query-batch' ? new Response('denied', { status: 403 })
+      : request.path === '/v2/usage/query' ? Response.json(accounting) : undefined));
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://recap-export.test', accountId: 'account-a' }],
     route: sessionBatch.handle });
   const focused = home.homes.a!;
@@ -312,6 +313,7 @@ describe('recap export through the real captured UI Account Action', () => {
   });
 
   it('shares the progressing page Resource and leaves its subscriber alive after a one-shot Action settles', async () => {
+    const query = normalizeUsageQuery({ ...input.query, includeWorkEvidence: false, includeCoach: false, includeQuota: false });
     const privateSession = createDeferred<Response>();
     const caller = await context(false, request => request.path === '/v2/usage/query'
       ? Response.json({ ...accounting, contributions: [{ id: 'cost', observedAtMs: 500, sessionId: 'work-session',
@@ -326,30 +328,32 @@ describe('recap export through the real captured UI Account Action', () => {
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
     const captured = captureUiUsageQueryAccountContext(credentials)!;
-    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [input.query] }) });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
     const release = entry.subscribe(() => {}, true);
     const read = () => entry.getSnapshot().value ? decodeUsageQueryResource(entry.getSnapshot().value!) : undefined;
     try {
       await vi.waitFor(() => expect(read()?.results[0]?.accounting).toBeDefined());
       const accountingReads = () => home!.requests.filter(request => request.path === '/v2/usage/query' || request.path === '/v2/usage/query-batch').length;
       const before = accountingReads();
-      const executed = await createDefaultActionExecutor().execute('usage.query', { queries: [input.query] }, caller);
+      const executed = await createDefaultActionExecutor().execute('usage.query', { queries: [query] }, caller);
       expect(executed.ok).toBe(true);
       if (!executed.ok) throw new Error(executed.errorCode);
       const admitted = UsageQueryBatchResultSchema.parse(executed.result);
       expect(admitted.results[0]?.pending).toBe(true);
       const resource = UsageQueryBatchResultSchema.parse(read()).results[0]!;
       expect(admitted.results[0]).toMatchObject({ key: resource.key, requestedQuery: resource.requestedQuery,
-        shownQuery: resource.shownQuery, accounting: { totals: resource.accounting?.totals,
-          contributions: resource.accounting?.contributions }, sources: resource.sources,
-        work: resource.work, howYouWork: resource.howYouWork, coach: resource.coach });
+        shownQuery: resource.shownQuery, accounting: { totals: resource.accounting?.totals }, sources: resource.sources });
+      expect(admitted.results[0]?.accounting?.contributions).toEqual(resource.accounting?.contributions);
+      expect(admitted.results[0]?.howYouWork).toEqual(resource.howYouWork);
+      expect(admitted.results[0]?.coach).toEqual(resource.coach);
+      expect(admitted.results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
       // The Action delivers facts, not the Resource's retained tariff inventory.
       expect(admitted.results[0]?.accounting?.priceCatalog).toBeUndefined();
       expect(resource.accounting?.priceCatalog).toBeDefined();
       expect(accountingReads()).toBe(before);
       privateSession.resolve(Response.json({ error: 'not_found' }, { status: 404 }));
       await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
-      expect(read()?.results[0]?.sources).not.toContainEqual({ source: 'how_you_work', status: 'pending' });
+      expect(read()?.results[0]?.sources).not.toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
       expect(entry.getSnapshot().subscription).toBe('live');
       expect(admitted.results[0]?.pending).toBe(true);
     } finally { privateSession.resolve(Response.json({ error: 'not_found' }, { status: 404 })); release(); }

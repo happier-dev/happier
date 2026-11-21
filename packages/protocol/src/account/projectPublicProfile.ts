@@ -34,6 +34,8 @@ export function resolvePublicProfileUsageDemand(policy: PublicProfilePolicyV1) {
     includeActivity: selected('activeDays', 'currentStreak', 'bestStreak', 'calendar', 'punch', 'agentActiveDays'),
     includeSessionEvidence: selected('agentTime', 'peakParallel', 'weeklyPeakParallel', 'sessionDurations', 'dayNightActivity'),
     includeWorkEvidence: selected('mergedPrs'),
+    includeQuota: false,
+    includeCoach: false,
   };
 }
 /** Identity and metadata edits do not need a new Usage snapshot. */

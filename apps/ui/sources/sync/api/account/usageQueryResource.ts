@@ -1759,6 +1759,15 @@ export async function readUiUsageQueryBatch(
 }
 
 type UsageQueryInvalidation = HomeAccountChangeEvent | 'session-evidence' | UsageQueryStateInvalidation;
+
+function isAllowanceOnlyUsageInvalidation(change: UsageQueryInvalidation | undefined): boolean {
+    return change === 'quota-inputs' || change === 'quota-pool-inputs' || change === 'quota-projection-inputs'
+        || typeof change === 'object' && isUsageQuotaHomeAccountChange(change);
+}
+
+function usageQueriesReadAllowance(queries: readonly UsageQuery[]): boolean {
+    return queries.some(query => query.includeQuota !== false);
+}
 type UsageQueryReadDemand = Readonly<{
     allowance: boolean | undefined;
     allowanceRecordIds?: readonly string[];
@@ -2000,6 +2009,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     let admittedAccounting: { nowMs: number; answers: Map<string, UsageAccountingAnswer> } | undefined;
     // Retain admissions across closed views; observation follows live demand.
     let resourceInputs = {};
+    let quotaFreeResourceInputs = {};
     let coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     // Closed accounting views do not consume Session/private input changes.
     // Private views retain their own input identity and refresh when reopened.
@@ -2016,6 +2026,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     };
     const replaceAccountInputs = () => {
         resourceInputs = {};
+        quotaFreeResourceInputs = {};
         sessionEvidenceInputs = resourceInputs;
         retainedCurrentness.dispose();
         retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
@@ -2043,15 +2054,20 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // Quota pushes replace the retained resource identity. Each replacement keeps the record
     // ids it named, so a view reopened after closed-view pushes rereads only those records.
     const resourceInputSteps = new WeakMap<object, Readonly<{ next: object; recordIds: readonly string[] | undefined }>>();
-    const replaceResourceInputs = (recordIds: readonly string[] | undefined) => {
-        const next = {};
-        resourceInputSteps.set(resourceInputs, { next, recordIds });
-        resourceInputs = next;
+    const replaceResourceInputs = (recordIds: readonly string[] | undefined, allowanceOnly: boolean) => {
+        const advance = (from: object) => {
+            const next = {};
+            resourceInputSteps.set(from, { next, recordIds });
+            return next;
+        };
+        resourceInputs = advance(resourceInputs);
+        // A watcher that skips this wake must keep its admission current too.
+        if (!allowanceOnly) quotaFreeResourceInputs = advance(quotaFreeResourceInputs);
     };
     /** The record ids changed since `from` was the resource identity; `undefined` when unknown. */
-    const readResourceInputChanges = (from: object): readonly string[] | undefined => {
+    const readResourceInputChanges = (from: object, current: object): readonly string[] | undefined => {
         const ids = new Set<string>();
-        for (let at = from; at !== resourceInputs;) {
+        for (let at = from; at !== current;) {
             const step = resourceInputSteps.get(at);
             if (!step?.recordIds) return undefined;
             for (const id of step.recordIds) ids.add(id);
@@ -2112,7 +2128,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         // Only an admitted read anchors its window. Established windows still
         // advance at the local-day boundary even while closed.
         if (admittedAccounting) for (const query of queries) owner.readAccountingInstant(query);
-        const readInputs = [resourceInputs,
+        const readInputs = [usageQueriesReadAllowance(queries) ? resourceInputs : quotaFreeResourceInputs,
             ...(queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence)
                 ? [sessionEvidenceInputs] : []), ...queries.map(query => {
                 const key = accountingInputKey(query);
@@ -2436,7 +2452,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // Reuse the admitted source snapshots for a presentation wake;
                 // an explicit refresh or coalesced acquisition always wins.
                 const missedProjectionOnly = readDemand.length === 0 && retained.sourcesCurrent && admission?.reusable
-                    && readResourceInputChanges(admission.inputs[0]!)?.length === 0;
+                    && readResourceInputChanges(admission.inputs[0]!, readInputs[0]!)?.length === 0;
                 if (previousReproject && (!admission || quotaClockCurrent)
                     && (missedProjectionOnly || readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly))) {
                     projectionIsCurrent = () => readDemand.length > 0
@@ -2492,16 +2508,18 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         ? Object.assign(new Error('Usage Account encryption admission is unavailable', { cause: error }),
                             { code: 'plugin_resource_context_unavailable' }) : error;
                     const code = failure && typeof failure === 'object' && 'code' in failure ? failure.code : undefined;
+                    queuedProgress = null;
                     if (typeof code === 'string' && !canRetainUsageReadFailure(code)) {
                         allowance = undefined;
                         owner.projectionDocuments.clear();
                         slicesByQuery.clear();
+                        // The Resource must deliver the refusal before any consumer can
+                        // take the previous progress as a successful terminal answer.
+                        throw failure;
                     }
-                    // This read has ended. Its last progress revision stays the shown
-                    // facts, so a source it was still reading settles as failed rather
-                    // than leaving its bodies reading until some later read.
+                    // A retainable failure settles the sources still being read
+                    // while keeping their last admitted facts visible.
                     if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
-                        queuedProgress = null;
                         await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;
@@ -2530,7 +2548,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     throw Object.assign(new Error('Unsupported host read'), { code: 'unsupported_method' });
                 }
                 const queries = reference.hostRead === 'usage.query' ? normalizeUsageQueryBatchInput(reference.input).queries : [];
-                const readsAllowance = reference.hostRead !== 'usage.query' || queries.some(query => query.includeQuota !== false);
+                const readsAllowance = reference.hostRead !== 'usage.query' || usageQueriesReadAllowance(queries);
                 const allowanceOnlyQuery = reference.hostRead === 'usage.query' && queries.every(query => !query.includeAccounting);
                 const quotaSourceKey = reference.hostRead === 'connectedServices.quota.get'
                     ? createCanonicalJsonSigningInput(ConnectedServiceQuotaGetInputV1Schema.parse(reference.input).source) : undefined;
@@ -2579,8 +2597,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (!accountModeChanged && change === 'session-evidence' && !privateEvidence) return;
                     if (!accountModeChanged && change === 'quota-inputs' && quotaRecordIds !== undefined
                         && !readQuotaRecordIds().some(id => usageQuotaRecordChangeAffects(id, quotaRecordIds))) return;
-                    if (!accountModeChanged && !readsAllowance && (change === 'quota-inputs' || change === 'quota-pool-inputs' || change === 'quota-projection-inputs'
-                        || typeof change === 'object' && isUsageQuotaHomeAccountChange(change))) return;
+                    if (!accountModeChanged && !readsAllowance && isAllowanceOnlyUsageInvalidation(change)) return;
                     const accountingChange = typeof change === 'object' && change.usageAccountingChange
                         ? readUsageAccountingChangeScope(change) : undefined;
                     const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs'
@@ -2699,7 +2716,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // and reprojects the rest at this instant (P03-TAB-CONTENT-2 W8).
                 const missedRecordIds = admission && !admission.reusable && readsAllowance && !admission.error
                     && admission.admission?.settled === true && admission.admission.reusable && admission.sourcesCurrent
-                    && admission.derivationCurrent ? readResourceInputChanges(admission.admission.inputs[0]!) : undefined;
+                    && admission.derivationCurrent ? readResourceInputChanges(admission.admission.inputs[0]!, admission.readInputs[0]!) : undefined;
                 if (missedRecordIds !== undefined) {
                     allowanceReadDemand = true; allowanceRecordIds = missedRecordIds; allowanceOnlyDemand = true; projectionOnly = false;
                 }
@@ -2822,7 +2839,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             }
             if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
             else if (quotaChange || typeof homeChange === 'string') replaceResourceInputs(homeChange === 'projection-inputs' ? [] : homeChange === 'quota-inputs' ? quotaRecordIds
-                : typeof homeChange === 'object' ? readUsageQuotaChangedRecordIds(homeChange) : undefined);
+                : typeof homeChange === 'object' ? readUsageQuotaChangedRecordIds(homeChange) : undefined, isAllowanceOnlyUsageInvalidation(homeChange));
             for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange, quotaRecordIds);
         },
     };
