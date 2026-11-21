@@ -3,7 +3,7 @@ import type { DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1 } from '@h
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
-import { parseDatabaseConnectionUrl } from '@happier-dev/databases';
+import { parseDatabaseConnectionUrl } from '@happier-dev/databases/connection';
 import { engines, railway, readFailure, selectedService, type Engine, type Scope } from './provider.js';
 
 function descriptor(engine: Engine, target: DatabaseManagedDeploymentTargetV1,

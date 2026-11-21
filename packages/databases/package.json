@@ -37,6 +37,11 @@
       "types": "./dist/statements.d.ts",
       "default": "./dist/statements.js"
     },
+    "./connection": {
+      "happier-source": "./src/connection.ts",
+      "types": "./dist/connection.d.ts",
+      "default": "./dist/connection.js"
+    },
     "./postgresql": {
       "happier-source": "./src/postgresql/index.ts",
       "types": "./dist/postgresql/index.d.ts",

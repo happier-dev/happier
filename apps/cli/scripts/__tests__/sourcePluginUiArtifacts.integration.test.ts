@@ -29,6 +29,23 @@ describe('source CLI Plugin UI preparation with the real compiler', () => {
     } finally { removeTempDirSync(outputDir); }
   });
 
+  it('compiles the bundled Railway Account entry without Node-only database exports', async () => {
+    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+    const outputDir = createTempDirSync('happier Railway Account artifacts-');
+    try {
+      const directory = 'deployment-railway';
+      const { manifest } = await buildUniversalPluginUiArtifacts(
+        join(repoRoot, 'packages/plugins', directory),
+        join(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)),
+        { ...await sourcePluginUiBuildOptions({ repoRoot }), outputDir },
+      );
+      expect(manifest.entries).toContainEqual(expect.objectContaining({
+        artifactId: 'account-runtime', tier: 'reactNative',
+        executable: expect.objectContaining({ exports: expect.arrayContaining(['activateAccount']) }),
+      }));
+    } finally { removeTempDirSync(outputDir); }
+  });
+
   it('publishes executable graphs from CLI declarations on a cold checkout without packaged manifests', async () => {
     const repoRoot = createTempDirSync('happier source CLI plugin UI-');
     try {
