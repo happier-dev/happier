@@ -236,7 +236,7 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
   const registered = current.targets.get(sessionId);
   if (!registered) return { status: 404, error: 'Session is not hosted on this local channel', errorCode: 'local_session_unavailable' };
   const authorization = resolveSocketRpcSameAccountSessionAuthorizationV1(method.slice(separator + 1), sessionId,
-    { admittedAgentStart: localActionContext?.agentStartWorkDepth !== undefined });
+    { admittedAgentStart: Boolean(localActionContext) });
   if (!authorization) return forbidden;
   const request: SocketRpcRequestPayload = {
     method,
@@ -552,7 +552,7 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
   // Hosts admit only their daemon (kernel peer identity); other processes keep the server path.
   if (!localSessionRpcCallerEnabled) return null;
   if (!resolveSocketRpcSameAccountSessionAuthorizationV1(input.method, input.sessionId,
-    { admittedAgentStart: input.localActionContext?.agentStartWorkDepth !== undefined })) return null;
+    { admittedAgentStart: Boolean(input.localActionContext) })) return null;
   // Only credentials whose server admission is exactly "Account + Session access" go local. Restricted
   // kinds (ephemeral Session runners, API tokens) keep the server's extra principal checks.
   const credentialKind = readCredentialKind(input.token);

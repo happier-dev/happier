@@ -156,10 +156,15 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
   }, 600_000);
   afterEach(() => { trusted.birth = ownBirth; });
 
-  it('retains admitted execution-run facts only on the daemon-authenticated local Session hop', async () => {
+  it.each(['Workflow leaf', 'present-person Review'] as const)(
+    'retains admitted execution-run facts only on the daemon-authenticated local Session hop (%s)', async caller => {
     const person = token('acct-owner', 'account');
     const live = await host(SESSION, person);
-    const admitted = {
+    // The loaded attached Review carried a present person's private context
+    // without Agent subtree depth. Depth is policy data, not start admission.
+    const admitted: RpcLocalActionContext = caller === 'present-person Review' ? {
+      surface: 'cli', authority: 'present_user', actionRequestId: 'root-review', callerPermissionMode: 'read_only',
+    } : {
       surface: 'agent', authority: 'account_automation', actionRequestId: 'workflow/review/0',
       actionCaller: { kind: 'workflowRun', runId: 'workflow', authorization: {
         principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
@@ -170,7 +175,7 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
         workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' },
       causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
       callerPermissionMode: 'read_only', executionRunWorkflowRunId: 'workflow',
-    } satisfies RpcLocalActionContext;
+    };
     live.manager.registerHandler(SESSION_RPC_METHODS.EXECUTION_RUN_START, async (params, context) => {
       const action = buildActionExecutorContextForRpc({ ...context, actionId: 'execution.run.start', defaultSessionId: SESSION });
       return { sessionId: action.defaultSessionId, admitted: context?.localActionContext, input: params,
@@ -182,8 +187,13 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, { instructions: 'Review' }, {
         token: person, localActionContext: admitted,
       })).resolves.toEqual({ sessionId: SESSION, admitted, input: { instructions: 'Review' },
-        effective: { authority: 'account_automation', depth: 3, writes: 'deny', mode: 'read_only', causal: admitted.causalPermissionAuthority,
-          caller: admitted.actionCaller, workflowRunId: 'workflow' } });
+        effective: caller === 'present-person Review' ? { authority: 'present_user', mode: 'read_only' }
+          : { authority: 'account_automation', depth: 3, writes: 'deny', mode: 'read_only', causal: admitted.causalPermissionAuthority,
+            caller: admitted.actionCaller, workflowRunId: 'workflow' } });
+      expect(relay.calls).toBe(0);
+      await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, { instructions: 'Review' }, {
+        token: token('acct-other', 'account'), localActionContext: admitted,
+      })).rejects.toMatchObject({ code: 'execution_run_target_unavailable' });
       expect(relay.calls).toBe(0);
       // A public request operand cannot supply the private transport context.
       await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
@@ -243,8 +253,8 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
     try {
       const [file] = await findDescriptors(`${testHome}/servers`);
       const socketPath = JSON.parse(await readFile(file!, 'utf8')).endpoint.path;
-      const body = JSON.stringify({ packet: { method: `${SESSION}:${SESSION_RPC_METHODS.EXECUTION_RUN_LIST}`, params: {} },
-        callerAuthority: 'present_user', localActionContext: { authority: 'present_user', agentStartWorkDepth: 0 } });
+      const body = JSON.stringify({ packet: { method: `${SESSION}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`, params: {} },
+        callerAuthority: 'present_user', localActionContext: { authority: 'present_user', callerPermissionMode: 'read_only' } });
       // A separate same-uid process (e.g. a sandboxed agent shell) posting straight to the socket.
       const script = `const r=require('node:http').request({socketPath:process.argv[1],path:'/v1/session-rpc/call',method:'POST',
         headers:{'content-type':'application/json'}},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{process.stdout.write(res.statusCode+' '+b)})});
