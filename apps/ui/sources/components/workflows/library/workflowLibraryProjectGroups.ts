@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { useMachineDisplayNamesById } from '@/sync/domains/state/storage';
 import type { ProjectAccountRowsSnapshot } from '@/sync/domains/workspaces/projectAccountRows';
@@ -11,7 +12,13 @@ export type WorkflowProjectGroup = Readonly<{ key: string; title: string }>;
 export function useWorkflowProjectGroupDisplay(census: ProjectAccountRowsSnapshot | null, presented: boolean) {
   const refs = census?.workspaceRefs;
   const organizations = census?.organizations;
-  const machineIds = React.useMemo(() => refs?.map(ref => ref.machineId) ?? [], [refs]);
+  const machineIds = React.useMemo(() => {
+    const ids: string[] = [];
+    for (const ref of refs ?? []) {
+      if (!isManagedWorkspaceRefV2(ref)) ids.push(ref.machineId);
+    }
+    return ids;
+  }, [refs]);
   const machineNames = useMachineDisplayNamesById(machineIds, { serverId: census?.scope.serverId, presented });
   return React.useMemo(() => refs ? buildProjectGroupDisplayIndex(refs, organizations, machineNames) : null,
     [refs, organizations, machineNames]);

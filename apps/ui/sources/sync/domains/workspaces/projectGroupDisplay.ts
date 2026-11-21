@@ -83,7 +83,8 @@ export function buildProjectGroupDisplayIndex(
     for (const [title, matches] of byTitle) {
         if (matches.length < 2) continue;
         const candidates = matches.map(([key, display]) => {
-            const machine = display.baseline ? machineNames?.[display.baseline.machineId] : undefined;
+            const machineId = display.baseline?.machineId;
+            const machine = machineId === undefined ? undefined : machineNames?.[machineId];
             const path = display.baseline?.rootPath;
             return { key, display, details: [machine, path, machine && path ? `${machine} · ${path}` : undefined] };
         });
