@@ -386,6 +386,13 @@ it.skipIf(process.platform === 'win32')('selects the persisted edge over every a
     expect(selectEdgeCaddyDomainRoute({ ...input, edge: { ...input.edge, machineId: 'wrong' } })).toMatchObject({ status: 'unavailable' });
     expect(selectEdgeCaddyDomainRoute({ ...input, members: [members[0]!, { machineId: 'b', state: 'active', caddy: { status: 'stopped', containerId: 'b' } }] }))
         .toMatchObject({ status: 'unavailable', machineIds: ['b'] });
+    if (b.status !== 'ready') throw new Error('Expected a ready member Caddy');
+    expect(selectEdgeCaddyDomainRoute({ ...input, members: [members[0]!,
+        { machineId: 'b', state: 'active', caddy: { ...b, privateOrigins: [] } }] }))
+        .toMatchObject({ status: 'unavailable', reason: 'private_scope_unenforceable' });
+    expect(selectEdgeCaddyDomainRoute({ ...input, members: [members[0]!] })).toMatchObject({
+        status: 'ready', route: { upstreams: { kind: 'privateOrigins', endpoints: ['100.70.0.2:9481'] } },
+    });
     expect(selectEdgeCaddyDomainRoute({ ...input, edge: { ...input.edge,
         privateNetworks: [{ ...network('100.70.0.4'), networkIdentity: 'another-tailnet' }] } }))
         .toMatchObject({ status: 'unavailable', reason: 'private_scope_unenforceable' });
@@ -596,6 +603,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const incumbentJoining = scenario === 'incumbent receipt joining member' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
     const membership = scenario === 'membership join installed' || scenario === 'membership drain';
+    const adminAccessRefused = scenario === 'administrator access off' || scenario === 'administrator access not applied';
     const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
         || scenario === 'administrator native outcome unknown with fact';
@@ -631,7 +639,9 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     link.machines = ['a', 'b'];
     link.members = [{ machineId: 'a', installationId: 'installed-a', state: 'active' },
         { machineId: 'b', installationId: 'installed-b', state: 'active' }];
-    if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' && scenario !== 'membership drain') {
+    if (adminAccessRefused) {
+        environment.content.ingress = { kind: 'edgeCaddy', edgeMachineId: 'a' };
+    } else if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' && scenario !== 'membership drain') {
         if (!retainedSeed) delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
@@ -961,6 +971,10 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 return;
             }
             if (job.kind === 'domainDiscover') {
+                if (adminAccessRefused && job.machineId === 'a') {
+                    acknowledge({ ok: true, result: machines[0] });
+                    return;
+                }
                 if (scenario === 'network review required' || scenario === 'firewall prerequisite failed' || scenario === 'firewall policy unavailable' || scenario === 'firewall partial failure'
                     || scenario === 'daemon ACK unavailable' || scenario === 'daemon ACK unknown' || scenario === 'native cancelled') {
                     if (prepared?.status !== 'ready') throw new Error('Expected declared public Caddy bindings');
@@ -1326,8 +1340,11 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 details: { failure: { kind: 'native_protocol_invalid' } } });
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(0);
-        } else if (scenario === 'administrator access off' || scenario === 'administrator access not applied') {
-            expect(result).toMatchObject({ ok: false, errorCode: 'machine_admin_access_required' });
+        } else if (adminAccessRefused) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'machine_admin_access_required', details: {
+                environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution', machineId: 'b',
+                remedy: expect.stringContaining('administrator access'),
+            } });
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(0);
         } else if (scenario === 'daemon ACK unavailable' || scenario === 'daemon ACK unknown') {

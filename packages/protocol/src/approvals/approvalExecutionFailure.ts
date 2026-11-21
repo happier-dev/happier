@@ -55,7 +55,7 @@ import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifie
 import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, deploymentOperationForRootActionV1, isDeploymentActionIdV1, isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../deployments/deploymentDomainV1.js';
-import { DeploymentFailureRecoveryV1Schema } from '../deployments/deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentDomainFailureStorageDetailsV1 } from '../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, projectOpenProjectRefusalV1 } from '../projects/openProjectV1.js';
@@ -233,7 +233,8 @@ function parseStrictApprovalFailure(input: Readonly<{
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
     const details = (storedRead ? createStoredReadSchema(DeploymentDomainFailureDetailsV1Schema)
-      : DeploymentDomainFailureDetailsV1Schema).safeParse(input.failure.details);
+      : DeploymentDomainFailureDetailsV1Schema).safeParse(
+        projectDeploymentDomainFailureStorageDetailsV1(input.failure.errorCode, input.failure.details));
     if (details.success) {
       // A DNS preview verify names no Domain yet, so no Domain failure can belong to it.
       if (!args.success || !('domainId' in args.data) || details.data.environmentId !== args.data.environmentId

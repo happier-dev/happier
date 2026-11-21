@@ -353,6 +353,8 @@ const ProjectDeploymentsPage = React.memo(
         case 'review': case 'deploy':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source': router.push(projectSourceRoute(props.sourceId)); return;
+        case 'machineAdminAccess': router.push(machineId ? machinePageHref({ door: 'rail',
+          target: { machineId, serverId: props.serverId }, tab: { id: 'security' } }) : SETTINGS_ROUTES.machines); return;
         // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.
         case 'machines': case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
           target: { machineId, serverId: props.serverId }, tab: { id: 'setup' } }) : SETTINGS_ROUTES.machines); return;

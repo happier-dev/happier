@@ -4861,7 +4861,9 @@ In unreleased 0.3 source, Caddy setup preserves the elevation owner's typed
 and `native_effect_failed` failures, optional closed native reason and existing
 managed-CLI recovery. Domain presentation maps only proven administrator-policy
 refusals to `machine_admin_access_required`; a generic denial does not establish
-missing Admin Access. An uncertain native effect remains `outcome_unknown`.
+missing Admin Access. When a native Machine refuses, the Domain controller
+reports that destination and the recovery opens its Administrator access
+settings. An uncertain native effect remains `outcome_unknown`.
 Own-server preparation also preserves `plugin_exec_system_tool_unavailable`
 with the closed Docker details `kind: 'systemToolUnavailable'`, `toolId: 'docker'`
 and `remedy: 'install_on_machine_and_add_to_daemon_path'`. Recovery is to install

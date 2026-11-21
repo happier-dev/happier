@@ -1038,6 +1038,33 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it('opens the refused origin Machine setup from a Domain Add refusal', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({
+      ok: false as const, error: 'machine_admin_access_required',
+      details: { step: 'native_execution', machineId: 'origin-machine' },
+    })) };
+    const openRecovery = vi.fn();
+    const { screen, controller, settle } = await renderDomains(detail, [], actions, false, undefined, false, { ...noReview, openRecovery });
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(await settle(`${id}.outcome`)).not.toBeNull();
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      const banner = screen.findAllByType(AttentionBanner)
+        .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
+      expect(banner?.props.description).toContain('origin-machine');
+      await act(async () => { banner?.props.action?.onPress(); });
+      expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machineAdminAccess', { machineId: 'origin-machine' });
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('names the field a disabled Add domain still needs', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: undefined } };

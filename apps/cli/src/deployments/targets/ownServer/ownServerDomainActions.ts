@@ -41,19 +41,23 @@ import { logger } from '@/ui/logger';
 type DomainAction = DeploymentDomainChildActionIdV1;
 // The Domain mode owner presents native setup decisions without reading or
 // deciding Machine administrator/network policy a second time.
-type DomainNativeFailureScope = Readonly<{ environmentId: string; domainId: string; step: 'native_execution'; tunnelId?: string }>;
+type DomainNativeFailureScope = Readonly<{
+    environmentId: string; domainId: string; step: 'native_execution'; tunnelId?: string; machineId?: string;
+}>;
 const failure = (reason: string, details?: unknown, failureCause?: unknown, effectAttempted?: unknown, nativeScope?: DomainNativeFailureScope) => {
     const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required'
         : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
     const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
-    const scoped = nativeScope
-        ? { ...nativeScope, ...(isRecord(details) ? details : {}) } : details;
+    const { machineId, ...scope } = nativeScope ?? {};
+    const scoped = nativeScope ? { ...scope, ...(isRecord(details) ? details : {}),
+        ...(errorCode === 'machine_admin_access_required' && machineId ? { machineId } : {}) } : details;
     const recoveryFacts = nativeScope && isRecord(scoped) && typeof scoped.tunnelId === 'string' ? { ...scoped,
         ...(scoped.requiredFact === undefined || scoped.requiredFact === 'nativeExecutionResult' ? { requiredFact: 'cloudflarePreparation' } : {}),
         recovery: { kind: 'adopt' as const, tunnelId: scoped.tunnelId },
         remedy: `${typeof scoped.remedy === 'string' ? `${scoped.remedy} ` : ''}Cloudflare tunnel ${scoped.tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.` } : scoped;
     const recovery = isRecord(recoveryFacts) && recoveryFacts.step === 'native_execution'
-        ? projectDeploymentFailureRecoveryV1(recoveryFacts) : recoveryFacts;
+        ? projectDeploymentFailureRecoveryV1(recoveryFacts,
+            errorCode === 'machine_admin_access_required' ? errorCode : undefined) : recoveryFacts;
     return { ok: false as const, errorCode, error: errorCode, ...(recovery === undefined ? {} : { details: recovery }),
         ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
         ...(parsedCause === undefined ? {} : { failureCause: parsedCause }) };
@@ -99,7 +103,7 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
     const machines: DeploymentDomainTopologyV1['machines'] = [];
     for (const destination of destinations) {
         const nativeScope = { environmentId: environment.environment.id, domainId: request.input.domainId,
-            step: 'native_execution' as const };
+            step: 'native_execution' as const, machineId: destination.machineId };
         let observed: unknown;
         try {
             observed = await host.dispatch(DeploymentDomainDiscoverChildRpcV1Schema.parse({ v: 1,
@@ -416,6 +420,7 @@ export function createOwnServerDomainActions(host: Readonly<{
         if (!isDeploymentDomainChildActionIdV1(actionId)) return failure('unsupported_action');
         let issued = false;
         let nativeScope: DomainNativeFailureScope | undefined;
+        let dispatchedMachineId: string | undefined;
         let privateContent: DeploymentDomainContentV1 | undefined = admitted?.content;
         const run = async (): Promise<Awaited<ReturnType<Execute>>> => {
             try {
@@ -498,18 +503,21 @@ export function createOwnServerDomainActions(host: Readonly<{
                 for (const capture of [...captures.filter(capture => !capture.desired), ...captures.filter(capture => capture.desired)]) {
                     context.signal?.throwIfAborted();
                     const cloudflareConnector = privateContent && cloudflareDomainConnectorForTarget(privateContent, capture.placement);
+                    dispatchedMachineId = capture.placement.machineId;
                     const result = await host.dispatch({ v: 1, kind: 'domain', actionId,
                         input: { serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId },
-                        machineId: capture.placement.machineId, installationId: capture.placement.installationId,
+                        machineId: dispatchedMachineId, installationId: capture.placement.installationId,
                         expectedDomainRevision: domain.revision, capture,
                         ...(topology ? { topology } : {}),
                         ...(actionOperationId ? { actionOperationId } : {}),
                         ...(cloudflareConnector && (capture.desired || capture.retireSharedTunnel === true) ? { cloudflareConnector } : {}),
                     }, context);
+                    dispatchedMachineId = undefined;
                     if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string')
-                        return failure(result.errorCode, 'details' in result ? result.details : nativeScope,
+                        return failure(result.errorCode, 'details' in result ? result.details : undefined,
                             'failureCause' in result ? result.failureCause : undefined,
-                            'effectAttempted' in result ? result.effectAttempted : undefined);
+                            'effectAttempted' in result ? result.effectAttempted : undefined,
+                            { ...nativeScope, tunnelId: undefined, machineId: capture.placement.machineId });
                     const observation = DeploymentDomainObservationV1Schema.safeParse(result);
                     if (!observation.success) return failure('invalid_action_transport_output');
                     observations.push(observation.data);
@@ -535,8 +543,9 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const diagnostic = issued ? projectDeploymentFailure('outcome_unknown', error, 'deployment.domain.native_execution')
                     : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });
                 return { ...failure(diagnostic.errorCode, !issued ? (error instanceof Error && 'details' in error ? error.details : undefined)
-                    ?? diagnostic.details ?? nativeScope : nativeScope,
-                    diagnostic.failureCause, diagnostic.effectAttempted), error: diagnostic.error };
+                    ?? diagnostic.details : undefined,
+                    diagnostic.failureCause, diagnostic.effectAttempted,
+                    nativeScope && { ...nativeScope, tunnelId: undefined, machineId: dispatchedMachineId }), error: diagnostic.error };
             }
         };
         const result = await run();

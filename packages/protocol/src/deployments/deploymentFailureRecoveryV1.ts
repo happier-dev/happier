@@ -3,6 +3,7 @@ import { isRecord } from '../common/records.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, type OpenProjectInputV1 } from '../projects/openProjectV1.js';
+import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 
 export const DeploymentImageResolutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('deploymentImageResolutionFailure'),
@@ -40,16 +41,16 @@ export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObj
  */
 export type DeploymentFailureRecoveryDestinationV1 =
     | 'source' | 'domains' | 'variables' | 'permissions' | 'settings' | 'history' | 'logs'
-    | 'machines' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy';
+    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
-    kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string;
+    kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string; machineId?: string;
 }>;
 export type DeploymentFailureRecoveryPresentationV1 = Readonly<{
     requiredFact: string; remedy: string; nextAction: DeploymentFailureRecoveryNextActionV1;
 }>;
 
-function recovery(remedy: string, destination: DeploymentFailureRecoveryDestinationV1, label: string) {
-    return { remedy, nextAction: { kind: 'navigate' as const, destination, label } };
+function recovery(remedy: string, destination: DeploymentFailureRecoveryDestinationV1, label: string, machineId?: string) {
+    return { remedy, nextAction: { kind: 'navigate' as const, destination, label, ...(machineId ? { machineId } : {}) } };
 }
 
 // Read-only presentation, never persisted into strict receipts or approval details.
@@ -277,6 +278,11 @@ function recoveryDetails(details: Record<string, unknown>): Record<string, unkno
         ? details.failure : details;
 }
 
+function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, errorCode?: string): string | undefined {
+    if (errorCode !== 'machine_admin_access_required' || details.step !== 'native_execution') return undefined;
+    return DeploymentIdentifierV1Schema.safeParse(details.machineId).data;
+}
+
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     if (details.kind === 'refused') {
@@ -294,6 +300,10 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
+    const adminMachineId = readDomainAdminRecoveryMachineId(details, code);
+    if (adminMachineId) return recovery(
+        `This address change needs administrator access on Machine ${adminMachineId}. Set up administrator access there, then review the address again.`,
+        'machineAdminAccess', recoveries.machine_admin_access_required.nextAction.label, adminMachineId);
     if (code === 'deployment_conflict' && (details.step === 'native_execution'
         || failure?.step === 'native_execution'
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
@@ -339,6 +349,13 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
         requiredFact: facts.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
         remedy: recovery.remedy,
     });
+}
+
+/** Retain the named remedy in the closed Domain failure. Live Action navigation uses the exact Machine field. */
+export function projectDeploymentDomainFailureStorageDetailsV1(errorCode: string, details: unknown): unknown {
+    if (!isRecord(details) || !readDomainAdminRecoveryMachineId(details, errorCode)) return details;
+    const { machineId: _recoveryMachineId, ...stored } = projectDeploymentFailureRecoveryV1(details, errorCode);
+    return stored;
 }
 
 /**

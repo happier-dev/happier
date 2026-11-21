@@ -5,6 +5,18 @@ import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailur
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
 import { OpenProjectInputV1Schema } from '../projects/openProjectV1.js';
 
+it('names and opens the Machine whose native Domain setup was refused', () => {
+    const details = { step: 'native_execution', machineId: 'origin-machine' };
+    const code = 'machine_admin_access_required';
+    const stored = projectDeploymentFailureRecoveryV1(details, code);
+    expect(stored.remedy).toContain(details.machineId);
+    expect(readDeploymentRefusalRecoveryV1(code, stored)).toMatchObject({
+        remedy: stored.remedy,
+        nextAction: { destination: 'machineAdminAccess', machineId: details.machineId },
+    });
+    expect(readDeploymentRefusalRecoveryV1(code, { step: details.step })?.nextAction).not.toHaveProperty('machineId');
+});
+
 it('routes a repository clone refusal with INVALID_REQUEST to repair the deployment Source', () => {
     const cause = { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null };
     const refused = { kind: 'refused', code: 'INVALID_REQUEST', effectAttempted: false,

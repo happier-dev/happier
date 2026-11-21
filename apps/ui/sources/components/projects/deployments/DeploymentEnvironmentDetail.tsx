@@ -1477,6 +1477,8 @@ export function DeployOutcomeBanner(
   // The cure is this Environment's own Deploy, already on the page: the sentence names it, no second button.
   const ownDeploy = typedRecovery?.nextAction.destination === 'deploy';
   const recovery = leadsNowhere || ownDeploy ? null : typedRecovery;
+  const recoveryMachineId = recovery?.nextAction.machineId
+    ?? (recovery?.nextAction.destination === 'machines' ? props.machineId : undefined);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
   const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy ? failure.reason : null;
   const { openRecovery } = controller;
@@ -1529,7 +1531,7 @@ export function DeployOutcomeBanner(
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,
             failedDeploymentId ? { deploymentId: failedDeploymentId }
-              : recovery.nextAction.destination === 'machines' && props.machineId ? { machineId: props.machineId } : undefined) } } : {})}
+              : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
       details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (recovery || ownDeploy) && !canonicalReason))
