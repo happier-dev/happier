@@ -462,7 +462,7 @@ describe('platform choice disclosure', () => {
 
   it('says one failed read once, at the sheet, and draws no choice after it', () => {
     const states: Record<string, { status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string }> = {
-      account: { status: 'ready', options: [{ value: 'team-1' }] },
+      account: { status: 'ready', options: [{ value: 'team-1' }, { value: 'team-2' }] },
       note: { status: 'failed', options: [], errorCode: 'provider_response_invalid' },
       project: { status: 'failed', options: [], errorCode: 'provider_response_invalid' },
     };
@@ -482,11 +482,25 @@ describe('platform choice disclosure', () => {
 
   it('leaves out an optional choice this target has nothing for (a Worker has no Pages project)', () => {
     const states: Record<string, { status: 'ready'; options: readonly unknown[] }> = {
-      account: { status: 'ready', options: [{ value: 'team-1' }] }, note: { status: 'ready', options: [] },
-      project: { status: 'ready', options: [{ value: 'prj-1' }] }, environment: { status: 'ready', options: [{ value: 'production' }] },
+      account: { status: 'ready', options: [{ value: 'team-1' }, { value: 'team-2' }] }, note: { status: 'ready', options: [] },
+      project: { status: 'ready', options: [{ value: 'prj-1' }, { value: 'prj-2' }] }, environment: { status: 'ready', options: [{ value: 'production' }] },
     };
     const drawn = drawPlatformFields(fields, { account: 'team-1', project: 'prj-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
     expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account', 'project', 'environment']);
     expect(drawn.failure).toBeNull();
+  });
+
+  // PAGE-ACCEPT-176 R8-D4 / R10-D6: a provider choice answered with its only option is not a second row of the same
+  // value (the sole Cloudflare account, the Worker just named); a declared static option still draws.
+  it('draws no row for a provider choice answered with its only option', () => {
+    const states: Record<string, { status: 'ready'; options: readonly unknown[] }> = {
+      account: { status: 'ready', options: [{ value: 'team-1' }] }, note: { status: 'ready', options: [] },
+      project: { status: 'ready', options: [{ value: 'prj-1' }, { value: 'prj-2' }] }, environment: { status: 'ready', options: [{ value: 'production' }] },
+    };
+    const drawn = drawPlatformFields(fields, { account: 'team-1', project: 'prj-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
+    expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['project', 'environment']);
+    const declared = fields.map(entry => entry.path === 'account' ? { ...entry, options: [{ value: 'team-1', label: 'Team' }] } : entry);
+    expect(drawPlatformFields(declared, { account: 'team-1', project: 'prj-1' }, (entry: { path: string }) => states[entry.path]!, () => false)
+      .fields.map((entry: { path: string }) => entry.path)).toEqual(['account', 'project', 'environment']);
   });
 });

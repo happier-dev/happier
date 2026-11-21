@@ -474,17 +474,21 @@ export function DeploymentPlatformTargetEditor(
     );
     resetFrom();
   };
-  const providerAccountField = fields.find(field => field.path === 'providerAccountId');
-  const providerAccountOptions = providerAccountField ? options.state(providerAccountField) : null;
-  const mayPreselectProviderAccount = draft !== null && !connectionNeeded && providerAccountField?.required === true
-    && busy === null && !reviewingCreate && values.providerAccountId === undefined
-    && (cursors.providerAccountId?.length ?? 0) === 0;
-  const selectProviderAccount = useEventCallback((value: ActionFieldOption['value']) => patch({ ...values, providerAccountId: value }));
-  React.useEffect(() => {
-    if (!mayPreselectProviderAccount || providerAccountOptions?.status !== 'ready' || providerAccountOptions.nextCursor !== undefined) return;
-    const option = findSoleEligibleOption(providerAccountOptions.options, choice => !choice.disabled);
-    if (option) selectProviderAccount(option.value);
-  }, [mayPreselectProviderAccount, providerAccountOptions, selectProviderAccount]);
+  // A required provider choice with exactly one eligible option is answered for the person, in field order: the
+  // Cloudflare account behind the sole connection, or the Worker just named on Create new (PAGE-ACCEPT-176 R8-D4, R10-D6).
+  const mayPreselect = draft !== null && !connectionNeeded && busy === null && !reviewingCreate;
+  const soleChoice = mayPreselect ? fields.reduce<Readonly<{ path: string; value: ActionFieldOption['value'] }> | null>((found, field) => {
+    if (found || !field.required || field.allowCustomValue || field.widget !== 'select' || field.path.includes('.')) return found;
+    if (values[field.path] !== undefined || (cursors[field.path]?.length ?? 0) > 0) return found;
+    const choices = options.state(field);
+    if (choices.status !== 'ready' || choices.nextCursor !== undefined) return found;
+    const option = findSoleEligibleOption(choices.options, choice => !choice.disabled);
+    return option ? { path: field.path, value: option.value } : found;
+  }, null) : null;
+  const applySoleChoice = useEventCallback(() => { if (soleChoice) patch({ ...values, [soleChoice.path]: soleChoice.value }); });
+  // The choice is rebuilt each render; its serialized form says when it changed.
+  const soleChoiceKey = soleChoice ? JSON.stringify(soleChoice) : null;
+  React.useEffect(() => { if (soleChoiceKey) applySoleChoice(); }, [soleChoiceKey, applySoleChoice]);
   const page = (
     field: EffectiveActionInputField,
     direction: 'next' | 'previous',

@@ -418,6 +418,14 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
       && choices.nextCursor === undefined && !paged(field)) {
       return { fields: drawn, failure: { code: 'provider_options_empty' }, canCheck: false };
     }
+    // An answered choice that offers nothing else is not a row: it would repeat the value beside it (the sole
+    // Cloudflare account under its connection, the Worker under its name) (PAGE-ACCEPT-176 R8-D4, R10-D6).
+    // Only a provider-resolved choice: a declared static option (Vercel's Production) is part of the form's shape.
+    const answeredSole = value !== undefined && !field.options?.length && !field.allowCustomValue
+      && field.widget === 'select' && choices.status === 'ready'
+      && choices.nextCursor === undefined && !paged(field) && choices.options.length === 1
+      && JSON.stringify((choices.options[0] as Readonly<{ value?: unknown }>).value) === JSON.stringify(value);
+    if (answeredSole) continue;
     if (field.required || value !== undefined
       || choices.status !== 'ready' || choices.options.length > 0 || paged(field)) drawn.push(field);
   }

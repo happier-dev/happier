@@ -748,6 +748,7 @@ it('uses the sole Pages account and prepares one repository branch and normalize
       .map(resource => [qualified(resource.id), { pluginId: manifest.id, id: resource.id, resourceKind: resource.kind,
         scope: resource.scope, execution: resource.execution, accountRuntimeDeclared: true }])),
   });
+  const answeredAccounts: unknown[] = [];
   receiverRpc.call.mockImplementation(async request => {
     expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
     return { protocolVersion: 1, projection };
@@ -759,6 +760,8 @@ it('uses the sole Pages account and prepares one repository branch and normalize
     await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.options.resolve', machineId,
       installationId: 'pages-options-installation', tokenEpoch: 0, execute: async raw => {
         const input = getActionSpec('action.options.resolve').inputSchema.parse(raw);
+        // The Pages project's choices are read through the answered account (R8-D4).
+        if (input.fieldPath !== 'providerAccountId') answeredAccounts.push(input.draftInput?.providerAccountId);
         return getActionSpec('action.options.resolve').outputSchema!.parse({
           actionId: input.actionId ?? null, fieldPath: input.fieldPath ?? null, optionsSourceId: input.optionsSourceId ?? null,
           options: input.fieldPath === 'providerAccountId' ? [{ value: 'provider-pages', label: 'Pages Account' }] : [],
@@ -781,14 +784,12 @@ it('uses the sole Pages account and prepares one repository branch and normalize
       }] }) });
     });
     await waitForHomeGovernance(() => expect(chooser().props.value).toEqual({ kind: 'account', account: ref }));
+    // A required choice with one option is answered for the person and not drawn as a second row of the same account
+    // (PAGE-ACCEPT-176 R8-D4); the draft still carries it.
     const expectProviderAccount = () => {
-      const field = screen.root.findAllByType(ActionInputFields)
-        .find(node => node.props.fields[0]?.path === 'providerAccountId');
-      expect(field?.props.resolveFieldOptions.state?.(field.props.fields[0])).toMatchObject({
-        status: 'ready', options: [{ value: 'provider-pages', label: 'Pages Account' }],
-      });
-      expect(field?.props.input.providerAccountId).toBe('provider-pages');
-      expect(screen.getTextContent()).toContain('Pages Account');
+      const drawn = screen.root.findAllByType(ActionInputFields);
+      expect(drawn.some(node => node.props.fields[0]?.path === 'providerAccountId')).toBe(false);
+      expect(answeredAccounts.at(-1), screen.getTextContent()).toBe('provider-pages');
     };
     const mode = screen.root.findAllByType(SegmentedChoiceItem)
       .find(node => node.props.testID === 'project-deployments.platform.mode');
