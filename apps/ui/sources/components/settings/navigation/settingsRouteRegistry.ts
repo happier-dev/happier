@@ -11,6 +11,31 @@ export type SettingsStackScreenDefinition = Readonly<{
     options: NativeStackNavigationOptions;
 }>;
 
+function getSettingsBreadcrumbTitle(
+    t: Translate,
+    name: string,
+    definitions: readonly SettingsRouteChromeDefinition[],
+    scope: SettingsStackScope,
+): string {
+    const titleKeys: TranslationKeyNoParams[] = ['settings.title'];
+    if (scope === 'prompts') titleKeys.push('settings.prompts');
+    const segments = name.split('/');
+
+    for (let index = 0; index < segments.length; index += 1) {
+        const routePrefix = segments.slice(0, index + 1).join('/');
+        const routeName = index === segments.length - 1
+            ? routePrefix
+            : definitions.some((definition) => definition.name === routePrefix)
+                ? routePrefix
+                : `${routePrefix}/index`;
+        const titleKey = definitions.find((definition) => definition.name === routeName)?.titleKey;
+        if (titleKey) titleKeys.push(titleKey);
+    }
+
+    const titles = titleKeys.map(t).filter((title, index, allTitles) => index === 0 || title !== allTitles[index - 1]);
+    return titles.join(' < ');
+}
+
 type SettingsRouteChromeDefinition = Readonly<{
     name: string;
     titleKey?: TranslationKeyNoParams;
@@ -120,7 +145,7 @@ export function getSettingsStackScreenDefinitions(
             headerBackTitle: t(definition.headerBackTitleKey ?? 'common.back'),
         };
         if (definition.titleKey) {
-            options.headerTitle = t(definition.titleKey);
+            options.headerTitle = getSettingsBreadcrumbTitle(t, definition.name, definitions, scope);
         }
         return {
             name: definition.name,
