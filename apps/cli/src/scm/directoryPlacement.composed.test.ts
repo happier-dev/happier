@@ -249,6 +249,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
     const commit = { method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } };
     const comparison = { method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, operation: { source: { kind: 'workingTree' } } };
     const diff = { method: RPC_METHODS.SCM_DIFF_FILE, operation: { path: 'notes.txt', area: 'pending' } };
+    const history = { method: RPC_METHODS.SCM_HISTORY_ENTRIES, operation: { folder: '', paths: ['', 'nested', 'nested/guest.txt'] } };
     const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
     it.each([
         { placed: true, caller: 'none', managed: true, ...commit },
@@ -261,7 +262,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
         // SEC2: comparison capture must share the placed-root owner decision.
         { placed: true, caller: 'member', ...comparison },
         { placed: true, caller: 'other-member', ...comparison },
-        ...[diff, commit].map(request => ({ placed: true as const, caller: 'none' as const, disjointRoots: true, ...request })),
+        ...[diff, commit, history].map(request => ({ placed: true as const, caller: 'none' as const, disjointRoots: true, ...request })),
     ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller, disjoint=$disjointRoots, managed=$managed)', async (fixture) => {
         const { placed, caller, method, operation } = fixture;
         const disjointRoots = 'disjointRoots' in fixture;
@@ -296,6 +297,12 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             await writeFile(join(root, 'notes.txt'), 'initial\n');
             git('add', 'notes.txt');
             git('commit', '-qm', 'initial');
+            if (method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
+                await mkdir(join(root, 'nested'));
+                await writeFile(join(root, 'nested', 'guest.txt'), 'guest directory history\n');
+                git('add', 'nested/guest.txt');
+                git('commit', '-qm', 'guest directory');
+            }
             git('init', '--bare', '-q', destination);
             git('remote', 'add', 'origin', destination);
             for (const hook of ['pre-commit', 'pre-push', 'fsmonitor']) {
@@ -422,6 +429,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             });
             const request = {
                 cwd: statusResponse?.snapshot?.repo.rootPath ?? addressedRoot, ...operation,
+                ...(method === RPC_METHODS.SCM_HISTORY_ENTRIES ? { headOid: git('rev-parse', 'HEAD').toString().trim() } : {}),
             };
             const addressedRequest = managed ? { v: 1, kind: 'targeted_action_rpc', target: managed,
                 input: { ...request, outcomeVersion: 1 } } : disjointRoots
@@ -474,6 +482,13 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 if (method === RPC_METHODS.SCM_DIFF_FILE) {
                     expect(response.diff).toContain('+changed');
                     expect(response.diff).not.toContain('controller-only');
+                } else if (method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
+                    const oid = git('rev-parse', 'HEAD').toString().trim();
+                    expect(response).toMatchObject({ headOid: oid, entries: [
+                        { path: '', kind: 'commit', commit: { oid } },
+                        { path: 'nested', kind: 'commit', commit: { oid } },
+                        { path: 'nested/guest.txt', kind: 'commit', commit: { oid } },
+                    ] });
                 } else {
                     expect(response.publication).toMatchObject({ state: 'published', indexReconciliation: 'reconciled' });
                     expect(git('show', 'HEAD:notes.txt').toString()).toBe('changed\n');

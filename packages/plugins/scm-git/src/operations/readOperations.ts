@@ -17,13 +17,14 @@ import type {
 import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { parseGitComparisonOutput } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, normalizeRepoRootRelativePath, runScmCommand } from '../runtime.js';
 import { toRepoRootLiteralPathspec } from '../literalPathspec.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { resolveGitCommitRef } from './exportCommit.js';
 import { ScmBlameFileRequestSchema, ScmBlameFileResponseSchema } from '@happier-dev/plugin-sdk/scm';
 
@@ -264,6 +265,7 @@ export async function gitHistoryEntries(input: {
     if (request.headOid !== undefined && request.headOid !== headOid) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED, headOid };
     const unavailable = (reason: string): ScmHistoryEntriesResponse => ({ success: true, headOid, entries: request.paths.map(path => ({ path, kind: 'unavailable', reason })) });
     if (request.paths.length === 0) return { success: true, headOid, entries: [] };
+    const files = readRepositoryFileSystem();
     let historyFolder = request.folder;
     if (process.platform === 'win32' && request.folder !== '') {
         // Qualified Windows workspace identities may lose directory casing. Recover
@@ -272,10 +274,10 @@ export async function gitHistoryEntries(input: {
         const folderPath = resolve(cwd, request.folder);
         context.assertFilesystemPathAuthorized?.(folderPath);
         try {
-            if (!(await lstat(folderPath)).isDirectory()) return unavailable('history_folder_unavailable');
-            const physicalRoot = await realpath(cwd);
+            if (!(await files.lstat(folderPath)).isDirectory()) return unavailable('history_folder_unavailable');
+            const physicalRoot = await files.realpath(cwd);
             const expectedFolder = resolve(physicalRoot, request.folder);
-            const physicalFolder = await realpath(expectedFolder);
+            const physicalFolder = await files.realpath(expectedFolder);
             if (!isCanonicalAbsolutePathInsideRoot(physicalRoot, physicalFolder)
                 || !isCanonicalAbsolutePathInsideRoot(expectedFolder, physicalFolder)
                 || !isCanonicalAbsolutePathInsideRoot(physicalFolder, expectedFolder)) {
@@ -288,7 +290,7 @@ export async function gitHistoryEntries(input: {
         const historyPath = historyFolder === request.folder ? path : `${historyFolder}${path.slice(request.folder.length)}`;
         const absolutePath = resolve(cwd, historyPath);
         context.assertFilesystemPathAuthorized?.(absolutePath);
-        try { return { path, historyPath, directory: (await lstat(absolutePath)).isDirectory() }; }
+        try { return { path, historyPath, directory: historyPath === '' || (await files.lstat(absolutePath)).isDirectory() }; }
         catch (error) {
             if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return { path, historyPath, directory: false };
             throw error;
@@ -297,8 +299,11 @@ export async function gitHistoryEntries(input: {
     const shallowPath = await command(['rev-parse', '--git-path', 'shallow']);
     if (!shallowPath.success) return unavailable('history_probe_failed');
     let shallow: Set<string>;
-    try { shallow = new Set((await readFile(resolve(cwd, shallowPath.stdout.trim()), 'utf8')).split('\n').filter(Boolean)); }
-    catch (error) {
+    try {
+        const gitPath = shallowPath.stdout.trim();
+        const file = isAbsolute(gitPath) ? files.commandPaths?.fromCommandPath(gitPath) ?? gitPath : resolve(cwd, gitPath);
+        shallow = new Set(Buffer.from(await files.readFile(file)).toString('utf8').split('\n').filter(Boolean));
+    } catch (error) {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') shallow = new Set();
         else return unavailable('history_probe_failed');
     }
