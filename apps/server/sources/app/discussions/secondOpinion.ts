@@ -177,16 +177,22 @@ export async function admitDiscussionSecondOpinionSourceInTx(tx: Tx, input: Acto
 }>): Promise<DiscussionResult<void>> {
     const anchor = DiscussionAnchorV1Schema.safeParse(input.anchor);
     if (!anchor.success || anchor.data.kind !== 'session' || !anchor.data.messageId) return discussionSuccess(undefined);
+    return admitQuotedSessionSourceInTx(tx, input, { sessionId: anchor.data.sessionId, messageId: anchor.data.messageId });
+}
+
+async function admitQuotedSessionSourceInTx(tx: Tx, input: Actor & Readonly<{
+    destination: ContextDisclosureResource; allowMissingSource?: true;
+}>, source: Readonly<{ sessionId: string; messageId: string }>): Promise<DiscussionResult<void>> {
     // Retained-resource invitations need no grant to a physically absent source.
     // Read only identity here: absent access/key readiness is NOT source deletion.
     // Fresh quotes and active source disclosure keep the strict default below.
     if (input.allowMissingSource && !await tx.sessionMessage.findFirst({
-        where: { sessionId: anchor.data.sessionId, id: anchor.data.messageId }, select: { id: true },
+        where: { sessionId: source.sessionId, id: source.messageId }, select: { id: true },
     })) return discussionSuccess(undefined);
-    const facts = await sessionSourceFactsInTx(tx, { ...input, sessionId: anchor.data.sessionId, messageId: anchor.data.messageId });
+    const facts = await sessionSourceFactsInTx(tx, { ...input, ...source });
     if (!facts?.ready) return discussionFailure('discussion_content_unavailable');
     const disclosure = await mayInjectResourceContextInTx(tx, { configuringAccountId: input.actorAccountId,
-        authentication: input.authentication, source: { kind: 'session', sessionId: anchor.data.sessionId }, destination: input.destination });
+        authentication: input.authentication, source: { kind: 'session', sessionId: source.sessionId }, destination: input.destination });
     return disclosure.ok ? discussionSuccess(undefined) : discussionFailure('discussion_access_forbidden');
 }
 
@@ -217,7 +223,7 @@ export async function admitDiscussionSecondOpinionGrantInTx(tx: Tx, input: Actor
     }
     const currentAudience = new Set(resolveResourceGrantAudienceFromFacts(current));
     if (resolveResourceGrantAudienceFromFacts(facts).every(accountId => currentAudience.has(accountId))) return discussionSuccess(undefined);
-    return admitDiscussionSecondOpinionSourceInTx(tx, { ...input, anchor: row?.anchorV1, allowMissingSource: true,
+    return admitQuotedSessionSourceInTx(tx, { ...input, allowMissingSource: true,
         destination: { kind: 'resource', resourceId: input.discussionId, adapter: {
             ...discussionContextStorageAdapter,
             async readAccessFactsBatchInTx(_tx, resourceIds) {
@@ -226,5 +232,5 @@ export async function admitDiscussionSecondOpinionGrantInTx(tx: Tx, input: Actor
             async readAccessFactsInTx(tx, resourceId, actorAccountId) {
                 return (await this.readAccessFactsBatchInTx(tx, [resourceId], actorAccountId)).get(resourceId) ?? null;
             },
-        } } });
+        } } }, { sessionId: anchor.data.sessionId, messageId: anchor.data.messageId });
 }

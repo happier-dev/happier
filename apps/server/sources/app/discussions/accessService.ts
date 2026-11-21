@@ -258,7 +258,8 @@ export async function inviteDiscussionParticipantInTx(tx: Tx, input: DiscussionA
     if (!context) return discussionFailure("discussion_not_found");
     if (context.access.level === "view") return discussionFailure("discussion_access_forbidden");
     if (!context.keyReadiness) return discussionFailure("discussion_content_unavailable");
-    const discussion = await tx.discussion.findUnique({ where: { id: input.discussionId }, select: { archivedAt: true } });
+    const discussion = await tx.discussion.findUnique({ where: { id: input.discussionId },
+        select: { archivedAt: true, ...(request.participant.kind === 'session' ? { anchorV1: true } : {}) } });
     if (discussion?.archivedAt) return discussionFailure("discussion_archived");
     const requestedAnswerPolicy = "answerPolicy" in request ? request.answerPolicy : undefined;
     if (request.participant.kind === "model") {
@@ -289,7 +290,7 @@ export async function inviteDiscussionParticipantInTx(tx: Tx, input: DiscussionA
     if (!session || session.archivedAt) return discussionFailure("discussion_subject_ineligible");
     const sourceQuote = await admitDiscussionSecondOpinionSourceInTx(tx, { ...input,
         allowMissingSource: true,
-        anchor: (await tx.discussion.findUnique({ where: { id: input.discussionId }, select: { anchorV1: true } }))?.anchorV1,
+        anchor: discussion?.anchorV1,
         destination: { kind: 'session', sessionId: request.participant.sessionId } });
     if (!sourceQuote.ok) return sourceQuote;
     const disclosure = await mayInjectResourceContextInTx(tx, { configuringAccountId: input.actorAccountId, authentication: input.authentication,
