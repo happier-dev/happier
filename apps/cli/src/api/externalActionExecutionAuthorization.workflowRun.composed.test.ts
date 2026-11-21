@@ -7,7 +7,7 @@ import { AccountSettingsSchema } from '@happier-dev/protocol';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema,
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema,
   type ExternalActionRequestEnvelope, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
@@ -18,7 +18,8 @@ import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machine
 import { sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1,
   createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, decodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -262,7 +263,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
         }
         if (transport === 'managed-missing-parent') {
           const refused = await dispatchManagedWorkflowStart({ ...dispatch, context: undefined });
-          expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+          expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
           return refused;
         }
         return dispatchManagedWorkflowStart(dispatch);
@@ -278,13 +279,22 @@ describe('guest Workflow Run through public external Action ingress', () => {
     });
     const controllerExecutor = makeExecutor(controllerOwner, { managedMachineAction: adapter, runActionOperation: operations.runActionOperation });
     let managedReceiver: ((body: unknown) => Promise<{ status: number; data: unknown }>) | undefined;
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       boundaryTrace.push(new URL(url).pathname);
       if (url.endsWith('/controller/admit')) return { status: 200, data: { machine: enrolled, presetContent, presetContentOverride, replayed: true } };
       if (url.endsWith('/controller/current') || url.endsWith('/controller/report')) return { status: 200, data: { machine: enrolled } };
-      if (url.endsWith('/controller/context')) return { status: 200, data: { requestId: runId,
-        enrollmentInstallation: { machineId: 'guest', installationId: 'guest-installation',
-          installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') } } };
+      if (url.endsWith('/controller/context')) {
+        const header = config?.headers?.[EXTERNAL_ACTION_REVIEWED_CHILD_HEADER];
+        const proof = typeof header === 'string' ? decodeReviewedActionChildHttpProofV1(header) : null;
+        // Home opens retained creation context under the reviewed acquire effect.
+        if (config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] !== MANAGED_ACQUIRE_ACTION_ID_V1
+          || proof?.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1 || proof.role !== 'acquire-workflow-placement') {
+          return { status: 403, data: { error: 'permission_denied' } };
+        }
+        return { status: 200, data: { requestId: runId,
+          enrollmentInstallation: { machineId: 'guest', installationId: 'guest-installation',
+            installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') } } };
+      }
       if (url === 'https://home.example/v1/actions/workflow.run.start' && managedReceiver) {
         return await managedReceiver(body);
       }
@@ -419,6 +429,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
       // Standalone preparation supplies no inherited consent or accepted Run.
       expect(created, JSON.stringify(created)).toMatchObject({ ok: false });
       expect(storage.calls.some(operation => operation.operation === 'admit')).toBe(false);
+      expect(guestRequests).toBe(0);
       expect(native.effects()).toBe(0);
       return;
     }

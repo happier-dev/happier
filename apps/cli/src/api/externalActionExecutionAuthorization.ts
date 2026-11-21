@@ -2539,8 +2539,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     invocation = params.sessionCreationTag ? { ...origin, sessionCreationDefaults: launchDefaults } : origin;
   }
   const managedChildCodec = isManagedChildFreshCodec(root);
+  const reviewedAcquireRoot = root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+    || (root.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && params.actionId === WORKFLOW_RUN_START_ACTION_ID_V1);
   const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null
-    || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+    || reviewedAcquireRoot;
   if (!isManagedChildTransportAvailable(params)
     || (root.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)
       && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
@@ -2602,9 +2604,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     const body = { homeId: root.serverIdentityId, managedId: params.continuation.managedId,
       expectedIntentRevision: params.continuation.expectedIntentRevision,
       controller: { machineId: root.machineId, installationId: root.installationId }, includeEnrollmentInstallation: true as const };
-    const reviewedChild = root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
-      ? readHostAdmittedReviewedChildHttpProofV1(params.context) : undefined;
-    if (root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && reviewedChild?.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1)
+    // Session and Workflow placement both read the enrollment through their
+    // reviewed acquire. The following guest dispatch still spends the root.
+    const reviewedChild = reviewedAcquireRoot ? readHostAdmittedReviewedChildHttpProofV1(params.context) : undefined;
+    if (reviewedAcquireRoot && reviewedChild?.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1)
       return fail('admission_unavailable');
     try {
       const response = await axios.post<unknown>(`${params.serverHttpBaseUrl}${path}`, body, {
