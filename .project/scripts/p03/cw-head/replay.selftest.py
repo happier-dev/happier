@@ -3,8 +3,8 @@ ROOT = pathlib.Path(__file__).resolve().parent
 CP = os.environ.get('P03_SELFTEST_CP', str(ROOT / 'commit-partial.sh'))
 REAL_GIT = subprocess.check_output(['which', 'git'], text=True).strip()
 def case(kind):
-    admission_case = kind in ('cas-final-entry', 'cas-final-declarations', 'declaration-admission-refused', 'declaration-admission-stall', 'entry-admission-refused', 'cas-churn')
-    declaration_case = kind in ('cas-final-declarations', 'declaration-admission-refused', 'declaration-admission-stall')
+    admission_case = kind in ('cas-final-entry', 'cas-final-declarations', 'declaration-admission-refused', 'declaration-admission-stall', 'two-stale-verdicts', 'entry-admission-refused', 'cas-churn')
+    declaration_case = kind in ('cas-final-declarations', 'declaration-admission-refused', 'declaration-admission-stall', 'two-stale-verdicts')
     d = pathlib.Path(tempfile.mkdtemp(prefix='p03-replay-test.'))
     scratch = d/'wrapper-scratch'; scratch.mkdir()
     cache = d/'shared-cache'; cache.mkdir()
@@ -45,7 +45,7 @@ def case(kind):
     (d/'msg').write_text('test: packet A\n')
     idx = str(d/'private-b'); envb = dict(env, GIT_INDEX_FILE=idx)
     subprocess.check_call([REAL_GIT, 'read-tree', base], cwd=d, env=envb)
-    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-final-entry','cas-final-declarations','declaration-admission-refused', 'declaration-admission-stall','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
+    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-final-entry','cas-final-declarations','two-stale-verdicts','declaration-admission-refused', 'declaration-admission-stall','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','requeue','retention','two-stale-verdicts') else 'package.json' if kind == 'manifest' else 'a.txt'
     content = initial.replace('line 20\n', 'packet B\n') if kind != 'conflict' else initial.replace('line 2\n', 'conflict B\n')
     blob = subprocess.check_output([REAL_GIT, 'hash-object', '-w', '--stdin'], input=content, cwd=d, text=True).strip()
     subprocess.check_call([REAL_GIT, 'update-index', '--cacheinfo', f'100644,{blob},{target}'], cwd=d, env=envb)
@@ -108,6 +108,14 @@ if [[ '{kind}' != cas-loss && '{kind}' != cas-final-entry && '{kind}' != cas-fin
 fi
 [[ '{kind}' = cheapmiss || '{kind}' = requeue ]] && [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ] && [ ! -e '{d}/.missed' ] && {{ touch '{d}/.missed'; echo "$(git diff --name-only "$1" "$2" | sort | paste -sd,)|${{P03_GATE_PRIOR:+fast}}|$l|cheap-miss" >> '{d}/gates'; exit 3; }}
 echo "$(git diff --name-only "$1" "$2" | sort | paste -sd,)|${{P03_GATE_PRIOR:+fast}}|$l" >> '{d}/gates'
+if [ '{kind}' = two-stale-verdicts ]; then
+ if [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ]; then
+   [ "${{P03_GATE_FINAL_DECLARATION_RECHECK:-}}" = 1 ] || exit 3
+   [ "$l" = locked ] && [ "${{TEST_ENTRY_LEASE:-}}" = held ] && [ "${{TEST_DECLARATION_LEASE:-}}" = held ] || exit 99
+ elif [ "$1" = '{b}' ]; then
+   flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
+ fi
+fi
 if [ '{kind}' = requeue ] && [ -e '{d}/.missed' ] && [ -z "${{P03_SCAN_CHEAP_ONLY:-}}" ] && [ "$l" = unlocked ]; then
  flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
 fi
@@ -220,7 +228,7 @@ exec "$@"
         assert ('replay conflict' if kind == 'conflict' else 'candidate refused') in run.stdout.lower(), run.stdout
     else:
         assert run.returncode == 0, run.stdout
-        assert git('rev-parse','HEAD^') == (later if kind in ('requeue', 'cas-final-entry', 'cas-final-declarations', 'cas-churn') else b)
+        assert git('rev-parse','HEAD^') == (later if kind in ('requeue', 'cas-final-entry', 'cas-final-declarations', 'cas-churn', 'two-stale-verdicts') else b)
         if kind in ('retention', 'requeue'):
             head_tree = git('rev-parse', 'HEAD^{tree}')
             payloads = sorted(p.name for p in cache.rglob('*') if p.is_file() and not p.name.endswith('.lock') and not p.name.endswith('.slot'))
@@ -242,6 +250,7 @@ exec "$@"
             'cas-loss': [cheap],
             'cas-final-entry': [cheap, cheap],
             'cas-final-declarations': [cheap, cheap],
+            'two-stale-verdicts': [cheap, pk + '|fast|unlocked', cheap],
             'cas-churn': [cheap, cheap, pk + '|fast|unlocked'],
             'requeue': fallback + [cheap],
         }
@@ -265,4 +274,4 @@ exec "$@"
                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             assert dry.returncode == 0 and 'DRY candidate' in dry.stdout, dry.stdout
             assert not list(cache.glob('packet.*')), 'dry packet retained its private files'
-for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-final-entry','cas-final-declarations','declaration-admission-refused', 'declaration-admission-stall','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','signal','retention']: case(kind)
+for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-final-entry','cas-final-declarations','declaration-admission-refused', 'declaration-admission-stall','entry-admission-refused','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','two-stale-verdicts','signal','retention']: case(kind)

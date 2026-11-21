@@ -179,14 +179,12 @@ replay() { # new HEAD -> fresh tree and parent; never reuse an old tree with a n
 # moved HEAD instead of running the full gate again (20 wrappers re-gating at once on an install would cost ~5 GB each).
 resumed=""
 cas_losses=0
-rechecked_after_release=0
 if [ -n "${P03_CP_FROZEN:-}" ] && [ -s "$P03_CP_FROZEN" ]; then
   [ "$P03_CP_FROZEN" = "$packet" ] || mv -f "$P03_CP_FROZEN" "$packet"
   unset P03_CP_FROZEN
   if [ -n "${P03_CP_GATED:-}" ] && git cat-file -e "${P03_CP_GATED%% *}^{commit}" 2>/dev/null; then
     commit=${P03_CP_GATED%% *}; head=${P03_CP_GATED#* }; resumed=1
     cas_losses=${P03_CP_CAS_LOSSES:-0}
-    rechecked_after_release=${P03_CP_RECHECKED_AFTER_RELEASE:-0}
   else head=$(git rev-parse HEAD); replay "$head"; fi
   unset P03_CP_GATED
   expected=$(git diff --no-renames --name-only "$head" "$commit" | sort -u)
@@ -243,7 +241,7 @@ replay_onto_now() {
 }
 resume_frozen_packet() {
   exec 9>&-
-  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
+  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses \
     P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds exec bash "$SELF" "${ARGS[@]}"
 }
 requeue_after_full_gate() {
@@ -251,7 +249,6 @@ requeue_after_full_gate() {
   P03_GATE_PRIOR=${1:-} check_gate "$now"
   head=$now
   gated=$commit
-  rechecked_after_release=1
   resume_frozen_packet
 }
 final_prepared=${P03_CP_FINAL_PREPARED:-0}
@@ -302,7 +299,7 @@ admit_final_phase() {
   if [ "$entry_phase" = 1 ]; then
     [ -n "${P03_CP_DECLARATION_PROJECTS:-}" ] || return 0
     P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses \
-      P03_CP_RECHECKED_AFTER_RELEASE=0 P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
+      P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
       run_final_declaration_phase "$launcher" "$P03_CP_DECLARATION_PROJECTS" || rc=$?
     packetDir=
     exit "$rc"
@@ -327,7 +324,7 @@ admit_final_phase() {
     else
       run_final_declaration_phase "$launcher" "$declaration_projects" || rc=$?
     fi
-    unset P03_CP_FROZEN P03_CP_GATED P03_CP_CAS_LOSSES P03_CP_RECHECKED_AFTER_RELEASE
+    unset P03_CP_FROZEN P03_CP_GATED P03_CP_CAS_LOSSES
     unset P03_CP_FINAL_PREPARED P03_CP_ROUNDS P03_CP_DECLARATION_PROJECTS
     case $rc in
       0|11|130|143) exit "$rc";;
@@ -397,15 +394,21 @@ reexec_if_replaced() {
 }
 rounds=${P03_CP_ROUNDS:-0}
 reexec_if_replaced
-if [ "$rechecked_after_release" -eq 1 ] && [ "$(git rev-parse HEAD)" != "$head" ]; then
-  cas_losses=$((cas_losses + 1)); rechecked_after_release=0
+# Losing the accepted HEAD before CAS still costs the packet one recheck.
+# Admission children inherit a loss already counted by the outer wrapper.
+head_loss_counted=0
+if [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$(git rev-parse HEAD)" != "$head" ]; then
+  cas_losses=$((cas_losses + 1))
+  head_loss_counted=1
 fi
 admit_final_phase
 lock
 now=$(git rev-parse HEAD)
 if [ "$now" != "$head" ]; then
   rounds=$((rounds + 1))
-  if [ "$rechecked_after_release" -eq 1 ]; then cas_losses=$((cas_losses + 1)); fi
+  if [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$head_loss_counted" -eq 0 ]; then
+    cas_losses=$((cas_losses + 1))
+  fi
   if [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$cas_losses" -ge 2 ]; then
     unlock; admit_final_phase; lock
     now=$(git rev-parse HEAD)
