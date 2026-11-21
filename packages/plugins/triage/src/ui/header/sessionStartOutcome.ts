@@ -1,5 +1,6 @@
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
 import type { TriageEntrySessionStartPhaseV1 } from '../../sessions/entrySessionStartController.js';
+import type { TriageNewSessionFailureV1 } from './newSessionSeedCommand.js';
 
 /**
  * A Session id or canonical pending creation answers for the logical start.
@@ -40,14 +41,16 @@ export type TriageEntrySessionNoticeV1 = Readonly<{
   labelKey: string;
   label: string;
   failureCode?: string;
+  failure?: TriageNewSessionFailureV1;
 }>;
 
 function notice(
   tone: TriageEntrySessionNoticeV1['tone'],
   labelKey: string,
   label: string,
+  failure?: TriageNewSessionFailureV1,
 ): TriageEntrySessionNoticeV1 {
-  return Object.freeze({ tone, labelKey, label });
+  return Object.freeze({ tone, labelKey, label, ...(failure === undefined ? {} : { failure }) });
 }
 
 const REJECTION_NOTICE_V1: Readonly<Record<
@@ -124,12 +127,16 @@ function settledNotice(
           'plugins.triage.surface.session.creationUnknown',
           'Happier could not confirm whether this session was created. Pressing again resumes the same one rather than starting a second.',
         );
-    case 'creationFailed':
+    case 'creationFailed': {
+      const codes = [result.failureCode, result.failureCause?.errorCode, result.failureCause?.nativeErrorCode]
+        .filter((code): code is string => typeof code === 'string');
       return notice(
         'danger',
         'plugins.triage.surface.session.creationFailed',
         'This session could not be created.',
+        codes.length === 0 ? undefined : { codes },
       );
+    }
     case 'workspacePreparationFailed':
       // `retryable` asks one question: could this same request, repeated
       // unchanged, succeed later? Saying so is the difference between offering
@@ -139,11 +146,13 @@ function settledNotice(
           'warning',
           'plugins.triage.surface.session.workspaceUnavailable',
           'The review workspace could not be prepared just now. Nothing was created.',
+          result.failure,
         )
         : notice(
           'warning',
           'plugins.triage.surface.session.workspaceRefused',
           'A review workspace could not be prepared for this entry, so nothing was created.',
+          result.failure,
         );
     case 'rejected':
       return REJECTION_NOTICE_V1[result.reason];

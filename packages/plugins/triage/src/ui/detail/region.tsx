@@ -510,7 +510,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     controller.reset();
   }, [controller]);
   const notice = describeTriageEntrySessionPhaseV1(controller.phase);
-  const sessionFailure = controller.phase.kind === 'unavailable' ? controller.phase.failure : controller.configuredResult?.failure;
+  const sessionFailure = notice?.failure ?? (controller.phase.kind === 'unavailable'
+    ? controller.phase.failure : controller.configuredResult?.failure);
   const retainedNotice = controller.phase.kind === 'unavailable' && controller.phase.reason === 'handoffOutcomeUnknown'
     && controller.configuredResult !== null
     ? describeTriageEntrySessionPhaseV1({ kind: 'handoffSettled', result: controller.configuredResult }) : null;

@@ -7,6 +7,7 @@ import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
+import { startTriageEntrySession } from '../actions/entrySession.js';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/plugin-sdk/sessions';
@@ -38,6 +39,7 @@ import {
 import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
     TriageStartEntrySessionInputV1Schema,
+    TriageStartEntrySessionResultV1Schema,
     type TriageStartEntrySessionInputV1,
     type TriageStartEntrySessionResultV1,
 } from '../actions/entrySessionProtocol.js';
@@ -66,7 +68,14 @@ import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { TRIAGE_DEFAULT_ACTIONS_V1 } from '../settings/actions.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { testkitTriageActionId } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import {
+    createTestkitActionInvoker,
+    createTestkitPrepareReviewWorkspace,
+    createTestkitSourceSessionRelations,
+    spawnSuccess,
+    testkitTriageActionId,
+} from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import type { TriageEntrySessionDepsV1 } from '../sessions/entrySessionOrchestrator.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -285,12 +294,14 @@ function createHarness(options: Readonly<{
     detailUnavailable?: boolean;
     comparisonRead?: () => Promise<unknown>;
     comparisonOpen?: () => Promise<unknown>;
+    sessionBoundary?: Pick<TriageEntrySessionDepsV1, 'execute' | 'prepareReviewWorkspace'>;
 }> = {}): Harness {
     const descriptor = options.issue === true
         ? { ...DESCRIPTOR, kinds: DESCRIPTOR.kinds.map((kind) => ({ ...kind, workflowSubject: 'issue' })) }
         : DESCRIPTOR;
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+    const relations = createTestkitSourceSessionRelations(collections);
     const startRequests: TriageStartEntrySessionInputV1[] = [];
     const configuredRequests: TriageRunConfiguredActionInputV1[] = [];
     const reviewEngineListRequests: unknown[] = [];
@@ -429,6 +440,15 @@ function createHarness(options: Readonly<{
             // the wire would reject cannot be recorded as one that left.
             const startInput = TriageStartEntrySessionInputV1Schema.parse(request.input);
             startRequests.push(startInput);
+            if (options.sessionBoundary !== undefined) {
+                return TriageStartEntrySessionResultV1Schema.parse(await startTriageEntrySession(startInput, {
+                    ...options.sessionBoundary,
+                    linkSession: async link => {
+                        const result = await relations.write({ ...link, sourceInstanceId: link.sourceInstanceId ?? startInput.sourceInstanceId, linked: true });
+                        return { status: result.status === 'linked' ? 'linked' : 'failed' };
+                    },
+                }));
+            }
             const scripted = startResults[Math.min(startResultIndex, startResults.length - 1)];
             startResultIndex += 1;
             return typeof scripted === 'function' ? scripted(startInput) : scripted;
@@ -1128,8 +1148,20 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(newSessionSeeds[0]).not.toHaveProperty('placement');
     }, 60_000);
 
-    it('retries a pending mounted start with the same logical identity', async () => {
-        const harness = createHarness();
+    it.each(['lost settlement', 'spawn refusal'] as const)('recovers a mounted Session start after %s', async fault => {
+        const pending = fault === 'lost settlement';
+        const invoker = createTestkitActionInvoker({ spawn: pending
+            ? [
+                { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' },
+                spawnSuccess({ disposition: 'rejoined' }),
+            ]
+            : [
+                { type: 'error', code: 'spawn_failed', retryable: false, failureCause: {
+                    phase: 'session.spawn_new', errorClass: 'Error', errorCode: 'SPAWN_VALIDATION_FAILED', httpStatus: null,
+                } },
+                spawnSuccess(),
+            ] });
+        const harness = createHarness({ sessionBoundary: { execute: invoker.execute } });
         harness.setActions([{
             actionId: 'start',
             label: 'Start',
@@ -1139,32 +1171,82 @@ describe('the entry action controls on the mounted detail header', () => {
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Start this entry.', delivery: 'send' },
         }]);
-        harness.setStartResults([
-            { v: 1, type: 'creationPending', outcome: 'unknown' },
-            {
-                v: 1,
-                type: 'opened',
-                sessionId: 'session-a',
-                disposition: 'created',
-                delivery: 'notRequested',
-            },
-        ]);
         resolveDirectStart(harness);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        const start = await shell.getByRole('button', { name: 'Start' });
-        await act(async () => { await shell.press(start); });
-        await settle();
-        expect(harness.startRequests).toHaveLength(1);
-        await act(async () => { await shell.press(start); });
-        await settle();
+        const notice = pending
+            ? /could not confirm whether this session was created/
+            : /This session could not be created/;
+        await pressAction(shell, 'Start');
+        expect(document.body.textContent).toMatch(notice);
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
+        expect(invoker.callsFor('session.message.send')).toHaveLength(0);
+        expect(invoker.callsFor('session.open')).toHaveLength(0);
+        if (!pending) {
+            await pressAction(shell, 'Details');
+            expect(document.body.textContent).toMatch(/spawn_failed\s+SPAWN_VALIDATION_FAILED/);
+        }
 
+        await pressAction(shell, 'Start');
         expect(harness.startRequests).toHaveLength(2);
         const [first, retry] = harness.startRequests;
-        expect(retry?.destination).toEqual(first?.destination);
-        expect(retry?.resume).toEqual({ phase: 'creationPending' });
+        const spawns = invoker.callsFor('session.spawn_new');
+        expect(spawns).toHaveLength(2);
+        if (pending) {
+            expect(retry?.destination).toEqual(first?.destination);
+            expect(retry?.resume).toEqual({ phase: 'creationPending' });
+            expect(spawns[1]?.input).toEqual(spawns[0]?.input);
+        } else {
+            expect(retry?.resume).toBeUndefined();
+            expect(retry?.destination).not.toEqual(first?.destination);
+        }
+        expect(retry?.delivery).toMatchObject({
+            text: first?.delivery?.text,
+            attachments: first?.delivery?.attachments,
+        });
+        expect(invoker.callsFor('session.message.send')).toEqual([expect.objectContaining({ input: expect.objectContaining({
+            message: 'Start this entry.', attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })],
+        }) })]);
+        expect(invoker.callsFor('session.open')).toEqual([expect.objectContaining({ input: expect.objectContaining({
+            sessionId: 'session-a',
+        }) })]);
+        expect(document.body.textContent).not.toMatch(notice);
     }, 15_000);
+
+    it('retries mounted review workspace preparation before creating a Session', async () => {
+        const source = createTestkitPrepareReviewWorkspace({ results: [
+            { kind: 'unavailable', failure: { class: 'transient', code: 'workspace_process_unavailable' } },
+            { kind: 'prepared', repositoryPath: '/workspaces/example-review', branch: 'pr-17', created: true,
+                pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' } },
+        ] });
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'session-review' })] });
+        const harness = createHarness({ formalReviewReady: true, sessionBoundary: {
+            execute: invoker.execute, prepareReviewWorkspace: source.deps,
+        } });
+        harness.setActions([{
+            actionId: 'formal-review', label: 'Formal review', enabled: true, appliesTo: ['pullRequest'],
+            profileId: 'profile-1', workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
+        }]);
+        resolveDirectStart(harness);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        await pressAction(shell, 'Formal review');
+        expect(document.body.textContent).toMatch(/review workspace could not be prepared just now/);
+        expect(source.calls).toHaveLength(1);
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
+        await pressAction(shell, 'Details');
+        await expect(shell.getByText('workspace_process_unavailable')).resolves.toBeDefined();
+
+        await pressAction(shell, 'Formal review');
+        expect(source.calls.map(call => call.input)).toEqual([source.calls[0]?.input, source.calls[0]?.input]);
+        expect(invoker.callsFor('session.spawn_new')).toEqual([expect.objectContaining({ input: expect.objectContaining({
+            directory: { kind: 'path', path: '/workspaces/example-review' },
+        }) })]);
+        await expect.poll(() => mountedActionControls.get(shell)?.presentation('Start review')).toBeDefined();
+    });
 
     it('retries an unknown mounted delivery against the linked Session with the same delivery identity', async () => {
         const harness = createHarness();
