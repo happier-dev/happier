@@ -12868,6 +12868,8 @@ const zhHant: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "需要你做出決定",
+        description: '你的代理改了什麼，在發布前檢查。',
+        showAll: ({ count }) => `顯示全部 ${count} 個`,
         caughtUp: "暫無需要你決定的事項",
         noProject: "無專案",
         search: '搜尋審閱',
@@ -14827,6 +14829,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `移至空間「${name}」`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `從空間「${name}」移除`,
         spacesAllWorkflows: '所有工作流程', spacesAllDiscussions: '所有討論',
+        spacesAllReviews: '所有審閱',
         conditionActive: '活躍',
         filtersMachine: '機器', filtersRunsOn: '執行於', filtersService: '服務',
         spacesNew: "新增空間", spacesTitleMenu: ({ name }: { name: string }) => `${name}，空間與篩選`, spacesFilter: "篩選…",

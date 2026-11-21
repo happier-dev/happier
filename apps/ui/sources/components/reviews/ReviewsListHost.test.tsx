@@ -20,11 +20,11 @@ import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/revie
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
-import { ReviewsListHost } from './ReviewsListHost';
+import { ReviewsListHost, reviewRowFact } from './ReviewsListHost';
 import { findHomeHubBuiltinSection } from '@/components/hub/homeHubSections';
 import { HOME_HUB_BUILTIN_DEFINITIONS, getHomeHubDefaultLayoutV1, resolveHomeHubLayout } from '@/components/hub/layout/homeHubLayout';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 } from '@happier-dev/protocol/collections/spaces/collectionSpaceEnablementV1';
@@ -35,7 +35,9 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 
 const routerPush = vi.hoisted(() => vi.fn());
 const membershipAlert = vi.hoisted(() => vi.fn());
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { alert: membershipAlert } }).module);
+const modalShow = vi.hoisted(() => vi.fn((_config: { component: { name?: string }; props?: Record<string, unknown> }) => 'review-start-sheet'));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    spies: { alert: membershipAlert, show: modalShow as never } }).module);
 // RN's physical recycler is absent from Test Renderer; keep real Collection rows beneath it.
 vi.mock('react-native', async () => {
     const lists = await import('@/dev/testkit/mocks/virtualizedList');
@@ -57,7 +59,25 @@ beforeEach(() => {
     const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 900, scale: 1, fontScale: 1 });
     restoreDimensions = () => dimensions.mockRestore();
 });
-afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); restoreDimensions(); });
+afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); modalShow.mockClear(); restoreDimensions(); });
+
+describe('reviewRowFact', () => {
+    const row = (patch: Partial<ReviewListResponseV1['items'][number]>, needsYou: Partial<ReviewListResponseV1['items'][number]['needsYou']> = {}) => ({
+        reviewId: 'r', projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct', state: 'completed',
+        currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 2, needsDecision: 0 },
+        needsYou: { reviewId: 'r', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false, requestedVerdict: false,
+            pendingDecisions: false, canSubmitVerdict: false, ...needsYou }, ...patch,
+    }) as ReviewListResponseV1['items'][number];
+    it('says one fact: what needs the person, else how the Review came out, and nothing while running', () => {
+        expect(reviewRowFact(row({ counts: { total: 3, needsDecision: 2 } }))).toEqual(
+            { label: t('reviewWalkthrough.detail.glanceToDecide', { count: 2 }), tone: 'attention' });
+        expect(reviewRowFact(row({}, { needsYou: true, requestedVerdict: true }))).toEqual(
+            { label: t('reviewWalkthrough.detail.requestedFromYou'), tone: 'attention' });
+        expect(reviewRowFact(row({ counts: { total: 0, needsDecision: 0 } }))?.label).toBe(t('reviewWalkthrough.detail.glanceNoFindings'));
+        expect(reviewRowFact(row({}))?.label).toBe(t('reviewWalkthrough.detail.glanceAllDecided'));
+        expect(reviewRowFact(row({ state: 'running', counts: { total: 0, needsDecision: 0 } }))).toBeNull();
+    });
+});
 
 describe('/reviews live host', () => {
     it('opens actionable Reviews from the actual Home section without a second toolbar or automatic page drain', async () => {
@@ -101,12 +121,17 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:home:row:needs')).not.toBeNull());
             expect(screen.findHostByTestId('reviews:home:row:running')).not.toBeNull();
             expect(screen.findHostByTestId('reviews:home:row:finished')).toBeNull();
-            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.needsYourDecision'));
-            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.stateRunning'));
+            // Home's section is one short list under its own title (U8 G2): no bands, the whole collection one press away.
+            expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.collection.needsYourDecision'));
             expect(screen.findByTestId('reviews:scope-line')).toBeNull();
             expect(reads).toBe(1);
             await screen.pressByTestIdAsync('reviews:home:row:needs');
             expect(routerPush).toHaveBeenCalledWith(artifactViewRoute('needs'));
+            expect(screen.findHostByTestId('reviews:home:continuation:all')?.props.accessibilityLabel)
+                .toBe(t('reviewWalkthrough.collection.showAll', { count: 2 }));
+            await screen.pressByTestIdAsync('reviews:home:continuation:all');
+            expect(routerPush).toHaveBeenLastCalledWith('/reviews');
+            expect(reads).toBe(1);
         } finally {
             await screen.unmount();
             await connection.dispose();
@@ -262,12 +287,13 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(getReviewListSnapshot(key).items?.[0]?.reviewId).toBe('review-live'));
             await reportCollectionLayout(screen, 'reviews:list');
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-live')).not.toBeNull());
-            const totalLabel = t('reviewWalkthrough.detail.findingsCount', { count: 3 });
+            // One fact: what needs the person, never the total beside it (U8 A2).
             const pendingLabel = t('reviewWalkthrough.detail.glanceToDecide', { count: 1 });
-            expect(screen.getTextContent()).toContain(totalLabel);
             expect(screen.getTextContent()).toContain(pendingLabel);
+            expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.findingsCount', { count: 3 }));
+            const byline = `${t('reviewWalkthrough.collection.subjectRepository')} · ${t('reviewWalkthrough.collection.stateCompleted')}`;
             expect(screen.findHostByTestId('reviews:row:review-live')?.props.accessibilityLabel)
-                .toBe(`${t('detailsSurface.review.title')} · ${totalLabel} · ${pendingLabel} · ${formatRelativeTimeShort(1, Date.now())}`);
+                .toBe(`${t('detailsSurface.review.title')} · ${pendingLabel} · ${byline} · ${formatShortRelativeTimeAt(1, Date.now())}`);
             await screen.pressByTestIdAsync('reviews-space-filter-open');
             expect(screen.getTextContent()).toContain(t('sessionsList.conditionCountPartial', { count: 1 }));
             await screen.pressByTestIdAsync('reviews:row:review-live');
@@ -316,9 +342,14 @@ describe('/reviews live host', () => {
         const restorePopoverGlobals = withPopoverWebGlobals();
         const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive><WorkspaceRouteBody /></PluginSurfaceFocusEligibilityProvider>);
         try {
-            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-member:menu')).not.toBeNull());
-            await screen.pressByTestIdAsync('reviews:row:review-member:menu');
-            await screen.pressByTestIdAsync('reviews:row:review-member:add:release');
+            // The row's own overflow (shared row actions: shown on hover, focus and touch) carries its spaces.
+            const { ContextMenu } = await import('@happier-dev/plugin-ui');
+            const row = () => screen.findAll(node => node.props.testID === 'reviews:row:review-member'
+                && Array.isArray(node.props.secondaryActions))[0];
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            expect(row()!.props.secondaryActions).toEqual([expect.objectContaining({ id: 'add:release',
+                label: t('reviewWalkthrough.collection.addToSpace', { space: 'Release' }) })]);
+            await act(async () => { row()!.findByType(ContextMenu).props.onSelect('add:release'); });
             await waitForHomeGovernance(() => expect(mutations).toEqual([{ resourceKind: 'artifact', resourceId: 'review-member', operation: 'add', spaceId: 'release' }]));
             if (!allowed) await waitForHomeGovernance(() => expect(membershipAlert).toHaveBeenCalled());
             await new Promise<void>(resolve => setImmediate(resolve));
@@ -366,7 +397,7 @@ describe('/reviews live host', () => {
         }
     });
 
-    it.each([false, true])('offers Start a review with existing Reviews=%s, through the same Start review command', async hasReviews => {
+    it.each([false, true])('Start a review with existing Reviews=%s opens the Review start sheet, never universal search', async hasReviews => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1024, height: 900, scale: 1, fontScale: 1 });
         const serverId = await homes.addHome({ serverUrl: 'https://reviews-empty.example', name: 'Reviews', accountId: 'alice' });
         await setActiveServerId(serverId, { scope: 'device' });
@@ -393,7 +424,11 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(screen.findByTestId(startId)).not.toBeNull());
             expect(screen.findByTestId(hasReviews ? 'reviews:empty:start' : 'reviews:start')).toBeNull();
             await screen.pressByTestIdAsync(startId);
-            expect(opened).toEqual([t('commandPalette.commands.startReviewRunTitle')]);
+            await waitForHomeGovernance(() => expect(modalShow).toHaveBeenCalledTimes(1));
+            const sheet = modalShow.mock.calls[0]![0];
+            expect(sheet.component.name).toBe('ReviewExecutionRunLaunchSelectionModal');
+            expect(sheet.props).toMatchObject({ sessionId: null, serverId, draft: expect.objectContaining({ target: { kind: 'detached' } }) });
+            expect(opened).toEqual([]);
         } finally {
             await screen.unmount();
             await connection.dispose();

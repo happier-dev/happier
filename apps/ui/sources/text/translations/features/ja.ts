@@ -12928,6 +12928,8 @@ const ja: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "あなたの判断が必要",
+        description: 'エージェントが変更した内容を、出荷前に確認します。',
+        showAll: ({ count }) => `すべて表示（${count}）`,
         caughtUp: "判断が必要なものはありません",
         noProject: "プロジェクトなし",
         search: 'レビューを検索',
@@ -14887,6 +14889,7 @@ const sessionListFilterTranslations = { ja: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `スペース「${name}」に移動`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `スペース「${name}」から削除`,
         spacesAllWorkflows: 'すべてのワークフロー', spacesAllDiscussions: 'すべてのディスカッション',
+        spacesAllReviews: 'すべてのレビュー',
         conditionActive: 'アクティブ',
         filtersMachine: 'マシン', filtersRunsOn: '実行先', filtersService: 'サービス',
         spacesNew: "新しいスペース", spacesTitleMenu: ({ name }: { name: string }) => `${name}、スペースとフィルター`, spacesFilter: "フィルター…",

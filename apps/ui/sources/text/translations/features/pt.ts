@@ -12970,6 +12970,8 @@ const pt: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "Precisam da sua decisão",
+        description: 'O que os seus agentes mudaram, verificado antes de ir para produção.',
+        showAll: ({ count }) => `Mostrar todas (${count})`,
         caughtUp: "Nada precisa da sua decisão",
         noProject: "Sem projeto",
         search: 'Pesquisar revisões',
@@ -14933,6 +14935,7 @@ const sessionListFilterTranslations = { pt: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `Mover para o espaço “${name}”`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `Remover do espaço “${name}”`,
         spacesAllWorkflows: 'Todos os fluxos de trabalho', spacesAllDiscussions: 'Todas as discussões',
+        spacesAllReviews: 'Todas as revisões',
         conditionActive: 'Ativas',
         filtersMachine: 'Máquina', filtersRunsOn: 'Executa em', filtersService: 'Serviço',
         spacesNew: "Novo espaço", spacesTitleMenu: ({ name }: { name: string }) => `${name}, espaços e filtros`,

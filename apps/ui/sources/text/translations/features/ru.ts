@@ -13004,6 +13004,8 @@ const ru: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "Требуют вашего решения",
+        description: 'Что изменили ваши агенты, проверено до выпуска.',
+        showAll: ({ count }) => `Показать все (${count})`,
         caughtUp: "Ваше решение не требуется",
         noProject: "Без проекта",
         search: 'Искать проверки',
@@ -14965,6 +14967,7 @@ const sessionListFilterTranslations = { ru: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `Переместить в пространство «${name}»`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `Убрать из пространства «${name}»`,
         spacesAllWorkflows: 'Все рабочие процессы', spacesAllDiscussions: 'Все обсуждения',
+        spacesAllReviews: 'Все проверки',
         conditionActive: 'Активные',
         filtersMachine: 'Машина', filtersRunsOn: 'Работает на', filtersService: 'Сервис',
         spacesNew: "Новое пространство",

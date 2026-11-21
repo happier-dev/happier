@@ -1125,7 +1125,9 @@ export function HappierListItem({
   // selected or is open: a `•••` on every row is noise (the lab's rows carry only the chevron). The cell stays
   // laid out and announced, so the age keeps its place and assistive technology and Tab still reach it. The
   // overflow itself reads this through `HappierRowActionsReveal`, whatever else shares the row's accessory.
-  const hoverRevealRowActions = collectionRow && hasSecondaryActions && cardCornerAccessory === null
+  // That holds for a collection's rows on a page sheet and in a navigation column too (U8 A3: a "…" at rest on
+  // every Reviews row); they keep their own anatomy and fills, only the overflow waits for the pointer.
+  const hoverRevealRowActions = (collectionItem !== null || navigationRow) && hasSecondaryActions && cardCornerAccessory === null
     && behavior.accessoryPlacement === 'outside' && !overlayRowActions && (precisePointer || collectionItem?.table === true);
   const rowActionsRevealed = cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
   const layered = contentBesidePressable === true && isInteractive && resolvedTheme !== undefined && resolvedTheme !== null;
@@ -1310,7 +1312,7 @@ export function HappierListItem({
 
   return (
     <ListItemFrame
-      hoverEnabled={(collectionRow || navigationRow) && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
+      hoverEnabled={(collectionRow || navigationRow || hoverRevealRowActions) && isInteractive && !(cardCornerAccessory !== null && precisePointer)}
       hoverFill={collectionRow && resolvedTheme && isInteractive && disabled !== true && selected !== true && !openRow
         ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover) : undefined}
       restingFill={collectionRow && resolvedTheme

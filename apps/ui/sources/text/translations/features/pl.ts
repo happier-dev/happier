@@ -13004,6 +13004,8 @@ const pl: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "Wymagają Twojej decyzji",
+        description: 'Co zmienili Twoi agenci, sprawdzone przed wydaniem.',
+        showAll: ({ count }) => `Pokaż wszystkie (${count})`,
         caughtUp: "Nic nie wymaga Twojej decyzji",
         noProject: "Bez projektu",
         search: 'Szukaj recenzji',
@@ -14965,6 +14967,7 @@ const sessionListFilterTranslations = { pl: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `Przenieś do przestrzeni „${name}”`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `Usuń z przestrzeni „${name}”`,
         spacesAllWorkflows: 'Wszystkie przepływy pracy', spacesAllDiscussions: 'Wszystkie dyskusje',
+        spacesAllReviews: 'Wszystkie recenzje',
         conditionActive: 'Aktywne',
         filtersMachine: 'Maszyna', filtersRunsOn: 'Działa na', filtersService: 'Usługa',
         spacesNew: "Nowa przestrzeń",

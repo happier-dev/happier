@@ -194,13 +194,17 @@ export const HOME_HUB_COMPOSER_SECTION_ID = 'start';
 export const HOME_HUB_ATTENTION_SECTION_ID = 'attention';
 /** Get set up: with no machine yet it follows the cards, which carry the first steps, at their width. */
 const HOME_HUB_SETUP_SECTION_ID = 'setup';
+/** Reviews: the Reviews waiting on the person's decision, a list of things to do like Needs your attention. */
+const HOME_HUB_REVIEWS_SECTION_ID = 'reviews';
 
 /**
- * The blocks that ask something of the person (the composer, Needs your attention, Get set up) share
+ * The blocks that ask something of the person (the composer, Needs your attention, Reviews, Get set up) share
  * the composer's reading column, centred, so the page reads as one column of things to do; the cards
  * below keep the wider dashboard grid (owner, 2026-10-30).
  */
-const HOME_HUB_READING_SECTION_IDS: ReadonlySet<string> = new Set([HOME_HUB_COMPOSER_SECTION_ID, HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_SETUP_SECTION_ID]);
+const HOME_HUB_READING_SECTION_IDS: ReadonlySet<string> = new Set([
+    HOME_HUB_COMPOSER_SECTION_ID, HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_REVIEWS_SECTION_ID, HOME_HUB_SETUP_SECTION_ID,
+]);
 
 /**
  * With no machine yet the one question is where agents will run (58d AF1): the shown Machines widget leads

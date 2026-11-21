@@ -229,6 +229,8 @@ function useReviewSpaceDrop(view: ReviewsCollectionView): () => CollectionSpaceD
 export function useReviewsSpaceHeader(
   view: ReviewsCollectionView,
   testIDPrefix: string,
+  /** `page`: the saved view is the page's title (a phone); `section`: a heading under the page's own title. */
+  titleScale: 'page' | 'section' = 'section',
 ) {
   const focusEligible = usePluginSurfaceFocusEligibility();
   const spaceDrop = useReviewSpaceDrop(view);
@@ -307,7 +309,7 @@ export function useReviewsSpaceHeader(
       coverage: view.list.items ? (view.list.cursor ? 'partial' : 'complete') : 'unavailable',
     },
     defaultIcon: REVIEW_SPACE_ICON,
-    titleScale: 'section',
+    titleScale,
     wrapTabTarget,
   });
 }

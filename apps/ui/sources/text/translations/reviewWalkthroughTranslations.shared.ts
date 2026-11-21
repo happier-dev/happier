@@ -103,6 +103,10 @@ export type ReviewWalkthroughTranslations = {
     };
     collection: {
         needsYourDecision: string;
+        /** The Reviews page's purpose line. */
+        description: string;
+        /** Home's short Reviews list opens the whole collection. */
+        showAll: (params: Count) => string;
         caughtUp: string;
         noProject: string;
         search: string;
@@ -327,6 +331,8 @@ export const en: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: 'Needs your decision',
+        description: 'What your agents changed, checked before it ships.',
+        showAll: ({ count }) => `Show all ${count}`,
         caughtUp: 'Nothing needs your decision',
         noProject: 'Without a project',
         search: 'Search reviews',

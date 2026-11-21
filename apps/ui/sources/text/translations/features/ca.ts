@@ -12976,6 +12976,8 @@ const ca: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "Necessiten la teva decisió",
+        description: 'El que han canviat els teus agents, revisat abans de publicar-ho.',
+        showAll: ({ count }) => `Mostra-les totes (${count})`,
         caughtUp: "Res no necessita la teva decisió",
         noProject: "Sense projecte",
         search: 'Cerca revisions',
@@ -14939,6 +14941,7 @@ const sessionListFilterTranslations = { ca: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `Mou a l’espai «${name}»`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `Treu de l’espai «${name}»`,
         spacesAllWorkflows: 'Tots els fluxos de treball', spacesAllDiscussions: 'Totes les discussions',
+        spacesAllReviews: 'Totes les revisions',
         conditionActive: 'Actives',
         filtersMachine: 'Màquina', filtersRunsOn: 'S’executa a', filtersService: 'Servei',
         spacesNew: "Espai nou", spacesTitleMenu: ({ name }: { name: string }) => `${name}, espais i filtres`,

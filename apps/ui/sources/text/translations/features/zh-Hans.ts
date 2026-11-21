@@ -12868,6 +12868,8 @@ const zhHans: ReviewWalkthroughTranslations = {
     },
     collection: {
         needsYourDecision: "需要你做出决定",
+        description: '你的智能体改了什么，在发布前检查。',
+        showAll: ({ count }) => `显示全部 ${count} 个`,
         caughtUp: "暂无需要你决定的事项",
         noProject: "无项目",
         search: '搜索审阅',
@@ -14827,6 +14829,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         spacesMembershipMoveToNamed: ({ name }: { name: string }) => `移动到空间“${name}”`,
         spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `从空间“${name}”移除`,
         spacesAllWorkflows: '所有工作流', spacesAllDiscussions: '所有讨论',
+        spacesAllReviews: '所有审阅',
         conditionActive: '活跃',
         filtersMachine: '机器', filtersRunsOn: '运行于', filtersService: '服务',
         spacesNew: "新建空间", spacesTitleMenu: ({ name }: { name: string }) => `${name}，空间和筛选`, spacesFilter: "筛选…",

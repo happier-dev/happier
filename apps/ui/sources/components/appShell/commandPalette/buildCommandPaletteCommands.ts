@@ -1,5 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
+import { detachedReviewStartSeed, type ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import { REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -543,10 +543,7 @@ export function buildCommandPaletteCommands(
         action: async () => {
           if (!activeSessionId && entry.spec.id === REVIEW_START_ACTION_ID_V1) {
             if (!actionDraftAccountScope) return;
-            await nav.openExecutionRunDraft?.({ scope: actionDraftAccountScope, sessionId: null, actionId: 'review.start',
-              input: buildExecutionRunActionDraftInputForUi({ actionId: 'review.start', sessionId: null,
-                instructions: '', extra: { target: { kind: 'detached' } } }),
-            });
+            await nav.openExecutionRunDraft?.(detachedReviewStartSeed(actionDraftAccountScope));
             return;
           }
           const sessionId = await requireSession(activeSessionId, alert);

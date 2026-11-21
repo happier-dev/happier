@@ -66,6 +66,7 @@ export const en = {
     spacesMembershipMoveToNamed: ({ name }: { name: string }) => `Move to space “${name}”`,
     spacesMembershipRemoveFromNamed: ({ name }: { name: string }) => `Remove from space “${name}”`,
     spacesAllWorkflows: 'All workflows', spacesAllDiscussions: 'All discussions',
+    spacesAllReviews: 'All reviews',
     conditionActive: 'Active',
     filtersMachine: 'Machine', filtersRunsOn: 'Runs on', filtersService: 'Service',
     spacesNew: "New space", spacesTitleMenu: ({ name }: { name: string }) => `${name}, spaces and filters`,

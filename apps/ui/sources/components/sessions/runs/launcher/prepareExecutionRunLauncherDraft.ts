@@ -5,6 +5,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { executionRunLauncherDraftKey } from '@/components/sessions/agents/launch/agentStartDrafts';
 import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { createExecutionRunLauncherDetailsTab, type ExecutionRunIntent } from './executionRunLauncherModel';
 
 type ExecutionRunLauncherDraftInput = Readonly<{
@@ -15,6 +16,12 @@ export type ExecutionRunLauncherDraftSeed = ExecutionRunLauncherDraftInput & (
     | Readonly<{ sessionId: string; actionId: ActionId }>
     | Readonly<{ sessionId: null; actionId: 'review.start' }>
 );
+
+/** The Review start sheet with no Session: what every global "Start a review" entry opens. */
+export function detachedReviewStartSeed(scope: ServerAccountScope): ExecutionRunLauncherDraftSeed {
+    return { scope, sessionId: null, actionId: 'review.start', input: buildExecutionRunActionDraftInputForUi({
+        actionId: 'review.start', sessionId: null, instructions: '', extra: { target: { kind: 'detached' } } }) };
+}
 
 export function prepareExecutionRunLauncherDraft(seed: ExecutionRunLauncherDraftSeed & Readonly<{ sessionId: string }>) {
     const intent: ExecutionRunIntent = seed.actionId === 'subagents.plan.start' ? 'plan'
