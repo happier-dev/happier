@@ -74,14 +74,18 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
     const checkSignal = (signal?: AbortSignal) => {
         if (disposed || signal?.aborted) throw new Error('usage_source_cancelled');
     };
-    async function commit(mutate: (next: NativeUsageCaptureSource[]) => void) {
-        await stateLock.inLock(async () => {
+    async function commit(mutate: (next: NativeUsageCaptureSource[]) => void, retireAfterSave?: readonly string[]) {
+        const retirements = await stateLock.inLock(async () => {
             const next = structuredClone(sources);
             mutate(next);
             // Never move the in-memory frontier ahead of durable pending custody.
             await input.store.save({ v: 1, authority: input.authority, sources: next });
             sources = next;
+            // Abort stale capture before a waiting writer can use the saved state.
+            return retireAfterSave?.map(retire);
         });
+        // Retirement may need a task that is itself waiting for this lock.
+        if (retirements) await Promise.all(retirements);
     }
     async function error(life: Lifetime, code: string) {
         if (!isActive(life)) return;
@@ -333,7 +337,6 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 const changedConsented = sources.filter(source => source.consented
                     && (updates.has(source.sourceId) || active.get(source.sourceId)?.subscription?.retirementSignal?.aborted))
                     .map(source => source.sourceId);
-                await Promise.all(changedConsented.map(retire));
                 if (updates.size) await commit(next => {
                     const nextById = new Map(next.map(source => [source.sourceId, source]));
                     for (const [sourceId, descriptor] of updates) {
@@ -341,7 +344,8 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                         if (current) applyCaptureSourceDescriptor(current, descriptor);
                         else next.push({ ...descriptor, sourceId, consented: false, pending: [] });
                     }
-                });
+                }, changedConsented);
+                else await Promise.all(changedConsented.map(retire));
                 // Inventory disappearance is not permission to drop custody or an override.
                 await Promise.all(changedConsented.map(activate));
                 return sources.map(source => {
@@ -374,9 +378,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                         current.consented = false;
                     }
                     else next.push({ ...descriptor, sourceId: replacementId, consented: false, pending: [] });
-                });
-                await retire(sourceId);
-                if (replacementId !== sourceId) await retire(replacementId);
+                }, replacementId === sourceId ? [sourceId] : [sourceId, replacementId]);
                 // Disabled roots have no capture task to publish their settled metadata.
                 if (!isDeepStrictEqual(previous, sources.map(view))) input.onSourceSettled?.();
                 return view(requireSource(replacementId));
@@ -387,16 +389,14 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             return effects.inLock(async () => {
                 checkSignal(signal);
                 const previous = requireSource(sourceId);
-                await retire(sourceId);
-                checkSignal(signal);
-                // Explicit deletion retires selected local pending BEFORE the outward delete.
+                // Explicit deletion clears selected local pending before the outward delete.
                 // A crash after server success must not resurrect it through pending replay.
                 await commit(next => {
                     const current = next.find(candidate => candidate.sourceId === sourceId)!;
                     current.consented = false;
                     current.pending = current.pending.filter(row => (range?.startMs !== undefined && row.observedAt < range.startMs)
                         || (range?.endMs !== undefined && row.observedAt > range.endMs));
-                });
+                }, [sourceId]);
                 const current = requireSource(sourceId);
                 if (previous.consented || previous.pending.length !== current.pending.length) input.onSourceSettled?.();
                 try {

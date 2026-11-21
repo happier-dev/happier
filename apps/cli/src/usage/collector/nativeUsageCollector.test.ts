@@ -18,23 +18,29 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
-    it('keeps the old capture running when saving its replacement fails', async () => {
+    it.each(['replacement', 'discover', 'scoped delete'] as const)('keeps the old capture running when saving %s fails', async effect => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-replacement-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
         const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
         const durable = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
         const replacementRoot = join(directory, 'replacement');
-        let rejectReplacement = true;
+        let rejectNextSave = false;
+        let discoveredRoot = directory;
+        let historyDeletes = 0;
         let reads = 0;
         let notify: (() => void) | undefined;
         const descriptor = (root: string) => ({ agent: { pluginId: 'fixture.agent', localId: 'agent' },
             source: { kind: 'fixture' }, sourceKey: root, root, supported: true });
         const collector = createNativeUsageCollector({ authority, storage,
             store: { load: durable.load, async save(state) {
-                if (rejectReplacement && state.sources.some(source => source.root === replacementRoot)) throw new Error('Write failed');
+                if (rejectNextSave) {
+                    rejectNextSave = false;
+                    throw new Error('Write failed');
+                }
                 await durable.save(state);
             } },
-            budgetRegistry: new ExecutionBudgetRegistry(), discoverSources: async () => [descriptor(directory)],
+            budgetRegistry: new ExecutionBudgetRegistry(),
+            discoverSources: async () => [{ ...descriptor(discoveredRoot), sourceKey: directory }],
             resolveRoot: async () => descriptor(replacementRoot),
             readAccounting: async () => { reads++; return { ok: true, value: { outcome: 'unchanged' } }; },
             subscribeSource: async (_source, onChange) => {
@@ -42,21 +48,46 @@ describe('consented native accounting collector', () => {
                 return { dispose() { notify = undefined; } };
             },
             publisher: { publish: async () => { throw new Error('No observations'); } },
-            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+            deleteHistory: async () => { historyDeletes++; return { success: true, deletedEventCount: 0 }; },
         });
         try {
             const [source] = await collector.discover();
             await collector.setConsent(source.sourceId, true);
             await collector.flushPending();
             const readsBefore = reads;
-            await expect(collector.setRoot(source.sourceId, replacementRoot)).rejects.toThrow('Write failed');
-            expect((await durable.load()).sources).toMatchObject([{ sourceId: source.sourceId, consented: true }]);
+            const change = () => {
+                if (effect === 'discover') {
+                    discoveredRoot = replacementRoot;
+                    return collector.discover();
+                }
+                if (effect === 'scoped delete') return collector.deleteHistory(source.sourceId, { startMs: 10, endMs: 20 });
+                return collector.setRoot(source.sourceId, replacementRoot);
+            };
+            rejectNextSave = true;
+            await expect(change()).rejects.toThrow('Write failed');
+            expect((await durable.load()).sources).toMatchObject([
+                { sourceId: source.sourceId, root: directory, consented: true },
+            ]);
             expect((await collector.get(source.sourceId))[0]?.consent).toBe('enabled');
+            expect(historyDeletes).toBe(0);
             notify?.();
             await collector.flushPending();
             expect(reads).toBe(readsBefore + 1);
 
-            rejectReplacement = false;
+            if (effect === 'discover') {
+                await expect(collector.discover()).resolves.toMatchObject([
+                    { sourceId: source.sourceId, consent: 'enabled', root: { path: replacementRoot } },
+                ]);
+                return;
+            }
+            if (effect === 'scoped delete') {
+                await expect(collector.deleteHistory(source.sourceId, { startMs: 10, endMs: 20 })).resolves.toMatchObject({ success: true });
+                expect((await durable.load()).sources).toMatchObject([{ sourceId: source.sourceId, consented: false }]);
+                expect(historyDeletes).toBe(1);
+                expect(notify).toBeUndefined();
+                return;
+            }
+
             const replacement = await collector.setRoot(source.sourceId, replacementRoot);
             expect(replacement).toMatchObject({ consent: 'disabled', root: { path: replacementRoot } });
             expect((await durable.load()).sources).toMatchObject([
