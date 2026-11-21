@@ -1481,7 +1481,11 @@ describe('createOpenCodeServerRuntime', () => {
     ]));
   });
 
-  it('recovers the server-owned prompt identity and ignores stale prompt-response assistants until the exact parent completes', async () => {
+  it.each([
+    { label: 'plain text', prompt: 'Current prompt' },
+    { label: 'a final newline', prompt: 'Current prompt\n' },
+    { label: 'outer whitespace', prompt: '  Current prompt\n ' },
+  ])('recovers the server-owned prompt identity with $label and ignores stale prompt-response assistants until the exact parent completes', async ({ prompt }) => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const { ctx, harness, runtimeEvents } = createContextFixture();
@@ -1513,7 +1517,7 @@ describe('createOpenCodeServerRuntime', () => {
         sessionID: 'ses-1',
         time: { created: 1_001 },
       },
-      parts: [{ id: 'part-current-user', type: 'text', text: 'Current prompt' }],
+      parts: [{ id: 'part-current-user', type: 'text', text: prompt }],
     };
     client.setMessages([priorUser, priorTerminalAssistant]);
     client.suppressNextNativePromptPersistence();
@@ -1524,7 +1528,7 @@ describe('createOpenCodeServerRuntime', () => {
     const runtime = await createStartedRuntime({ ctx, client, harness });
 
     beginTestHostTurn(runtime);
-    await expect(runtime.sendTurnPrompt('Current prompt')).resolves.toEqual({
+    await expect(runtime.sendTurnPrompt(prompt)).resolves.toEqual({
       providerUserMessageId: nativeCurrentUser.info.id,
     });
     await flushMicrotasks();
@@ -1532,7 +1536,7 @@ describe('createOpenCodeServerRuntime', () => {
     const promptCall = vi.mocked(client.sessionPromptAsync).mock.calls[0]?.[0];
     expect(promptCall).toMatchObject({
       sessionId: 'ses-1',
-      text: 'Current prompt',
+      text: prompt,
     });
     expect(promptCall).not.toHaveProperty('messageId');
     expect(runtimeEvents).not.toEqual(expect.arrayContaining([

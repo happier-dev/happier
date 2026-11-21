@@ -2459,7 +2459,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
       if (!nativeCommand) {
         state.currentTurnProviderPromptTexts.clear();
-        state.currentTurnProviderPromptTexts.add(prompt);
+        state.currentTurnProviderPromptTexts.add(normalizeString(prompt));
         state.currentTurnPromptAcceptedAtMs = null;
       }
       const promptSubmittedAtMs = Date.now();
