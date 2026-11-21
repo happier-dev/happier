@@ -3344,8 +3344,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   }, cancelAutomaticCheck: async ({ run, context }) => {
     deps.assertCurrent?.();
     try {
-      const snapshot = await getSnapshot(run.runId, context.signal);
-      await execute({ actionId: 'workflow.run.cancel', input: { runId: run.runId, expectedRevision: snapshot.run.revision }, context },
+      // Stop targets this admitted Run across progress revisions, including
+      // queued checks whose accepted content custody is not available yet.
+      await execute({ actionId: 'workflow.run.cancel', input: { runId: run.runId, expectedRevision: 0 }, context },
         undefined, undefined, run);
     } finally { deps.assertCurrent?.(); }
   }, startCombined: async (request, ingressContext) => {

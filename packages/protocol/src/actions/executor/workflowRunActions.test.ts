@@ -3202,6 +3202,27 @@ describe('shared Account workflow run owner', () => {
     expect(privateProgressReads).toBe(0);
   });
 
+  it('cancels an admitted queued automatic check before its content custody is available', async () => {
+    let run = { ...runSnapshot().run, state: 'queued', revision: 4 };
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') throw Object.assign(new Error('custody_pending'), { code: 'custody_pending' });
+      if (operation.operation === 'cancel' && typeof operation.expectedRevision === 'number'
+        && operation.expectedRevision <= run.revision) {
+        run = { ...run, state: 'cancelled', revision: run.revision + 1 };
+        return { run, intent: 'cancelled' };
+      }
+      throw new Error(`unexpected_storage_operation:${operation.operation}`);
+    } }));
+    await owner.cancelAutomaticCheck({
+      run: { automationId: 'automation', triggerId: 'check', triggerRevision: 3, ownerAccountId: 'account-1',
+        workflowId: 'workflow', workflowRevision: 7, actionIds: ['session.title.set'], phase: 'before', mode: 'wait',
+        onFailure: 'ask', runId },
+      context: { surface: 'agent', authority: 'present_user',
+        externalActionTarget: { kind: 'machine', machineId: 'parent-action-machine' } },
+    });
+    expect(run).toMatchObject({ state: 'cancelled', revision: 5 });
+  });
+
   it('keeps an interrupted automatic check unavailable without failed-child evidence', async () => {
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
       const snapshot = runSnapshot();

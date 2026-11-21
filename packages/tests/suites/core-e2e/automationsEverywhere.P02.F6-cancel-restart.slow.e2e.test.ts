@@ -11,6 +11,10 @@ describe('AE.P02.F6-cancel-restart', () => {
   afterEach(async () => { await fixture?.release(); await fixture?.stop(); fixture = undefined; }, 0);
   it('rejoins recorded checking after daemon and requester restart without a replacement Run', async () => {
     fixture = await startAutomaticCheckFixture('wait');
+    // This request waits for the automatic check without an ordinary Inbox Ask.
+    expect(await fixture.actor.executeAsPerson('actions.policy.set', {
+      actionId: 'machines.command.run', audience: 'cli', mode: 'allowed',
+    })).toMatchObject({ ok: true, result: { mode: 'allowed' } });
     const pending = await fixture.invokePending();
     await waitFor(async () => hasAutomaticCheckPhase(await fixture!.approval(pending.artifactId), 'checking'),
       { context: 'Persisted check before replacing the Account executor' });
@@ -40,6 +44,10 @@ describe('AE.P02.F6-cancel-restart', () => {
   }, 0);
   it('preserves canceled pending custody and its Run ids over daemon restart and a late check result', async () => {
     fixture = await startAutomaticCheckFixture('wait');
+    // This request waits for the automatic check without an ordinary Inbox Ask.
+    expect(await fixture.actor.executeAsPerson('actions.policy.set', {
+      actionId: 'machines.command.run', audience: 'cli', mode: 'allowed',
+    })).toMatchObject({ ok: true, result: { mode: 'allowed' } });
     const pending = await fixture.invokePending();
     await waitFor(async () => hasAutomaticCheckPhase(await fixture!.approval(pending.artifactId), 'checking'),
       { context: 'Recorded checking approval' });
@@ -49,6 +57,7 @@ describe('AE.P02.F6-cancel-restart', () => {
     expect(await fixture.actor.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'cancel' }))
       .toMatchObject({ ok: true });
     await pending.invocation;
+    expect(await fixture.runs()).toEqual([expect.objectContaining({ id: runId, state: 'cancelled' })]);
     expect(await fixture.approval(pending.artifactId)).toMatchObject({ status: 'canceled', automaticChecks: {
       runs: [expect.objectContaining({ runId })],
     } });
@@ -62,7 +71,7 @@ describe('AE.P02.F6-cancel-restart', () => {
     expect(await fixture.approval(pending.artifactId)).toMatchObject({ status: 'canceled', automaticChecks: {
       runs: [expect.objectContaining({ runId })],
     } });
-    expect(await fixture.runs()).toHaveLength(1);
+    expect(await fixture.runs()).toEqual([expect.objectContaining({ id: runId, state: 'cancelled' })]);
     await expect(access(fixture.effectPath)).rejects.toMatchObject({ code: 'ENOENT' });
   }, 0);
 });
