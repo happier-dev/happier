@@ -212,40 +212,68 @@ test('firstOpen.02.F4 skips a playing opening with Escape and lands focus in wel
     await expect.poll(() => page.evaluate(() => performance.getEntriesByName('first_open:destination-handoff').length)).toBe(1);
 });
 
-test('firstOpen.04.F6 samples the opening aperture on the live Welcome stage', async ({ page }) => {
-    test.skip(!liveStack, 'The stage probe uses the repo-dev Metro registry');
-    await openApp(page);
-    const login = page.getByTestId('welcome-scan-existing-home');
-    await expect(login).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('first-open.scene')).toHaveCount(0, { timeout: 15_000 });
-    await page.evaluate(() => {
-        const metro = (globalThis as typeof globalThis & {
-            __r?: { getModules?: () => Map<number, {
-                verboseName?: string;
-                publicModule?: { exports?: { playBuild?: (config: object) => Promise<unknown> } };
-            }> };
-        }).__r;
-        const modules = metro?.getModules?.();
-        const stage = Array.from(modules?.values() ?? []).find(module => module.verboseName?.endsWith('/StepMotionStage.tsx'));
-        const build = stage?.publicModule?.exports?.playBuild;
-        if (!build) throw new Error('The real workflow stage is unavailable');
-        void build({ layer: 'workflow', choreography: 'opening', interactive: true });
+for (const phase of ['covered', 'revealed'] as const) {
+    test(`firstOpen.04.F6 handles a trusted ${phase} Welcome press on first boot`, async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await page.bringToFront();
+        await page.addInitScript(() => {
+            const openingPressProbe = {
+                readControlOpacity(control: Element) {
+                    const welcome = control.closest('[data-testid="welcome-decision-panel"]');
+                    for (let node: Element | null = control; node && node !== welcome; node = node.parentElement) {
+                        if (node.getAnimations().some(animation => animation.effect instanceof KeyframeEffect
+                            && animation.effect.getKeyframes().some(frame => 'opacity' in frame))) {
+                            return Number(getComputedStyle(node).opacity);
+                        }
+                    }
+                    return null;
+                },
+            };
+            Object.assign(window, { openingPressProbe });
+            document.addEventListener('pointerdown', event => {
+                const target = event.target instanceof Element
+                    ? event.target.closest('[data-testid="welcome-scan-existing-home"]')
+                    : null;
+                if (!target) return;
+                document.documentElement.dataset.openingPress = JSON.stringify({
+                    trusted: event.isTrusted,
+                    scene: document.querySelector('[data-testid="first-open.scene"]') !== null,
+                    opacity: openingPressProbe.readControlOpacity(target),
+                });
+            }, true);
+        });
+        await openApp(page);
+        const login = page.getByTestId('welcome-scan-existing-home');
+        const scene = page.getByTestId('first-open.scene');
+        const restore = page.getByTestId('restore-requester-qr').or(page.getByTestId('restore-sign-in-ways')).first();
+        const target = await page.waitForFunction(phase => {
+            const login = document.querySelector('[data-testid="welcome-scan-existing-home"]');
+            const opening = document.querySelector('[data-testid="first-open.scene"]');
+            if (!(login instanceof HTMLElement) || !opening) return false;
+            const opacity = (window as Window & { openingPressProbe: { readControlOpacity: (control: Element) => number | null } })
+                .openingPressProbe.readControlOpacity(login);
+            if (opacity === null || (phase === 'covered' ? opacity !== 0 : opacity < 0.05)) return false;
+            const { x, y, width, height } = login.getBoundingClientRect();
+            const center = { x: x + width / 2, y: y + height / 2 };
+            return login.contains(document.elementFromPoint(center.x, center.y)) && center;
+        }, phase, { timeout: 60_000 });
+        const { x, y } = await target.jsonValue();
+        await page.mouse.click(x, y);
+        const press = await page.evaluate(() => JSON.parse(document.documentElement.dataset.openingPress ?? 'null'));
+        expect(press).toMatchObject({ trusted: true, scene: true });
+        if (phase === 'covered') {
+            expect(press.opacity).toBe(0);
+            await expect(scene).not.toBeAttached();
+            await expect(restore).toBeHidden();
+            await expect(login).toBeVisible();
+            await expect(page.getByTestId('welcome-decision-panel').getByRole('heading').first()).toBeFocused();
+            await login.click();
+        } else {
+            expect(press.opacity).toBeGreaterThan(0);
+        }
+        await expect(restore).toBeVisible();
     });
-    const result = await page.waitForFunction(() => {
-        const welcome = document.querySelector('[data-testid="welcome-decision-panel"]');
-        const login = welcome?.querySelector('[data-testid="welcome-scan-existing-home"]');
-        if (!welcome || !login) return false;
-        const effects = welcome.getAnimations({ subtree: true });
-        const opacity = Number(getComputedStyle(login).opacity);
-        if (effects.length === 0 || opacity <= 0 || opacity >= 1) return false;
-        login.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1 }));
-        const keptBuilding = effects.every(effect => effect.playState === 'running');
-        login.dispatchEvent(new PointerEvent('click', { bubbles: true, cancelable: true, detail: 1, pointerId: 1 }));
-        return { keptBuilding };
-    });
-    expect(await result.jsonValue()).toEqual({ keptBuilding: true });
-    await expect(page.getByTestId('restore-requester-qr').or(page.getByTestId('restore-sign-in-ways')).first()).toBeVisible();
-});
+}
 
 test('firstOpen.F1.newHere | firstOpen.03.F1 provisions one Account and reaches Home in one tap', async ({ page }) => {
     await openApp(page);
