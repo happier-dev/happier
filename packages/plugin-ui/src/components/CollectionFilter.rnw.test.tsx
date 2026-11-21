@@ -8,7 +8,7 @@ import { compileExternalReleaseStageFilter, externalReleaseStageSelection, exter
     admitExternalReleaseStage } from '../../fixtures/external-authoring/src/releaseStage.js';
 
 describe('public plugin collection filter adapter through the RNW public entry', () => {
-    it('filters independent plugin-owned release facts and preserves unavailable selections over retirement', () => {
+    it('filters held plugin facts and ignores the retired field in lists while rules fail closed', () => {
         const declared = { id: 'release-stage', title: 'Release stage', source: { factKey: 'releaseStage' }, value: { kind: 'set' } } as const;
         const admitted = admitPluginListFilterFieldV1({ pluginId: 'test.release', field: declared, factKeys: new Set(['releaseStage']) });
         if (admitted.kind !== 'admitted') throw new Error('Invalid fixture');
@@ -27,19 +27,21 @@ describe('public plugin collection filter adapter through the RNW public entry',
         expect(rows.filter(row => match(row) === 'match').map(row => row.id)).toEqual(['ready']);
         expect(match({})).toBe('unavailable');
         const retired = createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>([]);
-        expect(compileEntityListFilterV1(retired, selection)(rows[0]!)).toBe('unavailable');
+        expect(rows.map(row => compileEntityListFilterV1(retired, selection)(row))).toEqual(['match', 'match']);
+        expect(compileEntityListFilterV1(retired, selection, 'daemonRule')(rows[0]!)).toBe('unavailable');
         expect(compileEntityListFilterV1(registry, selection)(rows[0]!)).toBe('match');
     });
 
-    it('keeps the same external page selection unavailable through field retirement and unheld facts, then recovers', () => {
+    it('restores the saved external filter when its field returns and distinguishes unavailable facts', () => {
         const selection = externalReleaseStageSelection('ready');
         const match = compileExternalReleaseStageFilter(selection);
         expect(externalReleaseReviews.filter(row => match(row) === 'match').map(row => row.id)).toEqual(['release']);
         const retired = compileExternalReleaseStageFilter(selection, false);
-        expect(externalReleaseReviews.map(row => retired(row))).toEqual(['unavailable', 'unavailable', 'unavailable']);
+        expect(externalReleaseReviews.map(row => retired(row))).toEqual(['match', 'match', 'match']);
         expect(match(admitExternalReleaseStage(undefined))).toBe('unavailable');
         expect(match(admitExternalReleaseStage(null))).toBe('miss');
         expect(match(admitExternalReleaseStage('ready'))).toBe('match');
-        expect(compileExternalReleaseStageFilter(selection)(externalReleaseReviews[2]!)).toBe('match');
+        const restored = compileExternalReleaseStageFilter(selection);
+        expect(externalReleaseReviews.filter(row => restored(row) === 'match').map(row => row.id)).toEqual(['release']);
     });
 });

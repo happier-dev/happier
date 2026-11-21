@@ -267,8 +267,8 @@ describe('external author semantic proof', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Edit release filter' }));
       await expect(fixture.getByText('Release stage')).resolves.toBeDefined();
       await fixture.press(await fixture.getByRole('button', { name: 'Withdraw release field' }));
-      await expect(fixture.getByText('Release stage unavailable')).resolves.toBeDefined();
-      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+      await expect(fixture.queryByText('Release stage')).resolves.toBeUndefined();
+      expect(await choices()).toEqual([expect.stringContaining('Choose Current review'), 'Choose Terminal review', 'Choose Release review']);
       expect(location).toBe(savedLocation);
       await fixture.press(await fixture.getByRole('button', { name: 'Restore release field' }));
       expect(await choices()).toEqual(['Choose Release review']);
@@ -290,13 +290,13 @@ describe('external author semantic proof', () => {
       handlers: { executeAction: async () => null },
     });
     try {
-      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+      await expect(fixture.getByRole('radio', { name: 'Choose Terminal review' })).resolves.toBeDefined();
       fieldCurrent = true;
       await fixture.updateSurface(createSurfaceContextFixture({ locale: 'en-GB' }));
       await expect(fixture.getByRole('radio', { name: 'Choose Release review' })).resolves.toBeDefined();
       fieldCurrent = false;
       await fixture.updateSurface(createSurfaceContextFixture({ locale: 'en-US' }));
-      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+      await expect(fixture.getByRole('radio', { name: 'Choose Terminal review' })).resolves.toBeDefined();
     } finally { await fixture.dispose(); }
   });
 
