@@ -5,10 +5,15 @@ import { createSudoPasswordResponder, passwordFrame } from './sudoPasswordRespon
 // newline splits its exact native output into these two lines.
 describe('native sudo password framing', () => {
     it.each(['', '[sudo: '])('refuses a different principal under native prefix %j without disclosure', async prefix => {
-        const responder = createSudoPasswordResponder(passwordFrame({ password: 'fake-secret' })!, 'operator');
+        let requested = false;
+        const responder = createSudoPasswordResponder(async () => {
+            requested = true;
+            return passwordFrame({ password: 'fake-secret' });
+        }, 'operator');
         let writes = 0;
-        expect(await responder.answer(`${prefix}[happier-sudo-password:root]`, async () => { writes++; })).toBe('denied');
+        expect(await responder.answer(`${prefix}[happier-sudo-password:root]`, async () => { writes++; })).toBe('administratorSudoFromDaemon');
         expect(writes).toBe(0);
+        expect(requested).toBe(false);
         responder.clear();
     });
 });

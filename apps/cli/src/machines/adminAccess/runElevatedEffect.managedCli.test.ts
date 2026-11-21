@@ -14,7 +14,8 @@ import { runMachineSetupEffectInternal } from '../setup/effectInternal';
 const native = vi.hoisted(() => ({ launches: 0, args: [] as string[] }));
 // The sudo process is the OS boundary. Its private interpreter and the selected
 // managed executable's filesystem are real; tests never invoke host sudo.
-vi.mock('node:child_process', () => ({ spawn: (_file: string, args: string[]) => {
+vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal<typeof import('node:child_process')>(),
+    spawn: (_file: string, args: string[]) => {
     native.launches++;
     native.args = args;
     const child = Object.assign(new EventEmitter(), {
@@ -54,17 +55,21 @@ async function fixture() {
     return { root, dependencies };
 }
 
-it.each(['admin', 'setup'] as const)('reports a missing managed CLI with an exact install remedy through %s', async entry => {
+it.each(['admin', 'setup', 'ask'] as const)('reports a missing managed CLI with an exact install remedy through %s', async entry => {
     const { dependencies } = await fixture();
+    const prompt = vi.fn(async () => ({ password: 'fixture-only' }));
     const result = entry === 'admin'
         ? await runElevatedAdminAccessTransition({ ...operation, previousPolicy: { version: 1, mode: 'none' }, policy,
             verifyCurrent: dependencies.verifyCurrent }, dependencies)
-        : await runElevatedMachineSetupIntent({ ...operation, basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 }, steps: [] }, dependencies);
+        : await runElevatedMachineSetupIntent({ ...operation, basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 }, steps: [] },
+            entry === 'ask' ? { ...dependencies, readPolicy: async () => ({ version: 1, mode: 'ask', administratorUsername: 'operator' }), prompt }
+                : dependencies);
     expect(result).toEqual({ outcome: 'not_applied', reasonCode: 'managed_cli_unavailable',
         recovery: { kind: 'install_managed_cli', executablePath: dependencies.installedCli } });
     expect(MachineAdminAccessMutationResultV1Schema.parse({ status: 'applied', policy, metadataVersion: 29, effect: result }))
         .toMatchObject({ status: 'applied', effect: result });
     expect(native.launches).toBe(0);
+    expect(prompt).not.toHaveBeenCalled();
 });
 
 it('uses the installed executable and real root interpreter after the prerequisite is supplied', async () => {

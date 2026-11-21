@@ -6,14 +6,16 @@ export function passwordFrame(answer: unknown): Buffer | null {
 }
 
 /** Only exact, separately named sudo prompts receive a fresh copy of the frame. */
-export function createSudoPasswordResponder(frame: Buffer, administratorUsername: string) {
-    let password: Buffer | null = frame;
+export function createSudoPasswordResponder(requestPassword: () => Promise<Buffer | null>, administratorUsername: string) {
+    let password: Buffer | null = null;
+    let closed = false;
     let administratorAnswered = false;
     let rootAnswered = false;
     return {
         get submitted() { return administratorAnswered || rootAnswered; },
-        clear() { password?.fill(0); password = null; },
-        async answer(line: string, write: (frame: Buffer) => Promise<void>): Promise<'denied' | 'administratorSudoToRoot' | undefined> {
+        clear() { closed = true; password?.fill(0); password = null; },
+        async answer(line: string, write: (frame: Buffer) => Promise<void>):
+            Promise<'denied' | 'administratorSudoFromDaemon' | 'administratorSudoToRoot' | undefined> {
             const administrator = line.includes('[happier-sudo-password:');
             const root = line.includes('[happier-sudo-root-password:');
             if (!administrator && !root) return;
@@ -22,8 +24,16 @@ export function createSudoPasswordResponder(frame: Buffer, administratorUsername
             // sudo-rs wraps the custom prompt in its PAM label; the custom
             // newline ends this line before its closing "] Password: " text.
             const expectedPrompt = line === expected || line === `[sudo: ${expected}`;
-            if (!expectedPrompt || !password || (root ? rootAnswered : administratorAnswered || rootAnswered)) {
+            if (!expectedPrompt) return root ? 'administratorSudoToRoot' : 'administratorSudoFromDaemon';
+            if (closed || (root ? rootAnswered : administratorAnswered || rootAnswered)) {
                 return root ? 'administratorSudoToRoot' : 'denied';
+            }
+            password ??= await requestPassword();
+            if (!password) return 'denied';
+            if (closed) {
+                password.fill(0);
+                password = null;
+                return 'denied';
             }
             if (root) rootAnswered = true; else administratorAnswered = true;
             // The write callback can complete after root readiness. Its own copy

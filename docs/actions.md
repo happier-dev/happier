@@ -213,7 +213,14 @@ Desired success alone must not be presented as a successful host grant or revoca
 A correlated administrator change uses the existing Action operation and admitted
 system-task owners. Ask publishes a nonsecret `sudo.password` descriptor on that
 same operation and waits for its transient answer; it does not return a successful
-host result while unanswered. The shared setup/reboot response validator requires
+host result while unanswered. The native sudo runner starts first. It asks when
+sudo challenges for the selected administrator, or at root readiness when the
+incumbent native rule already permits root. A sudo exit before either point or
+a first-hop challenge for a different principal reports that the daemon's native
+Ask route is unavailable. Saving Ask does not
+establish that route after native sudo permission has been removed. Restore the
+reviewed Ask sudoers rule through the Machine's console before retrying.
+The shared setup/reboot response validator requires
 the Home-admitted `present_user` authority, original Actor and Custodian, exact
 Machine/installation/encryption mode, and current Manage admission. Ordinary
 Account automation cannot answer it, and no password becomes an Action operand,

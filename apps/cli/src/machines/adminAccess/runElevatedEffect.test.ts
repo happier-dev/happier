@@ -194,6 +194,38 @@ async function planFor(f: ReturnType<typeof nativeFixture>, ids = ['first', 'sec
 }
 
 describe('one operation-scoped sudo stdin hand-off', () => {
+    it('reports the missing native Ask route without requesting a password when sudo refuses before authenticating', async () => {
+        const f = nativeFixture();
+        const runner = createSystemTasksRunner({ kinds: {} });
+        const spawn: MachineElevationSpawn = () => {
+            const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+            stdout.end();
+            stderr.end("sudo: invoking user cannot run sudo as the administrator\n");
+            return { stdin, stdout, stderr, settled: Promise.resolve({ code: 1, signal: null }), terminate: async () => {} };
+        };
+        const taskId = 'sudoers-grant-removed';
+        await runner.startAdmitted({ taskId, kind: 'machine.setup.apply.v1', params: {} }, { run: async ctx =>
+            await checkElevatedMachineSetupPlanResult({ machineId: 'machine-a', operationId: taskId, basis, steps: [] }, {
+                ...f.dependencies, spawn,
+                observe: async () => ({ ...observation, managedDropIn: 'unknown', reasonCode: 'needs_admin_to_check' }),
+                prompt: ctx.prompt,
+            }),
+        });
+        const state = await vi.waitFor(async () => {
+            const state = await runner.poll({ taskId, cursor: 0 });
+            expect(state.pendingPrompt !== null || state.result !== null).toBe(true);
+            return state;
+        });
+        if (state.pendingPrompt) {
+            await runner.respond({ taskId, expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' } });
+        }
+        expect(await runner.wait({ taskId })).toMatchObject({ ok: true, data: {
+            outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { requiredFact: 'administratorSudoFromDaemon', remedy: expect.any(String) },
+        } });
+        expect((await runner.poll({ taskId, cursor: 0 })).events.some(event => event.type === 'prompt')).toBe(false);
+    });
+
     it('authenticates both sudo hops with the one attended answer before sending the interpreter frame', async () => {
         const f = nativeFixture();
         f.requireAdministratorSudoPassword();
@@ -512,8 +544,9 @@ describe('one operation-scoped sudo stdin hand-off', () => {
                 await runElevatedEffect({ machineId: 'machine-a', operationId, effect: { kind: 'setupOperation', plans: [{ plan }] } },
                     { ...f.dependencies, prompt: ctx.prompt, emit: ctx.emit }) });
             // The real runner owns the unanswered prompt, not a test-injected password service.
-            await new Promise(resolve => setImmediate(resolve));
-            expect((await runner.poll({ taskId: operationId, cursor: 0 })).pendingPrompt?.kind).toBe('sudo.password');
+            await vi.waitFor(async () => {
+                expect((await runner.poll({ taskId: operationId, cursor: 0 })).pendingPrompt?.kind).toBe('sudo.password');
+            });
             await runner.respond({ taskId: operationId, expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' } });
             const result = await runner.wait({ taskId: operationId });
             expect(f.boundaryFailures).toEqual([]);
@@ -581,25 +614,27 @@ describe('one operation-scoped sudo stdin hand-off', () => {
             args: ['--managed-runtime', 'machine', 'effect-internal', '--operation-id=root-operation', '--installation-id=install-a'] }]);
     });
 
-    it('settles cancelled attendance and a retired installation before launching sudo', async () => {
+    it('settles cancelled attendance and a retired installation without giving sudo a password or applying a plan', async () => {
         const f = nativeFixture(); const plan = await planFor(f);
         const effect = { kind: 'setupOperation' as const, plans: [{ plan }] };
         let current = true;
         expect(await runElevatedEffect({ machineId: 'machine-a', operationId: 'retired', effect }, { ...f.dependencies,
             verifyCurrent: async () => current, prompt: async () => { current = false; return { password: 'one-use-password' }; } }))
             .toMatchObject({ outcome: 'not_applied', reasonCode: 'plan_stale' });
-        expect(f.launches).toEqual([]);
+        expect(f.authentication.filter(Boolean)).toEqual([]);
         const runner = createSystemTasksRunner({ kinds: {} });
         await runner.startAdmitted({ taskId: 'cancelled', kind: 'machine.setup.apply.v1', params: {} }, { run: async ctx =>
             await runElevatedEffect({ machineId: 'machine-a', operationId: 'cancelled', effect, signal: ctx.signal },
                 { ...f.dependencies, prompt: ctx.prompt, emit: ctx.emit }) });
-        await new Promise(resolve => setImmediate(resolve));
-        expect((await runner.poll({ taskId: 'cancelled', cursor: 0 })).pendingPrompt?.kind).toBe('sudo.password');
+        await vi.waitFor(async () => {
+            expect((await runner.poll({ taskId: 'cancelled', cursor: 0 })).pendingPrompt?.kind).toBe('sudo.password');
+        });
         await runner.cancel({ taskId: 'cancelled' });
         const result = await runner.wait({ taskId: 'cancelled' });
         expect(result).toMatchObject({ ok: true, data: { outcome: 'not_applied', reasonCode: 'cancelled' } });
         expect((await runner.poll({ taskId: 'cancelled', cursor: 0 })).pendingPrompt).toBeNull();
-        expect(f.launches).toEqual([]);
+        expect(f.authentication.filter(Boolean)).toEqual([]);
+        expect(f.mutations).toEqual([]);
     });
 
     it.each(['check', 'apply'] as const)('allows an attended Ask %s when sudo already permits root without consuming the password', async kind => {
@@ -617,13 +652,16 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(JSON.stringify(f.launches)).not.toContain('one-use-password');
     });
 
-    it('never gives the password or plan to an unexpected password principal', async () => {
+    it('never requests a password when native sudo challenges for a different user', async () => {
         const f = nativeFixture(); f.unexpectedPrincipal();
         const plan = await planFor(f);
+        const prompt = vi.fn(async () => ({ password: 'one-use-password' }));
         expect(await runElevatedEffect({ machineId: 'machine-a', operationId: 'unexpectedPrincipal',
             effect: { kind: 'setupOperation', plans: [{ plan }] } },
-            { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) }))
-            .toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
+            { ...f.dependencies, prompt }))
+            .toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+                failure: { requiredFact: 'administratorSudoFromDaemon' } });
+        expect(prompt).not.toHaveBeenCalled();
         expect(f.authentication.filter(Boolean)).toEqual([]);
         expect(f.mutations).toEqual([]);
     });
@@ -638,7 +676,7 @@ describe('one operation-scoped sudo stdin hand-off', () => {
                 return true;
             }, prompt: async () => { answered = true; return { password: 'one-use-password' }; } }))
             .resolves.toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
-        expect(f.launches).toEqual([]);
+        expect(f.authentication.filter(Boolean)).toEqual([]);
         expect(f.mutations).toEqual([]);
     });
 
