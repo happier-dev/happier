@@ -431,12 +431,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
     } satisfies ActionExecuteFailure);
   };
 
-  const readAccountSettings = async (): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
-    if (params.savedSecretOperationContext) {
-      if (!await params.savedSecretOperationContext.isCurrent()) {
+  const readAccountSettings = async (operation = params.savedSecretOperationContext): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
+    if (operation) {
+      if (!await operation.isCurrent()) {
         throw await acpSnapshotUnavailable('scope-retired');
       }
-      const snapshot = params.savedSecretOperationContext.readSnapshot();
+      const snapshot = operation.readSnapshot();
       return snapshot && snapshot.source !== 'none' ? snapshot.settings : null;
     }
     const { resolveAvailableAccountSettings } = await import("@/settings/accountSettings/resolveAvailableAccountSettings");
@@ -755,7 +755,17 @@ export function createCliActionInventoryDeps(params: Readonly<{
       return Object.fromEntries([...dispositions].map(([agentId, disposition]) => [agentId, disposition.kind]));
     },
     agentsModelsList: async (args, context) => {
+      // Admitted requester custody reads the requester's own launch credential
+      // metadata, as Session launch does. Without it, reads stay signed under
+      // this root, which Home limits to the default-auth purposes row.
+      const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)?.savedSecretOperationContext;
+      const readCatalogSettings = () => readAccountSettings(requester);
       const catalogInput = () => {
+        if (requester) {
+          return { credentials: requester.credentials, savedSecretOperationContext: requester,
+            serverHttpBaseUrl: requester.serverHttpBaseUrl, machineId: args.machineId,
+            serverId: args.serverId ?? params.serverId, signal: args.signal };
+        }
         const homeDomainAction = params.readHomeDomainAction?.();
         return {
           credentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
@@ -780,21 +790,21 @@ export function createCliActionInventoryDeps(params: Readonly<{
         const resolution = await resolveLlmTaskRunnerOnThisMachine({ task: args.task, choice: args.choice,
           ...(args.sessionAgentTargetKey ? { sessionAgentTargetKey: args.sessionAgentTargetKey } : {}),
           readCandidates: async () => {
-            const settings = await readAccountSettings();
+            const settings = await readCatalogSettings();
             return settings ? readLlmTaskRunnerCandidatesOnThisMachine(catalogInput(), settings) : { candidates: [], unavailableAgents: [] };
           }, ...(args.signal ? { signal: args.signal } : {}) });
         return { items: [], llmTaskRunner: projectLlmTaskRunnerResolutionWireV1(resolution) };
       }
       if (args.purpose === 'scm_diff_summary') {
         if (!args.machineId || args.machineId !== params.localMachineId) return { items: [], source: 'unavailable' };
-        const settings = await readAccountSettings();
+        const settings = await readCatalogSettings();
         if (!settings) return { items: [], source: 'unavailable' };
         const { createCliSettingsCatalogServices } = await import("../settingsCatalogServices");
         const services = createCliSettingsCatalogServices(catalogInput());
         const catalog = await services.readScmDiffSummaryCatalog!(settings,
           args.modelSelector ? encodeScmDiffSummaryModelOverride(args.modelSelector) : readScmDiffSummaryRunnerCatalogId(readScmDiffSummaryRunnerChoice(settings)),
           { includeConfigured: true, discoveryTargetKey: args.discoveryTargetKey });
-        const current = await readAccountSettings();
+        const current = await readCatalogSettings();
         if (!catalog || !current || !catalog.isCurrent(current) || !await services.isCurrent()) return { items: [], source: 'unavailable' };
         return { items: [], scmDiffSummaryCatalog: ScmDiffSummaryModelCatalogObservationV1Schema.parse({ profiles: catalog.profiles,
           automaticProfiles: catalog.automaticProfiles, discoveryTargetKeys: catalog.discoveryTargetKeys,
