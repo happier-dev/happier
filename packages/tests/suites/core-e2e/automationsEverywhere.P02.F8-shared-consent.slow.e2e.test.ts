@@ -513,7 +513,13 @@ describe('AE.P02.F8-shared-consent', () => {
     await exerciseRequester('after', 'missing');
     await setSharedPhase('before');
 
+    const countWorkflowReads = () => fixture!.takeRequestObservations().filter(request => request.method === 'GET'
+      && request.path === `/v1/artifacts/${workflow.definitionId}`).length;
+    expect(await consentRows()).toEqual([]);
+    fixture.takeRequestObservations();
     const invoked = await invoke();
+    // Without a consent row, matching is the only reason to open the Workflow during admission.
+    const matchingReads = countWorkflowReads();
     expect(invoked.ok, JSON.stringify(invoked)).toBe(true);
     if (!invoked.ok) throw new Error(invoked.errorCode);
     const approval = ActionApprovalRequestCreatedResultSchema.parse(invoked.result);
@@ -607,9 +613,10 @@ describe('AE.P02.F8-shared-consent', () => {
     expect(AutomationDefinitionListResponseSchema.parse(listed.data).automations).toEqual([]);
     fixture.takeRequestObservations();
     const repeated = await invoke();
+    const unchangedReads = countWorkflowReads();
+    console.info('F8 shared Workflow admission reads', { matchingReads, unchangedReads });
+    expect.soft(unchangedReads - matchingReads, 'An equal Workflow revision adds zero consent-currentness reads').toBe(0);
     await settleWithoutConsent(repeated);
-    expect(fixture.takeRequestObservations().filter(request => request.method === 'GET'
-      && request.path === `/v1/artifacts/${workflow.definitionId}`)).toEqual([]);
 
     const allowCurrentPhase = async () => {
       const invoked = await invoke();
