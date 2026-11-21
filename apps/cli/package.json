@@ -401,6 +401,7 @@
     "ffmpeg-static": "5.2.0",
     "http-proxy": "^1.18.1",
     "https-proxy-agent": "^7.0.6",
+    "ignore": "7.0.5",
     "ink": "^6.5.1",
     "jiti": "^2.6.1",
     "json5": "^2.2.3",

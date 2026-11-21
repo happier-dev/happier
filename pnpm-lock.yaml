@@ -782,6 +782,9 @@ importers:
       https-proxy-agent:
         specifier: ^7.0.6
         version: 7.0.6(supports-color@8.1.1)
+      ignore:
+        specifier: 7.0.5
+        version: 7.0.5
       ink:
         specifier: ^6.5.1
         version: 6.6.0(@types/react@19.2.14)(react-devtools-core@6.1.5)(react@19.2.0)
