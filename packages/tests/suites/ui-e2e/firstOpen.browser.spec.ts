@@ -584,69 +584,84 @@ test('firstOpen.02.F6 | firstOpen.03.F12 | firstOpen.F12.inviteOutcomes remember
     await expect(page.getByTestId('welcome-decision-panel')).toBeVisible();
 });
 
-test('firstOpen.F15.notices keeps Login fixed through notice arrival, replacement and retry', async ({ page }) => {
-    let response: 'outage' | 'incompatible' | 'available' = 'outage';
-    let releaseDiscovery = () => {};
-    let discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
-    const discovery = /^https?:\/\/[^/]+\/v1\/(features|auth\/entry)(\?.*)?$/;
-    await page.route(discovery, async route => {
-        await discoveryPending;
-        if (response === 'outage') await route.abort('connectionrefused');
-        else if (response === 'incompatible' && route.request().method() === 'GET') {
-            await route.fulfill({ json: { features: null }, headers: { 'access-control-allow-origin': '*' } });
-        } else await route.continue();
+for (const [width, height] of [[1224, 600], [390, 640], [1440, 900], [390, 844]] as const) {
+    test(`firstOpen.F15.notices keeps Login fixed through notice arrival, replacement and retry at ${width}×${height}`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        let response: 'outage' | 'incompatible' | 'available' = 'outage';
+        let releaseDiscovery = () => {};
+        let discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+        const discovery = /^https?:\/\/[^/]+\/v1\/(features|auth\/entry)(\?.*)?$/;
+        await page.route(discovery, async route => {
+            await discoveryPending;
+            if (response === 'outage') await route.abort('connectionrefused');
+            else if (response === 'incompatible' && route.request().method() === 'GET') {
+                await route.fulfill({ json: { features: null }, headers: { 'access-control-allow-origin': '*' } });
+            } else await route.continue();
+        });
+        const features = countRequests(page, '/v1/features', 'GET');
+        const entry = countRequests(page, '/v1/auth/entry', 'POST');
+        try {
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            await openApp(page);
+            const welcome = page.getByTestId('welcome-decision-panel').and(page.locator(':not([aria-hidden="true"])'));
+            const notice = welcome.getByTestId('welcome-auth-blocked');
+            const login = welcome.getByTestId('welcome-scan-existing-home');
+            await expect(login).toBeVisible({ timeout: 60_000 });
+            // While the Home's ways in load, the welcome holds the primary door's place and offers no dead-end door.
+            const pendingDoor = welcome.getByTestId('welcome-primary-door-pending');
+            await expect(pendingDoor).toHaveCount(1);
+            await expect(welcome.getByTestId('welcome-account-service-choose')).toHaveCount(0);
+            releaseDiscovery();
+            // An unreachable Home settles into its own ways (a truthful change of form); from here the notice changes alone.
+            await expect(notice).toBeVisible({ timeout: 60_000 });
+            const hideNotice = await page.addStyleTag({ content:
+                '[data-testid="welcome-notice-slot"] { height: 0 !important; padding: 0 !important; margin: 0 !important; overflow: hidden; }',
+            });
+            const settledFrame = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            await login.focus();
+            await settledFrame();
+            const door = await login.boundingBox();
+            expect(door).not.toBeNull();
+
+            // Isolate notice arrival from the different controls shown while discovery is still pending.
+            await hideNotice.evaluate(element => element.remove());
+            await settledFrame();
+            await expect(login).toBeFocused();
+            expect(await login.boundingBox()).toEqual(door);
+
+            const before = { features: features.value(), entry: entry.value() };
+            const firstNotice = await notice.innerText();
+            const firstNoticeBox = await notice.boundingBox();
+            expect(firstNoticeBox).not.toBeNull();
+            const retry = welcome.getByTestId('welcome-auth-blocked-retry');
+            response = 'incompatible';
+            discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+            await retry.press('Enter');
+            await login.focus();
+            // Give the replacement the space a longer translation needs, regardless of the runner fonts.
+            await page.addStyleTag({ content: `[data-testid="welcome-auth-blocked"] { min-height: ${(firstNoticeBox?.height ?? 0) + 48}px; }` });
+            releaseDiscovery();
+            await expect.poll(() => notice.innerText()).not.toBe(firstNotice);
+            expect((await notice.boundingBox())?.height).toBeGreaterThan(firstNoticeBox?.height ?? 0);
+            await expect(login).toBeFocused();
+            expect(await login.boundingBox()).toEqual(door);
+            expect(features.value() - before.features).toBe(1);
+            expect(entry.value() - before.entry).toBe(1);
+
+            response = 'available';
+            await retry.press('Enter');
+            await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
+            await expect(notice).toBeHidden();
+            await expect(login).toBeVisible();
+            expect(features.value() - before.features).toBe(2);
+            expect(entry.value() - before.entry).toBe(2);
+        } finally {
+            releaseDiscovery();
+            features.stop();
+            entry.stop();
+        }
     });
-    const features = countRequests(page, '/v1/features', 'GET');
-    const entry = countRequests(page, '/v1/auth/entry', 'POST');
-    try {
-        await page.emulateMedia({ reducedMotion: 'reduce' });
-        await openApp(page);
-        const welcome = page.getByTestId('welcome-decision-panel').and(page.locator(':not([aria-hidden="true"])'));
-        const notice = welcome.getByTestId('welcome-auth-blocked');
-        const login = welcome.getByTestId('welcome-scan-existing-home');
-        await expect(login).toBeVisible({ timeout: 60_000 });
-        // While the Home's ways in load, the welcome holds the primary door's place and offers no dead-end door.
-        const pendingDoor = welcome.getByTestId('welcome-primary-door-pending');
-        await expect(pendingDoor).toHaveCount(1);
-        await expect(welcome.getByTestId('welcome-account-service-choose')).toHaveCount(0);
-        releaseDiscovery();
-        // An unreachable Home settles into its own ways (a truthful change of form); from here the notice changes alone.
-        await expect(notice).toBeVisible({ timeout: 60_000 });
-        await login.focus();
-        const door = await login.boundingBox();
-
-        const before = { features: features.value(), entry: entry.value() };
-        const firstNotice = await notice.innerText();
-        const firstNoticeBox = await notice.boundingBox();
-        expect(firstNoticeBox).not.toBeNull();
-        const retry = welcome.getByTestId('welcome-auth-blocked-retry');
-        response = 'incompatible';
-        discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
-        await retry.press('Enter');
-        await login.focus();
-        // Give the replacement the space a longer translation needs, regardless of the runner fonts.
-        await page.addStyleTag({ content: `[data-testid="welcome-auth-blocked"] { min-height: ${(firstNoticeBox?.height ?? 0) + 48}px; }` });
-        releaseDiscovery();
-        await expect.poll(() => notice.innerText()).not.toBe(firstNotice);
-        expect((await notice.boundingBox())?.height).toBeGreaterThan(firstNoticeBox?.height ?? 0);
-        await expect(login).toBeFocused();
-        expect(await login.boundingBox()).toEqual(door);
-        expect(features.value() - before.features).toBe(1);
-        expect(entry.value() - before.entry).toBe(1);
-
-        response = 'available';
-        await retry.press('Enter');
-        await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
-        await expect(notice).toBeHidden();
-        await expect(login).toBeVisible();
-        expect(features.value() - before.features).toBe(2);
-        expect(entry.value() - before.entry).toBe(2);
-    } finally {
-        releaseDiscovery();
-        features.stop();
-        entry.stop();
-    }
-});
+}
 
 // Samples every painted frame of a Welcome step move: the departing heading (live or its paint copy) and the
 // arriving step's heading. A string keeps the transpiler's helper names out of the page.
