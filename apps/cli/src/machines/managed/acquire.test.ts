@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import fastify from 'fastify';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -315,7 +316,7 @@ describe('creation environment stage', () => {
             expect(retained.submittedNativeEffect?.requestId).toBe('in-flight-start');
         } finally { await runtime.stop(); }
     });
-    it('retries a transient final report on the enrolled resource without changing isolation', async () => {
+    it('retries a transient Inspect report on the enrolled resource without changing isolation', async () => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_retained_report', allocation: 'bound', enrolledMachineId: 'guest', bootstrapInstalled: true,
             enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized' },
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
@@ -323,7 +324,7 @@ describe('creation environment stage', () => {
         const resource = retained.resource;
         const keys = tweetnacl.sign.keyPair();
         const wire = { ...originAuthorization('srv_retained_report', 'retry-report'), binding: {
-            ...originAuthorization('srv_retained_report', 'retry-report').binding, actionId: 'machines.managed.bootstrap.retry' as const,
+            ...originAuthorization('srv_retained_report', 'retry-report').binding, actionId: 'machines.managed.inspect' as const,
         } };
         let reportFailures = 0;
         let isolationApplied = false;
@@ -351,39 +352,34 @@ describe('creation environment stage', () => {
                         metadataVersion: 1, status: isolationApplied ? { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } : { kind: 'disabled' },
                         plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'guest-plan' } } } } };
             }
+            if (path.endsWith('/actions/get')) return { status: 200, data: retained };
             return { status: 200, data: { machine: retained, ...(path.endsWith('/context') ? { requestId: 'creation-request' } : {}) } };
         });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
             serverId: 'daemon-local-profile', serverIdentityId: 'srv_retained_report', serverHttpBaseUrl: 'https://home.example',
             target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
         if (!authorization) throw new Error('Requester authority was not established');
-        const declaration = nativeFixture({ credentialPurposes: [] }).runtimeRegistry.contributes.activationTargets[0]!.manifest;
-        const native = nativeFixture({ credentialPurposes: [],
-            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } }, fixtureManifest: normalizePluginManifestV2({ ...declaration,
-            contributes: { ...declaration.contributes, machineProvisioners: declaration.contributes.machineProvisioners.map(provider => ({
-                ...provider, bootstrapTransport: undefined,
-            })) },
-        }) });
+        const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
+            onNativeRole: role => { if (role !== 'inspect') throw new Error(`Inspection must not repeat ${role}`); } });
         const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
             homeId: 'srv_retained_report', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_retained_report',
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
-        const retry = () => recovery.execute('machines.managed.bootstrap.retry', { homeId: 'srv_retained_report', managedId: retained.id, expectedIntentRevision: 0 }, {
-            requestId: 'retry-report', context: { surface: 'cli', externalActionExecutionAuthorization: authorization, operationOwnerUpdate: { update() {} },
-                operationAcceptance: { operationId: 'recovery', accept() {} } },
+        const inspect = () => recovery.execute('machines.managed.inspect', { homeId: 'srv_retained_report', managedId: retained.id }, {
+            requestId: 'retry-report', context: { surface: 'cli', externalActionExecutionAuthorization: authorization },
         });
-        const failure = await retry().then(() => null, error => error);
-        expect(failure, JSON.stringify({ writes, stack: failure?.stack })).toMatchObject({ code: 'database_transaction_timeout', details: { status: 503 } });
+        await expect(inspect()).rejects.toMatchObject({ code: 'database_transaction_timeout', details: { status: 503 } });
         expect(retained.observation?.reason).toBe('bootstrap.incomplete');
         expect(isolationApplied).toBe(false);
-        await expect(retry()).resolves.toMatchObject({ managedId: retained.id });
+        await expect(inspect()).resolves.toMatchObject({ machine: { id: retained.id } });
         expect(isolationApplied).toBe(false);
         expect(isolationWrites).toBe(0);
         expect(retained).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
         expect(retained.observation?.reason).toBeUndefined();
         expect(writes.some(path => path.endsWith('/admit') || path.endsWith('/submit') || path.endsWith('/enrollment-context'))).toBe(false);
     });
-    it('preserves isolation on an E2EE bootstrap retry with retained creation identity and requester custody', async () => {
+    it('refuses E2EE bootstrap retry without a native transport before loading enrollment or isolation', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
         const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(43) };
@@ -454,14 +450,13 @@ describe('creation environment stage', () => {
                 requestId: 'fresh-retry', context: { surface: 'cli', operationOwnerUpdate: { update() {} }, authority: 'present_user', actionCaller: { kind: 'host' },
                     externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization,
                     operationAcceptance: { operationId: 'bootstrap-operation', accept() {} } },
-            })).resolves.toMatchObject({ managedId: retained.id, operation: { operationId: 'bootstrap-operation' } });
+            })).rejects.toMatchObject({ code: 'guest_update_not_supported' });
             expect(previews).toBe(0);
             expect(installationReads).toBe(0);
         } finally { await admitted.dispose(); await channel.close(); }
     });
 
-    it.each(['machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
-        'preserves retained enrollment isolation across report failure and recovery on %s', async recoveryAction => {
+    it('preserves retained enrollment isolation when Retry refuses and Inspect recovers', async () => {
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
             role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
@@ -473,7 +468,7 @@ describe('creation environment stage', () => {
         let reports = 0;
         const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
             nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
-            onNativeRole: role => { throw new Error(`Recovery must not repeat ${role}`); } });
+            onNativeRole: role => { if (role !== 'inspect') throw new Error(`Recovery must not repeat ${role}`); } });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = String(url);
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
@@ -509,7 +504,7 @@ describe('creation environment stage', () => {
             homeId: 'srv_bootstrap_policy', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap_policy', canonicalServerUrl: 'https://home.example',
                 revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
-        const run = async (action: typeof recoveryAction) => {
+        const run = async (action: 'machines.managed.bootstrap.retry' | 'machines.managed.inspect') => {
             const origin = originAuthorization('srv_bootstrap_policy', 'retry-policy');
             const wire = { ...origin, binding: { ...origin.binding, actionId: action } };
             const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
@@ -522,11 +517,13 @@ describe('creation environment stage', () => {
                     operationAcceptance: { operationId: 'recovery', accept() {} } },
             });
         };
-        await expect(run('machines.managed.bootstrap.retry')).rejects.toMatchObject({ code: 'database_transaction_timeout' });
+        await expect(run('machines.managed.bootstrap.retry')).rejects.toMatchObject({ code: 'guest_update_not_supported' });
+        expect(reports).toBe(0);
+        await expect(run('machines.managed.inspect')).rejects.toMatchObject({ code: 'database_transaction_timeout' });
         expect(isolated).toBe(false);
         expect(reports).toBeGreaterThan(0);
         unavailable = false;
-        await run(recoveryAction);
+        await expect(run('machines.managed.inspect')).resolves.toMatchObject({ machine: { id: retained.id } });
         expect(retained).toMatchObject({ enrolledMachineId: 'guest', bootstrapInstalled: true,
             resource: { value: {} }, observation: { availability: 'present', power: 'running' } });
         expect(retained.observation?.reason).toBeUndefined();
@@ -544,7 +541,6 @@ describe('creation environment stage', () => {
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: true },
         { action: 'machines.managed.inspect', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.inspect', outcome: 'applied', storedEnabled: true },
-        { action: 'machines.managed.bootstrap.retry', outcome: 'isolationUnavailable', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false, freshEnrollment: true },
     ] as const)('records the reviewed administrator policy and isolation through the enrolled guest Action ($action/$outcome/$storedEnabled)', async (scenario) => {
         const { action, outcome, storedEnabled } = scenario;
@@ -625,7 +621,10 @@ describe('creation environment stage', () => {
             nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' },
                 bootstrap: { kind: 'ssh', address: 'guest.example', user: 'happier',
                     credentialRef: { kind: 'shared_resource', resourceId: '00000000-0000-4000-8000-000000000001' } } },
-            onNativeRole: role => { if (!freshEnrollment || role !== 'bootstrap') throw new Error(`Enrollment policy recovery must not repeat ${role}`); } });
+            onNativeRole: role => {
+                if (action === 'machines.managed.inspect' && role === 'inspect') return;
+                if (!freshEnrollment || role !== 'bootstrap') throw new Error(`Enrollment policy recovery must not repeat ${role}`);
+            } });
         const enrolledDriver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
             homeId: 'srv_bootstrap_policy', controller, runtimeRegistry: native.runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap_policy', canonicalServerUrl: 'https://home.example',
@@ -639,6 +638,9 @@ describe('creation environment stage', () => {
                 operationAcceptance: { operationId: 'creation-operation', accept() {} } },
         });
         if (action === 'machines.managed.inspect') await expect(execution).resolves.toMatchObject({ machine: { id: retained.id } });
+        else if (action === 'machines.managed.bootstrap.retry' && !freshEnrollment) {
+            await expect(execution).rejects.toMatchObject({ code: 'guest_update_not_supported' });
+        }
         else if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
         else if (outcome === 'previewRefusal') {
             await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', failureCause: {
@@ -690,7 +692,9 @@ describe('creation environment stage', () => {
         const guestHome = join(root, 'guest');
         const payload = join(root, 'payload');
         const homeId = 'srv_controller_home_recovery';
-        const token = cloudSsh || opaque ? `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` : 'token';
+        const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+        const token = cloudSsh || opaque
+            ? `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', provenance })).toString('base64url')}.signature` : 'token';
         const reference = { kind: 'shared_resource' as const, resourceId: 'cloud-key' };
         const publicKeyPair = generateKeyPairSync('rsa', { modulusLength: 1024,
             privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -744,7 +748,8 @@ describe('creation environment stage', () => {
                 return;
             }
             if (request.url?.startsWith('/v1/features')) {
-                response.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } }, homeConnectionDescriptor: descriptor }));
+                response.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId },
+                    guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } }, homeConnectionDescriptor: descriptor }));
             } else if (request.url === '/v1/account/encryption/currentness') {
                 response.end(JSON.stringify({ mode: opaque ? 'e2ee' : 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null,
                     contentKeyFingerprint: opaque ? computeAccountEncryptionMigrateKeyFingerprintV1(opaque.publicKey) : null, updatedAt: 0 }));
@@ -927,7 +932,7 @@ esac
             const acquisition = createManagedMachineAcquisitionDriver({ token, serverUrl, homeId, controller,
                 ...(opaque ? { externalActionMachineRequestPrivateKey: signing.secretKey } : {}),
                 ...accountInputs, credentials: opaque ? { token, encryption: { type: 'dataKey', machineKey: opaque.accountKey, publicKey: opaque.publicKey } }
-                    : { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget });
+                    : { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget, guestCliFetch: globalThis.fetch });
             const operations = operationRuntime = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
                 generateOperationId: () => `controller-home-${scenario}` });
             const actionInput = opaque ? { ...opaque.input, selection: { ...opaque.input.selection, homeId } }
@@ -1628,10 +1633,13 @@ describe('opaque managed preset admission', () => {
             target: authorization.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
             rootAdmitted: true, isCurrent: async () => true });
         if (!projectedAuthorization) throw new Error('Fixture requester authorization was not projected');
+        // Session resources use the host relay; only enrolled Machines need a
+        // Home application route reachable from the guest.
+        const homeUrl = acquisitionMode === 'resource-bound' ? 'http://controller.localhost:3033' : 'https://home.example';
         const connection = { ...accountInputs, token: carrier.token, credentials: { token: carrier.token, encryption: null },
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
-                canonicalServerUrl: 'https://home.example', revision: 1,
-                endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }),
+                canonicalServerUrl: homeUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: homeUrl }] }, authority: 'current_connection' }),
             serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry, guestCliFetch: globalThis.fetch,
             externalActionMachineRequestPrivateKey: keys.secretKey };
         const context = { surface: 'cli' as const, runtimeAccountId: 'owner', actionRequestId: 'warm-create',
@@ -4910,7 +4918,7 @@ describe('managed acquisition durable custody', () => {
             kind: 'found', operation: { state: 'succeeded' },
         });
     });
-    it('reopens retry from the authenticated controller context using the retained creation correlation', async () => {
+    it('reopens Inspect from the authenticated controller context using the retained creation correlation', async () => {
         const homeId = 'srv_authenticated_context';
         const enrolled = { ...machine, homeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
@@ -4918,21 +4926,21 @@ describe('managed acquisition durable custody', () => {
         const paths: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             paths.push(String(url));
+            if (String(url).endsWith('/actions/get')) return { status: 200, data: enrolled };
             if (!String(url).endsWith('/context')) expect(body).toMatchObject({ requestId: 'creation-request', managedId: enrolled.id });
             return { status: 200, data: { machine: enrolled,
                 ...(String(url).endsWith('/context') ? { requestId: 'creation-request' } : {}) } };
         });
         const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
             nativeRoleResults: { inspect: { observedAt: 1, availability: 'present', power: 'running' } },
-            onNativeRole: role => { throw new Error(`Retained controller recovery must not repeat ${role}`); } });
+            onNativeRole: role => { if (role !== 'inspect') throw new Error(`Retained controller recovery must not repeat ${role}`); } });
         const recovery = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example', homeId,
             controller, runtimeRegistry: native.runtimeRegistry,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example',
                 revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
-        const result = await recovery.execute('machines.managed.bootstrap.retry', { homeId, managedId: 'managed', expectedIntentRevision: 0 }, {
-            requestId: 'retry-request', context: { operationOwnerUpdate: { update() {} }, operationAcceptance: { operationId: 'retry-operation', accept: () => {} } },
-        });
-        expect(result).toEqual({ managedId: 'managed', operation: { operationId: 'retry-operation' } });
+        await expect(recovery.execute('machines.managed.inspect', { homeId, managedId: 'managed' }, {
+            requestId: 'inspect-request',
+        })).resolves.toMatchObject({ machine: { id: 'managed', enrolledMachineId: 'guest' } });
         expect(paths).toContain('https://home.example/v1/machines/managed/controller/report');
         expect(paths.some(path => path.endsWith('/submit') || path.endsWith('/enrollment-context'))).toBe(false);
     });
