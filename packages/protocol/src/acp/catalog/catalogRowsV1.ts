@@ -1,6 +1,6 @@
 import * as z from '../../zodRuntimePolicy.js';
 import { AcpCatalogRecordV1Schema, StoredAcpCatalogRecordV1Schema, StoredAcpCatalogContentV1Schema } from "./catalogSchemasV1.js";
-import type { AcpCatalogRecordV1, AcpCatalogContentV1, StoredAcpCatalogContentV1, AcpCatalogDiagnosticV1 } from "./catalogSchemasV1.js";
+import type { AcpCatalogRecordV1, AcpCatalogContentV1, StoredAcpCatalogContentV1, AcpCatalogDiagnosticV1, AcpCatalogSnapshotV1 } from "./catalogSchemasV1.js";
 export { AcpCatalogRecordV1Schema, StoredAcpCatalogRecordV1Schema, AcpCatalogContentV1Schema, StoredAcpCatalogContentV1Schema, AcpCatalogMigrationContentV1Schema, AcpCatalogRowFailureV1Schema, AcpCatalogRowReadResponseV1Schema, AcpCatalogRowMutationV1Schema, AcpCatalogRowMutationResponseV1Schema, AccountEncryptionMigrateAcpCatalogDirectiveV1Schema, AccountEncryptionMigrateAcpCatalogResultV1Schema } from "./catalogSchemasV1.js";
 export type { AcpCatalogRecordV1, AcpCatalogContentV1, StoredAcpCatalogContentV1, AcpCatalogRowMutationV1, AcpCatalogDiagnosticV1, AcpCatalogSnapshotV1, AccountEncryptionMigrateAcpCatalogDirectiveV1 } from "./catalogSchemasV1.js";
 import tweetnacl from 'tweetnacl';
@@ -202,4 +202,16 @@ export function rewriteAcpCatalogSavedSecretRefsV1(record: AcpCatalogRecordV1, r
     env: Object.fromEntries(Object.entries(definition.env).map(([name, value]) =>
       [name, remapValueRefSavedSecretReferencesV1(value, mapping)])),
   })) });
+}
+
+export class AcpCatalogUnavailableError extends Error {
+  readonly code = 'ACP_CATALOG_UNAVAILABLE';
+  constructor(readonly reason: string, readonly revision?: number) { super(`Configured ACP catalog is unavailable: ${reason}`); }
+}
+
+export function requireReadyAcpCatalog(catalog: AcpCatalogSnapshotV1 | undefined): Extract<AcpCatalogSnapshotV1, { status: 'ready' }> {
+  if (!catalog || catalog.status !== 'ready') {
+    throw new AcpCatalogUnavailableError(!catalog ? 'catalog-unobserved' : 'reason' in catalog ? catalog.reason : 'loading');
+  }
+  return catalog;
 }

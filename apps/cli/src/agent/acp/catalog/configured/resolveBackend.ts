@@ -1,3 +1,5 @@
+import { AcpCatalogUnavailableError, requireReadyAcpCatalog } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+export { AcpCatalogUnavailableError, requireReadyAcpCatalog } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type {
   AcpBackendAuthConfigV1,
   AcpBackendCapabilitiesV1,
@@ -17,18 +19,6 @@ export function resolveConfiguredAcpAgentSelection(definitionId: string): Config
     throw new AcpCatalogUnavailableError('contribution-unavailable');
   }
   return { ...selection, runtimeRoutingAgentId: declared.id };
-}
-
-export class AcpCatalogUnavailableError extends Error {
-  readonly code = 'ACP_CATALOG_UNAVAILABLE';
-  constructor(readonly reason: string, readonly revision?: number) { super(`Configured ACP catalog is unavailable: ${reason}`); }
-}
-
-export function requireReadyAcpCatalog(catalog: AcpCatalogSnapshotV1 | undefined): Extract<AcpCatalogSnapshotV1, { status: 'ready' }> {
-  if (!catalog || catalog.status !== 'ready') {
-    throw new AcpCatalogUnavailableError(!catalog ? 'catalog-unobserved' : 'reason' in catalog ? catalog.reason : 'loading');
-  }
-  return catalog;
 }
 
 export type ResolvedConfiguredAcpBackend = Readonly<{
