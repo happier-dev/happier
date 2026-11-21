@@ -119,7 +119,7 @@ import type { ArtifactHostActionInvocationV1 } from '../../artifacts/artifactCol
 import type { SessionRoleConfigurationV1, SessionRolesV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
 import type { ExecutionRunSendRequest, ExecutionRunCancelTurnRequest } from '../../execution/runs/index.js';
 import type { ExecutionRunGetResponse } from '../../execution/runs/responseSchemas.js';
-import type { ExecutionRunLaunchOrigin } from '../../execution/runs/startRequest.js';
+import type { ExecutionRunLaunchOrigin, ExecutionRunStartRequest } from '../../execution/runs/startRequest.js';
 import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ScopeActionId } from '../scopeActionFamily.js';
 import type { DiagnosticsActionId } from '../diagnosticsActionFamily.js';
@@ -2204,10 +2204,11 @@ export type ActionExecutorDeps = Readonly<{
    * live parent Session; approval replay never becomes a policy bypass.
    * Session-scope readers need the same validated caller/baseline but consume
    * no launch Role or Agent selections. Run admission additionally retains
-   * Account work policy. Omission retains full start admission.
+   * Account work policy. An explicit Run choice is forwarded only when no
+   * child consumes a Role snapshot. Omission retains full start admission.
    */
   resolveAgentStartContext?: (context: ActionExecutorContext,
-    options?: Readonly<{ purpose: 'session_scope' | 'workflow_run' }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
+    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
   /** Live Session role owner; checked again after deferred approval/prepared invocation. */
   getCurrentWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
   /**

@@ -12,6 +12,7 @@ import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { executionRunChildSelectionNeedsAppliedParent } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 
 export function createCliAgentStartContext(
   params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
@@ -92,18 +93,19 @@ export function createCliAgentStartContext(
         try { appliedChildSelection = await readAppliedSelection(); }
         catch { appliedChildSelection = { status: 'unavailable' }; }
       }
-      // Workflow daemon birth has no live origin baseline. Only its explicit
-      // resolved child engine may supply unfrozen Role defaults; ordinary live
-      // inheritance still requires applied native authority.
-      if (!scopeOnly && (!session.backendTarget || (appliedChildSelection?.status !== 'applied'
-        && !workflowStepRoleDefaultEngine))) {
-        return { roleSources: undefined, settings: null, appliedChildSelection, availableAgents: undefined,
-          roles: undefined, effectiveSnapshotUnavailable: true };
+      // A Role snapshot consumes applied launch facts or the existing explicit
+      // Workflow child engine. A role-free Run can proceed with caller facts
+      // and no launch configuration when the native selector allows it.
+      const hasLaunchBaseline = !scopeOnly && (appliedChildSelection?.status === 'applied' || Boolean(workflowStepRoleDefaultEngine));
+      const childSelection = options?.executionRunChildSelection;
+      if (!scopeOnly && (!session.backendTarget || (!hasLaunchBaseline
+        && (!childSelection || executionRunChildSelectionNeedsAppliedParent({ lifecycle: 'attached', childSelection }))))) {
+        return { effectiveSnapshotUnavailable: true } as const;
       }
-      if (!scopeOnly) await measureActionStartPhaseV1(context, 'role_overrides', () => prepareAccountRoleOverrides(context.signal));
+      if (hasLaunchBaseline) await measureActionStartPhaseV1(context, 'role_overrides', () => prepareAccountRoleOverrides(context.signal));
       // The live Session owns fresh Role resolution, including its installed
       // Agent sources. A runner's cold built-in inventory cannot re-admit it.
-      const roleSources = scopeOnly || sessionRoleContext ? undefined
+      const roleSources = !hasLaunchBaseline || sessionRoleContext ? undefined
         : await measureActionStartPhaseV1(context, 'role_sources', () => readRoleSources(context.signal));
       const settings = !readsWorkPolicy ? null : await measureActionStartPhaseV1(context, 'account_settings', async () =>
         {
@@ -113,26 +115,22 @@ export function createCliAgentStartContext(
         : params.actionsSettingsProvider?.getAccountSettings?.()
         ?? (params.credentials ? (await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' })).settings : null);
       });
-      const availableAgents = scopeOnly ? undefined : await measureActionStartPhaseV1(context, 'agent_inventory',
-        async () => readEffectiveDeps().agentsBackendsList?.({ includeDisabled: false }));
-      if (!scopeOnly && !availableAgents) {
-        return { roleSources, settings, appliedChildSelection, availableAgents, roles: undefined,
-          effectiveSnapshotUnavailable: true };
-      }
-      // Prompt reads stay selected-only. Complete child snapshots additionally
-      // require the native owner's applied baseline and real enabled inventory.
-      const roles = sessionRoleContext && session.backendTarget ? await measureActionStartPhaseV1(context, 'role_sources', () =>
+      const availableAgents = hasLaunchBaseline ? await measureActionStartPhaseV1(context, 'agent_inventory',
+        async () => readEffectiveDeps().agentsBackendsList?.({ includeDisabled: false })) : undefined;
+      if (hasLaunchBaseline && !availableAgents) return { effectiveSnapshotUnavailable: true } as const;
+      // Only a complete child snapshot updates the live Role owner's resolution.
+      const roles = sessionRoleContext && session.backendTarget && availableAgents ? await measureActionStartPhaseV1(context, 'role_sources', () =>
         sessionRoleContext.resolveRoles({
           defaultEngine: readCliSessionEngineBaselineV1({ backendTarget: session.backendTarget!, appliedChildSelection }).defaultEngine,
-          availableAgentTargetKeys: availableAgents!.items.filter(item => item.enabled).map(item => item.targetKey),
+          availableAgentTargetKeys: availableAgents.items.filter(item => item.enabled).map(item => item.targetKey),
         }, context.signal)) : undefined;
-      return { roles, roleSources, settings, appliedChildSelection, availableAgents };
+      return { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline };
     };
     const { resolveCliAgentStartContextV1 } = await import("../resolveCliAgentStartContextV1");
     const prepared = await prepareStartReads();
-    const { roles, roleSources, settings, appliedChildSelection, availableAgents } = prepared;
     context.signal?.throwIfAborted();
-    if ('effectiveSnapshotUnavailable' in prepared) return refuse('caller_agent_unavailable');
+    if (prepared.effectiveSnapshotUnavailable) return refuse('caller_agent_unavailable');
+    const { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline } = prepared;
     if (!scopeOnly && params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
       return refuse('caller_session_unavailable');
     }
@@ -148,8 +146,8 @@ export function createCliAgentStartContext(
       workflowStepRoleDefaultEngine,
       turnDepth,
       callerPermissionMode: context.callerPermissionMode ?? null, settings,
-      accountRoleOverrides: scopeOnly ? undefined : await readReadyAccountRoleOverrides(context.signal),
-      ...(scopeOnly ? { roles: {} } : roles ? { roles } : {}),
+      accountRoleOverrides: hasLaunchBaseline ? await readReadyAccountRoleOverrides(context.signal) : undefined,
+      roles: hasLaunchBaseline ? roles : {},
       availableAgentTargetKeys: availableAgents?.items
         .filter((item) => item.enabled).map((item) => item.targetKey),
       roleSourceInventory: roleSources,

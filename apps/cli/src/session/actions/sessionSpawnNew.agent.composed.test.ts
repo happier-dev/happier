@@ -116,6 +116,90 @@ it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller fa
   expect(sessionSpawnNew).not.toHaveBeenCalled();
 });
 
+it('admits a J6 Account-default child without inheriting the unavailable parent route or exceeding the turn ceiling', async () => {
+  const sessionId = 'c111111111111111111111111';
+  const machineId = '230d042f-545c-4245-b269-b3ac209add77';
+  const backendTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+  const metadata = { machineId, path: '/tmp', flavor: 'claude' };
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: 'j6-owner' })).toString('base64url')}.signature`;
+  const parentBindings = { v: 2, bindingsByServiceId: {
+    'acme.github/github': { source: 'team_resource', deliveryMode: 'direct', resourceId: 'fixture-resource',
+      disclosedMember: { service: { pluginId: 'acme.github', localId: 'github' }, accountId: 'fixture-account' } },
+  } } as const;
+  let appliedSelection: ExecutionRunAppliedParentSelection = {
+    status: 'applied', backendTarget, modelId: 'applied-model', connectedServices: parentBindings,
+  };
+  const roles = createSessionRoleContext({
+    readMetadata: () => metadata,
+    readOrganization: async () => ({ manager: null, origin: null }),
+    readRoleSources: createRoleSourceReader({}),
+    readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
+    readAppliedChildSelection: () => appliedSelection,
+  });
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+    if (path === '/v1/account/encryption') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+    if (path === ACP_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+    throw new Error(`Unexpected Home read: ${path}`);
+  });
+  const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId,
+    mode: 'plain', ctx: null, serverId: 'j6-home', serverHttpBaseUrl: 'https://spawn-owner.test',
+    getCurrentSessionMetadata: () => metadata, getCurrentSessionBackendTarget: () => backendTarget,
+    getCurrentSessionWorkDepth: () => 0, getCurrentTurnWorkDepth: () => 0, getSessionRoleContext: () => roles,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+  });
+  const { resolveExecutionRunChildSelection } = await import('@/agent/runtime/bridges/executionRun/runtime/openInputs');
+  const executionRunStart = vi.fn<NonNullable<ActionExecutorDeps['executionRunStart']>>(async (_sessionId, input) => {
+    const selection = resolveExecutionRunChildSelection({
+      ...input, lifecycle: 'attached', parent: appliedSelection, backendTarget,
+    });
+    expect(selection.connectedServices).toBeUndefined();
+    return { runId: 'native-admission', callId: 'call', sidechainId: 'sidechain' };
+  });
+  const executor = createActionExecutor({ executionRunStart, resolveAgentStartContext: deps.resolveAgentStartContext,
+    executionRunCheckProtocolV2: async () => ({ ok: true }),
+  } as ActionExecutorDeps);
+  const bridge = createActionToolExecutorBridge({ surface: 'agent', defaultSessionMachineId: machineId,
+    resolveCallerPermissionMode: () => 'yolo',
+    resolveActiveTurnPermissionWitness: () => ({ turnId: 'j6-turn',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' } }),
+    executor: { execute: (id, value, context) => executor.execute(id, value, { ...context,
+      serverId: 'j6-home', runtimeAccountId: 'j6-owner',
+      actionCaller: { kind: 'session', sessionId, starterDepth: 1, turnDepth: 2 },
+    }) },
+  });
+  const invoke = (selection: Record<string, unknown>) => bridge.executeActionByToolName('action_execute', {
+    actionId: 'execution.run.start', input: { sessionId, intent: 'agent', backendTarget,
+      instructions: 'Confirm the explicit child selection reaches the Agent.', permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', ...selection },
+  }, sessionId);
+  const accepted = { ok: true, result: { runId: 'native-admission' } };
+  const control = await invoke({ childSelection: 'agentDefault' });
+  expect(control, JSON.stringify(control.ok ? null : { errorCode: control.errorCode, details: control.details })).toMatchObject(accepted);
+  executionRunStart.mockClear();
+  // Exact projection emitted by the current daemon for a direct Team route.
+  appliedSelection = { status: 'unavailable' };
+  const explicit = await invoke({ childSelection: 'agentDefault' });
+  expect(explicit, JSON.stringify(explicit.ok ? null : { errorCode: explicit.errorCode, details: explicit.details })).toMatchObject(accepted);
+  expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({
+    childSelection: 'agentDefault', permissionMode: 'read_only',
+  });
+  expect(executionRunStart.mock.calls[0]?.[2]).toMatchObject({ workDepth: 3,
+    causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+  });
+  executionRunStart.mockClear();
+  expect(await invoke({ childSelection: 'agentDefault', permissionMode: 'yolo' })).toMatchObject({
+    ok: false, errorCode: 'permission_exceeds_ceiling',
+  });
+  for (const selection of [{}, { connectedServices: null }, { childSelection: 'agentDefault', roleId: 'second_opinion' }]) {
+    expect(await invoke(selection)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+      details: { executionRunStart: { runCreation: 'noRunCreated',
+        refusal: { code: 'caller_agent_unavailable', phase: 'agent_start_context' } } } });
+  }
+  expect(executionRunStart).not.toHaveBeenCalled();
+});
+
 // Exact author input from QA-R27's completed action_execute tool, with no
 // credential material. Host authority is supplied separately below.
 const input = SessionSpawnNewInputV2Schema.parse({

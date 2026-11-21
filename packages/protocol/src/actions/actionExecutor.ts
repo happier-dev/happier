@@ -3145,13 +3145,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const ceiling = typeof caller.effectiveCallerMode === 'string'
         ? parseAgentPermissionIntentV1Alias(caller.effectiveCallerMode) : null;
       if (!ceiling) return classifyExecutionRunStartPreDispatchFailure(actionId, causalPermissionAuthorityFailure());
+      const request = readRecord(admittedInput);
+      // Forward the authored choice only for native Runs without Role selection.
+      // A Voice Run also launches a commit Agent with its own selection.
+      const explicitRunDefault = !roleSelected && agentStartAction && isAgentStartActionV1(actionId)
+        && actionId !== 'session.spawn_new' && actionId !== 'voice_agent.start' && request.intent !== 'voice_agent'
+        && (actionId === 'review.start'
+          ? (admittedInput as ReviewStartInput).reviewers.every(reviewer => reviewer.kind === 'engine'
+            && (reviewer.childSelection ?? request.childSelection) === 'agentDefault')
+          : request.childSelection === 'agentDefault');
       const resolved = admittedWorkflowLeafStart ? ctx.agentStartContext : await resolveActionAgentStartContextV1(deps,
-        { ...ctx, callerPermissionMode: caller.effectiveCallerMode }, typeof targetSessionId === 'string' ? targetSessionId : undefined);
+        { ...ctx, callerPermissionMode: caller.effectiveCallerMode }, typeof targetSessionId === 'string' ? targetSessionId : undefined,
+        explicitRunDefault ? { executionRunChildSelection: 'agentDefault' } : undefined);
       if (resolved && 'ok' in resolved) return classifyExecutionRunStartPreDispatchFailure(actionId, resolved);
       // This fact comes from the authenticated Action caller, never authored input.
       const startContext = resolved ? { ...resolved, callerPermissionCeiling: ceiling,
         initiator: userRoleStart ? 'user' as const : undefined } : null;
-      const request = readRecord(admittedInput);
       if (roleTargetAction) {
         const admission = admitActionAgentStartV1(ctx, { kind: 'session_target', targetSessionId: String(request.sessionId) }, startContext);
         if (!admission.ok) return admission.error;

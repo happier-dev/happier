@@ -108,7 +108,9 @@ export type ExecutionRunChildSelectionInput = Readonly<{
 }>;
 
 /** Only omissions that inherit parent custody need to join its startup. */
-export function executionRunChildSelectionNeedsAppliedParent(input: ExecutionRunChildSelectionInput): boolean {
+export function executionRunChildSelectionNeedsAppliedParent(input: Pick<ExecutionRunChildSelectionInput,
+    'lifecycle' | 'childSelection' | 'modelSelection' | 'modelId' | 'teamCredentialModel' | 'connectedServices'
+    | 'connectedServicesDefaultServiceIds'>): boolean {
     return input.lifecycle === 'attached' && input.childSelection !== 'agentDefault'
         && input.modelSelection !== null && !input.modelSelection?.providerConnectionId && input.teamCredentialModel === undefined
         && !((input.modelSelection !== undefined || input.modelId !== undefined) && (input.connectedServices !== undefined
