@@ -175,9 +175,9 @@ describe('HappierFindBar', () => {
     mounted.unmount();
   });
 
-  it('renders one native-branch overlay per floating plane and none for an explicit null finish', async () => {
+  it('renders one iOS SVG overlay per floating plane and none for an explicit null finish', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
-    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
     try {
       for (const presentation of ['inline', 'keyboardSeated'] as const) {
         const { mounted, props } = mountBar({ presentation, status: { kind: 'idle' }, note: { icon: 'offline', text: 'Offline' } }, provider);

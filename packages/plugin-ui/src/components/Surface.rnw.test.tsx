@@ -57,7 +57,7 @@ describe('Surface and Card', () => {
     expect(inner.textContent).toBe('Nested content');
     mount.unmount();
   });
-  it('materializes fields and surfaces while preserving solid controls with equal colour values', () => {
+  it('materializes the floating surface while preserving explicitly solid fields and controls', () => {
     const host: PluginUiPresentationHost = {
       renderMarkdown: () => null, renderCodeBlock: () => null, renderPopover: () => null, renderIcon: () => null,
       // The platform paint boundary returns a concrete translucent fill; field anatomy stays real.
@@ -83,8 +83,8 @@ describe('Surface and Card', () => {
     expect(backgrounds).toContain(resolveRenderedColor('backgroundColor', 'rgba(235, 230, 225, 0.1)'));
     expect(mount.container.textContent).toContain('Field content');
     expect(mount.container.textContent).toContain('Search content');
-    // Equal colour values do not make a field into a solid primary control.
-    expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-field-content"]')!.parentElement!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', 'rgba(235, 230, 225, 0.1)'));
+    // The field's own fill colors its shape against the floating material.
+    expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-field-content"]')!.parentElement!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', context.theme.colors.accent));
     expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-primary"]')!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', context.theme.colors.accent));
     const disabledFill = resolveHappierButtonChrome({ theme: context.theme, variant: 'primary', disabled: true, focused: false }).style.backgroundColor;
     expect(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="inner-disabled"]')!).backgroundColor).toBe(resolveRenderedColor('backgroundColor', disabledFill ?? 'transparent'));

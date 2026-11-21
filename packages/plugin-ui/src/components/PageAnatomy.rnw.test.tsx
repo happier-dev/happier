@@ -1,6 +1,6 @@
 import { act, useState, type ReactNode } from 'react';
-import { View } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { Dimensions, View } from 'react-native';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { HappierUiPalette } from '../environment/types.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
@@ -64,7 +64,19 @@ function textOf(element: Element | null | undefined): string {
   return element?.textContent?.trim() ?? '';
 }
 
+function rowHairlines(section: Element): HTMLElement[] {
+  return Array.from(section.querySelectorAll<HTMLElement>('[aria-hidden="true"]'))
+    .filter(node => getComputedStyle(node).backgroundColor === 'rgb(7, 8, 9)');
+}
+
 describe('plugin page anatomy through the shared page owners', () => {
+  beforeEach(() => {
+    // The lane varies pane width within a roomy window. jsdom's unmeasured
+    // viewport otherwise looks like a phone, where selects always stack.
+    vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1200, height: 800, scale: 1, fontScale: 1 });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it('exposes one add row with a semantic add glyph, controlled expansion and disabled activation', async () => {
     const onPress = vi.fn();
     const renderIcon: PluginUiPresentationHost['renderIcon'] = ({ name }) => <span data-testid={`mark-${name}`} />;
@@ -92,7 +104,7 @@ describe('plugin page anatomy through the shared page owners', () => {
       expect(disabled.getAttribute('aria-disabled')).toBe('true');
       await act(async () => disabled.click());
       expect(onPress).toHaveBeenCalledTimes(1);
-      expect(mount.container.querySelectorAll('[role="separator"]')).toHaveLength(1);
+      expect(rowHairlines(mount.container)).toHaveLength(0);
     } finally { mount.unmount(); }
   });
 
@@ -176,13 +188,13 @@ describe('plugin page anatomy through the shared page owners', () => {
   it('starts each row seam at its text and runs it to the sheet trailing edge (P7-R2)', () => {
     const mount = mountPage(
       <ItemGroup title="Devices">
-        <Item title="Laptop" icon={<View style={{ width: 16, height: 16 }} />} />
-        <Item title="Phone" />
+        <Item title="Laptop" subtitle="Connected" icon={<View style={{ width: 16, height: 16 }} />} />
+        <Item title="Phone" subtitle="Connected" />
         <Item title="Tablet" />
       </ItemGroup>,
     );
     try {
-      const seams = Array.from(mount.container.querySelectorAll<HTMLElement>('[role="separator"]')).map((separator) => {
+      const seams = rowHairlines(mount.container).map((separator) => {
         const style = getComputedStyle(separator);
         return [style.marginInlineStart || style.marginLeft, style.marginInlineEnd || style.marginRight];
       });
@@ -210,7 +222,7 @@ describe('plugin page anatomy through the shared page owners', () => {
     )).toThrow(/accessible name/i);
   });
 
-  it('draws a titled ItemGroup as a page section: heading and description above one sheet, hairlines between rows only', () => {
+  it('draws a titled ItemGroup with its heading above one sheet and rules beneath multiline rows', () => {
     const mount = mountPage(
       <ItemGroup title="Sync" description="How often the plugin checks for new issues." testID="section">
         <Item title="Interval" subtitle="Every 5 minutes" />
@@ -226,11 +238,8 @@ describe('plugin page anatomy through the shared page owners', () => {
     // The explanation is read before the rows, never as a footer under them.
     expect(text.indexOf('How often the plugin checks')).toBeLessThan(text.indexOf('Interval'));
 
-    const separators = Array.from(section.querySelectorAll<HTMLElement>('[role="separator"]'));
-    expect(separators).toHaveLength(2);
-    for (const separator of separators) {
-      expect(separator.style.backgroundColor).toBe('rgb(7, 8, 9)');
-    }
+    expect(rowHairlines(section)).toHaveLength(1);
+    expect(section.querySelector('[role="separator"]')).toBeNull();
 
     const sheet = Array.from(section.querySelectorAll<HTMLElement>('div'))
       .find((element) => element.style.borderTopLeftRadius === '14px');
@@ -251,7 +260,7 @@ describe('plugin page anatomy through the shared page owners', () => {
 
     const group = mount.container.querySelector('[data-testid="group"]')!;
     expect(group.querySelector('[role="heading"]')).toBeNull();
-    expect(group.querySelectorAll('[role="separator"]')).toHaveLength(0);
+    expect(rowHairlines(group)).toHaveLength(0);
     expect(Array.from(group.querySelectorAll<HTMLElement>('div')).some((element) => element.style.borderTopLeftRadius === '14px'))
       .toBe(false);
     mount.unmount();
@@ -526,7 +535,9 @@ describe('plugin page anatomy through the shared page owners', () => {
       const field = trigger.firstElementChild as HTMLElement;
       expect(getComputedStyle(field).width).not.toBe('240px');
       if (rowWidth === 481) {
-        expect(Array.from(trigger.querySelectorAll<HTMLElement>('div')).some((node) => getComputedStyle(node).maxWidth === '237px')).toBe(true);
+        const availableWidth = rowWidth - 2 * HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx
+          - HAPPIER_PAGE_METRICS.rowLeadingGapPx - HAPPIER_PAGE_METRICS.sectionTextMinWidthPx;
+        expect(Array.from(trigger.querySelectorAll<HTMLElement>('div')).some((node) => getComputedStyle(node).maxWidth === `${availableWidth}px`)).toBe(true);
       }
       // Placement follows the row's available width, including within a narrow pane.
       act(() => layout({ nativeEvent: { layout: { x: 0, y: 0, width: 280, height: 52 } } }));

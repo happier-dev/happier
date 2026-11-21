@@ -248,7 +248,8 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     });
     expect(mount.container.querySelector('[data-testid="compound-value"]')?.textContent).toBe('0');
     expect(key.defaultPrevented).toBe(false);
-    expect(control.tabIndex).toBe(-1);
+    expect(control.tabIndex).toBe(busy ? 0 : -1);
+    expect(control.getAttribute('aria-disabled')).toBe('true');
     mount.unmount();
   });
 
@@ -426,7 +427,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
 
     expect(button.getAttribute('aria-busy')).toBe('true');
     expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(button.disabled).toBe(true);
+    expect(document.activeElement).toBe(button);
     await act(async () => { sibling?.focus(); });
     expect(document.activeElement).toBe(sibling);
 
@@ -439,7 +440,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     mount.unmount();
   });
 
-  it('returns focus after an Enter-activated pending press settles with no newer focus target', async () => {
+  it('keeps the Enter opener focused so a pending press can open a dialog', async () => {
     let settle: () => void = () => {};
     const pending = new Promise<void>((resolve) => { settle = resolve; });
     const mount = mountSurface(<Button title="Refresh findings" onPress={() => pending} testID="refresh" />);
@@ -447,8 +448,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
 
     await act(async () => { button.focus(); });
     await activateWithEnter(button);
-    await act(async () => { button.blur(); });
-    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).toBe(button);
 
     await act(async () => {
       settle();
@@ -506,7 +506,7 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     mount.unmount();
   });
 
-  it('waits for caller-owned busy state to settle before restoring Enter focus', async () => {
+  it('keeps the Enter opener focused until caller-owned busy state settles', async () => {
     let settleInternal: () => void = () => {};
     let settleCallerBusy: () => void = () => {};
     const internal = new Promise<void>((resolve) => { settleInternal = resolve; });
@@ -532,15 +532,16 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
 
     await act(async () => { button.focus(); });
     await activateWithEnter(button);
-    await act(async () => { button.blur(); });
     await act(async () => {
       settleInternal();
       await internal;
     });
-    expect(document.activeElement).toBe(document.body);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(document.activeElement).toBe(button);
 
     await act(async () => { settleCallerBusy(); });
 
+    expect(button.getAttribute('aria-busy')).not.toBe('true');
     expect(document.activeElement).toBe(button);
     mount.unmount();
   });

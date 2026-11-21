@@ -5,6 +5,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { PageHeader } from './PageHeader.js';
+import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT } from '../presentation/layout/pageText.js';
@@ -71,7 +72,8 @@ describe('public PageHeader composition', () => {
       for (let node = view.container.querySelector('[data-testid="mark"]')!.parentElement!; node !== header; node = node.parentElement!) {
         heights.push(getComputedStyle(node).height);
       }
-      expect(heights.includes(`${HAPPIER_PAGE_TEXT.pageTitle.lineHeight}px`)).toBe(hanging);
+      const controlLine = Math.max(HAPPIER_PAGE_TEXT.pageTitle.lineHeight, HAPPIER_PAGE_METRICS.controlHeightPx);
+      expect(heights.includes(`${controlLine}px`)).toBe(hanging);
     } finally { view.unmount(); }
   });
 
@@ -182,7 +184,7 @@ describe('public PageHeader composition', () => {
   it('keeps the purpose and facts under a title-only mark row before controls that wrap beneath (OWNER-UI-1115B B3)', () => {
     const context = createSurfaceContext();
     const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
-      <PageHeader testID="header" title="NLDW6-3-11-20 · 2e0f" actionsLayout="hang" markSpan="title" description="Short on memory. Swapping for 2 h."
+      <HappierPageHeader testID="header" title="NLDW6-3-11-20 · 2e0f" actionsLayout="hang" markSpan="title" description="Short on memory. Swapping for 2 h."
         meta={[{ key: 'presence', text: 'Online' }]} leading={<View />} actions={<View testID="controls" />} />
     </PluginUiProvider>);
     const handler = (node: Element) => Reflect.get(node, '__reactLayoutHandler') as ((event: HappierLayoutChangeEvent) => void) | undefined;
