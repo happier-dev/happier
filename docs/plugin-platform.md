@@ -391,6 +391,10 @@ plugin's contributions from admission; required host-import packages remain in
 the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
+For a plugin whose Machine declaration has claimed Account collection writers,
+the Account enablement edit carries those same collection contracts. Home
+checks them against the saved intent revision. The Machine declaration claim
+owns changes to the collection contracts.
 
 Account enablement also supports limiting a plugin to selected Projects. An
 Account intent without a Project selection applies to all Projects. A Session

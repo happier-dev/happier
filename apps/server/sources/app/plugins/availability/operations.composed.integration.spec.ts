@@ -1698,6 +1698,47 @@ describe("plugin Availability operations", () => {
                 .resolves.toMatchObject({ pluginIds: [PLUGIN_ID] });
         });
 
+        it("withdraws and restores a release-less plugin while preserving its claimed collection contracts", async () => {
+            await seedAccountAndMachine();
+            const service = operations();
+            const { intent } = await service.claimCollectionWriters({
+                accountId: ACCOUNT_ID,
+                input: { manifest: claimManifest([CLAIMED_TASKS_V1]) },
+            });
+            expect(intent.writableCollections).toEqual([claimedRef(CLAIMED_TASKS_V1)]);
+            await withAuthenticatedTestApp(app => registerPluginAvailabilityRoutes(app, { operations: service }), async app => {
+                const setIntent = (enabled: boolean, expectedRevision: string, writableCollections = intent.writableCollections) =>
+                    app.inject({
+                        method: "POST",
+                        url: PluginAvailabilityActionHttpPathsV1["account.plugins.availability.intent.set"],
+                        headers: { "x-test-user-id": ACCOUNT_ID },
+                        payload: { pluginId: PLUGIN_ID, desiredVersion: null, offlineUiHosting: "disabled",
+                            enabled, expectedRevision, writableCollections },
+                    });
+
+                const disabled = await setIntent(false, intent.revision);
+                expect(disabled.json()).toMatchObject({ intent: { ...intent, enabled: false, revision: "1" } });
+                expect(disabled.statusCode).toBe(200);
+                const afterDisable = await readAccountSeq();
+                const repeat = await setIntent(false, "1");
+                expect(repeat.json()).toEqual(disabled.json());
+                expect(await readAccountSeq()).toBe(afterDisable);
+
+                const dropped = await setIntent(true, "1", []);
+                expect(dropped.statusCode).toBe(400);
+                expect(dropped.json()).toEqual({ error: "plugin_release_collection_contract_mismatch" });
+                expect(await readAccountSeq()).toBe(afterDisable);
+
+                const enabled = await setIntent(true, "1");
+                expect(enabled.statusCode).toBe(200);
+                expect(enabled.json()).toMatchObject({ intent: { ...intent, revision: "2" } });
+            });
+            await expect(readCurrentPluginCollectionContract({
+                accountId: ACCOUNT_ID,
+                request: { ref: claimedRef(CLAIMED_TASKS_V1) },
+            })).resolves.toMatchObject({ access: "writable" });
+        });
+
         it("promotes a populated release-less Collection at a lower plugin version through candidate preparation with retained rows", async () => {
             await seedAccountAndMachine();
             await db.account.update({ where: { id: ACCOUNT_ID }, data: { encryptionMode: "plain" } });

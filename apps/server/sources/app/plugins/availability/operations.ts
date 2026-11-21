@@ -320,8 +320,8 @@ function intentFromRow(row: Omit<StoredIntentRow, "releaseLessDeclaration">) {
 
 /**
  * The release normalizer orders collection refs by this same qualified key.
- * Availability uses it only to compare its selected release with the requested
- * writer set; Data remains the sole validator and readiness owner.
+ * Availability compares requested writers with the selected release or the
+ * existing claim. Data owns contract validation and readiness.
  */
 function collectionContractsEqual(
     left: readonly Readonly<{
@@ -2290,17 +2290,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         "plugin_release_not_found",
                     );
                 }
-                if (
-                    (release === null && input.writableCollections.length > 0)
-                    || (release !== null && !collectionContractsEqual(
-                        releaseFactsFromRow(release).collectionContracts,
-                        input.writableCollections,
-                    ))
-                ) {
-                    throw new PluginAvailabilityOperationError(
-                        "plugin_release_collection_contract_mismatch",
-                    );
-                }
                 const current = await tx.accountPluginIntent.findUnique({
                     where: {
                         accountId_pluginId: {
@@ -2324,11 +2313,17 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         "plugin_intent_revision_conflict",
                     );
                 }
+                const currentIntent = current ? intentFromRow(current) : null;
+                const expectedContracts = release
+                    ? releaseFactsFromRow(release).collectionContracts
+                    : currentIntent?.desiredVersion === null ? currentIntent.writableCollections : [];
+                if (!collectionContractsEqual(expectedContracts, input.writableCollections)) {
+                    throw new PluginAvailabilityOperationError("plugin_release_collection_contract_mismatch");
+                }
                 // An identical body is an idempotent rejoin: it is not a
                 // semantic change, so it writes nothing, keeps the revision,
                 // and does not advance Account.seq.
-                if (current !== null) {
-                    const currentIntent = intentFromRow(current);
+                if (currentIntent !== null) {
                     if (
                         currentIntent.desiredVersion === input.desiredVersion
                         && currentIntent.enabled === input.enabled
