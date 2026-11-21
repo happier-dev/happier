@@ -337,6 +337,102 @@ describe("sessionRoutes lookup by tags (integration)", () => {
         );
     });
 
+    it("keeps the released tag-only lookup blind to recorded external identities", async () => {
+        const owner = await db.account.create({
+            data: { publicKey: "pk-session-lookup-external-released", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const identity = `direct:v1:${"a".repeat(64)}`;
+        await db.session.create({
+            data: {
+                tag: "hosted-launch-tag",
+                externalIdentityTag: identity,
+                accountId: owner.id,
+                metadata: "hosted-metadata",
+            },
+        });
+        const direct = await db.session.create({
+            data: { tag: `direct:v1:${"b".repeat(64)}`, accountId: owner.id, metadata: "direct-metadata" },
+            select: { id: true, tag: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => sessionRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: "/v2/sessions/lookup-by-tags",
+                    headers: { "content-type": "application/json", "x-test-user-id": owner.id },
+                    payload: { tags: [identity, direct.tag] },
+                });
+                expect(response.statusCode).toBe(200);
+                const body = response.json();
+                expect(body).not.toHaveProperty("externalIdentities");
+                expect(body.sessions.map((session: { id: string }) => session.id)).toEqual([direct.id]);
+            },
+        );
+    });
+
+    it("matches recorded external identities on request and reports why each row matched", async () => {
+        const owner = await db.account.create({
+            data: { publicKey: "pk-session-lookup-external-match", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const otherAccount = await db.account.create({
+            data: { publicKey: "pk-session-lookup-external-other", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const hostedIdentity = `direct:v1:${"c".repeat(64)}`;
+        const directIdentity = `direct:v1:${"d".repeat(64)}`;
+        const hosted = await db.session.create({
+            data: {
+                tag: "hosted-launch-tag",
+                externalIdentityTag: hostedIdentity,
+                accountId: owner.id,
+                metadata: "hosted-metadata",
+            },
+            select: { id: true },
+        });
+        const direct = await db.session.create({
+            data: { tag: directIdentity, accountId: owner.id, metadata: "direct-metadata" },
+            select: { id: true },
+        });
+        await db.session.create({
+            data: {
+                tag: "other-account-launch-tag",
+                externalIdentityTag: hostedIdentity,
+                accountId: otherAccount.id,
+                metadata: "other-metadata",
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => sessionRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: "/v2/sessions/lookup-by-tags",
+                    headers: { "content-type": "application/json", "x-test-user-id": owner.id },
+                    payload: { tags: [hostedIdentity, directIdentity], matchExternalIdentity: true },
+                });
+                expect(response.statusCode).toBe(200);
+                const body = response.json();
+                expect(body.sessions.map((session: { id: string }) => session.id).sort())
+                    .toEqual([hosted.id, direct.id].sort());
+                expect(body.externalIdentities).toHaveLength(body.sessions.length);
+                body.sessions.forEach((session: { id: string }, index: number) => {
+                    expect(body.externalIdentities[index].sessionId).toBe(session.id);
+                    expect(session).not.toHaveProperty("externalIdentityTag");
+                    expect(session).not.toHaveProperty("tag");
+                });
+                expect(body.externalIdentities).toEqual(expect.arrayContaining([
+                    { sessionId: hosted.id, externalIdentityTag: hostedIdentity, tagMatched: false },
+                    { sessionId: direct.id, externalIdentityTag: null, tagMatched: true },
+                ]));
+            },
+        );
+    });
+
     it.each([
         ["empty", { tags: [] }],
         ["duplicate", { tags: ["same", "same"] }],

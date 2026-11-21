@@ -41,15 +41,27 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
         },
     }, async (request, reply) => {
         const userId = request.userId;
+        const tags = request.body.tags;
+        const matchExternalIdentity = request.body.matchExternalIdentity === true;
         return await inReadSnapshot(async (tx) => {
+            // Each arm is served by its own unique (accountId, …) index.
             const sessions = await tx.session.findMany({
-                where: {
-                    accountId: userId,
-                    tag: { in: request.body.tags },
-                },
+                where: matchExternalIdentity
+                    ? {
+                        accountId: userId,
+                        OR: [{ tag: { in: tags } }, { externalIdentityTag: { in: tags } }],
+                    }
+                    : {
+                        accountId: userId,
+                        tag: { in: tags },
+                    },
                 orderBy: { tag: "asc" },
                 take: SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
-                select: withSessionContentSelect(createV2SessionOwnerRowSelect(request.userId)),
+                select: withSessionContentSelect({
+                    ...createV2SessionOwnerRowSelect(request.userId),
+                    tag: true,
+                    externalIdentityTag: true,
+                }),
             }).then(decodeSessionStoredContent);
             if (
                 sessions.some((session) =>
@@ -87,6 +99,15 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
                             failureSequences,
                             ruleReadStates,
                         )),
+                    ...(matchExternalIdentity
+                        ? {
+                            externalIdentities: sessions.map((session) => ({
+                                sessionId: session.id,
+                                externalIdentityTag: session.externalIdentityTag,
+                                tagMatched: tags.includes(session.tag),
+                            })),
+                        }
+                        : {}),
                 }));
             } catch (error) {
                 if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {

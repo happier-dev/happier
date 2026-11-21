@@ -21,6 +21,12 @@ import { SessionTeamCredentialBindingMetadataPatchV1Schema, SessionTeamCredentia
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { AccountRouteAuthenticationForbiddenResponseSchema } from "@/app/api/utils/enableAuthentication";
 import { log } from "@/utils/logging/log";
+import {
+    SessionExternalIdentityClaimConflictV1Schema,
+    SessionExternalIdentityClaimRequestV1Schema,
+    SessionExternalIdentityClaimResponseV1Schema,
+} from "@happier-dev/protocol/sessions/control/contract";
+import { sessionExternalIdentityClaim } from "@/app/session/external/sessionExternalIdentityClaim";
 
 export function registerSessionPatchRoute(app: Fastify) {
     const legacyPatchBodySchema = z.strictObject({
@@ -45,10 +51,12 @@ export function registerSessionPatchRoute(app: Fastify) {
                 SessionMetadataInactiveModelIntentOwnerPatchV1Schema,
                 SessionMetadataInactiveModelIntentPatchV1Schema,
                 SessionTeamCredentialBindingMetadataPatchV1Schema,
+                SessionExternalIdentityClaimRequestV1Schema,
                 legacyPatchBodySchema,
             ]),
             response: {
                 200: z.union([
+                    SessionExternalIdentityClaimResponseV1Schema,
                     SessionMetadataTuplePatchSuccessV1Schema,
                     SessionMetadataInactiveModelIntentPatchSuccessV1Schema,
                     SessionMetadataInactiveModelIntentVersionConflictV1Schema,
@@ -86,6 +94,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                         ),
                     }),
                     SessionTeamCredentialBindingMutationRejectionV1Schema,
+                    SessionExternalIdentityClaimConflictV1Schema,
                 ]),
                 426: z.unknown(),
                 503: z.object({ error: z.literal("session_access_authentication_unavailable") }),
@@ -100,15 +109,33 @@ export function registerSessionPatchRoute(app: Fastify) {
         // editor tuple. The owner metadata modes this endpoint also carries —
         // model intent and Team credential binding — remain present-user writes,
         // so the Runner is refused here rather than at the credential boundary,
-        // which knows only the Session this request names.
+        // which knows only the Session this request names. The Runner may also
+        // record the external identity of the conversation its Session hosts.
         if (
             request.authTokenKind === "ephemeral_session_runner"
             && !("mode" in request.body && request.body.mode === "shared_editor")
+            && !("externalIdentityTag" in request.body)
         ) {
             return reply.code(403).send({ error: "Forbidden" });
         }
         const userId = request.userId;
         const { sessionId } = request.params;
+        if ("externalIdentityTag" in request.body) {
+            const claim = await sessionExternalIdentityClaim({
+                actorUserId: userId,
+                sessionId,
+                externalIdentityTag: request.body.externalIdentityTag,
+                authentication: readSessionAccessAuthenticationFromRequest(request),
+            });
+            if (claim.ok) return reply.send({ externalIdentity: claim.externalIdentity });
+            if (claim.error === "conflict") {
+                return reply.code(409).send({ code: "session_external_identity_conflict" as const, reason: claim.reason });
+            }
+            if (claim.error === "session_access_authentication_unavailable") {
+                return reply.code(503).send({ error: "session_access_authentication_unavailable" });
+            }
+            return reply.code(403).send({ error: claim.error === "forbidden" ? "Forbidden" as const : claim.error });
+        }
         if ("mode" in request.body) {
             const tupleBody = request.body;
             if (
