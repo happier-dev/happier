@@ -366,14 +366,27 @@ it('names same-name Account machines apart, as every machine list does', async (
     await setActiveServerId(home.id);
     if (!home.serverIdentityId) throw new Error('Expected qualified Home');
     const scope = { serverId: home.serverIdentityId, accountId: 'reach-same-name-account' };
-    const machines = ['08ccb961', '6a1f02d4', 'b7c3aa10'].map((id, index) => createMachineFixture({ id, activeAt: Date.now(),
-        metadata: { ...createMachineFixture().metadata!, host: 'shared-host', displayName: index < 2 ? 'Build box' : 'Laptop' } }));
+    const machines = [
+        { id: '08ccb961', host: 'lima-happier-generated-08ccb961', displayName: 'Lima', managed: true },
+        { id: '6a1f02d4', host: 'lima-happier-generated-6a1f02d4', displayName: 'Lima', managed: true },
+        { id: 'b7c3aa10', host: 'laptop', displayName: 'Laptop', managed: false },
+        { id: 'cabcdef0', host: 'mac-mini', displayName: 'Office', managed: false },
+        { id: 'def123ab', host: 'linux-box', displayName: 'Office', managed: false },
+    ].map(({ id, host, displayName, managed }) => createMachineFixture({ id, activeAt: Date.now(),
+        ...(managed ? { managedMachineRef: { homeId: scope.serverId, managedId: `managed-${id}` } } : {}),
+        metadata: { ...createMachineFixture().metadata!, host, displayName } }));
     storage.setState({ settingsScope: scope, profileScope: scope, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [scope.serverId]: machines }, machineListStatusByServerId: { [scope.serverId]: 'idle' } });
     storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
-    const facts = await renderHook(() => useReachMachines());
+    const facts = await renderHook(() => ({
+        fleet: useReachMachines(),
+        narrowed: useReachMachines({ machineIds: ['6a1f02d4'] }),
+    }));
     try {
-        expect(facts.getCurrent().machines.map(machine => machine.name)).toEqual(['Build box · 08cc', 'Build box · 6a1f', 'Laptop']);
+        expect(facts.getCurrent().fleet.machines.map(machine => machine.name)).toEqual([
+            'Lima · 08cc', 'Lima · 6a1f', 'Laptop', 'Office · mac-mini', 'Office · linux-box',
+        ]);
+        expect(facts.getCurrent().narrowed.machines.map(machine => machine.name)).toEqual(['Lima · 6a1f']);
     } finally { await facts.unmount(); }
 });
 

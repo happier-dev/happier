@@ -69,6 +69,7 @@ function readNameSources(displays: Parameters<typeof selectMachineFleetFromRecor
   return [...selectMachineFleetFromRecord(displays)].sort((left, right) => left.id.localeCompare(right.id))
     .map(machine => ({ id: machine.id,
       metadata: machine.metadata !== null ? { displayName: machine.metadata?.displayName ?? null, host: machine.metadata?.host ?? null } : null,
+      managedMachineRef: machine.managedMachineRef,
       ...(machine.availability?.kind ? { availability: { kind: machine.availability.kind } } : {}) }));
 }
 
@@ -133,7 +134,7 @@ export function useReachMachines(options?: Readonly<{ machineIds?: readonly stri
   const displayNames = useMachineDisplayById(displays => !admitted ? [] : only
     ? [...resolveMachineDisplayNames(readNameSources(displays))].filter(([machineId]) => only.has(machineId)).flat()
     : readNameSources(displays).flatMap(source => [source.id, source.metadata?.displayName ?? null, source.metadata?.host ?? null,
-      source.metadata !== null, source.availability?.kind ?? null]));
+      source.metadata !== null, source.availability?.kind ?? null, source.managedMachineRef?.managedId ?? null]));
   const capabilityInputs = useMachineDisplayById(displays => admitted ? [...selectMachineFleetFromRecord(displays)]
     .filter(machine => !only || only.has(machine.id)).sort((left, right) => left.id.localeCompare(right.id))
     .flatMap(machine => [machine.id, machine.metadata?.platform ?? null, machine.metadata?.arch ?? null,
@@ -149,11 +150,12 @@ export function useReachMachines(options?: Readonly<{ machineIds?: readonly stri
       return named;
     }
     const sources = [];
-    for (let index = 0; index < displayNames.length; index += 5) {
-      const [id, displayName, host, hasMetadata, availability] = displayNames.slice(index, index + 5) as [
-        string, string | null, string | null, boolean, string | null,
+    for (let index = 0; index < displayNames.length; index += 6) {
+      const [id, displayName, host, hasMetadata, availability, managedId] = displayNames.slice(index, index + 6) as [
+        string, string | null, string | null, boolean, string | null, string | null,
       ];
       sources.push({ id, metadata: hasMetadata ? { displayName, host } : null,
+        managedMachineRef: managedId === null ? null : { managedId },
         ...(availability ? { availability: { kind: availability } } : {}) });
     }
     return [...resolveMachineDisplayNames(sources)].map(([machineId, name]) => ({ machineId, name }));
