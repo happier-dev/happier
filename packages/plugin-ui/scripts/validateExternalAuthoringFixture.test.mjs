@@ -49,7 +49,7 @@ test('the author components and root agree while excluding mounted host controls
     'HappierInputPickerPort', 'HappierInputPickerProvider', 'useHappierInputPickerPort',
     'HappierItemGroupSelectionContext', 'HappierLiveStreamAvccInput', 'HappierLiveStreamPlayerDiagnostic',
     'HappierLiveStreamPlayerDisplayState', 'HappierLiveStreamPlayerHost', 'HappierLiveStreamPlayerRendererEvent',
-    'HappierLiveStreamPlayerRenderEvent', 'HappierLiveStreamInputLayer', 'HappierLiveStreamPlayer',
+    'HappierLiveStreamPlayerRenderEvent', 'HappierLiveStreamPlayer',
     'HappierPageChrome', 'HappierPageChromeProvider', 'HappierColumnEdgeContext', 'HappierSpinnerHost', 'useHappierSpinnerKeyframes',
     'HappierWhereItsOnControl', 'HappierCapabilityAddBody',
   ]);
@@ -57,6 +57,7 @@ test('the author components and root agree while excluding mounted host controls
     assert.ok(!components.has(name), `components exposes mounted host control ${name}`);
     assert.ok(!root.has(name), `root exposes mounted host control ${name}`);
   }
+  assert.ok(components.has('HappierLiveStreamInputLayer'), 'components exposes the documented author input layer');
   // /presentation is host-only (docs/plugin-platform.md). The shared-family ownership audit
   // proves which neutral owners have public adapters; host exports are not an author palette.
   assert.deepEqual([...components].filter((name) => !root.has(name)), [], 'root must re-export the complete author layer');
@@ -490,15 +491,17 @@ test('current-source install delegates to the canonical CLI dev build and stages
     assert.equal(resolvedProtocol.startsWith(physicalSdkRoot), true);
     const uiInstallRoot = await realpath(join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-ui'));
     const requireFromInstalledUi = createRequire(join(uiInstallRoot, 'package.json'));
-    // Public root/components imports reach the inert declarative renderer.
-    // Node must resolve its direct runtime dependencies from UI's own closure,
-    // not a sibling SDK's private node_modules or the repository checkout.
+    // The inert declarative renderer consumes SDK UI. Resolve the SDK that the
+    // installed renderer actually reaches, then check its private dependencies there.
+    const sdkUiEntrypoint = await realpath(requireFromInstalledUi.resolve('@happier-dev/plugin-sdk/ui'));
+    assert.equal(sdkUiEntrypoint.startsWith(`${physicalSdkRoot}${sep}`), true);
+    const requireFromInstalledSdkUi = createRequire(sdkUiEntrypoint);
     for (const specifier of [
       '@happier-dev/protocol/plugins/contributions/ui/v2',
       '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1',
     ]) {
-      const resolved = await realpath(requireFromInstalledUi.resolve(specifier));
-      assert.equal(resolved.startsWith(`${uiInstallRoot}${sep}`), true);
+      const resolved = await realpath(requireFromInstalledSdkUi.resolve(specifier));
+      assert.equal(resolved.startsWith(`${physicalSdkRoot}${sep}`), true);
     }
   } finally {
     await rm(root, { recursive: true, force: true });
