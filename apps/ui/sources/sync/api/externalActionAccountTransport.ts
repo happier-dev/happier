@@ -370,7 +370,8 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         account.assertCurrent();
         params.signal?.throwIfAborted();
     }
-    const retainsSendReceipt = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
+    const retainsEffectReceipt = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1
+        || binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
     const path = `/v1/actions/${binding.actionId}`;
     const init = { method: 'POST', headers, body: JSON.stringify(request), signal: params.signal };
     let issued = false;
@@ -380,7 +381,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     };
     let response: Response;
     try {
-        if (retainsSendReceipt) return await account.requestEffectReceipt(path, init, options, readResponse);
+        if (retainsEffectReceipt) return await account.requestEffectReceipt(path, init, options, readResponse);
         response = await account.request(path, init, options);
     } catch (error) {
         // Losing the response after issuance cannot prove that the Action failed.
@@ -396,12 +397,12 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
 
     async function readResponse(response: Response): Promise<ActionExecuteResult> {
         let payload: unknown;
-        // Losing the Send response body is also an issued transport failure.
-        const sendBody = retainsSendReceipt ? await response.text() : undefined;
+        // The effect receipt is the complete body. Losing it after headers leaves issuance uncertain.
+        const receiptBody = retainsEffectReceipt ? await response.text() : undefined;
         try {
-            if (response.status === 502 || sendBody !== undefined) {
+            if (response.status === 502 || receiptBody !== undefined) {
                 // The Home deliberately sends no envelope after losing the daemon's acknowledgement.
-                const body = sendBody ?? await response.text();
+                const body = receiptBody ?? await response.text();
                 if (isExternalActionSubmittedUnknownHttpResponse(response.status, body)) return failure('outcome_unknown');
                 payload = JSON.parse(body);
             } else {

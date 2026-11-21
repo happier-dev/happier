@@ -1,8 +1,12 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -22,6 +26,49 @@ beforeEach(async () => {
 afterEach(async () => { account?.dispose(); account = null; await homes.reset(); });
 
 describe('original Account encrypted spawn setup transport', () => {
+    it.each(['delivered', 'deadline'] as const)('settles an issued spawn after HTTP 200 headers (%s)', async outcome => {
+        if (!account) throw new Error('Expected captured Account');
+        const machineId = 'machine-1';
+        const executionTarget = { serverId: binding.serverIdentityId, machineId };
+        const actionId = SESSION_SPAWN_NEW_ACTION_ID_V1;
+        const path = `/v1/actions/${actionId}`;
+        const requestId = 'muse-spawn-after-headers';
+        const allowBody = createDeferred<void>();
+        homes.answer(serverId, path, { status: 200, bodyAfter: allowBody.promise,
+            body: { v: 1, actionId, requestId, execution: { ok: true,
+                result: projectSessionSpawnNewActionResultV1({
+                    type: 'success', disposition: 'created', sessionId: 'created-session', executionTarget,
+                    organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+                }),
+            } },
+        });
+        vi.useFakeTimers();
+        const timeoutMs = readSpawnSessionRpcTimeoutMsFromEnv();
+        const pending = executeOriginalAccountActionTransport({ account, binding: { ...binding, actionId, requestId }, timeoutMs,
+            input: { executionTarget, creationKey: 'manual:muse-spawn-after-headers',
+                directory: { kind: 'path', path: '/project' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } } } });
+        const settlement = vi.fn();
+        void pending.then(settlement, settlement);
+        try {
+            await waitForHomeGovernance(() => expect(homes.requestsFor(path)).toHaveLength(1));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(settlement).not.toHaveBeenCalled();
+            if (outcome === 'delivered') {
+                allowBody.resolve();
+                await expect(pending).resolves.toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+            } else {
+                await vi.advanceTimersByTimeAsync(timeoutMs + 1);
+                expect(settlement).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'outcome_unknown' }));
+            }
+            expect(homes.requestsFor(path)).toHaveLength(1);
+        } finally {
+            allowBody.resolve();
+            await pending.catch(() => {});
+            vi.useRealTimers();
+        }
+    });
+
     it('binds private setup presence to the existing encrypted spawn admission projection', async () => {
         if (!account) throw new Error('Expected captured Account');
         const spawnBinding = { ...binding, actionId: 'session.spawn_new', requestId: 'spawn-setup' };
