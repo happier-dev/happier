@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import type { LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -44,6 +45,7 @@ export function ServiceOutputDisclosure(props: Readonly<{
     const binding = useCoreDisclosureToggleBinding();
     const [open, setOpen] = React.useState(false);
     const toggle = React.useCallback(() => setOpen((value) => !value), []);
+    useCurrentUiContextLocalCommands([{ key: 'output', title: props.output.label, invoke: toggle }], { contextKey: props.testID });
     return (
         <View testID={`${props.testID}-output`} style={[styles.root, props.align === 'center' ? styles.center : styles.start]}>
             <HappierDisclosureToggle

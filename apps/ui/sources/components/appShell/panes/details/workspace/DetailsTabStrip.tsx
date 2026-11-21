@@ -59,9 +59,9 @@ export function resolveDetailsTabGlyph(tab: DetailsTabState, resolveTabIconName?
 }
 
 /** A Details tab's close, as its strip offers it: an unsaved tab asks first. */
-export function useGuardedDetailsTabClose(closeDetailsTab: AppPaneScopeApi['closeDetailsTab'], scopeId?: string): (tabKey: string) => void {
+export function useGuardedDetailsTabClose(closeDetailsTab: AppPaneScopeApi['closeDetailsTab'], scopeId?: string): (tabKey: string) => true | Promise<boolean> {
     return React.useCallback((tabKey: string) => {
-        void runGuardedTabNavigation([scopeId ? detailsTabNavigationKey(scopeId, tabKey) : tabKey], () => closeDetailsTab(tabKey));
+        return runGuardedTabNavigation([scopeId ? detailsTabNavigationKey(scopeId, tabKey) : tabKey], () => closeDetailsTab(tabKey));
     }, [closeDetailsTab, scopeId]);
 }
 

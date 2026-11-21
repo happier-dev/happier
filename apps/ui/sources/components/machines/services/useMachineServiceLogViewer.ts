@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { z } from 'zod';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { useLogViewerV1, type LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
@@ -10,9 +11,12 @@ import { buildMachineServiceLogIndex, type MachineServiceLogProjection } from '.
 import { exportMachineServiceLogIndex } from './exportMachineServiceLogIndex';
 import { useMachineServiceFirstLogRead, type MachineServiceFirstLogRead } from './useMachineServiceFirstLogRead';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { t } from '@/text';
 
 type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'deployments.logs' }>;
 const RESOURCE_AUTHORITY_WITHDRAWN = Object.freeze({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const });
+const logContextInput = z.object({ before: z.number().int().nonnegative(), after: z.number().int().nonnegative() }).strict();
 
 /** Native acquisition stops at Action/Resource; Forge owns the sole log presentation model. */
 export function useMachineServiceLogViewer(input: LogViewerControlsV1 & Readonly<{
@@ -173,6 +177,15 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
         newLineCount: atLatest ? 0 : Math.max(0, (index?.lines.length ?? 0) - viewport.seenLines),
         jumpTarget: index?.lines.at(-1) ?? null, contextTarget, contextWindow,
         setAtLatest, jumpToLatest, showContext };
+    useCurrentUiContextLocalCommands(input.active && viewer?.available ? [
+        ...(followable ? [{ key: 'follow', title: t(follow ? 'machineServices.logs.stopFollowing' : 'machineServices.logs.follow'),
+            invoke: () => setFollow(value => !value) }] : []),
+        { key: 'latest', title: t('settingsSession.transcript.jumpToBottomButtonLabel'), invoke: jumpToLatest },
+        ...(contextTarget ? [{ key: 'context', title: t('common.details'), description: 'Input: {"before":1,"after":1}; nonnegative integer line counts around the selected Find result.', invoke: (value: unknown) => {
+            const parsed = logContextInput.safeParse(value);
+            return parsed.success ? showContext(parsed.data) : { ok: false as const, code: 'invalid_request' as const };
+        } }] : []),
+    ] : [], { contextKey: input.surfaceId });
     const copyLoaded = React.useCallback(() => {
         const current = latest.current;
         if (!current.active || !current.index || !current.accountLifetime?.isCurrent()) return Promise.resolve(false);

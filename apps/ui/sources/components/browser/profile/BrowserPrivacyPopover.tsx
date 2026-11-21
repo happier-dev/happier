@@ -7,6 +7,7 @@ import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { BrowserProfileStatus, type BrowserProfileStatusModel } from './BrowserProfileStatus';
 
@@ -29,6 +30,19 @@ export function BrowserPrivacyPopover(props: Readonly<{
 }>): React.ReactElement {
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<View>(null);
+    const commands = useCurrentUiContextLocalCommands([
+        { key: 'open', title: t('browserShell.privacy.title'), invoke: () => {
+            setOpen(true);
+            return { ok: true, result: {
+                profileId: props.model.profile?.profileId ?? null,
+                storageMode: props.model.profile?.storageMode ?? null,
+                storagePersistence: props.model.storagePartition?.persistence ?? null,
+                activePermissionGrantCount: props.model.activePermissionGrantCount ?? null,
+                permissionState: props.model.permissionState ?? null,
+            } };
+        } },
+        ...(open ? [{ key: 'close', title: t('common.close'), description: t('browserShell.privacy.title'), invoke: () => setOpen(false) }] : []),
+    ], { contextKey: props.model.profile?.profileId, unbound: 'local' });
 
     return (
         <>
@@ -46,7 +60,7 @@ export function BrowserPrivacyPopover(props: Readonly<{
                     expanded={open}
                     hasPopup="dialog"
                     interactiveTargetGapPx={4}
-                    onPress={() => setOpen((value) => !value)}
+                    onPress={() => { void commands.invoke(open ? 'close' : 'open'); }}
                 />
             </View>
             {open ? (
@@ -57,7 +71,7 @@ export function BrowserPrivacyPopover(props: Readonly<{
                     gap={6}
                     maxHeightCap={480}
                     maxWidthCap={360}
-                    onRequestClose={() => setOpen(false)}
+                    onRequestClose={() => { void commands.invoke('close'); }}
                     backdrop={{ enabled: false }}
                     // A phone gets the shared bottom sheet, titled by what it is about.
                     phonePresentation="sheet"

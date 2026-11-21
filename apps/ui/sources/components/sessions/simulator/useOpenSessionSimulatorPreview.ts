@@ -8,6 +8,7 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { fetchSimulatorPreviewSnapshotViaMachineRpc } from '@/sync/domains/devices/simulator/machineRpc';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { createSimulatorPreviewDetailsTab } from './simulatorPreviewDetailsTab';
 
@@ -54,5 +55,7 @@ export function useOpenSessionSimulatorPreview(
     const open = React.useCallback(() => {
         openDetailsTab?.(createSimulatorPreviewDetailsTab({ title: t('simulatorPreview.title') }), { intent: 'pinned' });
     }, [openDetailsTab]);
+    useCurrentUiContextLocalCommands(usable ? [{ key: 'simulator.open', title: t('simulatorPreview.title'), invoke: open }] : [],
+        { contextKey: JSON.stringify([input.sessionId, machineKey]) });
     return React.useMemo(() => usable ? { open } : null, [open, usable]);
 }

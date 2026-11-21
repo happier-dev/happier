@@ -23,6 +23,7 @@ import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifa
 import { sumDocPassageOpenCommentCountsV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
 import { buildDocPassageMargin, readDocPassageThreadQuote } from './docPassageMargin';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useDocPassageThreads } from './useDocPassageThreads';
 import { readDocAudience, type DocAudience } from './docAudience';
 import { rememberDocReturn } from './docThreadReturn';
@@ -77,6 +78,7 @@ export type DocCollaboration = Readonly<{
  * `null` for anything that is not a prose Doc read at a known version.
  */
 export function useDocCollaboration(artifact: DecryptedArtifact | null, canRestore: boolean): DocCollaboration | null {
+  const commandBridge = useCurrentUiContextCommandBridge();
   const scope = useActiveServerAccountScope();
   const openedProse = artifact !== null && typeof artifact.body === 'string';
   const knownDocIdentity = artifact !== null && artifact.body === undefined
@@ -255,9 +257,9 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null, canResto
   // A changed passage opens History on the version its comment was written against, compared with now.
   const openHistory = React.useCallback((compareFromBodyVersion: number) => {
     if (artifactId && client)
-      showArtifactHistorySheet({ artifactId, client, currentDoc: docRead.status === 'ready' ? docRead.value.artifact : undefined,
+      showArtifactHistorySheet({ artifactId, client, commandBridge, currentDoc: docRead.status === 'ready' ? docRead.value.artifact : undefined,
         name: proseName, canRestore, compareFromBodyVersion });
-  }, [artifactId, canRestore, client, docRead, proseName]);
+  }, [artifactId, canRestore, client, commandBridge, docRead, proseName]);
   const open = React.useCallback(
     (discussionId: string) => {
       if (!scope) return;

@@ -16,6 +16,7 @@ import { useWebScrollLockBypass } from '@/components/ui/scroll/useWebScrollLockB
 import { DIFF_SPLIT_MIN_WIDTH_PX, DiffPresentationWidthProvider, resolveDiffSplitFits } from '@/components/ui/code/diff/diffPresentationStyle';
 import { DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { motionTokens } from '@/components/ui/motion';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
@@ -278,6 +279,14 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     const foldedTabPin = foldedTab ? (foldedTab.isPreview ? 'pin' : foldedTab.isPinned ? 'unpin' : null) : null;
     const { resolveTabIconName } = props;
     const groupTabs = props.group.tabs;
+    const closePresentedTab = React.useCallback((tabKey: string) => closeLastTab && tabKey === foldedTabKey && groupTabs.length === 1
+        ? runGuardedTabNavigation([detailsTabNavigationKey(props.pane.scopeId, tabKey)], closeLastTab)
+        : closeTab(tabKey), [closeLastTab, closeTab, foldedTabKey, groupTabs.length, props.pane.scopeId]);
+    useCurrentUiContextLocalCommands(props.presented === false ? [] : groupTabs.map(tab => ({
+        key: `details.close:${tab.key}`,
+        title: `${t('session.detailsPanel.closeTabA11y')}: ${presentedTitles.get(tab.key) ?? tab.title}`,
+        invoke: () => closePresentedTab(tab.key),
+    })), { contextKey: JSON.stringify([props.pane.scopeId, props.group.id]) });
     const otherTabs = React.useMemo(() => foldedTabKey === null ? null : groupTabs.filter((tab) => tab.key !== foldedTabKey),
         [foldedTabKey, groupTabs]);
     const stripMenuRows = React.useMemo((): readonly LentHeaderMenuRow[] | null => {
@@ -292,11 +301,9 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 : null;
         const close: LentHeaderMenuRow = { id: 'details-tab-close', title: t('session.detailsPanel.closeTabA11y'),
             // Closing the last page ends the pane; with others held, the next one takes the screen.
-            testID: 'details-tab-menu-close', iconName: 'x', onSelect: closeLastTab && show.length === 0
-                ? () => { void runGuardedTabNavigation([detailsTabNavigationKey(props.pane.scopeId, foldedTabKey)], closeLastTab); }
-                : () => closeTab(foldedTabKey) };
+            testID: 'details-tab-menu-close', iconName: 'x', onSelect: () => { void closePresentedTab(foldedTabKey); } };
         return [...show, ...(pin ? [pin] : []), ...(paneLendsClose ? [] : [close])];
-    }, [closeLastTab, closeTab, foldedTabKey, foldedTabPin, otherTabs, presentedTitles, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
+    }, [closePresentedTab, foldedTabKey, foldedTabPin, otherTabs, presentedTitles, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
     // The rows travel with the lent controls, so whichever header draws those controls offers them too (a Details
     // header in its own `⋯`; a plugin or core page header in a `⋯` beside them).
     useStackHeaderActionsPublisher(headerActionsScopeKey, lendsControls ? renderLentControls : null, stripMenuRows);

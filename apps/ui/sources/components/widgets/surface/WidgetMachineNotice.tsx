@@ -12,6 +12,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import type { StorageSubscriptionScope } from '@/sync/domains/state/storageSubscriptions';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * Says once that the Machine a widget runs on cannot be reached — naming it and the way out — once the
@@ -50,6 +51,10 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     // A failure state that claims the sentence says it in its own place, and the body is then that one line.
     const content = React.useMemo(() => (sentence === null ? null : { sentence, ...(action !== undefined ? { action } : {}) }), [sentence, action]);
     const { notice: surfaceNotice, claimed } = useClaimableSurfaceNotice(content);
+    const recovery = action ?? { label: t('common.retry'), onPress: retry };
+    const commands = useCurrentUiContextLocalCommands(sentence !== null && !claimed && !suppressedAdd
+        ? [{ key: 'recovery', title: recovery.label, invoke: recovery.onPress }] : [],
+    { contextKey: props.testID, unbound: 'local' });
     return (
         <WidgetFrameBodyNoticeContext.Provider value={lend}>
             {sentence === null || claimed ? null : (
@@ -58,7 +63,7 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
                     kind="unavailable"
                     size="line"
                     title={sentence}
-                    action={suppressedAdd ? undefined : action ?? { label: t('common.retry'), onPress: retry }}
+                    action={suppressedAdd ? undefined : { ...recovery, onPress: () => { void commands.invoke('recovery'); } }}
                     accessibilitySemantics="status"
                 />
             )}

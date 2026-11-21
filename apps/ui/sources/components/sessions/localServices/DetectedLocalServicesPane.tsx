@@ -50,6 +50,8 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { ServerCredentialAccountScopeBindingProvider, useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -289,6 +291,22 @@ function ServicesScopeBar(props: Readonly<{
             />
         </View>
     );
+}
+
+function ServicesEmptyState(props: Readonly<{
+    scope: ServicesScope;
+    testID: string;
+    addService?: SurfaceFreshnessAction;
+    checkAgain?: SurfaceFreshnessAction;
+}>): React.ReactElement {
+    useCurrentUiContextLocalCommands(props.addService ? [{
+        key: 'add', title: props.addService.label, invoke: props.addService.onPress,
+    }] : [], { contextKey: props.testID });
+    return <SurfaceStateCard testID={`${props.testID}-empty`} kind="empty" iconName="globe" scene="nothingListening"
+        title={t('localServices.pane.emptyTitle')}
+        reason={props.scope === 'machine' ? t('localServices.pane.emptyReasonMachine') : t('localServices.pane.emptyReason')}
+        {...(props.addService ? { action: props.addService, ...(props.checkAgain ? { secondaryAction: props.checkAgain } : {}) }
+            : props.checkAgain ? { action: props.checkAgain } : {})} />;
 }
 
 /** The one scan cause the pane names: a failed scan outranks a partial one; the rest stay on the marker. */
@@ -551,6 +569,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     // The ports owner's answer for this checkout: its services take their ports when they start.
     const portsAssignedAtStart = launcherState.worktreePorts?.result.kind === 'ready';
+    const listPresented = detailRow === null;
     const renderRow = React.useCallback((row: ServiceRow) => (
         <TargetServiceRow
             key={row.id}
@@ -695,21 +714,18 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     // What the person can see or do: rows that are neither running nor startable are not shown.
     const hasRows = sections.length > 0;
+    useCurrentUiContextLocalCommands([
+        ...(offered && !detailRow && props.onChangeScope ? [
+            { key: 'scope:workspace', title: t('localServices.scope.workspace'), invoke: () => props.onChangeScope?.('workspace') },
+            { key: 'scope:machine', title: t('localServices.scope.machine'), invoke: () => props.onChangeScope?.('machine') },
+        ] : []),
+        ...(offered && expandedId ? [{ key: 'detail:back', title: t('localServices.pane.backToServices'), invoke: closeDetail }] : []),
+    ], { contextKey: testID });
     const checkAgain = onRefresh ? { label: t('localServices.pane.checkAgain'), onPress: onRefresh } : undefined;
     // One empty state for "nothing to show" however it is reached. Adding a service leads; re-reading is the quiet second move.
     const addService = props.onAddService ? { label: t('localServices.pane.addService'), onPress: props.onAddService } : undefined;
     const emptyCard = (
-        <SurfaceStateCard
-            testID={`${testID}-empty`}
-            kind="empty"
-            iconName="globe"
-            scene="nothingListening"
-            title={t('localServices.pane.emptyTitle')}
-            reason={scope === 'machine' ? t('localServices.pane.emptyReasonMachine') : t('localServices.pane.emptyReason')}
-            {...(addService
-                ? { action: addService, ...(checkAgain ? { secondaryAction: checkAgain } : {}) }
-                : checkAgain ? { action: checkAgain } : {})}
-        />
+        <ServicesEmptyState scope={scope} testID={testID} addService={addService} checkAgain={checkAgain} />
     );
 
     const scopeBar = props.onChangeScope ? (
@@ -806,6 +822,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     const effectReview = props.effectReview ? <View style={styles.effectReview}>{props.effectReview}</View> : null;
     return (
         <View style={styles.root}>
+            <PluginSurfaceFocusEligibilityProvider active={listPresented} currentUiContextActive={listPresented}>
             <View
                 testID={`${testID}-list`}
                 accessibilityElementsHidden={detailRow !== null}
@@ -881,6 +898,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                     </ConstrainedScreenContent>
                 </ScrollView>
             </View>
+            </PluginSurfaceFocusEligibilityProvider>
             {detailRow ? (
                 <View testID={`${testID}-detail`} style={styles.root}>
                     {renderedDetailRow}

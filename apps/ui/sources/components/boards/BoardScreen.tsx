@@ -53,7 +53,7 @@ import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 import { readBoardCardDetailFocus, resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
-import { BoardReadState, useBoardIndexSaidByColumn } from './BoardReadState';
+import { BoardReadState, useBoardIndexSaidByColumn, useBoardReadRetryCommand } from './BoardReadState';
 import { BoardUndeterminedLine } from './BoardUndeterminedLine';
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE } from './boardsRoutes';
@@ -121,6 +121,7 @@ const MissingBoard = React.memo(function MissingBoard(props: Readonly<{ boardId:
     const failure = resolveBoardSaveFailure(useWorkBoardSaveState(), props.boardId);
     const summary = useWorkBoardSummaries().find(board => board.id === props.boardId);
     const read = useWorkBoardReadState(props.boardId);
+    const retryRead = useBoardReadRetryCommand(!failure && summary ? read.retry : undefined, props.boardId, summary?.name);
     if (failure) {
         return (
             <EmptyState
@@ -136,7 +137,7 @@ const MissingBoard = React.memo(function MissingBoard(props: Readonly<{ boardId:
     if (summary) {
         return <SurfaceStateCard testID="board-unreadable" kind="error"
             title={t('surfaceState.couldNotOpen', { name: summary.name })}
-            action={{ label: t('surfaceState.tryAgain'), onPress: read.retry }} accessibilitySemantics="alert" />;
+            action={{ label: t('surfaceState.tryAgain'), onPress: retryRead }} accessibilitySemantics="alert" />;
     }
     return (
         <EmptyState

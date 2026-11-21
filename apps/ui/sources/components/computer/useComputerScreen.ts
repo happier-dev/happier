@@ -19,6 +19,7 @@ import { useComputerDriverRepair } from './useComputerDriverRepair';
 import { useEscapeTakesControl } from './useEscapeTakesControl';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * The controlled Computer body model, currently consumed by the Details pane. A shared
@@ -47,6 +48,7 @@ export function useComputerScreen(props: Readonly<{
     sourceId: string | null;
 }> {
     const { scope, accountLifetime } = props;
+    const commandBridge = useCurrentUiContextCommandBridge();
     const serverId = scope.serverId ?? accountLifetime?.scope.serverId ?? null;
     const enabled = props.enabled ?? true;
     const writeClipboard = useClipboardWrite(accountLifetime?.scope ?? serverId, { enabled });
@@ -101,7 +103,7 @@ export function useComputerScreen(props: Readonly<{
     const { applySelection } = control;
     const resolveChooseWindow = React.useCallback((): ComputerTargetPickerRequest | null => {
         const params = {
-            serverId, accountLifetime, machineId: scope.machineId, machineName,
+            serverId, accountLifetime, commandBridge, machineId: scope.machineId, machineName,
             currentTargetKey: selectedTarget ? computerTargetKey(selectedTarget) : null,
             access: control.selection?.access ?? control.selection?.approvalDisplay.access,
             onSelected: applySelection,
@@ -113,7 +115,7 @@ export function useComputerScreen(props: Readonly<{
         if (!accountLifetime?.isCurrent() || !selectActiveServerAccountScopeForServer(accountLifetime.scope, serverId)) return null;
         return { ...params, scope, purpose: null, machineName: machineName ?? t('computerUse.presentation.tabFallback'),
             agentName: t('browserPresence.agentFallbackName'), agentless: true, currentTargetKey: params.currentTargetKey };
-    }, [accountLifetime, applySelection, control.selection?.access, control.selection?.approvalDisplay.access, machineName, props.execute, scope, selectedTarget, serverId]);
+    }, [accountLifetime, applySelection, commandBridge, control.selection?.access, control.selection?.approvalDisplay.access, machineName, props.execute, scope, selectedTarget, serverId]);
     const chooseWindow = React.useCallback(() => {
         const request = resolveChooseWindow();
         if (request) showComputerTargetPicker(request);

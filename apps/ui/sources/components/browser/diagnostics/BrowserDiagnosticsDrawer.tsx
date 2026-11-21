@@ -23,6 +23,7 @@ import { selectBrowserDiagnosticsForView, useBrowserDiagnosticsDaemonSnapshot } 
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import type { StoreApi } from 'zustand/vanilla';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { BROWSER_DRAWER_MAX_HEIGHT_FRACTION } from '../browserChromeDensity';
 import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
@@ -436,9 +437,15 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
         ? props.interaction
         : undefined;
 
-    React.useImperativeHandle(props.handleRef, () => ({ open: () => setDrawerState('expanded') }), []);
-
     const bodyVisible = drawerState !== 'closed';
+    const commands = useCurrentUiContextLocalCommands([
+        { key: 'open', title: t('browserShell.devtools.title'), invoke: () => setDrawerState('expanded') },
+        ...(bodyVisible ? [
+            { key: 'close', title: t('browserShell.devtools.close'), invoke: () => setDrawerState('closed') },
+            ...sections.map(section => ({ key: `section:${section}`, title: sectionLabel(section), invoke: () => setActiveSection(section) })),
+        ] : []),
+    ], { contextKey: persistenceKey, unbound: 'local' });
+    React.useImperativeHandle(props.handleRef, () => ({ open: () => { void commands.invoke('open'); } }), [commands]);
     const tabs = React.useMemo<readonly SegmentedTab<SectionKey>[]>(
         () => sections.map((section) => ({ id: section, label: sectionLabel(section) })),
         [sections],
@@ -479,7 +486,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                                 testIDPrefix={`${testID}-tab`}
                                 tabs={tabs}
                                 activeTabId={activeSection}
-                                onSelectTab={setActiveSection}
+                                onSelectTab={section => { void commands.invoke(`section:${section}`); }}
                                 compact
                                 segmentSizing="content"
                                 accessibilityLabel={t('browserShell.devtools.title')}
@@ -519,7 +526,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                         size={30}
                         interactiveTargetGapPx={8}
                         iconSize={16}
-                        onPress={() => setDrawerState('closed')}
+                        onPress={() => { void commands.invoke('close'); }}
                     />
                 </View>
             </View>

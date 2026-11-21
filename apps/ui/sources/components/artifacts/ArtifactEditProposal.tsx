@@ -46,6 +46,7 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import { readViewportClass } from '@/utils/platform/useViewportClass';
 import { readArtifactActionFailure, type ArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { docProposalChangesOutsideSelection, readDocProposalSelection } from './docProposalSelection';
 import {
   admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation, settleDocEditUndo,
@@ -201,6 +202,7 @@ export function ArtifactEditProposal(props: ArtifactEditProposalProps): React.Re
 }
 
 function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.ReactElement {
+  const commandBridge = useCurrentUiContextCommandBridge();
   const { theme } = useUnistyles();
   const router = useRouter();
   const styles = stylesheet;
@@ -352,10 +354,10 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
   // History is the one place to pick a version. Compare opens it on the version the suggestion was
   // reviewed against, beside the current text; a refused Undo opens it as it is.
   const openHistory = React.useCallback((compareFromBodyVersion?: number) => showArtifactHistorySheet({
-    artifactId, client, currentDoc: admitted ?? undefined,
+    artifactId, client, currentDoc: admitted ?? undefined, commandBridge,
     name: docTitle || undefined, canRestore,
     ...(compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion }),
-  }), [admitted, artifactId, canRestore, client, docTitle]);
+  }), [admitted, artifactId, canRestore, client, commandBridge, docTitle]);
   const compare = React.useCallback(() => openHistory(base.bodyVersion), [base.bodyVersion, openHistory]);
   const proposer = props.proposer ?? null;
   const proposedByViewer = proposer !== null && 'accountId' in proposer.mention && proposer.mention.accountId === props.viewerAccountId;

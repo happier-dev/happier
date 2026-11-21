@@ -28,6 +28,7 @@ import type { LocalServicePreviewState } from '@/sync/domains/local/services/pre
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { resolveLocalServiceOutput } from '@/sync/domains/local/services/serviceFailure';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { TranslationKey } from '@/text/i18n';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
@@ -754,6 +755,11 @@ export function ServiceRowView(props: Readonly<{
     const expandable = canOpen || elsewhere || Boolean(addressValue) || hasPublicLink || hasPlacement;
     const expanded = expandable && props.expanded === true;
     const onExpandedChange = props.onExpandedChange;
+    useCurrentUiContextLocalCommands(expandable && (props.onOpenDetail || onExpandedChange) ? [{
+        key: 'detail', title: row.title,
+        ...(row.distinguishingWorkspaceLabel ? { description: row.distinguishingWorkspaceLabel } : {}),
+        invoke: () => props.onOpenDetail ? props.onOpenDetail() : onExpandedChange?.(!expanded),
+    }] : [], { contextKey: row.id });
 
     const offline = props.offline === true;
     const machineName = props.machineName ?? null;

@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CollectionList, CollectionNavigationRow, CollectionRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE, createBoardRoute, readOpenBoardId } from './boardsRoutes';
@@ -50,7 +51,9 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
     const router = useRouter();
     const { board, summary } = props;
     const onPress = React.useCallback(() => router.push(createBoardRoute(summary.id) as never), [summary.id, router]);
-    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={onPress} />;
+    const commands = useCurrentUiContextLocalCommands([{ key: 'open', title: summary.name, invoke: onPress }], { contextKey: summary.id, unbound: 'local' });
+    const open = React.useCallback(() => { void commands.invoke('open'); }, [commands.invoke]);
+    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={open} />;
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${summary.id}`}
@@ -59,7 +62,7 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
             // Unread, the row says what its saved layout holds; read and empty, that it is hand-picked and empty.
             subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : describeBoardSummaryCounts(summary.counts, summary.source.sections)}
             selected={props.selected}
-            onPress={onPress}
+            onPress={open}
         />
     );
 });

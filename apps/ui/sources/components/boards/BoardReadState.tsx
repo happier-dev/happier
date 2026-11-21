@@ -3,7 +3,16 @@ import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShel
 import { SurfaceStateCard, type SurfaceStateSize } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useWorkBoardReadState, useWorkBoardSummaries } from './model/useWorkBoards';
+
+/** Publish only the read owner's visible retry; both renderers use its same recovery. */
+export function useBoardReadRetryCommand(retry: (() => void) | undefined, boardId?: string, name?: string) {
+    const commands = useCurrentUiContextLocalCommands(retry ? [{
+        key: 'retry', title: t('surfaceState.tryAgain'), description: name, invoke: retry,
+    }] : [], { contextKey: boardId, unbound: 'local' });
+    return React.useCallback(() => { void commands.invoke('retry'); }, [commands.invoke]);
+}
 
 /**
  * Whether a visible column is saying the index's read state, so a page must not say it too. Every page
@@ -28,14 +37,16 @@ export function BoardReadState(props: Readonly<{ size?: SurfaceStateSize; retain
     const index = useWorkBoardReadState();
     const state = useWorkBoardReadState(props.boardId);
     const boardName = useWorkBoardSummaries().find(board => board.id === props.boardId)?.name;
-    if (state.status === 'ready') return null;
-    if (saidByColumn && props.place !== 'column') return null;
-    if (props.retained && state.status === 'loading') return null;
+    const hidden = state.status === 'ready' || (saidByColumn && props.place !== 'column')
+        || (props.retained && state.status === 'loading');
+    const retry = useBoardReadRetryCommand(!hidden && state.status === 'error' ? state.retry : undefined,
+        props.boardId, boardName ?? t('boards.title'));
+    if (hidden) return null;
     const name = index.status === 'ready' && boardName ? boardName : t('boards.title');
     // Shown content is open already: a failed re-read says the content is last-known, never "couldn't open".
     const title = state.status === 'loading' ? t('surfaceState.opening', { name })
         : props.retained ? t('surfaceState.couldNotUpdate') : t('surfaceState.couldNotOpen', { name });
-    const action = state.status === 'error' ? { label: t('surfaceState.tryAgain'), onPress: state.retry } : undefined;
+    const action = state.status === 'error' ? { label: t('surfaceState.tryAgain'), onPress: retry } : undefined;
     if (props.retained) return <SurfaceFreshnessLine testID="boards-read-stale" reason={title}
         busy={state.status === 'loading'} tone={state.status === 'error' ? 'warning' : 'neutral'} action={action} />;
     return <SurfaceStateCard testID="boards-read-state" kind={state.status === 'loading' ? 'loading' : 'error'}

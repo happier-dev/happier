@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import type { UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 
@@ -110,6 +111,12 @@ export type InstalledWidgetSurfaceProps = Readonly<{
 /** The host's About this widget, for a widget that can only explain itself; null where the host has no About. */
 export const WidgetAboutContext = React.createContext<(() => void) | null>(null);
 
+function useWidgetManagementCommand(onManagePlugin: (() => void) | undefined, testID: string) {
+    useCurrentUiContextLocalCommands(onManagePlugin ? [{
+        key: 'manage-plugin', title: t('sessionBoard.item.actions.managePlugin'), invoke: onManagePlugin,
+    }] : [], { contextKey: testID, unbound: 'local' });
+}
+
 /** A saved definition the viewer cannot read: a durable access fact, not a wait. */
 const DEFINITION_FACT_CODES: ReadonlySet<string> = new Set(['widget_definition_unavailable', 'widget_definition_account_mismatch']);
 
@@ -132,6 +139,7 @@ function UnavailableWidgetFact(props: Readonly<{
         ? { label: t('widgetDefinition.aboutMenu'), onPress: about, testID: `${props.testID}-about` } : undefined;
     const primary = props.action ?? aboutAction;
     const secondary = props.action ? aboutAction : undefined;
+    useWidgetManagementCommand(props.action?.onPress, props.testID);
     // A missing plugin is a fact about the card, not an event in it: one quiet line under the card's own
     // title, its next step on the line. The rest of the surface works, so it asks nothing else of the person.
     if (props.kind === 'plugin') {
@@ -201,6 +209,9 @@ export function UnavailableInstalledWidget(props: Readonly<{
         reasonKind: props.reasonKind,
         reasonCode: props.unresolved.reasonCode,
     });
+    const definitionFact = props.reasonKind === 'widget' && props.unresolved.state === 'unavailable'
+        && DEFINITION_FACT_CODES.has(props.unresolved.reasonCode ?? '');
+    useWidgetManagementCommand(props.unresolved.state === 'unavailable' && !definitionFact ? props.onManagePlugin : undefined, props.testID);
     // Only `loading` and `unavailable` reach this component, and both produce a
     // replacement card. The fallback keeps a truthful state on screen rather
     // than an empty frame if that ever stops being true.
@@ -213,8 +224,7 @@ export function UnavailableInstalledWidget(props: Readonly<{
                 accessibilityLabel={presentation.card?.title ?? t('common.loading')} />
         );
     }
-    if (props.reasonKind === 'widget' && props.unresolved.state === 'unavailable'
-        && DEFINITION_FACT_CODES.has(props.unresolved.reasonCode ?? '')) {
+    if (definitionFact) {
         return <UnavailableDefinitionFact testID={props.testID} title={t('projects.widgets.definitionUnavailable')}
             diagnosticCode={presentation.diagnosticCode} owner={props.definitionOwner} />;
     }
@@ -462,6 +472,8 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
 }>): React.ReactElement {
     const { resolution, onRepairInputs } = props;
     const stateSize = useSurfaceStateCardSize();
+    useWidgetManagementCommand(resolution.status !== 'loading' && resolution.repair?.kind === 'type_unavailable' && resolution.repair.field
+        ? props.onManagePlugin : undefined, props.testID);
     if (resolution.status === 'loading') {
         return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
     }

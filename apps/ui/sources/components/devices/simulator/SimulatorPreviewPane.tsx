@@ -9,6 +9,7 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { SimulatorDevicePicker } from './SimulatorDevicePicker';
 import { SimulatorInputLayer } from './SimulatorInputLayer';
@@ -33,6 +34,12 @@ export function SimulatorPreviewPane(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     const { viewModel, actions } = props;
+    useCurrentUiContextLocalCommands(actions.selectDevice ? viewModel.devices
+        .filter(device => device.state !== 'stopped')
+        .map(device => ({ key: `simulator.select:${device.simulatorId}`,
+            title: `${t('simulatorPreview.viewer.switchDevice')}: ${device.label}`,
+            invoke: () => actions.selectDevice?.(device.simulatorId),
+        })) : [], { contextKey: props.sessionId ?? props.testID });
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const [paneWidth, setPaneWidth] = React.useState(0);
     const [toolsOpen, setToolsOpen] = React.useState(false);

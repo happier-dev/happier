@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Animated, Platform, ScrollView, useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -253,11 +254,12 @@ export type SessionBoardSurfaceProps = Readonly<{
 const DEFAULT_HEIGHT_BOUNDS = Object.freeze({ min: 96, max: 720 });
 const NO_ADD_CANDIDATES: readonly WidgetCandidate[] = Object.freeze([]);
 
-function boardStateCard(
-    snapshot: SessionBoardSnapshot,
-    testID: string,
-    onPrepareEncryption?: () => void,
-): React.ReactElement | null {
+function BoardStateCard({ snapshot, testID, onPrepareEncryption }: Readonly<{
+    snapshot: SessionBoardSnapshot; testID: string; onPrepareEncryption?: () => void;
+}>): React.ReactElement | null {
+    const commands = useCurrentUiContextLocalCommands(snapshot.layoutState.kind === 'locked' && onPrepareEncryption
+        ? [{ key: 'encryption', title: t('sessionBoard.item.actions.prepareEncryption'), invoke: onPrepareEncryption }] : [],
+    { contextKey: testID, unbound: 'local' });
     switch (snapshot.layoutState.kind) {
         case 'loading':
             return (
@@ -281,7 +283,7 @@ function boardStateCard(
                         ? {
                             action: {
                                 label: t('sessionBoard.item.actions.prepareEncryption'),
-                                onPress: onPrepareEncryption,
+                                onPress: () => { void commands.invoke('encryption'); },
                             },
                         }
                         : {})}
@@ -823,13 +825,10 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
     }
 
     const activeView = controller.activeView;
-    const layoutCard = boardStateCard(
-        snapshot,
-        testID,
-        mutationControls && controller.supports('item.prepareEncryption')
+    const layoutCard = snapshot.layoutState.kind === 'ready' ? null : <BoardStateCard snapshot={snapshot} testID={testID}
+        onPrepareEncryption={mutationControls && controller.supports('item.prepareEncryption')
             ? () => { void controller.run({ kind: 'item.prepareEncryption' }); }
-            : undefined,
-    );
+            : undefined} />;
 
     // Offline and stale are explained, never faked: the last content the person
     // loaded stays on screen and the freshness line says why it may be behind.

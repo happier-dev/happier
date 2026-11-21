@@ -15,6 +15,7 @@ import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/W
 import { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { focusNativeAccessibilityTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import {
@@ -650,11 +651,18 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                         : kind === 'openHere' ? props.onOpenHere !== undefined
                             : false;
             return available ? [{
+                key: kind,
                 label: actionLabel(kind),
                 onPress: () => runAction(kind),
             }] : [];
         })
         : [];
+
+    useCurrentUiContextLocalCommands(stateActions.filter(action => action.key !== 'remove').map((action) => ({
+        key: action.key,
+        title: action.label,
+        invoke: action.onPress,
+    })), { contextKey: testID, unbound: 'local' });
 
     // A reply that runs elsewhere keeps no slot for the body it does not draw: the declared height
     // belongs to the live copy, and holding it here left a large empty box around one line.

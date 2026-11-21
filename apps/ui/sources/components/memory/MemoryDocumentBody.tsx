@@ -45,6 +45,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Text } from '@/components/ui/text/Text';
 import { showArtifactHistorySheet } from '@/components/artifacts/ArtifactHistorySheet';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -225,6 +226,7 @@ export type MemoryDocumentBodyProps = Readonly<{
 export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   props: MemoryDocumentBodyProps,
 ) {
+  const commandBridge = useCurrentUiContextCommandBridge();
   const styles = stylesheet;
   const { theme } = useUnistyles();
   const { source, serverId, testID, onComposingChange, onCreatedMemory } = props;
@@ -744,6 +746,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
       <MemoryDocumentNotices testID={testID} offline={connection.offline} since={connection.since}
         source={source} notice={notice}
         onReviewConflict={conflictTarget ? () => showArtifactHistorySheet({
+          commandBridge,
           artifactId: conflictTarget.ref.artifactId,
           name: view?.title,
           canRestore: false,

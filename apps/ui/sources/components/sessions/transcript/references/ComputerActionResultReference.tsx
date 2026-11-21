@@ -21,6 +21,7 @@ import { t } from '@/text';
 
 import { useBrowserSessionAgentIdentity } from '@/components/browser/copresence/BrowserShellPresence';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { resolveTranscriptComputerActionReference, type TranscriptComputerActionReference, type TranscriptComputerVerb } from './transcriptComputerActionReference';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -199,6 +200,7 @@ function MountedComputerActionReference(props: Readonly<{
     const { theme } = useUnistyles();
     const { reference, sessionId } = props;
     const accountLifetime = useSessionViewerSourceAccountLifetime();
+    const commandBridge = useCurrentUiContextCommandBridge();
     const serverId = props.serverId ?? accountLifetime?.scope.serverId ?? null;
     const identity = useBrowserSessionAgentIdentity({ sessionId, serverId });
     const [shared, setShared] = React.useState<ComputerApprovalDisplayV1 | null>(null);
@@ -217,11 +219,12 @@ function MountedComputerActionReference(props: Readonly<{
             sessionId,
             serverId,
             accountLifetime,
+            commandBridge,
             machineId: reference.machineId,
             machineName,
             onSelected: (selection) => setShared(selection.approvalDisplay),
         });
-    }, [accountLifetime, machineName, serverId, reference.machineId, sessionId]);
+    }, [accountLifetime, commandBridge, machineName, serverId, reference.machineId, sessionId]);
 
     if (reference.kind === 'action') {
         return <ComputerActionLine reference={reference} sessionId={sessionId} serverId={props.serverId} mediaPreviewEnabled={props.mediaPreviewEnabled} testID={testID} />;

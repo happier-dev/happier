@@ -22,6 +22,14 @@ import { act } from 'react-test-renderer';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { router } from 'expo-router';
+import { t } from '@/text';
 
 // Native and navigation adapters are external boundaries; the Board store and collection stay real.
 vi.mock('react-native', async () => {
@@ -63,6 +71,18 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
     useDeviceType: () => deviceState.type,
 }));
+
+function CommandPublication() {
+    const commands = useCurrentUiContextComposedCommands();
+    const enrichment = React.useMemo(() => ({ commands }), [commands]);
+    usePublishCurrentUiContext(enrichment);
+    return null;
+}
+function CommandPage({ children }: React.PropsWithChildren) {
+    return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <CommandPublication />{children}
+    </CurrentUiContextCommandsProvider>;
+}
 
 describe('BoardsColumn collection search', () => {
     beforeEach(async () => {
@@ -115,6 +135,47 @@ describe('BoardsColumn collection search', () => {
         invalidateAccountEncryptionModeCache();
         getStorage().setState(previousStorageState);
         vi.restoreAllMocks();
+    });
+
+    it('lets the answering agent open a named Board', async () => {
+        vi.useRealTimers();
+        await home!.restoreActiveConnection();
+        const screen = await renderMountedCurrentUiContext(<CommandPage><BoardsColumn /></CommandPage>);
+        await vi.waitFor(() => expect(screen.findByTestId('boards-column:board:beta')).not.toBeNull());
+        const executor = createDefaultActionExecutor();
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        expect(read.ok).toBe(true);
+        if (!read.ok) throw new Error('Expected mounted Board commands');
+        const snapshot = CurrentUiContextSnapshotV1Schema.parse(read.result);
+        const open = snapshot.commands.find(command => command.title === 'Beta work');
+        expect(open).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: open!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        expect(router.push).toHaveBeenCalledWith('/boards/beta');
+        await screen.unmount();
+    });
+
+    it('lets the answering agent retry the visible failed Board projection', async () => {
+        vi.useRealTimers();
+        await home!.restoreActiveConnection();
+        failIndex = true;
+        const failed = await renderMountedCurrentUiContext(<CommandPage><BoardsColumn /></CommandPage>);
+        await vi.waitFor(() => expect(failed.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'boards-read-state')?.props.kind).toBe('error'));
+        const executor = createDefaultActionExecutor();
+        const refusal = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!refusal.ok) throw new Error('Expected mounted recovery commands');
+        const retry = CurrentUiContextSnapshotV1Schema.parse(refusal.result).commands.find(command => command.title === t('surfaceState.tryAgain'));
+        expect(retry).toBeDefined();
+        failIndex = false;
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: retry!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        await vi.waitFor(() => expect(failed.findByTestId('boards-read-state')).toBeNull());
+        expect(failed.findByTestId('boards-column:board:beta')).not.toBeNull();
+        await failed.unmount();
     });
 
     // More opens this page with no tab bar and no native header, so its head is the only way out.

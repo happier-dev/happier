@@ -19,6 +19,17 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionCompanionPresentationBridge, type SessionPresentationIntentApplier } from '../companion/presentation/SessionCompanionPresentationBridge';
 import { createSessionCompanionPanePresentation } from '../companion/presentation/sessionCompanionPanePresentation';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { t } from '@/text';
+import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { WidgetMachineNoticeBoundary } from '@/components/widgets/surface/WidgetMachineNotice';
+import { WidgetFrameBodyNoticeContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 installDisconnectedServerSocketBoundary();
 
@@ -164,6 +175,45 @@ function ControllerProbe(): React.ReactElement | null {
     observedBoard = useMountedSessionBoardController({ serverId: harness.homeId, sessionId: 'session-1' });
     observedController = observedBoard?.controller ?? null;
     return null;
+}
+
+function RecoveryCommandPublication() {
+    const commands = useCurrentUiContextComposedCommands();
+    const enrichment = React.useMemo(() => ({ commands }), [commands]);
+    usePublishCurrentUiContext(enrichment);
+    return null;
+}
+type RecoveryConsumer = 'fallback' | 'machineNotice' | 'claimedNotice';
+
+function LentPluginNotice(props: Readonly<{ pluginId: string; claimed: boolean }>) {
+    const lend = React.useContext(WidgetFrameBodyNoticeContext);
+    // The notice is the widget body's public producer input, as in WidgetMachineNotice.test.
+    const notice = React.useCallback(() => ({ sentence: 'This plugin is not running on a machine.', managePluginId: props.pluginId }), [props.pluginId]);
+    React.useEffect(() => { lend?.(notice); return () => lend?.(null); }, [lend, notice]);
+    return props.claimed ? <PluginSurfaceFallback testID="selected-recovery" reasonCode="plugin_resource_unavailable" /> : null;
+}
+
+function SelectedPluginRecovery(props: Readonly<{ consumer: RecoveryConsumer }>) {
+    const mounted = useMountedSessionBoardController({ serverId: harness.homeId, sessionId: 'session-1' });
+    const acquireContent = mounted?.acquireContent;
+    React.useEffect(() => acquireContent?.(), [acquireContent]);
+    const item = mounted?.binding.status === 'ready' ? mounted.binding.snapshot.itemsById.get('item-1')?.state : undefined;
+    if (item?.kind !== 'ready' || item.item.source.kind !== 'widget' || item.item.source.instance.definition.kind !== 'installed') return null;
+    const pluginId = item.item.source.instance.definition.surface.pluginId;
+    if (props.consumer === 'fallback') return <PluginSurfaceFallback testID="selected-recovery" reasonCode="plugin_disabled"
+        action={{ label: t('sessionBoard.item.actions.managePlugin'), onPress: () => { void mounted?.controller.run({ kind: 'item.managePlugin', itemId: 'item-1' }); } }} />;
+    return <WidgetMachineNoticeBoundary testID="selected-recovery">
+        <LentPluginNotice pluginId={pluginId} claimed={props.consumer === 'claimedNotice'} />
+    </WidgetMachineNoticeBoundary>;
+}
+
+function RecoveryCommandPage(props: Readonly<{ consumer?: RecoveryConsumer }> = {}) {
+    return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <RecoveryCommandPublication /><AuthorizedBoard><ControllerProbe />
+            {props.consumer ? <SelectedPluginRecovery consumer={props.consumer} />
+                : <SessionBoardPane sessionId="session-1" serverId={harness.homeId} host="details" density="full" layout="grid" />}
+        </AuthorizedBoard>
+    </CurrentUiContextCommandsProvider>;
 }
 
 function AddressedControllerProbe(props: Readonly<{
@@ -338,6 +388,30 @@ describe('mounted Board recovery navigation', () => {
         expect(harness.alert).toHaveBeenCalledWith('Error', 'An unknown error occurred');
     });
 
+    it('lets the answering agent open Account security from the locked Board without changing encryption', async () => {
+        harness.layoutLocked = true;
+        storage.setState({ sessions: { ...storage.getState().sessions, 'session-1': createSessionFixture({
+            serverId: harness.homeId, metadata: null, encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_access_pending',
+        }) } });
+        const screen = await renderMountedCurrentUiContext(<RecoveryCommandPage />);
+        await vi.waitFor(() => expect(screen.findByTestId('session-board-pane-surface-state-action')).not.toBeNull());
+        const executor = createDefaultActionExecutor();
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        expect(read.ok).toBe(true);
+        if (!read.ok) throw new Error('Expected locked Board recovery');
+        const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === t('sessionBoard.item.actions.prepareEncryption'));
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        await vi.waitFor(() => expect(harness.replace).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/settings/account/security', params: { serverId: harness.homeId },
+        })));
+        expect(storage.getState().sessions['session-1']?.encryptionMode).toBe('e2ee');
+        await screen.unmount();
+    });
+
     it('establishes the exact Session Home before opening an installed plugin recovery route', async () => {
         await mountBoard();
         await flushHookEffects({ cycles: 30 });
@@ -353,6 +427,47 @@ describe('mounted Board recovery navigation', () => {
         expect(harness.push).toHaveBeenCalledWith(expect.objectContaining({
             params: { pluginId: 'acme.board' },
         }));
+    });
+
+    it('lets the answering agent open the unavailable Board widget plugin manager', async () => {
+        harness.removalMode = 'populated';
+        const screen = await renderMountedCurrentUiContext(<RecoveryCommandPage />);
+        await vi.waitFor(() => expect(screen.findByTestId('session-board-pane-surface-views-view-research')).not.toBeNull());
+        await screen.pressByTestIdAsync('session-board-pane-surface-views-view-research');
+        await vi.waitFor(() => expect(screen.findByTestId('session-board-item-item-1-manage-plugin')).not.toBeNull());
+        const executor = createDefaultActionExecutor();
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        expect(read.ok).toBe(true);
+        if (!read.ok) throw new Error('Expected mounted Session Board recovery');
+        const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === t('sessionBoard.item.actions.managePlugin'));
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        await vi.waitFor(() => expect(harness.push).toHaveBeenCalledWith(expect.objectContaining({ params: { pluginId: 'acme.board' } })));
+        await screen.unmount();
+    });
+
+    it.each(['fallback', 'machineNotice', 'claimedNotice'] as const)('lets the answering agent open the widget plugin manager through %s', async consumer => {
+        const screen = await renderMountedCurrentUiContext(<RecoveryCommandPage consumer={consumer} />);
+        const cardId = consumer === 'machineNotice' ? 'selected-recovery-machine-notice' : 'selected-recovery';
+        await vi.waitFor(() => expect(screen.findByTestId(`${cardId}-action`)).not.toBeNull());
+        const card = screen.findAllByType(SurfaceStateCard).find(candidate => candidate.props.testID === cardId);
+        const title = card?.props.action?.label;
+        expect(title).toBeTruthy();
+        const executor = createDefaultActionExecutor();
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        expect(read.ok).toBe(true);
+        if (!read.ok) throw new Error('Expected selected widget recovery');
+        const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === title);
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: true });
+        });
+        await vi.waitFor(() => expect(harness.push).toHaveBeenCalledWith(expect.objectContaining({ params: { pluginId: 'acme.board' } })));
+        await screen.unmount();
     });
 
     it('constructs a legitimate nested owner instead of borrowing a different exact Session', async () => {

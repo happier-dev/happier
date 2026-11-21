@@ -25,6 +25,7 @@ type ComputerTargetPickerForSessionParams = Readonly<{
     sessionId: string;
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    commandBridge?: ComputerTargetPickerRequest['commandBridge'];
     machineId: string;
     /** Null while the Machine has no readable name: the picker then says "Computer", never the raw id. */
     machineName: string | null;
@@ -76,6 +77,7 @@ export function resolveComputerTargetPickerForSession(params: ComputerTargetPick
         : null;
     return {
         accountLifetime,
+        commandBridge: params.commandBridge,
         purpose,
         scope: { sessionId: params.sessionId, machineId: params.machineId, serverId },
         agentName: core ? formatAgentLikeIdForDisplay(core.id) : t('browserPresence.agentFallbackName'),

@@ -20,6 +20,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { showArtifactHistorySheet } from '@/components/artifacts/ArtifactHistorySheet';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { MemoryCreationReceipt } from '@/sync/ops/promptLibrary/memoryDocuments';
@@ -67,6 +68,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
   onClose: () => void;
   onSaved: () => void;
 }>) {
+  const commandBridge = useCurrentUiContextCommandBridge();
   const { model } = props;
   const { text, setText, reason, setReason, expiry, setExpiry, nowMs, expiryDraft, setExpiryDraft,
     review, choice, setChoice, candidateId, setCandidateId, notice, busy, canSave, save, sessionSource,
@@ -134,6 +136,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             reason={t('memoryContext.memory.sheetConflict')}
             action={review?.ref.serverId && reviewScope ? { label: t('memoryContext.memory.reviewChange'),
               testID: 'save-memory-decision.conflict-action', onPress: () => showArtifactHistorySheet({
+              commandBridge,
               artifactId: review.ref.artifactId,
               canRestore: false,
               compareFromBodyVersion: review.revision.bodyVersion,

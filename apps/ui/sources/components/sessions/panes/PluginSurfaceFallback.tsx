@@ -24,6 +24,7 @@ import {
 } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type PluginSurfaceFallbackState = Extract<PluginSurfacePresentationState, 'loading' | 'unavailable'>;
 
@@ -133,6 +134,12 @@ export function PluginSurfaceFallback(props: Readonly<{
     const hostNotice = useClaimedHostFailureNotice(card.kind !== 'loading', isPluginSurfaceCauseOutsidePlugin(props.reasonCode));
     const title = hostNotice?.sentence ?? card.title;
     usePublishPluginSurfaceStateTitle(card.kind === 'loading' ? null : title);
+    const action = card.kind === 'loading' ? undefined : hostNotice && hostNotice.action !== undefined
+        ? hostNotice.action ?? undefined : resolvePluginSurfaceStateAction({
+            recoveryAction: presentation.recoveryAction, onRetry: props.onRetry, manageAction: props.action,
+        });
+    const commands = useCurrentUiContextLocalCommands(action ? [{ key: 'recovery', title: action.label,
+        invoke: action.onPress }] : [], { contextKey: props.testID, unbound: 'local' });
     if (card.kind === 'loading') {
         const skeleton = (
             <PluginSurfaceLoadingSkeleton
@@ -161,11 +168,7 @@ export function PluginSurfaceFallback(props: Readonly<{
             reasonContent={!hostNotice && (props.reason ?? card.reason) ? props.renderText?.('reason', (props.reason ?? card.reason)!) : undefined}
             diagnosticCode={presentation.diagnosticCode}
             diagnosticDetail={props.diagnosticDetail}
-            action={hostNotice && hostNotice.action !== undefined ? hostNotice.action ?? undefined : resolvePluginSurfaceStateAction({
-                recoveryAction: presentation.recoveryAction,
-                onRetry: props.onRetry,
-                manageAction: props.action,
-            })}
+            action={action ? { ...action, onPress: () => { void commands.invoke('recovery'); } } : undefined}
             accessibilitySemantics={props.accessibilitySemantics ?? card.accessibilitySemantics}
         />
         </>

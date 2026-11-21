@@ -19,7 +19,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import type { CustomModalInjectedProps } from '@/modal/types';
+import type { BaseModalConfig, CustomModalInjectedProps } from '@/modal/types';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { getStorage, useLocalSetting } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -157,6 +158,12 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const history = state?.client === client && state.artifactId === artifactId ? state : null;
     const historyFailure = history?.failure ?? null;
     const selected = selection?.client === client && selection.artifactId === artifactId ? selection.bodyVersion : null;
+    const revisionCommands = useCurrentUiContextLocalCommands((history?.data?.revisions ?? [])
+        .filter(revision => revision.bodyVersion !== current)
+        .map(revision => ({ key: `version:${revision.bodyVersion}`,
+            title: t('artifacts.browser.history.version', { n: revision.bodyVersion }),
+            invoke: () => setSelection({ client, artifactId, bodyVersion: revision.bodyVersion }),
+        })), { foregroundOverlay: true, contextKey: artifactId, unbound: 'local' });
 
     React.useEffect(() => {
         let active = true;
@@ -257,7 +264,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                 detail: formatHappierDataBytes(revision.sizeBytes, { kind: 'storage' }),
             }))}
             selectedVersion={chosen?.bodyVersion ?? null}
-            onSelectVersion={bodyVersion => setSelection({ client, artifactId, bodyVersion })}
+            onSelectVersion={bodyVersion => { void revisionCommands.invoke(`version:${bodyVersion}`); }}
             colors={listColors}
             host={sideBySide ? HISTORY_PANE_HOST : HISTORY_LIST_HOST}
         />
@@ -371,6 +378,7 @@ export function showArtifactHistorySheet(params: Readonly<{
     client?: ArtifactActionsClient;
     /** Already admitted through this client's canonical Doc reader, including direct Discussion entry. */
     currentDoc?: CurrentDoc;
+    commandBridge?: BaseModalConfig['commandBridge'];
 }>): void {
     const state = getStorage().getState();
     const client = params.client ?? (state.profileScope ? createArtifactActionsClient(state.profileScope) : null);
@@ -382,6 +390,7 @@ export function showArtifactHistorySheet(params: Readonly<{
         updatedAt: doc.updatedAt, provenance: doc.provenance, seq: doc.seq, access: doc.access,
     } : areServerAccountScopesEqual(state.profileScope, client.scope) ? state.artifacts[params.artifactId] : undefined;
     Modal.show({
+        commandBridge: params.commandBridge,
         component: ArtifactHistoryModal,
         props: { artifactId: params.artifactId, client, currentArtifact,
             canRestore: params.canRestore ?? readArtifactAccessCapabilities(currentArtifact?.access).canEdit,

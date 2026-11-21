@@ -15,6 +15,7 @@ import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureTitle 
 import { readWidgetAreaLayoutDeleteProtectionV1 } from '@/sync/ops/actions/widgetAreaActionDeps';
 import { confirmDashboardDelete } from '@/components/projects/overview/confirmDashboardDelete';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { createArtifactActionsClient, createMountedArtifactActionExecute } from './artifactActionsClient';
 import { artifactViewRoute, classifyArtifactViewKind } from './artifactBrowserModel';
@@ -25,6 +26,7 @@ import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
 /** The same access, sharing, history and confirmed delete operations for a row, pane and page. */
 export function useArtifactOperations(artifact: DecryptedArtifact | null, onDeleted?: () => void) {
+    const commandBridge = useCurrentUiContextCommandBridge();
     const router = useRouter();
     const scope = useActiveServerAccountScope();
     const mounted = useMountedActionExecution(scope);
@@ -51,7 +53,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
     };
     /** `acceptedVersions`: the versions accepted suggestions made, when the caller reads the Doc's threads. */
     const history = (acceptedVersions?: ReadonlySet<number>) => {
-        if (artifact && canRead) showArtifactHistorySheet({ artifactId: artifact.id, name, canRestore: canEdit,
+        if (artifact && canRead) showArtifactHistorySheet({ artifactId: artifact.id, name, canRestore: canEdit, commandBridge,
             ...(acceptedVersions ? { acceptedVersions } : {}) });
     };
     const remove = async () => {

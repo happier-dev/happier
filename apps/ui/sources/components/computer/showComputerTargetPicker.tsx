@@ -8,7 +8,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import type { CustomModalChromeConfig, CustomModalInjectedProps } from '@/modal/types';
+import type { CustomModalChromeConfig, CustomModalInjectedProps, ModalCommandBridgeProps } from '@/modal/types';
 import {
     type ComputerActionExecute,
     type ComputerScope,
@@ -158,6 +158,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
 export type ComputerTargetPickerRequest = Readonly<{
     scope: ComputerScope;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    commandBridge?: React.ComponentType<ModalCommandBridgeProps>;
     agentName: string;
     /** No agent to name: a Machine's own Computer page, or a Session whose agent does not resolve. */
     agentless?: boolean;
@@ -198,6 +199,7 @@ export function computerTargetPickerProps(params: ComputerTargetPickerRequest): 
  */
 export function showComputerTargetPicker(params: ComputerTargetPickerRequest): void {
     Modal.show({
+        commandBridge: params.commandBridge,
         component: ComputerTargetPickerModal,
         props: computerTargetPickerProps(params),
         chrome: computerTargetPickerChrome({ agentName: params.agentName, agentless: params.agentless, machineName: params.machineName, purpose: params.purpose }),
