@@ -2840,6 +2840,17 @@ describe("pendingMessageService (shared sessions)", () => {
         let turnId = intervention.turnId;
         const observed: unknown[] = [];
         for (let i = 0; i < 5; i++) {
+            if (i === 1 && preset === 'everything') {
+                // The live receiver had an earlier terminal Turn without the
+                // first wake's acceptance, followed by the witnessed Turn.
+                const earlierTurnId = randomUUID();
+                await db.sessionTurn.create({ data: { sessionId: source.sessionId, turnId: earlierTurnId,
+                    status: 'completed', startedAt: 1n, updatedAt: 2n, terminalAt: 2n } });
+                const earlier = await delivery(source, receiver, earlierTurnId);
+                expect(earlier.result).toMatchObject({ ok: true, result: {
+                    status: 'held', code: 'session_input_target_unavailable',
+                } });
+            }
             const sent = await delivery(source, receiver, turnId);
             expect(sent.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
             turnId = await accept(receiver, sent.localId, i === 1 ? 'followUp' : 'newTurn');
@@ -2851,8 +2862,8 @@ describe("pendingMessageService (shared sessions)", () => {
         expect({ observed, pause: paused.result }).toMatchObject({ observed: [1, 2, 3, 4, 5],
             pause: { ok: true, result: { status: 'held', code: 'autonomous_check_in' } } });
         expect(await listPendingMessages({ actorUserId: owner.id, sessionId: receiver.sessionId })).toMatchObject({
-            pending: [expect.objectContaining({ localId: paused.localId, autonomousExchangeRoot: {
-                sessionId: second.sessionId, localId: intervention.localId } })],
+            pending: expect.arrayContaining([expect.objectContaining({ localId: paused.localId, autonomousExchangeRoot: {
+                sessionId: second.sessionId, localId: intervention.localId } })]),
         });
 
         expect(await db.sessionMessage.count({ where: { sessionId: receiver.sessionId, localId: paused.localId } })).toBe(0);

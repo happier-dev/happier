@@ -3,6 +3,7 @@ import {
     type PendingRequestedActionV1,
 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import type { PendingProviderAction } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
+import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 
 export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';
 export type PendingClaimDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
@@ -18,6 +19,19 @@ export function isUnclaimedUnavailableExecutionRunInput(targetExecutionRunId: st
         && row.deliveryState === 'blocked'
         && row.deliveryBlockedReason === 'session_input_target_unavailable'
         && row.providerAction === null;
+}
+
+/** Unavailable originals with independent custody stay visible without fencing later input. */
+export function isUnavailablePendingProviderPredecessor(targetExecutionRunId: string | null, row: Readonly<{
+    deliveryState: string | null;
+    deliveryBlockedReason: string | null;
+    providerAction: string | null;
+    inputAdmissionReceipt: unknown;
+}>): boolean {
+    if (targetExecutionRunId !== null) return isUnclaimedUnavailableExecutionRunInput(targetExecutionRunId, row);
+    if (row.deliveryState !== 'blocked' || row.deliveryBlockedReason !== 'session_input_target_unavailable') return false;
+    const follow = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt)?.followDeliveryV1;
+    return follow?.delivery === 'wake' && 'sourceSessionId' in follow.original;
 }
 
 type PendingInvocationCandidate = Readonly<{

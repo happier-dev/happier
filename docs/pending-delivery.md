@@ -550,6 +550,10 @@ original solely because its author belongs to another Account. Pending still
 enforces the receiver's check-in before the effect. This changes autonomous
 start accounting, not the separate cross-Account late-return contract above.
 
+Pending retains a Session Follow wake held with
+`session_input_target_unavailable` and continues admitting later originals
+against their own source facts.
+
 Run-caused Session wakes use the receiving side's exchange: the most recent
 protected person-written input in that Session is their root, not an inherited
 root on a later agent input or a fabricated parent input of the Run. With no

@@ -28,7 +28,7 @@ import { compareSessionMessageContentAndRole } from "@/app/session/sessionTransc
 import type { SessionReadyProjectionUpdate } from "@/app/session/sessionWriteService";
 import { logger } from "@/utils/logging/log";
 import {
-    isUnclaimedUnavailableExecutionRunInput,
+    isUnavailablePendingProviderPredecessor,
     selectPendingProviderInvocation,
     type PendingClaimForegroundState,
     type PendingProviderAction,
@@ -530,14 +530,12 @@ async function materializePendingTargetInTx(
             const invocationSelection = selectPendingProviderInvocation({
                 // C7-held Discussion originals already have protected Pending
                 // custody. They stay visible there without blocking independent
-                // later questions. An exact Run's unavailable classification also
-                // ends only that unclaimed attempt: retain its refusal without
-                // preventing fresh input after explicit Run recovery. Claimed or
-                // uncertain work and ordinary blocked FIFO keep their contract.
+                // later questions. The provider predecessor policy handles
+                // unavailable Follow wakes and unclaimed exact Run refusals.
                 rows: pendingCandidates.filter(row => {
                     if (retainedContextLocalIds.includes(row.localId)) return false;
+                    if (isUnavailablePendingProviderPredecessor(params.targetExecutionRunId, row)) return false;
                     if (row.deliveryState !== 'blocked' || row.deliveryBlockedReason !== 'session_input_target_unavailable') return true;
-                    if (isUnclaimedUnavailableExecutionRunInput(params.targetExecutionRunId, row)) return false;
                     const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
                     const address = receipt?.issuer === 'authenticatedMachine' ? receipt.discussionAddressing : undefined;
                     return !address || address.participantSessionId !== sessionId

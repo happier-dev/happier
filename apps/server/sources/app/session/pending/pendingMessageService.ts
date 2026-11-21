@@ -8,7 +8,7 @@ import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor, ty
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
 import { isRetainedPendingContextForPublisherInTx } from './retainedPendingContext';
-import { isUnclaimedUnavailableExecutionRunInput } from './selectPendingProviderInvocation';
+import { isUnavailablePendingProviderPredecessor } from './selectPendingProviderInvocation';
 import { resolveSessionAccountChangePublications } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
 import { reconcileSessionPendingQueueStateInTx } from "@/app/session/pending/reconcileSessionPendingQueueState";
 import { applyPendingSessionStateChange } from "@/app/session/pending/applyPendingSessionStateChange";
@@ -4139,7 +4139,7 @@ export async function resolveAcceptedPendingDelivery(params: {
                         inputAdmissionReceipt: true, autonomousExchangeCause: true },
                 });
                 for (const row of earlierUnresolved) {
-                    if (isUnclaimedUnavailableExecutionRunInput(targetExecutionRunId, row)) continue;
+                    if (isUnavailablePendingProviderPredecessor(targetExecutionRunId, row)) continue;
                     if (!await isRetainedPendingContextForPublisherInTx(tx, row, params.publisherAuthority)) {
                         return { ok: false, error: "blocked-by-earlier-pending" } as const;
                     }
