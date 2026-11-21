@@ -551,6 +551,60 @@ describe('Environment draft Machine Home', () => {
     routerMock.resetParams();
   });
 
+  it('returns to the source Environment settings after discarding a duplicate', async () => {
+    const { ModalProvider } = await import('@/modal');
+    const { withPopoverWebGlobals } = await import('@/dev/testkit/harness/popoverHarness');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://discard-deployment-copy.test',
+      accountId: 'alice', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const base = createDeploymentEnvironmentDetailV1({
+      environment: createDeploymentEnvironmentHeaderV1({ serverId, projectSourceId: 'source-app' }),
+    });
+    const detail = { ...base, content: { ...base.content, name: 'Production' } };
+    const controller = createDeploymentReadControllerV1({
+      scope: { ...account.accountLifetime.scope, projectSourceId: 'source-app' },
+      transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Production' }], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: detail }),
+        readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      },
+    });
+    try {
+      const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+      const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+      primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+        features: FeaturesResponseSchema.parse({ features: { deployments: { enabled: true } }, capabilities: {} }) } });
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 1, name: 'Corner Bakery Orders', owner: { kind: 'account', accountId: 'alice' },
+        audience: [], createdByAccountId: 'alice',
+      } } });
+      storage.getState().applySettingsLocal({ featureToggles: { ...previous.settings.featureToggles, deployments: true } });
+      routerMock.spies.setParams({ deploymentEnvironment: detail.environment.id, deploymentTab: 'settings' });
+      const screen = await renderScreen(<ModalProvider><ProjectDeploymentsView lifetime={account.accountLifetime}
+        sourceId="source-app" controller={controller} demand={{ mounted: true, visible: true, focused: true }}
+        accountId="alice" serverId={serverId} actions={createDeploymentActions(account.accountLifetime, 'source-app')} />
+      </ModalProvider>);
+      const press = async (id: string) => {
+        await waitForHomeGovernance(() => expect(screen.findByTestId(id), `${id}\n${screen.getTextContent()}`).not.toBeNull());
+        await screen.pressByTestIdAsync(id);
+      };
+      const restorePopover = withPopoverWebGlobals();
+      try {
+        await press('project-deployments.environment.menu');
+        await press('project-deployments.environment.menu.duplicate');
+        await press('project-deployments.draft.discard');
+        expect(routerMock.spies.setParams).toHaveBeenLastCalledWith({ newDefinition: undefined, deployMachine: undefined });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.menu')).not.toBeNull());
+        expect(screen.findByTestId('project-deployments.draft.discard')).toBeNull();
+        expect(screen.findAllByType(PageHeader).some(header => header.props.title === 'Production')).toBe(true);
+      } finally { await screen.unmount(); restorePopover(); }
+    } finally { controller.retire(); account.dispose(); storage.setState(previous); }
+  });
+
   it('withdraws and restores the new Environment entry without withdrawing the collection', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://deployment-entry.test',
       accountId: 'alice', currentAccount: true });

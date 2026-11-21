@@ -462,7 +462,7 @@ const ProjectDeploymentsPage = React.memo(
           if (next?.tab) navigateEnvironment({ tab: next.tab, section: null });
           void refresh();
         }}
-        onDiscard={() => setSelection(NOTHING_SELECTED)}
+        onDiscard={() => router.setParams({ newDefinition: undefined, deployMachine: undefined })}
       />
     ) : null;
     if (!selection.defaults && !environmentId && items.length === 0 && !selection.drafting) {
