@@ -687,6 +687,7 @@ async function startAdmittedExecutionRunInWorkspace(
   const launch = {
     ...(args.params.reviewOutputSelection !== undefined
       ? { reviewOutputSelection: args.params.reviewOutputSelection } : {}),
+    ...(args.params.nativeSandbox !== undefined ? { nativeSandbox: args.params.nativeSandbox } : {}),
     selectionSource: childSelection.selectionSource,
     ...(args.params.cwd ? { cwd: args.params.cwd } : {}),
     ...(args.params.capabilitySelection ? { capabilitySelection: args.params.capabilitySelection } : {}),
@@ -770,6 +771,7 @@ async function startAdmittedExecutionRunInWorkspace(
       ...(args.params.display ? { display: args.params.display } : {}),
       permissionMode: args.params.permissionMode,
       approvalProfileId: args.params.approvalProfileId ?? null,
+      approvalProfileTeamOrGroupDerived: args.params.approvalProfileTeamOrGroupDerived === true,
       workspaceWrites: args.params.workspaceWrites,
       retentionPolicy: args.params.retentionPolicy,
       runClass: args.params.runClass,

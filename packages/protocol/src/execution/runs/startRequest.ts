@@ -48,6 +48,7 @@ import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOv
 import { HappierStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
+import { AgentNativeSandboxChoiceV1Schema } from '../../runtime/agentSessionConfigurationV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { ProjectSessionDefaultsContextSelectionV1Schema } from '../../projects/projectSessionDefaultsSelectionV1.js';
 import { ReviewOutputSelectionSchema } from '../../reviews/reviewNarration.js';
@@ -416,6 +417,8 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
   permissionMode: z.string().check(z.minLength(1)),
   /** Reference only; null explicitly opts out of inherited selection. */
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  /** Explicit Agent-native sandbox choice for a detached Run. */
+  nativeSandbox: z.optional(AgentNativeSandboxChoiceV1Schema),
   projectContext: z.optional(ProjectSessionDefaultsContextSelectionV1Schema),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,

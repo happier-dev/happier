@@ -1,5 +1,6 @@
 import type {
   AcpConfigOptionOverridesV1,
+  AgentSessionConfigurationSnapshotV1,
   BackendTargetRefV1,
   ConnectedServiceBindingsV2,
   ExecutionRunDisplay,
@@ -50,6 +51,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
   /** Host-only caller lifetime for pending Voice initialization; detached after start accepts. */
   signal?: AbortSignal;
   projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
+  projectContext?: import('@happier-dev/protocol/projects/projectSessionDefaultsSelectionV1').ProjectSessionDefaultsContextSelectionV1;
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** Nonsecret host-admitted custody identity; never accepted from authored Run input. */
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
@@ -147,6 +149,10 @@ export type ExecutionRunManagerStartParams = Readonly<{
   actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
   permissionMode: string;
   approvalProfileId?: string | null;
+  /** Captured selection provenance; authored Run input cannot set this. */
+  approvalProfileTeamOrGroupDerived?: boolean;
+  /** Host-captured creation choice, retained independently of later defaults. */
+  nativeSandbox?: AgentSessionConfigurationSnapshotV1['nativeSandbox'];
   workspaceWrites?: 'allow' | 'deny';
   retentionPolicy: 'ephemeral' | 'resumable';
   runClass: 'bounded' | 'long_lived';
@@ -222,6 +228,7 @@ export type ExecutionRunState = Readonly<{
   display?: ExecutionRunDisplay;
   permissionMode: string;
   approvalProfileId?: string | null;
+  approvalProfileTeamOrGroupDerived?: boolean;
   workspaceWrites?: 'allow' | 'deny';
   retentionPolicy: ExecutionRunManagerStartParams['retentionPolicy'];
   runClass: ExecutionRunManagerStartParams['runClass'];
@@ -243,6 +250,7 @@ export type ExecutionRunState = Readonly<{
    */
   launch?: Readonly<{
     reviewOutputSelection?: ExecutionRunManagerStartParams['reviewOutputSelection'];
+    nativeSandbox?: AgentSessionConfigurationSnapshotV1['nativeSandbox'];
     selectionSource?: 'explicit' | 'inherited' | 'independent' | 'retained';
     cwd?: string;
     capabilitySelection?: SessionCapabilitySelectionV1;

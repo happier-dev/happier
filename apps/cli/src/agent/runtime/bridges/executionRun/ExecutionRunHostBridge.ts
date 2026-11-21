@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { readMachineIsolationPolicyV1, readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
-import { resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedDefaults';
+import { resolveDetachedRunManagedDefaults } from './resolveDetachedRunManagedDefaults';
 import { readAgentNativeSandboxCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -1467,7 +1468,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       cwd: opts.cwd ?? opts.start?.cwd ?? this.cwd,
       scope,
       runId: opts.runId,
-      ...(opts.runId ? { readApprovalProfileId: () => this.runs.get(opts.runId!)?.approvalProfileId ?? null } : {}),
+      ...(opts.runId ? { readApprovalProfileSelection: () => {
+        const run = this.runs.get(opts.runId!);
+        return { approvalProfileId: run?.approvalProfileId ?? null,
+          approvalProfileTeamOrGroupDerived: run?.approvalProfileTeamOrGroupDerived === true };
+      } } : {}),
       ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
       ...(opts.callId ? { callId: opts.callId } : {}),
       ...(opts.sidechainId ? { sidechainId: opts.sidechainId } : {}),
@@ -1705,6 +1710,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(opts.backendTarget ? { backendTarget: opts.backendTarget } : {}),
       permissionMode: opts.permissionMode,
       workspaceWrites: resumeOptions.workspaceWrites,
+      nativeSandbox: resumeOptions.nativeSandbox,
       modelSelectionSource: opts.modelSelectionSource ?? resumeOptions.modelSelectionSource,
       ...(opts.providerLaunch ? { providerLaunch: opts.providerLaunch } : {}),
       ...(opts.causalPermissionAuthority
@@ -2333,7 +2339,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
       throw markExecutionRunStartPreparationFailure(error, 'execution_run_contribution_snapshot_unavailable');
     });
-    let nativeSandbox: ExecutionRunRuntimeCreateOptions['nativeSandbox'];
+    let nativeSandbox: ExecutionRunRuntimeCreateOptions['nativeSandbox'] = params.nativeSandbox;
     const runtimeSnapshot = retained ? {
       createRuntime: () => {
         const controller = retained.controller;
@@ -2355,20 +2361,39 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     try {
       if (params.intent === 'voice_agent') params.signal?.throwIfAborted();
       const roleSessionMetadata = this.sessionInteractionHost?.session.getMetadataSnapshot();
-      if (!retained) {
+      if (!retained && !params.resumeHandle) {
         if (params.sessionId !== null) {
+          if (params.approvalProfileId === undefined) params = { ...params,
+            approvalProfileId: roleSessionMetadata?.approvalProfileId ?? null,
+            approvalProfileTeamOrGroupDerived: roleSessionMetadata?.approvalProfileTeamOrGroupDerived === true,
+          };
           nativeSandbox = roleSessionMetadata?.nativeSandbox;
         } else {
           const machineMetadata = this.readMachineMetadataSnapshot?.();
           const openedMachineMetadata = machineMetadata?.status === 'ready' ? machineMetadata.metadata : undefined;
           const agent = resolution.engineRegistry?.contributions.agentDefinitionsById
             .get(resolveExecutionRunRuntimeBackendId(params.backendTarget));
-          const agentSandbox = resolveManagedSessionDefaults({
-            agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget)),
+          const agentSandboxContext = {
             machineIsolation: readMachineIsolationV1(openedMachineMetadata),
             machineIsolationPolicy: readMachineIsolationPolicyV1(openedMachineMetadata ?? {}),
             nativeSandboxAvailable: readAgentNativeSandboxCapabilities(agent?.richDefinition?.definition)?.off === true,
-          }).agentSandbox;
+          };
+          const defaults = await resolveDetachedRunManagedDefaults(params, {
+            machineId: this.machineId, agentSandbox: agentSandboxContext,
+          });
+          if (defaults) params = { ...params,
+            approvalProfileId: defaults.approvalProfileId,
+            approvalProfileTeamOrGroupDerived: params.approvalProfileId === undefined
+              ? defaults.approvalProfileTeamOrGroupDerived : params.approvalProfileTeamOrGroupDerived === true,
+            permissionMode: defaults.permissionMode ?? params.permissionMode,
+            connectedServices: defaults.connectedServices,
+            ...(defaults.teamCredentialModel ? { teamCredentialModel: defaults.teamCredentialModel }
+              : defaults.modelSelection ? { modelSelection: defaults.modelSelection,
+                modelId: defaults.modelSelection.modelId } : {}),
+          };
+          const agentSandbox = defaults?.agentSandbox ?? resolveManagedAgentSandbox({
+            ...agentSandboxContext, explicitAgentSandbox: params.nativeSandbox,
+          });
           if (agentSandbox.availability?.status === 'unavailable') {
             throw markExecutionRunStartPreparationFailure(Object.assign(
               createExecutionRunCodedError('target_unavailable', 'Agent native sandbox is unavailable'), {
@@ -2378,7 +2403,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           nativeSandbox = agentSandbox.value;
         }
       }
-      params = { ...params, roleSessionMetadata,
+      params = { ...params, nativeSandbox, roleSessionMetadata,
         ...(resolution.readNativeOfferedModel ? { readNativeOfferedModel: resolution.readNativeOfferedModel } : {}) };
       let summarySelection: ResolvedExecutionRunChildSelection | undefined;
       try {
@@ -3729,7 +3754,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (run && params.actionId === 'approval_profile.set') {
       const parsed = ExecutionRunApprovalProfileSetInputSchema.safeParse(params.input);
       if (!parsed.success) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid approval profile selection' };
-      this.runs.set(runId, { ...run, approvalProfileId: parsed.data.approvalProfileId });
+      this.runs.set(runId, { ...run, approvalProfileId: parsed.data.approvalProfileId,
+        approvalProfileTeamOrGroupDerived: false });
       if (run.status === 'running') await this.writeActivityMarker(runId, this.getNowMs(), { force: true });
       else await this.enqueueMarkerWrite(runId, () => retainExecutionRunState(this.captureRetainedState(runId)!));
       this.emitPublicStateUpdated(runId);

@@ -215,16 +215,19 @@ describe('plugin invocation ActionsService', () => {
                 sourceCustody: { kind: 'development', registeredRootId: 'run-agent-root' },
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
                 approvalContext: { serverId: 'home', runtimeAccountId: 'alice', approvalProfileId: 'unrelated-caller-profile' },
-                readApprovalProfileId: () => { reads++; return approvalProfileId; },
+                readApprovalProfileSelection: () => { reads++; return { approvalProfileId,
+                    approvalProfileTeamOrGroupDerived: approvalProfileId !== null }; },
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             },
             actionExecutor: withHostActionsSettings(createActionExecutor({
                 ...createUnavailableActionTransportDeps(),
-                readActionApprovalProfileId: async () => { sessionReads++; return 'ask-backends'; },
+                readActionApprovalProfileId: async () => { sessionReads++; return { approvalProfileId: 'ask-backends', approvalProfileTeamOrGroupDerived: false }; },
+                readApprovalProfile: () => ({ profile: { id: 'ask-backends', name: 'Ask before listing',
+                    actions: { 'agents.backends.list': { approvalRequiredSurfaces: ['agent', 'plugin'] } } },
+                    resolution: { status: 'available', requestedId: 'ask-backends' } }),
                 approvalsCreate: async () => ({ artifactId: 'run-profile-approval' }),
                 agentsBackendsList: async () => { effects++; return { items: [] }; },
-            }), normalizeActionsSettingsV1({ v: 1, approvalProfiles: [{ id: 'ask-backends', name: 'Ask before listing',
-                actions: { 'agents.backends.list': { approvalRequiredSurfaces: ['agent', 'plugin'] } } }] })),
+            }), normalizeActionsSettingsV1({ v: 1 })),
             invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
         });
         // This host boundary has no approval execution origin; a required review must refuse before effect.

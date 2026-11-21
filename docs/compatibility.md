@@ -2710,6 +2710,13 @@ does not grant access. Foreign requesters receive the existing not-found refusal
 for ID operations and cannot see the Run in lists. This rule adds no migration,
 backfill, version flag or special handling for earlier 0.3 development builds.
 
+A new detached Agent Run uses the Session defaults resolver under the starting
+Account. An explicit approval profile or sandbox choice takes precedence. An
+explicit null profile disables inheritance. A resumable Run keeps the resolved
+profile, its Team or Group origin, and the sandbox choice in its retained state.
+Older retained records can omit these fields. Resuming a Run does not reread
+current Project defaults.
+
 The separate `machines.runs.list` Action reads the existing process marker
 registry through `daemon.executionRuns.list`. Manage sees the Machine-wide
 inventory, including fallback marker details. Use sees only markers whose stored

@@ -209,7 +209,10 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     /** Host-only actual transport publication; never an Agent SDK request field. */
     onToolNormalizationSource?: (source: import('@happier-dev/protocol/tools/v2/meta').ToolNormalizationSourceV3) => void;
     /** Current Run attachment, captured once by each new Action admission. */
-    readApprovalProfileId?: () => string | null;
+    readApprovalProfileSelection?: () => Readonly<{
+        approvalProfileId: string | null;
+        approvalProfileTeamOrGroupDerived: boolean;
+    }>;
     /** Host-private detached Workflow controller; never part of the Agent SDK. */
     workflowActionContext?: import('@/plugins/runtime/invocation/services/types').WorkflowAgentActionContext;
     projectLaunchContext?: ExecutionRunProjectLaunchContext;

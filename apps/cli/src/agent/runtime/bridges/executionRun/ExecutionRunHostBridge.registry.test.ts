@@ -12,7 +12,7 @@ vi.mock('node:fs', async (importOriginal) => {
 
 import { withAdmittedSessionRun, type AdmittedSessionRunFixture } from './testkit/admittedSessionRun';
 
-import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
@@ -59,6 +59,19 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
       expect(await listExecutionRunMarkers()).toEqual([]);
     } });
   });
+  it.each([undefined, 'builtin:apply-safe', null])('captures Session profile provenance only for an inherited choice (%s)', async selection => {
+    await withAdmittedSessionRun({ directOwner: true, parentMetadata: {
+      approvalProfileId: 'builtin:apply-safe', approvalProfileTeamOrGroupDerived: true,
+    }, run: async fixture => {
+      const started = await fixture.start({ ...(selection === undefined ? {} : { approvalProfileId: selection }) });
+      try {
+        expect(fixture.bridge!.get(started.runId)).toMatchObject({
+          approvalProfileId: selection === undefined ? 'builtin:apply-safe' : selection,
+          approvalProfileTeamOrGroupDerived: selection === undefined,
+        });
+      } finally { await fixture.bridge!.stop(started.runId); await fixture.bridge!.waitForTerminal(started.runId); }
+    } });
+  });
   it('refuses an unavailable Machine sandbox choice before creating a detached Run', async () => {
     await withAdmittedSessionRun({ directOwner: true,
       machineMetadata: {
@@ -79,17 +92,35 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
       } });
   });
 
-  it('uses the isolated Machine sandbox default for a detached Run while preserving approvals', async () => {
+  it.each([[undefined, 'off'], ['on', 'on'], ['off', 'off']] as const)(
+    'applies a qualified enrolled guest sandbox choice for a detached Run (%s)', async (nativeSandbox, expected) => {
     await withAdmittedSessionRun({ directOwner: true, nativeSandboxAvailable: true,
-      machineMetadata: { isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } },
+      machineMetadata: { isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest',
+        supportsAgentNativeSandbox: true } },
       run: async fixture => {
-        const started = await fixture.start({ sessionId: null, intent: 'plan' });
+        const bridge = fixture.bridge!;
+        const actions = createExecutionRunRpcActionExecutor({ manager: bridge,
+          context: { cwd: fixture.directory, sessionId: null, serverId: fixture.requesterWorkAttributionV1.serverId,
+            serverUrl: fixture.serverHttpBaseUrl, readPromptCredentials: () => fixture.credentials },
+          isExecutionRunsEnabled: () => true,
+          policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
+            reviewBoundedTimeoutMs: null, maxTurns: null } }),
+        });
+        const result = await actions.execute('execution.run.start', {
+          sessionId: null, intent: 'plan', backendTarget: { kind: 'agent', identity: fixture.agentIdentity },
+          instructions: 'Inspect.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+          ioMode: 'request_response', modelSelection: null, connectedServices: null,
+          ...(nativeSandbox === undefined ? {} : { nativeSandbox }),
+        }, { surface: 'rpc', authority: 'present_user' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error(result.errorCode);
+        const started = ExecutionRunStartResponseSchema.parse(result.result);
         try {
           await vi.waitFor(() => expect(fixture.nativeDetachedOpen.mock.calls[0]?.[0].configuration)
-            .toMatchObject({ nativeSandbox: 'off', permissionIntent: { value: 'read-only' } }));
+            .toMatchObject({ nativeSandbox: expected, permissionIntent: { value: 'read-only' } }));
         } finally {
-          await fixture.bridge!.stop(started.runId);
-          await fixture.bridge!.waitForTerminal(started.runId);
+          await bridge.stop(started.runId);
+          await bridge.waitForTerminal(started.runId);
         }
       } });
   });
@@ -132,10 +163,9 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
   });
 
   it('writes a running marker on start and a terminal marker on completion', async () => {
-    await withAdmittedSessionRun({ run: async fixture => {
+    await withAdmittedSessionRun({ parentRuntime: true, parentMetadata: { nativeSandbox: 'off' }, run: async fixture => {
       const native = createNativeSessionBoundary();
       fixture.nativeOpen.mockImplementation(native.open);
-      await fixture.session.updateMetadata(metadata => ({ ...metadata, nativeSandbox: 'off' }));
       const started = await fixture.start({ modelId: 'requested-child-model' });
       await native.waitForInputs(1);
       expect(native.opens).toMatchObject([{ configuration: { nativeSandbox: 'off',

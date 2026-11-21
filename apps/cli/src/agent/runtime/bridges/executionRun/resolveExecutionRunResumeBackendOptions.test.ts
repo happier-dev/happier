@@ -66,6 +66,17 @@ describe('resolveExecutionRunResumeBackendOptions', () => {
     expect(recovered.intentInput).toBeUndefined();
   });
 
+  it('retains the creation-selected approval profile and its provenance across host recovery', () => {
+    const run = { ...baseRun(undefined), approvalProfileId: 'profile:project', approvalProfileTeamOrGroupDerived: true };
+    expect(projectRetainedExecutionRunState(run)).toMatchObject({
+      approvalProfileId: 'profile:project', approvalProfileTeamOrGroupDerived: true,
+    });
+  });
+  it('rehydrates the captured native sandbox without consulting new creation defaults', () => {
+    const run = baseRun({ nativeSandbox: 'off' });
+    expect(projectRetainedExecutionRunState(run).launch).toMatchObject({ nativeSandbox: 'off' });
+    expect(resolveExecutionRunResumeBackendOptions({ run })).toMatchObject({ nativeSandbox: 'off' });
+  });
   it.each(['explicit', 'inherited', 'independent', 'retained'] as const)(
     'projects only proven explicit model intent from a historical %s launch', selectionSource => {
       const run = baseRun({ selectionSource, modelId: 'custom/native' });

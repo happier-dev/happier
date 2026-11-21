@@ -123,6 +123,7 @@ type AdmittedSessionRunOptions = Readonly<{
   observeTranscriptObservation?: (payload: unknown) => void;
   runtimePluginIds?: readonly string[];
   parentCapabilitySelection?: import('@happier-dev/protocol').SessionCapabilitySelectionV1;
+  parentMetadata?: Partial<import('@/api/types').Metadata>;
   /** Consume ordinary host startup's captured Account reader and runtime controls. */
   parentRuntime?: boolean;
   /** External executable lookup/process environment; native host composition stays real. */
@@ -828,13 +829,14 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   if ((skillsScenario || options?.parentRuntime) && parentProcessIdentity?.processStartTimeMs === undefined) {
     throw new Error('Missing actual parent process generation for Session-owned Run');
   }
-  const parentMetadata = skillsScenario || options?.parentRuntime ? createSessionMetadata({
+  const defaultParentMetadata = skillsScenario || options?.parentRuntime ? createSessionMetadata({
     flavor: 'claude', machineId: attribution.machineId, directory, startedBy: 'daemon',
     hostProcessStartTimeMs: parentProcessIdentity?.processStartTimeMs,
     launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }),
     augmentMetadata: metadata => ({ ...metadata, homeDir: directory }),
   }).metadata : { path: directory, host: 'host', homeDir: directory, happyHomeDir: directory, happyLibDir: directory,
     happyToolsDir: directory, flavor: 'claude', machineId: 'metadata-decoy-machine' };
+  const parentMetadata = { ...defaultParentMetadata, ...options?.parentMetadata };
   const initialParentSession = createPlainSessionFixture({ id: 'admitted-session',
     metadata: options?.parentCapabilitySelection
       ? writeSessionCapabilitySelectionToMetadataV1(parentMetadata, options.parentCapabilitySelection, { sessionActive: false })

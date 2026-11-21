@@ -17,6 +17,7 @@ import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWo
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
+import { SessionOwnerCompatibilityViewV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { ReviewOutputSelectionSchema } from '@happier-dev/protocol/reviews/reviewNarration';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
@@ -30,12 +31,14 @@ const RetainedRunStateSchema = z.strictObject({
   intentInput: z.optional(z.unknown()), display: z.optional(ExecutionRunDisplaySchema),
   permissionMode: z.string().check(z.minLength(1)), workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  approvalProfileTeamOrGroupDerived: z.optional(z.boolean()),
   retentionPolicy: ExecutionRunRetentionPolicySchema, runClass: ExecutionRunClassSchema, ioMode: ExecutionRunIoModeSchema,
   notifyParentOnCompletion: z.optional(z.boolean()), turnCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   runReportPolicy: z.optional(FollowPolicyV1Schema),
   effectiveEngine: z.optional(z.strictObject({ agentId: z.string().check(z.minLength(1)), modelId: z.optional(z.string()) })),
   launch: z.optional(z.strictObject({
     reviewOutputSelection: z.optional(z.nullable(ReviewOutputSelectionSchema)),
+    nativeSandbox: SessionOwnerCompatibilityViewV1Schema.shape.nativeSandbox,
     ...AgentSessionToolPolicyShapeV1,
     selectionSource: z.optional(z.enum(['explicit', 'inherited', 'independent', 'retained'])),
     cwd: z.optional(z.string()), capabilitySelection: z.optional(SessionCapabilitySelectionV1Schema), acpSessionModeId: z.optional(z.string()),

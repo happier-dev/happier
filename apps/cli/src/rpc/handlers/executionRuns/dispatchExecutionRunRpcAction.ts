@@ -304,6 +304,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       defaultSessionMachineId?: string;
       callerPermissionMode?: string | null;
       approvalProfileId?: string | null;
+      approvalProfileTeamOrGroupDerived?: boolean;
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     }>,
   ): Promise<ActionExecuteResult> {
@@ -314,6 +315,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     return await runtimeActionExecutorForRunActions.execute(actionId, input, withHostActionsSettings(actionsSettingsProvider, {
       defaultSessionId: context.defaultSessionId,
       approvalProfileId: context.approvalProfileId ?? null,
+      approvalProfileTeamOrGroupDerived: context.approvalProfileTeamOrGroupDerived === true,
       ...(context.serverId ? { serverId: context.serverId } : {}),
       ...(context.authority ? { authority: context.authority } : {}),
       ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}),
@@ -524,6 +526,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         projectSetupOperation: _callerProjectSetupOperation,
         runReportPolicy: _callerRunReportPolicy,
         actionInvocation: _callerActionInvocation,
+        approvalProfileTeamOrGroupDerived: _callerApprovalProfileTeamOrGroupDerived,
+        nativeSandbox,
         ...runStartRequest
       } = parsed.data;
       const requesterWorkAttributionV1 = params.context.sessionId === sessionId
@@ -535,13 +539,10 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const readRequesterNativeOfferedModel = params.context.readRequesterNativeOfferedModel;
       // Detached work consumes its admitted requester custody. Attached work
       // keeps the incumbent reader bound to its owning Session.
-      let promptCredentials = (sessionId !== null || parsed.data.roleId
-        || parsed.data.intent === 'review' || parsed.data.intent === 'scm_diff_summary')
-        ? sessionId === null && actionOptions?.externalActionExecutionAuthorization
+      let promptCredentials = sessionId === null && actionOptions?.externalActionExecutionAuthorization
           ? requesterAccountContext?.credentials
-          : requesterBootstrap?.credentials ?? await params.context.readPromptCredentials?.() ?? undefined
-        : undefined;
-      if (sessionId !== null && promptCredentials && !promptCredentials.requesterSessionCredentialScope) {
+          : requesterBootstrap?.credentials ?? await params.context.readPromptCredentials?.() ?? undefined;
+      if (promptCredentials && !promptCredentials.requesterSessionCredentialScope) {
         // Ordinary Session credentials also need their captured Home. Missing
         // custody stays unavailable; memory preparation must not select ambient state.
         promptCredentials = params.context.serverId && params.context.serverUrl
@@ -553,11 +554,13 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       const started = await params.manager.start({
         ...runStartRequest,
+        ...(sessionId === null && nativeSandbox !== undefined ? { nativeSandbox } : {}),
         ...(parsed.data.intent === 'voice_agent' ? {
           actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, actionId),
         } : {}),
-        approvalProfileId: runStartRequest.approvalProfileId === undefined
-          ? actionOptions?.approvalProfileId ?? null : runStartRequest.approvalProfileId,
+        approvalProfileId: runStartRequest.approvalProfileId === undefined && sessionId !== null
+          ? actionOptions?.approvalProfileId : runStartRequest.approvalProfileId,
+        approvalProfileTeamOrGroupDerived: actionOptions?.approvalProfileTeamOrGroupDerived === true,
         signal: parsed.data.intent === 'voice_agent' ? actionOptions?.signal : undefined,
         ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
         ...(params.context.projectSetupOperation ? { projectSetupOperation: params.context.projectSetupOperation } : {}),
@@ -959,6 +962,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           {
             defaultSessionId: sessionId,
             approvalProfileId: runState?.approvalProfileId ?? null,
+            approvalProfileTeamOrGroupDerived: runState?.approvalProfileTeamOrGroupDerived === true,
             ...(opts?.serverId ? { serverId: opts.serverId } : {}),
             ...(opts?.authority ? { authority: opts.authority } : {}),
             ...(opts?.actionCaller ? { actionCaller: opts.actionCaller } : {}),

@@ -42,6 +42,7 @@ export type ExecutionRunControlActionInputById = {
             draftCorrelationId?: string | undefined;
         };
         approvalProfileId?: null | string | undefined;
+        nativeSandbox?: 'off' | 'on' | undefined;
         projectContext?: undefined | {
             projectRef?: undefined | {
                 serverId: string;
@@ -886,6 +887,7 @@ export type ExecutionRunControlActionInputById = {
                 draftCorrelationId?: string | undefined;
             };
             approvalProfileId?: null | string | undefined;
+            nativeSandbox?: 'off' | 'on' | undefined;
             projectContext?: undefined | {
                 projectRef?: undefined | {
                     serverId: string;

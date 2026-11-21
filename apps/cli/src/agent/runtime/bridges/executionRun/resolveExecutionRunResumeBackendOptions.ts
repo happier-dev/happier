@@ -20,6 +20,7 @@ import type { ExecutionRunManagerStartParams, ExecutionRunState } from './execut
  * on ambient/native auth. Passing `null` preserves an explicit native (opt-out) selection.
  */
 export type ExecutionRunResumeBackendOptions = Readonly<{
+  nativeSandbox?: NonNullable<ExecutionRunState['launch']>['nativeSandbox'];
   workspaceWrites?: 'allow' | 'deny';
   modelId?: string;
   modelSelectionSource?: 'explicit' | 'inherited';
@@ -39,6 +40,7 @@ export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
   if (!run) return {};
   const launch = run.launch ?? null;
   return {
+    ...(launch?.nativeSandbox !== undefined ? { nativeSandbox: launch.nativeSandbox } : {}),
     ...(run.workspaceWrites !== undefined ? { workspaceWrites: run.workspaceWrites === 'allow' ? 'allow' : 'deny' } : {}),
     // Historical lifecycle labels do not prove an explicit model operand.
     modelSelectionSource: launch?.selectionSource === 'explicit' ? 'explicit' : 'inherited',

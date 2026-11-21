@@ -55,7 +55,7 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 
 export type PluginActionsServiceSeed = Readonly<{
     requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
-    readApprovalProfileId?: PluginInvocationServicesSeed['readApprovalProfileId'];
+    readApprovalProfileSelection?: PluginInvocationServicesSeed['readApprovalProfileSelection'];
     workflowActionContext?: import('./types').WorkflowAgentActionContext;
     sessionListAccess?: ActionExecutorContext['sessionListAccess'];
     plugin: Readonly<{ id: string; version: string }>;
@@ -431,13 +431,14 @@ export function createPluginInvocationActionsService(params: Readonly<{
         ?? params.seed.approvalContext?.executionRunWorkflowRunId;
     const readApprovalContext = (): ActionExecutorContext | undefined => {
         const executionRunWorkflowRunId = readWorkflowRunId();
-        const approvalProfileId = params.seed.readApprovalProfileId
-            ? params.seed.readApprovalProfileId() : params.seed.approvalContext?.approvalProfileId;
+        const profileSelection = params.seed.readApprovalProfileSelection?.();
+        const approvalProfileId = profileSelection ? profileSelection.approvalProfileId : params.seed.approvalContext?.approvalProfileId;
         const context = executionRunWorkflowRunId || approvalProfileId !== undefined || params.seed.finiteOperation
             ? { ...params.seed.approvalContext,
                 ...params.seed.finiteOperation,
                 ...(executionRunWorkflowRunId ? { executionRunWorkflowRunId } : {}),
-                ...(approvalProfileId !== undefined ? { approvalProfileId } : {}) }
+                ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
+                ...(profileSelection ? { approvalProfileTeamOrGroupDerived: profileSelection.approvalProfileTeamOrGroupDerived } : {}) }
             : params.seed.approvalContext;
         if (!context) return undefined;
         // A child Action selects its own hooks; only retained approval replay
@@ -798,6 +799,8 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 ? { signExternalActionApprovalInput: source.signExternalActionApprovalInput } : {}),
             ...(source?.callerPermissionMode !== undefined ? { callerPermissionMode: source.callerPermissionMode } : {}),
             ...(source?.approvalProfileId !== undefined ? { approvalProfileId: source.approvalProfileId } : {}),
+            ...(source?.approvalProfileTeamOrGroupDerived !== undefined
+                ? { approvalProfileTeamOrGroupDerived: source.approvalProfileTeamOrGroupDerived } : {}),
             ...(source?.causalPermissionAuthority !== undefined ? { causalPermissionAuthority: source.causalPermissionAuthority } : {}),
             ...(source?.nativeRealtimeInput || agentWitness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true } : {}),
             ...(source?.workspaceWrites !== undefined ? { workspaceWrites: source.workspaceWrites } : {}),

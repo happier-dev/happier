@@ -566,8 +566,8 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             ? async input => {
                                 const captured = options.projectLaunchContext;
                                 const projectSetupOperation = options.resolveProjectSetupOperation?.() ?? captured?.operation ?? options.projectSetupOperation;
-                                const runInput = options.readApprovalProfileId
-                                    ? { ...input, readApprovalProfileId: options.readApprovalProfileId } : input;
+                                const runInput = options.readApprovalProfileSelection
+                                    ? { ...input, readApprovalProfileSelection: options.readApprovalProfileSelection } : input;
                                 const operationInput = projectSetupOperation ? { ...runInput, projectSetupOperation } : runInput;
                                 const workflowInput = options.workflowActionContext
                                     ? { ...operationInput, workflowActionContext: options.workflowActionContext } : operationInput;

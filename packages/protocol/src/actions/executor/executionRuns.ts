@@ -125,7 +125,7 @@ export function buildExecutionRunCallOptions(
   workflowObservationSink?: unknown,
   actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'
     | 'surface' | 'runtimeAccountId' | 'callerInputConstraints' | 'callerPermissionMode' | 'workspaceWrites'
-    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId'>,
+    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived'>,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
   const target = normalizeId(actionContext?.admittedMachineTarget?.machineId ?? targetMachineId);
@@ -136,7 +136,7 @@ export function buildExecutionRunCallOptions(
   if (!targetServerId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
     && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued
-    && actionContext?.approvalProfileId === undefined) return undefined;
+    && actionContext?.approvalProfileId === undefined && actionContext?.approvalProfileTeamOrGroupDerived === undefined) return undefined;
   return {
     ...(targetServerId ? { serverId: targetServerId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
@@ -155,6 +155,8 @@ export function buildExecutionRunCallOptions(
     ...(typeof actionContext?.callerPermissionMode === 'string' ? { effectiveCallerPermissionMode: actionContext.callerPermissionMode } : {}),
     ...(actionContext?.workspaceWrites ? { workspaceWrites: actionContext.workspaceWrites } : {}),
     ...(actionContext?.approvalProfileId !== undefined ? { approvalProfileId: actionContext.approvalProfileId } : {}),
+    ...(actionContext?.approvalProfileTeamOrGroupDerived !== undefined
+      ? { approvalProfileTeamOrGroupDerived: actionContext.approvalProfileTeamOrGroupDerived } : {}),
     ...(actionContext?.externalActionCredential ? { externalActionCredential: actionContext.externalActionCredential } : {}),
     ...(actionContext?.externalActionExecutionAuthorization ? { externalActionExecutionAuthorization: actionContext.externalActionExecutionAuthorization } : {}),
     ...(actionContext?.externalActionTarget ? { externalActionTarget: actionContext.externalActionTarget } : {}),

@@ -163,6 +163,7 @@ export async function applyExecutionRunAction(args: Readonly<{
           ...(run.display ? { display: run.display } : {}),
           permissionMode: args.effectiveCallerPermissionMode ?? run.permissionMode,
           approvalProfileId: run.approvalProfileId ?? null,
+          approvalProfileTeamOrGroupDerived: run.approvalProfileTeamOrGroupDerived === true,
           ...(args.causalPermissionAuthority ? { causalPermissionAuthority: args.causalPermissionAuthority } : {}),
           retentionPolicy: run.retentionPolicy, runClass: run.runClass, ioMode: run.ioMode,
           ...(continueRetained ? (run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}) : { resumeHandle: null }),
@@ -211,6 +212,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       ...(run.display ? { display: run.display } : {}),
       permissionMode: args.effectiveCallerPermissionMode ?? run.permissionMode,
       approvalProfileId: run.approvalProfileId ?? null,
+      approvalProfileTeamOrGroupDerived: run.approvalProfileTeamOrGroupDerived === true,
       ...(args.causalPermissionAuthority
         ? { causalPermissionAuthority: args.causalPermissionAuthority }
         : {}),

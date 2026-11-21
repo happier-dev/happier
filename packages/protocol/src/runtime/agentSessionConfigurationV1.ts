@@ -28,6 +28,7 @@ export const AgentSessionProviderResumeV1Schema = lazyZodSchema(() => z.strictOb
   providerSessionId: ProviderIdSchema,
 }));
 export type AgentSessionProviderResumeV1 = z.infer<typeof AgentSessionProviderResumeV1Schema>;
+export const AgentNativeSandboxChoiceV1Schema = lazyZodSchema(() => z.enum(['on', 'off']));
 
 
 const AgentSessionConfigurationSnapshotCoreV1Schema = lazyZodSchema(() => z.strictObject({
@@ -40,7 +41,7 @@ const AgentSessionConfigurationSnapshotCoreV1Schema = lazyZodSchema(() => z.stri
   permissionIntent: TimestampedAgentValueV1Schema(zMini.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   /** Host role restriction; independent of the permission intent used as delegation ceiling. */
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
-  nativeSandbox: z.optional(z.enum(['on', 'off'])),
+  nativeSandbox: z.optional(AgentNativeSandboxChoiceV1Schema),
   options: z.record(
     exactString(LIMITS.hostIndexedIdMaxCodeUnits),
     TimestampedAgentValueV1Schema(AgentConfigurationScalarV1Schema),

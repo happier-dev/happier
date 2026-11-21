@@ -81,7 +81,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Exact resource admission, captured by the host before the handler starts. */
     managedWorkloads?: PluginServices['managedServices']['observeWorkload'];
     /** Host-private current Run attachment; never projected into plugin context. */
-    readApprovalProfileId?: () => string | null;
+    readApprovalProfileSelection?: import('@/agent/runtime/registry/engineRegistryTypes').CreateCliExecutionRunBackendParams['readApprovalProfileSelection'];
     /** Bound by the actual Domain admission, never by plugin-authored operands. */
     machineConnectorSecrets?: PluginServices['machineConnectorSecrets'];
     /** Exact role source acquisition captured by the deployment admission owner. */
@@ -255,7 +255,7 @@ export type CreatePluginInvocationServices = (
 
 export type CreateAgentInvocationServices = (
     params: Readonly<{
-        readApprovalProfileId?: PluginInvocationServicesSeed['readApprovalProfileId'];
+        readApprovalProfileSelection?: PluginInvocationServicesSeed['readApprovalProfileSelection'];
         workflowActionContext?: WorkflowAgentActionContext;
         actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
         /** Host-owned execution placement; conveys no approval or caller authority. */

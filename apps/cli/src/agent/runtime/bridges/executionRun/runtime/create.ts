@@ -153,7 +153,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
-    readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
+    readApprovalProfileSelection?: CreateCliExecutionRunBackendParams['readApprovalProfileSelection'];
     cwd: string;
     runId?: string;
     controllerOccurrenceId?: string;
@@ -542,7 +542,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 accountSettings: opts.accountSettings ?? null,
                 ...(opts.resolveAccountSettingsSnapshot ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot } : {}),
                 ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
-                ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
+                ...(opts.readApprovalProfileSelection ? { readApprovalProfileSelection: opts.readApprovalProfileSelection } : {}),
                 start: opts.start ?? null,
                 ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
                 ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
@@ -667,7 +667,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
-    readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
+    readApprovalProfileSelection?: CreateCliExecutionRunBackendParams['readApprovalProfileSelection'];
     projectLaunchContext?: CreateCliExecutionRunBackendParams['projectLaunchContext'];
     projectSetupOperation?: CreateCliExecutionRunBackendParams['projectSetupOperation'];
     resolveProjectSetupOperation?: CreateCliExecutionRunBackendParams['resolveProjectSetupOperation'];
@@ -748,7 +748,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
                 ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
             ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
-            ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
+            ...(opts.readApprovalProfileSelection ? { readApprovalProfileSelection: opts.readApprovalProfileSelection } : {}),
             ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
             ...(opts.projectSetupOperation ? { projectSetupOperation: opts.projectSetupOperation } : {}),
             ...(opts.resolveProjectSetupOperation ? { resolveProjectSetupOperation: opts.resolveProjectSetupOperation } : {}),

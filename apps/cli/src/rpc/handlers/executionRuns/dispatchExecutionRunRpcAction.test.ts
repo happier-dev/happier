@@ -668,6 +668,22 @@ describe('createExecutionRunRpcActionExecutor', () => {
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ launchOrigin }));
   });
 
+  it.each([undefined, 'builtin:apply-safe', null])('preserves Team approval profile provenance only for a retained selection (%s)', async approvalProfileId => {
+    const start = vi.fn(async () => ({ runId: 'run_started_1', callId: 'call_started_1', sidechainId: 'sidechain_started_1' }));
+    const executor = createAgentExecutionRunStartExecutor(start);
+    await expect(executor.execute('execution.run.start', {
+      ...AGENT_EXECUTION_RUN_START_REQUEST,
+      ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
+    }, {
+      surface: 'rpc', defaultSessionId: 'sess_1', approvalProfileId: 'builtin:apply-safe',
+      approvalProfileTeamOrGroupDerived: true,
+    })).resolves.toMatchObject({ ok: true });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      approvalProfileId: approvalProfileId === undefined ? 'builtin:apply-safe' : approvalProfileId,
+      approvalProfileTeamOrGroupDerived: approvalProfileId === undefined,
+    }));
+  });
+
   it('accepts the canonical Agent target and lowers it at daemon admission', async () => {
     const start = vi.fn(async () => ({
       runId: 'run_started_1',

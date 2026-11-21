@@ -272,6 +272,7 @@ async function applyReviewWalkthroughActionInAccountScope(host: Host): Promise<E
     ...(first.runtimeSettings?.accountSettings ? { accountSettings: first.runtimeSettings.accountSettings } : {}),
     permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
     approvalProfileId: first.approvalProfileId ?? null,
+    approvalProfileTeamOrGroupDerived: first.approvalProfileTeamOrGroupDerived === true,
     display: { title: 'Diff walkthrough', participantLabel: 'Reading diffs, not reviewing' },
     initialInput: { kind: 'deferred_session_pending' }, cwd: host.cwd,
     intentInput: { cwd: host.cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['walkthrough'] },
