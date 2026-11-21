@@ -13001,6 +13001,13 @@ const ru: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Оплачивается через ваш аккаунт ${engine}, а не Happier.`,
         includeTranscript: 'Включить расшифровку сессии',
         includeTranscriptLine: 'Каждый рецензент на этом шаге читает разговор вместе с изменениями.',
+        sheetDescription: 'Проверяющие читают изменения, не редактируя их, и сообщают здесь.',
+        subjectPending: 'Незафиксированные изменения',
+        subjectPendingLine: 'Ещё не закоммичены',
+        subjectStaged: 'Подготовленные изменения',
+        subjectStagedLine: 'Войдут в следующий коммит',
+        subjectAll: 'Все изменения',
+        subjectAllLine: 'Подготовленные и незафиксированные',
     },
     collection: {
         needsYourDecision: "Требуют вашего решения",

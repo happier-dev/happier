@@ -12973,6 +12973,13 @@ const ca: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Es factura al teu compte de ${engine}, no a Happier.`,
         includeTranscript: 'Inclou la transcripció de la sessió',
         includeTranscriptLine: 'Cada revisor d’aquest pas llegeix la conversa a més dels canvis.',
+        sheetDescription: 'Els revisors llegeixen els canvis sense editar-los i informen aquí.',
+        subjectPending: 'Canvis pendents',
+        subjectPendingLine: 'Encara sense confirmar',
+        subjectStaged: 'Canvis preparats',
+        subjectStagedLine: 'Inclosos al proper commit',
+        subjectAll: 'Tots els canvis',
+        subjectAllLine: 'Preparats i pendents',
     },
     collection: {
         needsYourDecision: "Necessiten la teva decisió",

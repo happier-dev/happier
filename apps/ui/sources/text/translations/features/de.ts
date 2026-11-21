@@ -12977,6 +12977,13 @@ const de: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Wird über dein ${engine}-Konto abgerechnet, nicht über Happier.`,
         includeTranscript: 'Transkript der Sitzung einbeziehen',
         includeTranscriptLine: 'Alle Prüfer in diesem Schritt lesen neben den Änderungen auch das Gespräch.',
+        sheetDescription: 'Prüfer lesen die Änderungen, ohne sie zu bearbeiten, und berichten hier.',
+        subjectPending: 'Offene Änderungen',
+        subjectPendingLine: 'Noch nicht committet',
+        subjectStaged: 'Vorgemerkte Änderungen',
+        subjectStagedLine: 'Im nächsten Commit enthalten',
+        subjectAll: 'Alle Änderungen',
+        subjectAllLine: 'Vorgemerkt und offen',
     },
     collection: {
         needsYourDecision: "Deine Entscheidung ist gefragt",

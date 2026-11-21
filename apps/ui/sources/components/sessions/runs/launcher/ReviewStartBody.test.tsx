@@ -52,3 +52,20 @@ it('shows the walkthrough decision supplied by the comparison owner', async () =
     expect(input.outputs).toEqual([]);
     await screen.unmount();
 });
+it('asks what to review first and records the chosen change area in the draft', async () => {
+    let input: Record<string, unknown> = { changeType: 'uncommitted', reviewers: [{ kind: 'engine', engineId: 'claude' }] };
+    const onChange: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update => {
+        input = typeof update === 'function' ? update(input) : update;
+    };
+    const screen = await renderScreen(<ReviewStartBody input={input}
+        onChange={onChange} source={{ enabled: true, sections: [], selectedIds: new Set(), where: null }}
+        subject={{ options: ['committed', 'uncommitted', 'all'] }}
+        choices={[]} transcriptAvailable={false} walkthrough={false} disabled={false} />);
+    const order = screen.root.findAll(node => typeof node.props.testID === 'string'
+        && ['review-start-subject', 'review-start-steps'].includes(node.props.testID) && typeof node.type === 'string')
+        .map(node => node.props.testID);
+    expect(order[0]).toBe('review-start-subject');
+    await screen.pressByTestIdAsync('review-start-subject:all');
+    expect(input.changeType).toBe('all');
+    await screen.unmount();
+});

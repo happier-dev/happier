@@ -4,8 +4,6 @@ import { View } from 'react-native';
 import { Modal } from '@/modal';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
-import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
-import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -30,14 +28,14 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
     onResolve: (selection: LaunchSelection | null) => void;
 }>) {
     const { onResolve, setChrome } = props;
-    // The composer owns the primary action, so the footer holds only Cancel; a phone sheet's close and drag
-    // already dismiss it, which leaves that footer empty.
-    const phoneSheet = useSheetDismiss() !== null;
-    const footer = React.useMemo(() => phoneSheet ? null : (
-        <ModalCardFooterActions cancel={{ onPress: () => onResolve(null), testID: 'review-execution-run-launch-cancel' }} />
-    ), [onResolve, phoneSheet]);
+    // The start publishes its own footer (Machine, Save as workflow, Cancel, Start review); one stable sheet
+    // binding and stable callbacks keep the memoized body from rendering again when the footer lands.
+    const [footer, setFooter] = React.useState<React.ReactNode>(null);
+    const cancel = React.useCallback(() => onResolve(null), [onResolve]);
+    const sheet = React.useMemo(() => ({ onFooterChange: setFooter, onCancel: cancel }), [cancel]);
     useModalCardChrome(setChrome, React.useMemo(() => ({
-        ...createAnchoredSheetChrome({ title: t('runPage.launcher.titles.review'), anchor: props.anchor }),
+        ...createAnchoredSheetChrome({ title: t('commandPalette.commands.startReviewRunTitle'),
+            subtitle: t('reviewWalkthrough.start.sheetDescription'), anchor: props.anchor }),
         footer,
     }), [footer, props.anchor]));
     return <View testID="review-execution-run-launch-selection" style={{ maxHeight: '100%', flexShrink: 1 }}>
@@ -45,7 +43,7 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
             intent="review" initialActionInput={props.draft}
             initialText={typeof props.draft.instructions === 'string' ? props.draft.instructions : undefined}
             reviewSelectionProjection={props.projection} selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
-            onStartAccepted={() => onResolve(null)} onRunStarted={() => onResolve(null)} />
+            onStartAccepted={cancel} onRunStarted={cancel} sheet={sheet} />
     </View>;
 }
 
@@ -70,7 +68,8 @@ export function presentReviewExecutionRunLaunchSelection(request: ReviewInputSel
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,
-        chrome: createAnchoredSheetChrome({ title: t('runPage.launcher.titles.review'), anchor: request.anchor }),
+        chrome: createAnchoredSheetChrome({ title: t('commandPalette.commands.startReviewRunTitle'),
+            subtitle: t('reviewWalkthrough.start.sheetDescription'), anchor: request.anchor }),
     });
     if (!modalId) close();
     else if (hideAfterShow) Modal.hide(modalId);

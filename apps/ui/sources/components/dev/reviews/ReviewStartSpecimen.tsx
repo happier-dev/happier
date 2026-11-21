@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { ReviewStartOptions } from '@/components/reviews/start/ReviewStartOptions';
+import { ReviewStartSubject } from '@/components/reviews/start/ReviewStartSubject';
 import {
   ReviewStartSteps,
   type ReviewStartReviewerPresentation,
@@ -35,7 +36,6 @@ type Fixture = Readonly<{
   line: string;
   reviewer: ReviewReviewerSelectionV1;
   mark: () => React.ReactNode;
-  avatar?: boolean;
   warning?: string;
 }>;
 
@@ -93,7 +93,6 @@ const FIXTURES: readonly Fixture[] = [
     category: 'person',
     name: 'Mika Tanaka',
     line: 'Teammate · Happier Core',
-    avatar: true,
     reviewer: {
       kind: 'person',
       principal: { kind: 'account', accountId: 'mika' },
@@ -150,7 +149,7 @@ const SCENES: Readonly<Record<string, readonly ReviewStepV1[]>> = {
   rounds: [
     {
       kind: 'review',
-      reviewers: pick('coderabbit', 'deepsec', 'desk', 'codex', 'claude'),
+      reviewers: pick('deepsec', 'desk', 'codex', 'claude'),
       instructions: '',
     },
     {
@@ -183,7 +182,6 @@ function present(
   return {
     name: fixture?.name ?? reviewer.kind,
     mark: fixture?.mark() ?? null,
-    avatar: fixture?.avatar === true,
     warning: fixture?.warning ?? null,
   };
 }
@@ -208,7 +206,8 @@ function SpecimenWho(
       label: fixture.name,
       subtitle: fixture.line,
       icon: fixture.mark(),
-      onSelect: () => onToggle(fixture.reviewer),
+      // An engine that can't run yet is offered with its reason, never chosen (the host's unavailable rule).
+      ...(fixture.warning ? { disabled: true } : { onSelect: () => onToggle(fixture.reviewer) }),
     });
     const section = (category: Fixture['category']) => ({
       category,
@@ -254,6 +253,7 @@ export function ReviewStartSpecimen(props: Readonly<{ scene: string | null }>) {
     SCENES[scene]!,
   );
   const [then, setThen] = React.useState<'report' | 'fix'>('report');
+  const [subject, setSubject] = React.useState<'uncommitted' | 'committed' | 'all'>('uncommitted');
   const [walkthrough, setWalkthrough] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
   const latest = React.useRef(steps);
@@ -303,6 +303,8 @@ export function ReviewStartSpecimen(props: Readonly<{ scene: string | null }>) {
       contentContainerStyle={phone ? styles.contentPhone : styles.content}
     >
       <View style={[styles.sheet, phone ? styles.sheetPhone : null]}>
+        <ReviewStartSubject options={['uncommitted', 'committed', 'all']} value={subject} onChange={setSubject}
+          detail={subject === 'uncommitted' ? 'main · 9 files' : null} />
         <ReviewStartSteps
           steps={steps}
           onStepsChange={setSteps}

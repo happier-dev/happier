@@ -135,10 +135,12 @@ export function useContextualStartComposer(source: ContextualStartSource, admiss
 export type ContextualStartComposerModel = ReturnType<typeof useContextualStartComposer>;
 
 /** The same placement presentation and admissibility for a combined composer or Review's stepped body. */
-export function ContextualStartWhere({ model }: Readonly<{ model: ContextualStartComposerModel }>) {
+export function ContextualStartWhere({ model, presentation = 'inline' }: Readonly<{ model: ContextualStartComposerModel;
+    /** `chip`: bordered chips on one line, for a sheet footer's Machine (lab `start-sheet`). */
+    presentation?: 'inline' | 'chip' }>) {
     const { source, where } = model;
     const busy = !source.enabled || source.busy === true;
-    return where ? <WorkflowProjectTargetControl presentation="inline" accountLifetime={where.accountLifetime}
+    return where ? <WorkflowProjectTargetControl presentation={presentation} accountLifetime={where.accountLifetime}
         target={where.target} machineName={where.machineName} machineHomeDir={where.machineHomeDir}
         machines={busy || model.admissible.machine === 'fixed' ? undefined : where.machines}
         directoryEditable={!busy && model.admissible.folder === 'select'}
@@ -368,18 +370,20 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
 
     return <View testID="contextual-start-composer" style={styles.root}>
         <View>
-            <View style={[styles.groupRow, styles.hang]}>
-                <CollectionListGroupLabel title={whoLabel ?? t('agentStart.chips.engineTitle')} presentation="menu" />
-                {whoHint ? <Text style={styles.groupNote} numberOfLines={1}>{whoHint}</Text> : null}
-                {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
-                    tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
-                    disabled={busy} onPress={() => setWhoEditing(value => !value)} /> : null}
-                {/* The link holds its own start alignment; its wrapper joins the label's baseline. */}
-                {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
-                    label={whoAccessory.label} disabled={busy} onPress={() => setAccessoryOpen(value => !value)} /></View> : null}
-                {addAgent ? <TextLinkButton testID="contextual-start-add-agent-button" tone="strong" size="meta"
-                    label={t('session.collaboration.discussion.secondOpinion.addAgentShort')}
-                    disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
+            {/* The label's own actions slot keeps Change, the accessory and Add agent together at its end, on its line. */}
+            <View style={styles.hang}>
+                <CollectionListGroupLabel title={whoLabel ?? t('agentStart.chips.engineTitle')} presentation="menu"
+                    actions={whoHint || hasChosen || whoAccessory || addAgent ? <View style={styles.groupActions}>
+                        {whoHint ? <Text style={styles.groupNote} numberOfLines={1}>{whoHint}</Text> : null}
+                        {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
+                            label={whoAccessory.label} disabled={busy} onPress={() => setAccessoryOpen(value => !value)} /></View> : null}
+                        {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
+                            tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
+                            disabled={busy} onPress={() => setWhoEditing(value => !value)} /> : null}
+                        {addAgent ? <TextLinkButton testID="contextual-start-add-agent-button" tone="strong" size="meta"
+                            label={t('session.collaboration.discussion.secondOpinion.addAgentShort')}
+                            disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
+                    </View> : undefined} />
             </View>
             <View style={styles.hang}>
                 <SelectionList testID="contextual-start-who" rootStep={choosingWho ? choosingStep : chosenStep}
@@ -429,14 +433,7 @@ function formatRecipeSummary(launch: ModelSelection['launch'], machines: readonl
 const styles = StyleSheet.create((theme) => ({
     root: { gap: theme.space.s12 },
     markSlot: { width: ICON_SIZE.md, height: ICON_SIZE.md },
-    groupRow: {
-        flexDirection: 'row',
-        // The label carries its group spacing above it; the hint or role link sits on its baseline.
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: theme.space.s8,
-        paddingRight: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
-    },
+    groupActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12, flexShrink: 1, minWidth: 0 },
     // Headings, the question and the row marks share the form's one edge, so menu rows and their
     // group labels hang their own inset into the gutter and a chosen row's tint reaches past it.
     hang: { marginHorizontal: -HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx },

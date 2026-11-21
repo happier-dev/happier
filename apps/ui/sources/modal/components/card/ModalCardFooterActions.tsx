@@ -17,6 +17,8 @@ export function ModalCardFooterActions(props: Readonly<{
   noteTestID?: string;
   /** A quiet way out in the note's place (Deploy an app's "Or ask an agent to set it up"); it wins over `note`. */
   noteAction?: Readonly<{ label: string; onPress: () => void; testID?: string }> | null;
+  /** A control in the note's place (a Review start's Machine chip); it wins over `noteAction` and `note`. */
+  lead?: React.ReactNode;
   children?: React.ReactNode;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
@@ -34,7 +36,7 @@ export function ModalCardFooterActions(props: Readonly<{
   </View>;
   return <HappierModalCardFooterActions phoneSheet={phoneSheet} gap={theme.space.s8}
     cancel={props.cancel ? <RoundButton {...props.cancel} display="inverted" title={props.cancel.title ?? t('common.cancel')} /> : null}
-    note={noteAction ?? (props.note ? <Text testID={props.noteTestID} variant="meta" numberOfLines={2}
+    note={props.lead ?? noteAction ?? (props.note ? <Text testID={props.noteTestID} variant="meta" numberOfLines={2}
       style={{ color: theme.colors.text.secondary }}>{props.note}</Text> : null)}>
     {props.children}
   </HappierModalCardFooterActions>;

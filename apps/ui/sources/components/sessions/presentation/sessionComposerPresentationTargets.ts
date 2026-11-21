@@ -1962,6 +1962,17 @@ export function requestRegisteredComposerFocus(ref: ComposerRefV1 | symbol): boo
         ? resolveTargetRegistration(targets.get(ref)) : readRegisteredTarget(ref));
 }
 
+/**
+ * Sends one exact mounted composer's draft through that composer's own submission owner, for a host whose
+ * primary sits outside the input (a sheet footer's Start). Null when no current composer can submit.
+ */
+export function requestRegisteredComposerSubmit(request: Readonly<{
+    ref: ComposerRefV1;
+    scope: ServerAccountScope;
+}>): ReturnType<NonNullable<ComposerPresentationTarget['submitDraft']>> | null {
+    return readScopedMountedComposerTarget(request.ref, request.scope)?.submitDraft?.() ?? null;
+}
+
 /** Dismisses the keyboard through the exact incumbent input's own native command. */
 export function requestRegisteredComposerBlur(ref: ComposerRefV1): boolean {
     const target = readRegisteredTarget(ref);

@@ -12980,6 +12980,13 @@ const it: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Addebitato sul tuo account ${engine}, non su Happier.`,
         includeTranscript: 'Includi la trascrizione della sessione',
         includeTranscriptLine: 'Ogni revisore di questo passo legge la conversazione oltre alle modifiche.',
+        sheetDescription: 'I revisori leggono le modifiche senza modificarle e riferiscono qui.',
+        subjectPending: 'Modifiche in sospeso',
+        subjectPendingLine: 'Non ancora confermate',
+        subjectStaged: 'Modifiche in stage',
+        subjectStagedLine: 'Incluse nel prossimo commit',
+        subjectAll: 'Tutte le modifiche',
+        subjectAllLine: 'In stage e in sospeso',
     },
     collection: {
         needsYourDecision: "Richiedono la tua decisione",

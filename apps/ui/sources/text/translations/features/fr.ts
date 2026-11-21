@@ -12992,6 +12992,13 @@ const fr: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Facturé sur ton compte ${engine}, pas par Happier.`,
         includeTranscript: 'Inclure la transcription de la session',
         includeTranscriptLine: 'Chaque relecteur de cette étape lit la conversation en plus des modifications.',
+        sheetDescription: 'Les relecteurs lisent les modifications sans les toucher et rendent compte ici.',
+        subjectPending: 'Modifications en attente',
+        subjectPendingLine: 'Pas encore validées',
+        subjectStaged: 'Modifications indexées',
+        subjectStagedLine: 'Incluses dans le prochain commit',
+        subjectAll: 'Toutes les modifications',
+        subjectAllLine: 'Indexées et en attente',
     },
     collection: {
         needsYourDecision: "À vous de décider",

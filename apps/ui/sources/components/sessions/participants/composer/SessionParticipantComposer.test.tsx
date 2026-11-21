@@ -440,6 +440,12 @@ vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
         return [serverId, binding];
     })),
 }));
+// Only the active-scope read is stubbed, for the host-primary case; every other read stays the module's own.
+const activeScopeState = vi.hoisted(() => ({ value: null as null | Readonly<{ serverId: string; accountId: string }> }));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>();
+    return { ...actual, getActiveServerAccountScope: () => activeScopeState.value ?? actual.getActiveServerAccountScope() };
+});
 vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
     sessionAttachmentsUploadFile: (args: unknown) => sessionAttachmentsUploadFileSpy(args),
 }));
@@ -710,6 +716,33 @@ describe('SessionParticipantComposer', () => {
         expect(admittedDraft).toMatchObject({ text: 'A' });
         expect(runOwner.current?.read().document.text).toBe('B');
         expect(readComposerPresentationSnapshot(participantComposerRef)?.text).toBe('B');
+    });
+
+    it('starts from a host primary outside the input through the same submission owner as its own send', async () => {
+        const submitPreparedMessage = vi.fn(async (_submission: ParticipantComposerPreparedSubmission) => undefined);
+        const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
+        const { requestRegisteredComposerSubmit } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        await renderScreen(<PluginSurfaceFocusEligibilityProvider active={false} presentationActive>
+            <SessionParticipantComposer sessionId="s1" canSendMessages recipient={null} submitPreparedMessage={submitPreparedMessage} />
+        </PluginSurfaceFocusEligibilityProvider>);
+        const input = agentInputSpy.mock.lastCall?.[0] as React.ComponentProps<typeof import('@/components/sessions/agentInput').AgentInput>;
+        if (!input.composerRef) throw new Error('Expected participant composer identity');
+        const ref = input.composerRef;
+        await act(async () => { input.onChangeText('Look at the settings modal first'); });
+
+        const scope = { serverId: 'server-1', accountId: 'account-1' };
+        activeScopeState.value = scope;
+        let submitted: Awaited<ReturnType<typeof requestRegisteredComposerSubmit>> = null;
+        await act(async () => {
+            submitted = await requestRegisteredComposerSubmit({ ref, scope });
+            await flushHookEffects({ cycles: 4, turns: 2 });
+        });
+        activeScopeState.value = null;
+
+        expect(submitted).toMatchObject({ ok: true });
+        expect(submitPreparedMessage).toHaveBeenCalledTimes(1);
+        expect(submitPreparedMessage.mock.calls[0]![0].draft.text).toBe('Look at the settings modal first');
     });
 
     it('rehydrates process-local file drafts instead of carrying them across an Account switch', async () => {

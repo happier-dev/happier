@@ -2,9 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { ReviewStartSteps } from '@/components/reviews/start/ReviewStartSteps';
 import { ReviewStartOptions, type ReviewStartOptionsProps } from '@/components/reviews/start/ReviewStartOptions';
+import { ReviewStartSubject } from '@/components/reviews/start/ReviewStartSubject';
 import { ContextualStartComposerBody, useContextualStartComposer, useContextualStartParticipantSource, type ContextualStartSource } from '@/components/sessions/authoring/ContextualStartComposer';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
-import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewChangeTypeSchema, reviewReviewerIdForSelectionV1, type ReviewChangeType } from '@happier-dev/protocol/reviews/reviewStart';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useExecutableParticipantLabels } from '@/components/sessions/authoring/useExecutableParticipantLabel';
@@ -34,6 +35,8 @@ type Props = Readonly<{
     narrator?: React.ReactNode;
     credentials?: React.ReactNode;
     onSaveAsWorkflow?: () => void;
+    /** What to review, first in the sheet: the change areas the action offers and the chosen one's facts. */
+    subject?: Readonly<{ options: readonly ReviewChangeType[]; detail?: string | null; base?: React.ReactNode }> | null;
 }>;
 
 /** Bind the visual owner's steps to the retained Run draft and its existing Who source. */
@@ -55,7 +58,14 @@ export function ReviewStartBody(props: Props) {
                     ? { ...value, options: { ...value.options, [consent.optionKey]: accepted } } : value),
             }))) }];
     }));
+    const changeType = ReviewChangeTypeSchema.safeParse(props.input.changeType);
     return <View>
+        {props.subject && props.subject.options.length > 0 ? <ReviewStartSubject options={props.subject.options}
+            value={changeType.success ? changeType.data : props.subject.options[0]!} detail={props.subject.detail}
+            disabled={props.disabled}
+            onChange={value => props.onChange(previous => ({ ...previous, changeType: value }))}>
+            {props.subject.base}
+        </ReviewStartSubject> : null}
         <ReviewStartSteps steps={steps} onStepsChange={update} disabled={props.disabled}
             transcriptAvailable={props.transcriptAvailable}
             presentReviewer={(reviewer, index, stepIndex) => {
@@ -163,7 +173,9 @@ function ParticipantStepWho(props: Props & Readonly<{
         question: '', onQuestionChange: NO_PROJECT_CHANGE, showWhere: false, onProject: NO_PROJECT_CHANGE,
         sessionsContext: t('session.collaboration.discussion.secondOpinion.yourSession'),
     });
-    const source: ContextualStartSource = { ...participantSource,
+    // A Review step asks for Focus, not a question: the shared participant source's question field stays out.
+    const { question: _question, ...participantFields } = participantSource;
+    const source: ContextualStartSource = { ...participantFields,
         sections: [...participantSource.sections, ...props.source.sections.map(entry => ({ ...entry, category: 'engine' as const }))],
         selectedIds: new Set([...participantSource.selectedIds, ...props.source.selectedIds]),
     };

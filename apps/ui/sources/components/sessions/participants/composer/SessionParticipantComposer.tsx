@@ -559,7 +559,13 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         return participantComposerDocumentOwner.apply(input.expectedRevision, input.mutation);
     }, [composerRef, participantComposerDocumentOwner]);
 
+    // The send handler is declared below; a host primary outside the input (a sheet's Start) reaches it here.
+    const participantSendRef = React.useRef<((options?: AgentInputSendOptions) => Promise<void>) | null>(null);
     const composerTarget = useStableComposerPresentationTarget(composerRef, {
+        submitDraft: async options => {
+            await participantSendRef.current?.(options);
+            return { ok: true, result: null };
+        },
         readPickedAttachments: () => transferDraftManager,
         readScope: () => composerAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => props.sessionId === null ? null : resolveWorkspaceTargetForSession(participantSessionAddress ?? props.sessionId),
@@ -933,6 +939,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         transferDraftScope,
         updateParticipantComposerDocument,
     ]);
+    participantSendRef.current = handleParticipantSend;
 
     const transferAttachmentChip = React.useMemo(() => attachmentsUploadsShown
         ? createAttachmentActionChip({

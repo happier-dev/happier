@@ -100,6 +100,13 @@ export type ReviewWalkthroughTranslations = {
         billedTo: (params: Readonly<{ engine: string }>) => string;
         includeTranscript: string;
         includeTranscriptLine: string;
+        sheetDescription: string;
+        subjectPending: string;
+        subjectPendingLine: string;
+        subjectStaged: string;
+        subjectStagedLine: string;
+        subjectAll: string;
+        subjectAllLine: string;
     };
     collection: {
         needsYourDecision: string;
@@ -328,6 +335,13 @@ export const en: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Billed to your ${engine} account, not to Happier.`,
         includeTranscript: 'Include the session’s transcript',
         includeTranscriptLine: 'Every reviewer in this step reads the conversation as well as the changes.',
+        sheetDescription: 'Reviewers read the changes without editing them, and report here.',
+        subjectPending: 'Pending changes',
+        subjectPendingLine: 'Not committed yet',
+        subjectStaged: 'Staged changes',
+        subjectStagedLine: 'Included in the next commit',
+        subjectAll: 'All changes',
+        subjectAllLine: 'Staged and pending',
     },
     collection: {
         needsYourDecision: 'Needs your decision',

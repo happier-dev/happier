@@ -12925,6 +12925,13 @@ const ja: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Happier ではなく、${engine} のアカウントに請求されます。`,
         includeTranscript: 'セッションの記録を含める',
         includeTranscriptLine: 'このステップのすべてのレビュアーが、変更に加えて会話も読みます。',
+        sheetDescription: 'レビュー担当は変更を編集せずに読み、ここに報告します。',
+        subjectPending: '保留中の変更',
+        subjectPendingLine: 'まだコミットされていません',
+        subjectStaged: 'ステージ済みの変更',
+        subjectStagedLine: '次のコミットに含まれます',
+        subjectAll: 'すべての変更',
+        subjectAllLine: 'ステージ済みと保留中',
     },
     collection: {
         needsYourDecision: "あなたの判断が必要",

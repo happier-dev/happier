@@ -88,7 +88,13 @@ import { resolveRowlessExecutionRunStartOptions } from './resolveRowlessExecutio
 import { settleReviewInputSelection, useReviewExecutionRunLaunchOptions, type ReviewInputSelection, type ReviewInputSelectionProjection } from './useReviewExecutionRunLaunchOptions';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus, requestRegisteredComposerSubmit } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
+import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { ReviewChangeTypeSchema, type ReviewChangeType } from '@happier-dev/protocol/reviews/reviewStart';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 import { useDetachedExecutionRunProtocolSupport } from './useDetachedExecutionRunProtocolSupport';
@@ -287,6 +293,11 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     roleId?: string | null;
     /** What the tab calls this start ("Second opinion"); the heading says the same, never a second name. */
     heading?: string | null;
+    /**
+     * A sheet hosts this Review start (lab `start-sheet`): its band names it, and its footer carries the Machine,
+     * Save as workflow, Cancel and the Start primary, which sends the composer's draft through its own submission.
+     */
+    sheet?: Readonly<{ onFooterChange: (footer: React.ReactNode) => void; onCancel: () => void }>;
 }>) => {
     const router = useRouter();
     const intent = props.intent ?? null;
@@ -1007,6 +1018,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         return label ? [`${field.title ?? field.path}: ${label}`] : [];
     }).join(' · ') : '';
 
+    const sheetHosted = props.sheet !== undefined && intent === 'review';
+    // A phone sheet's footer holds only its actions, so the Machine stays in the body there.
+    const phoneSheet = useSheetDismiss() !== null;
     const startChips = React.useMemo<ReadonlyArray<AgentInputExtraActionChip>>(() => {
         const chips: AgentInputExtraActionChip[] = [];
         const disabled = !editable;
@@ -1053,7 +1067,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 ),
             }));
         }
-        if (reviewScopeField) {
+        if (reviewScopeField && !sheetHosted) {
             chips.push(createExecutionRunStartContentChip({
                 ...getExecutionRunStartChipDefinition('scope'), pending: true,
                 label: reviewScopeLabel,
@@ -1105,7 +1119,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             }));
         }
         return chips;
-    }, [props.sessionId, props.comparisonReview, comparisonReview.fields, reviewScopeField, reviewScopeLabel, chipRevision, editable, routeChoice, routeFollowed, routeInFoot, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, rolesStatus, options.backendChoices, options.fields, options.profileChoices.length, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.targetMatchesParent, options.targetRequirement, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker, exactModelSubtitle, exactModelPresentation.accessibilityLabel, demandRouteModel, chooseDraftModel]);
+    }, [sheetHosted, props.sessionId, props.comparisonReview, comparisonReview.fields, reviewScopeField, reviewScopeLabel, chipRevision, editable, routeChoice, routeFollowed, routeInFoot, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, rolesStatus, options.backendChoices, options.fields, options.profileChoices.length, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.targetMatchesParent, options.targetRequirement, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker, exactModelSubtitle, exactModelPresentation.accessibilityLabel, demandRouteModel, chooseDraftModel]);
 
     // Why it can't start yet, said above the kept draft (lab `convo-ST` "Machine offline"): still
     // reading what the machine offers, or the reason agents can't start in this Session.
@@ -1289,6 +1303,41 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         return { details, whoAccessory };
     };
 
+    // What to review, as rows first in the sheet: the action's change areas, and the base they compare with.
+    const reviewSubject = React.useMemo(() => {
+        if (!sheetHosted || !reviewScopeField) return null;
+        const subjects = (reviewScopeField.options ?? []).flatMap(option => {
+            const parsed = ReviewChangeTypeSchema.safeParse(option.value);
+            return parsed.success ? [parsed.data] : [];
+        });
+        return { options: subjects as readonly ReviewChangeType[],
+            base: renderOptions(['fields'], path => path !== 'changeType' && isReviewScopeFieldPath(path)) };
+    }, [renderOptions, reviewScopeField, sheetHosted]);
+    const startFromFooter = useEventCallback(() => {
+        if (!accountLifetime?.isCurrent() || !mountedComposerRef) return;
+        void requestRegisteredComposerSubmit({ ref: mountedComposerRef, scope: accountLifetime.scope });
+    });
+    const sheetFooterChange = props.sheet?.onFooterChange;
+    const sheetCancel = props.sheet?.onCancel;
+    // A global start chooses its Machine and folder first, above what it reviews (the changes live there); a start
+    // whose place is fixed reads it as the footer's one chip (lab `start-sheet`).
+    const machineInFooter = sheetHosted && !phoneSheet && !choosingReviewWorkspace;
+    const footerStartDisabled = unavailable || !editable || !mountedComposerRef;
+    const footerMachine = machineInFooter ? <ContextualStartWhere model={contextualComposer} presentation="chip" /> : null;
+    React.useLayoutEffect(() => {
+        if (!sheetFooterChange || !sheetCancel) return;
+        sheetFooterChange(<ModalCardFooterActions lead={footerMachine}
+            cancel={phoneSheet ? undefined : { onPress: sheetCancel, testID: 'review-execution-run-launch-cancel' }}>
+            {/* The link holds its own start alignment; its wrapper takes the footer's centre line. */}
+            {selectingReviewInput ? null : <View><TextLinkButton testID="review-start-footer-save-as-workflow" size="meta"
+                label={t('workflows.run.saveAsWorkflow')} disabled={!editable} onPress={saveReviewAsWorkflow} /></View>}
+            {selectingReviewInput ? null : <RoundButton testID="review-start-footer-start"
+                title={t('runPage.launcher.start.review', { count: 1 })} disabled={footerStartDisabled}
+                loading={phase === 'starting'} onPress={startFromFooter} />}
+        </ModalCardFooterActions>);
+    });
+    React.useEffect(() => () => sheetFooterChange?.(null), [sheetFooterChange]);
+
     const startQuestion = <View style={styles.composerHang}><SessionParticipantComposer
                 // The draft identity rotates as a live prop. Keying on it would remount the
                 // composer and discard the text, references and staged attachments the
@@ -1326,7 +1375,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     contextText={selectionContext}
                     agentId={options.selectedBackendChoice?.agentId ?? null}
                 />
-            ) : selectingReviewInput ? null : (
+            ) : selectingReviewInput || sheetHosted ? null : (
                 // A value-returning selector's sheet band already names it; this lead would repeat it.
                 <ContextualStartLead testID="execution-run-start-lead"
                     marks={leadAgentIds.length > 0 ? leadAgentIds.slice(0, 3).map((agentId) => (
@@ -1367,13 +1416,14 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     />
                 </View>
             ) : null}
-            {choosingReviewWorkspace ? <ContextualStartWhere model={contextualComposer} /> : null}
+            {(choosingReviewWorkspace || sheetHosted) && !machineInFooter ? <ContextualStartWhere model={contextualComposer} /> : null}
             {intent === 'review' && !credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
                 consumerSessionId={props.sessionId} stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
-                credentials={reviewOptions.controls} onSaveAsWorkflow={saveReviewAsWorkflow}
+                credentials={reviewOptions.controls} onSaveAsWorkflow={sheetHosted ? undefined : saveReviewAsWorkflow}
+                subject={reviewSubject}
                 narrator={props.comparisonReview ? <ComparisonWalkthroughChoice {...comparisonReview.fields} /> : null}>
                 {startQuestion}
             </ReviewStartBody> : <ContextualStartComposerBody model={contextualComposer}
@@ -1383,11 +1433,11 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 whoContent={intent === 'review' && credentialSelectionOnly ? reviewOptions.modelChoice : null}
                 question={startQuestion} />}
 
-            <Text testID="execution-run-start-foot" style={styles.foot}>
+            {sheetHosted && !selectingReviewInput ? null : <Text testID="execution-run-start-foot" style={styles.foot}>
                 {/* Choosing here returns a selection to the plugin; it starts nothing itself. */}
                 {selectingReviewInput ? t('agentStart.selector.nothingStarts')
                     : routeInFoot && routeChoice ? `${routeChoice.label} \u00B7 ${startsWhenYouSend}` : startsWhenYouSend}
-            </Text>
+            </Text>}
             {intent !== 'review' || credentialSelectionOnly ? reviewOptions.controls : null}
             {phase === 'starting' || phase === 'reconciling' ? (
                 <Text testID="execution-run-conversation-phase" style={{ color: theme.colors.text.secondary }}>

@@ -13001,6 +13001,13 @@ const pl: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Rozliczane na Twoim koncie ${engine}, nie przez Happier.`,
         includeTranscript: 'Dołącz transkrypt sesji',
         includeTranscriptLine: 'Każdy recenzent w tym kroku czyta rozmowę oprócz zmian.',
+        sheetDescription: 'Recenzenci czytają zmiany bez ich edytowania i zgłaszają wyniki tutaj.',
+        subjectPending: 'Oczekujące zmiany',
+        subjectPendingLine: 'Jeszcze niezatwierdzone',
+        subjectStaged: 'Zmiany w poczekalni',
+        subjectStagedLine: 'Wejdą do następnego commita',
+        subjectAll: 'Wszystkie zmiany',
+        subjectAllLine: 'W poczekalni i oczekujące',
     },
     collection: {
         needsYourDecision: "Wymagają Twojej decyzji",

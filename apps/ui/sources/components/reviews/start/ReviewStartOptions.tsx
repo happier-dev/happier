@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -64,6 +65,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
     },
   }], { unbound: 'local' });
   return (
+    <HappierBodyEdgeContext.Provider value>
     <View testID="review-start-options">
       <SegmentedChoiceItem
         testID="review-start-then"
@@ -166,6 +168,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
       </ExpandableItem>
       <ReviewCostConsentRows costs={costs} disabled={props.disabled} />
     </View>
+    </HappierBodyEdgeContext.Provider>
   );
 }
 

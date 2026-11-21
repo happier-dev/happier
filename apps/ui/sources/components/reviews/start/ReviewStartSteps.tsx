@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import {
   ReviewStepV1Schema,
   type ReviewReviewerSelectionV1,
@@ -10,7 +11,6 @@ import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
-import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
   DropdownMenu,
@@ -31,8 +31,6 @@ import { ReviewLabel } from '../ReviewLabel';
 export type ReviewStartReviewerPresentation = Readonly<{
   name: string;
   mark: React.ReactNode;
-  /** A person's avatar takes the stack's separating ring; agent, session, bot and engine marks stay bare. */
-  avatar?: boolean;
   /** The owner's readiness reason ("CodeRabbit needs an API key"), said on the folded step. */
   warning?: string | null;
 }>;
@@ -147,7 +145,9 @@ export function ReviewStartSteps(props: ReviewStartStepsProps) {
     invoke: addStep,
   }], { unbound: 'local' });
 
+  // The sheet has one left edge (lab `start-sheet`): step and option rows stand on it instead of their own inset.
   return (
+    <HappierBodyEdgeContext.Provider value>
     <View testID="review-start-steps">
       {steps.map((step, index) => (
         <ReviewStartStep
@@ -175,6 +175,7 @@ export function ReviewStartSteps(props: ReviewStartStepsProps) {
         showChevron={false}
       />
     </View>
+    </HappierBodyEdgeContext.Provider>
   );
 }
 
@@ -330,17 +331,13 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
       ) : null}
     </View>
   );
+  // Folded marks sit side by side: agent, engine and bot glyphs are bare, so an overlap would run them together.
   const marks =
     reviewers.length > 0 ? (
       <View style={styles.marks}>
-        <AvatarStack
-          size={ICON_SIZE.sm}
-          entries={reviewers.slice(0, FOLDED_MARKS).map((reviewer) => ({
-            key: reviewer.key,
-            content: reviewer.mark,
-            avatar: reviewer.avatar === true,
-          }))}
-        />
+        {reviewers.slice(0, FOLDED_MARKS).map((reviewer) => (
+          <View key={reviewer.key} style={styles.mark}>{reviewer.mark}</View>
+        ))}
         {reviewers.length > FOLDED_MARKS ? (
           <Text style={styles.more}>
             {t('reviewWalkthrough.start.moreReviewers', {
@@ -414,7 +411,8 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
       )}
       bodyStyle={styles.body}
     >
-      {props.renderWho(index)}
+      {/* The Who list's menu rows hang their own inset onto the sheet's edge; they are not body-edge rows. */}
+      <HappierBodyEdgeContext.Provider value={false}>{props.renderWho(index)}</HappierBodyEdgeContext.Provider>
       <View style={styles.field}>
         <ReviewLabel>
           {t('reviewWalkthrough.start.focus')}
@@ -456,7 +454,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
 });
 
 const styles = StyleSheet.create((theme) => ({
-  body: { gap: theme.space.s16, paddingBottom: theme.space.s16 },
+  body: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
   field: { gap: theme.space.s8 },
   folded: { gap: theme.space.s2 },
   instruction: {
@@ -480,6 +478,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   warningText: { color: theme.colors.state.attention.textForeground },
   marks: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
+  mark: { width: ICON_SIZE.sm, height: ICON_SIZE.sm, alignItems: 'center', justifyContent: 'center' },
   more: {
     ...Typography.variant('meta', 'medium'),
     color: theme.colors.text.secondary,

@@ -12865,6 +12865,13 @@ const zhHant: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `費用記入你的 ${engine} 帳戶，而不是 Happier。`,
         includeTranscript: '包含工作階段記錄',
         includeTranscriptLine: '此步驟中的每位審查者除了變更，還會閱讀對話。',
+        sheetDescription: '審閱者只閱讀變更、不做編輯，並在此回報。',
+        subjectPending: '待處理的變更',
+        subjectPendingLine: '尚未提交',
+        subjectStaged: '已暫存的變更',
+        subjectStagedLine: '將包含在下一次提交中',
+        subjectAll: '全部變更',
+        subjectAllLine: '已暫存和待處理',
     },
     collection: {
         needsYourDecision: "需要你做出決定",
