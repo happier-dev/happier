@@ -1,3 +1,4 @@
+import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1 } from '@happier-dev/triage-protocol/v1';
 import { GITLAB_TRIAGE_SORT_FIELDS } from './mapping/gitlabInvolvement.js';
 import { gitlabDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 /**
@@ -323,6 +324,7 @@ type GitlabMutationActionDeclaration = Readonly<{
     confirmLabel: Readonly<{ key: string; fallback: string }>;
     inputFields: readonly ActionConfirmationInputField[];
   }>;
+  inputHints?: ReturnType<typeof triageEntryActionInputHintsV1>;
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
   hostAccess: readonly string[];
@@ -573,6 +575,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           { path: 'observedHeadSha', title: 'Reviewed head' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'observedHeadSha', title: 'Reviewed head', widget: 'text', required: true,
+        description: triageReviewedHeadInputDescriptionV1,
+      }),
       inputSchema: GitlabMergeRequestMergeInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestMergeResultV1Schema.jsonSchema,
     },
@@ -626,6 +632,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           ...gitlabEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: GitlabMergeRequestCloseInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestCloseResultV1Schema.jsonSchema,
     },
@@ -652,6 +659,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           ...gitlabEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: GitlabMergeRequestReopenInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestReopenResultV1Schema.jsonSchema,
     },
@@ -745,6 +753,13 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           { path: 'resolved', title: 'Resolved' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'discussionId', title: 'Review discussion', widget: 'text', required: true,
+        description: 'Read happier.scm.forge.gitlab/actions/' + GITLAB_TRIAGE_DETAIL_ACTION_IDS.listDiscussions + ' for the exact discussion id.',
+      }, {
+        path: 'observedHeadSha', title: 'Reviewed head', widget: 'text', required: true,
+        description: triageReviewedHeadInputDescriptionV1,
+      }),
       inputSchema: GitlabMergeRequestDiscussionResolutionInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestDiscussionResolutionResultV1Schema.jsonSchema,
     },
@@ -804,6 +819,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           { path: 'acknowledgedPreexistingDraftIds', title: 'Acknowledged drafts' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'publicationPlan', title: 'Review publication plan', widget: 'json', required: true,
+        description: triageReviewPublicationPlanInputDescriptionV1,
+      }),
       inputSchema: GitlabMergeRequestReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
     },

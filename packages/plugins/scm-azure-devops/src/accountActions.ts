@@ -1,4 +1,4 @@
-import { TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
+import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1, TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS, getAzureDevOpsSourceEntryAction, listAzureDevOpsInstancesAction, scanAzureDevOpsSourceAction } from './triage/actions.js';
 import { AzureCommitsInputV1Schema, AzureCommitsResultV1Schema, AzureIterationChangesInputV1Schema, AzureIterationChangesResultV1Schema, AzureIterationsInputV1Schema, AzureIterationsResultV1Schema, AzurePoliciesInputV1Schema, AzurePoliciesResultV1Schema, AzureThreadsInputV1Schema, AzureThreadsResultV1Schema } from './triage/detail/contracts.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS, listAzureDevOpsCommits, listAzureDevOpsIterationChanges, readAzureDevOpsIterations, readAzureDevOpsPolicies, readAzureDevOpsThreads } from './triage/detailActions.js';
@@ -154,6 +154,10 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
           { path: 'deleteSourceBranch', title: 'Delete source branch' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'observedSourceCommitId', title: 'Reviewed source commit', widget: 'text', required: true,
+        description: triageReviewedHeadInputDescriptionV1,
+      }),
       inputSchema: AzureCompleteInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -181,6 +185,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
           ...azureEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: AzureAbandonInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -208,6 +213,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
           ...azureEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: AzureReactivateInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -265,6 +271,10 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
           { path: 'status', title: 'Status' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'threadId', title: 'Review thread', widget: 'text', required: true,
+        description: 'Read happier.scm.forge.azure-devops/actions/' + AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads + ' and copy the thread id as text.',
+      }),
       inputSchema: AzureThreadStatusInputV1Schema.jsonSchema,
       resultSchema: AzureThreadStatusResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -291,6 +301,10 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
           { path: 'publicationPlan.verdict.body', title: 'Review summary' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'publicationPlan', title: 'Review publication plan', widget: 'json', required: true,
+        description: triageReviewPublicationPlanInputDescriptionV1,
+      }),
       inputSchema: AzureSubmitReviewInputV1Schema.jsonSchema,
       resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,

@@ -1,4 +1,4 @@
-import { TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
+import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1, TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './triage/source/descriptor.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS, getBitbucketSourceEntryAction, listBitbucketInstancesAction, scanBitbucketSourceAction } from './triage/source/actions.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS, listBitbucketActivity, listBitbucketBuilds, listBitbucketComments, readBitbucketDiff, readBitbucketOverview } from './triage/source/detailActions.js';
@@ -155,6 +155,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           { path: 'message', title: 'Message' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('lastKnownLocator', {
+        path: 'observedHeadCommit', title: 'Reviewed head', widget: 'text', required: true,
+        description: triageReviewedHeadInputDescriptionV1,
+      }),
       inputSchema: BitbucketMergeInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -186,6 +190,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           ...bitbucketEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('lastKnownLocator'),
       inputSchema: BitbucketDeclineInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -219,6 +224,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           { path: 'commentId', title: 'Comment' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('lastKnownLocator', {
+        path: 'commentId', title: 'Review comment', widget: 'text', required: true,
+        description: 'Read happier.scm.forge.bitbucket/actions/' + BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments + ' and copy the comment id as text.',
+      }),
       inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -252,6 +261,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           { path: 'commentId', title: 'Comment' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('lastKnownLocator', {
+        path: 'commentId', title: 'Review comment', widget: 'text', required: true,
+        description: 'Read happier.scm.forge.bitbucket/actions/' + BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments + ' and copy the comment id as text.',
+      }),
       inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -286,6 +299,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           { path: 'publicationPlan.verdict.body', title: 'Review summary' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('lastKnownLocator', {
+        path: 'publicationPlan', title: 'Review publication plan', widget: 'json', required: true,
+        description: triageReviewPublicationPlanInputDescriptionV1,
+      }),
       inputSchema: BitbucketReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,

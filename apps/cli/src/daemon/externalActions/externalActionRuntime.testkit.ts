@@ -35,7 +35,7 @@ export function createExternalActionRuntime(
     localId?: string; surfaces?: readonly ('cli' | 'mcp' | 'agent' | 'plugin' | 'ui')[]; overlappingTool?: true; unavailable?: true;
     pluginVersion?: string; inputSchema?: object; resultSchema?: object; occurrenceId?: PluginRuntimeOccurrenceId;
     sourceCustody?: PluginSourceCustodyV1;
-    inputHints?: { fields: readonly { path: string; title: string; widget: 'secret' }[] };
+    inputHints?: PluginActionContributionV2['inputHints'];
     approvalInputCustody?: 'live_only';
     secretInputPaths?: readonly string[];
     onInput?: (input: JsonValue) => void;

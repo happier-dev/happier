@@ -1130,7 +1130,13 @@ export async function executeContributedAction(params: Readonly<{
         };
       }
       const inputFailure = targetResult.status === 'invalid' && targetResult.code === 'plugin_action_input_schema_invalid'
-        && targetResult.issues ? actionInputIssueFailure(...targetResult.issues) : null;
+        && targetResult.issues ? actionInputIssueFailure(...targetResult.issues.map(issue => {
+          // The declared operand supplies its repair guidance even when a nested field is malformed.
+          const path = issue.path.map(part => typeof part === 'number' ? '[]' : part).join('.');
+          const hint = action.definition.inputHints?.fields.find(field => field.description
+            && (path === field.path || path.startsWith(`${field.path}.`)));
+          return hint ? { ...issue, message: `${issue.message} ${hint.description}` } : issue;
+        })) : null;
       return {
         ok: false,
         errorCode: targetResult.code,

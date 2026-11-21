@@ -1,3 +1,4 @@
+import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1 } from '@happier-dev/triage-protocol/v1';
 import { GITHUB_HOSTING_OPERATION_ACTIONS_V1 } from './actions/hosting.js';
 import { GITHUB_HOSTING_OPERATION_ACTION_IDS_V1 } from './actions/hostingActionIds.js';
 import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
@@ -1606,6 +1607,10 @@ function createGithubPlugin(): GithubPlugin {
           } },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'headRevision', title: 'Reviewed head', widget: 'text', required: true,
+        description: triageReviewedHeadInputDescriptionV1,
+      }),
       inputSchema: GithubPullRequestMergeInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestMergeActionResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -1701,6 +1706,7 @@ function createGithubPlugin(): GithubPlugin {
           ...githubEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: GithubPullRequestCloseInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -1731,6 +1737,7 @@ function createGithubPlugin(): GithubPlugin {
           ...githubEntryReviewFields,
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken'),
       inputSchema: GithubPullRequestReopenInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -1800,6 +1807,10 @@ function createGithubPlugin(): GithubPlugin {
           { path: 'publicationPlan.verdict.body', title: 'Review summary' },
         ],
       },
+      inputHints: triageEntryActionInputHintsV1('routingToken', {
+        path: 'publicationPlan', title: 'Review publication plan', widget: 'json', required: true,
+        description: triageReviewPublicationPlanInputDescriptionV1,
+      }),
       inputSchema: GithubPullRequestReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestReviewPublicationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,

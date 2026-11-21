@@ -128,6 +128,10 @@ it.each([
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen,
 ])('skips only the present person UI prompt for %s', id => {
   const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
+  expect(action.inputHints?.fields).toContainEqual(expect.objectContaining({
+    path: 'instance',
+    description: expect.stringContaining('happier.triage/actions/entries/read-detail-v1'),
+  }));
   for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
     expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
   }

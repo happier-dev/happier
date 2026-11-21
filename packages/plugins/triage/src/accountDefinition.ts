@@ -272,7 +272,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         },
         description: {
           key: 'plugins.triage.action.listEntries.description',
-          fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
+          fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources. For source Actions, use the matching row’s entryRef, selected sourceInstanceId and its observation.outcome.locator. Read entries/read-detail-v1 for the full configured instance.',
         },
         // UI, Voice and automated callers share the same bounded read owner.
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'],
@@ -290,7 +290,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         // views already carry, which is a proper noun rather than translated
         // copy — the same reason `ui.views` declares it directly.
         title: TRIAGE_DISPLAY_NAME,
-        description: 'Search configured GitHub issues, pull requests and error groups by title or repository text. Each result.command.input contains entryRef and sourceInstance. For an exact GitHub issue URL, including before pin issue, unpin or subscribe, use entries/resolve-resource-v1 instead; it explains how to obtain instance, localRef and routingToken for source Actions. For a text-search result, call entries/read-detail-v1 for instance and entries/reobserve-v1 for the current observation.outcome.locator.routingToken, using its entryRef and sourceInstance.sourceInstanceId.',
+        description: 'Search configured GitHub issues, pull requests and error groups by title or repository text. Each result.command.input contains entryRef and sourceInstance. For an exact GitHub issue URL, including before pin issue, unpin or subscribe, use entries/resolve-resource-v1 instead; it explains how to obtain instance, localRef and routingToken for source Actions. For a text-search result, call entries/read-detail-v1 for instance and get the matching entry locator from entries/list-v1. Pass it as lastKnownLocator to entries/reobserve-v1 to refresh the observation.',
         // Search and automated callers share the Account scan/fold owner.
         surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         // The provider section IS the affordance. A query Action is not also a
@@ -490,7 +490,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
         readOnly: true,
         title: 'Re-read an entry after a provider change',
-        description: 'Reads the exact selected entry through its configured source after a provider Action settles. For a pull request Review, pass includeComparisonSource:true and use the returned comparisonSource as singleIntent.comparison in sessions/run-configured-v1.',
+        description: 'Reads the exact selected entry through its configured source. Pass lastKnownLocator from the selected list observation or resolved resource. For source Actions, use the current observation.outcome.locator on a present result. For a pull request Review, pass includeComparisonSource:true and use the returned comparisonSource as singleIntent.comparison in sessions/run-configured-v1.',
         surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         inputSchema: TriageReobserveEntryInputV1Schema,

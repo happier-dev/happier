@@ -451,3 +451,9 @@ export { admitSourceFacts } from './listSourceSchemas.js';
 
 export * from './creationPlaces.js';
 export * from './reviews.js';
+
+export {
+    triageEntryActionInputHintsV1,
+    triageReviewedHeadInputDescriptionV1,
+    triageReviewPublicationPlanInputDescriptionV1,
+} from './entryActionInputHints.js';
