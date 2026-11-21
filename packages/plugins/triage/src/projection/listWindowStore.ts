@@ -161,6 +161,8 @@ export type TriageListWindowSnapshotV1 = Readonly<{
     loadMore?: TriageListLoadMoreV1;
     /** Every configured source instance, including ones with no admitted contribution. */
     configuredSources: TriageListEntriesResultV1['configuredSources'];
+    /** The roster was enumerated for the current Tasks or PRs & Issues scope. */
+    configuredSourcesReady?: true;
 }>;
 
 /**
@@ -348,6 +350,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     let orderedEntryKeys: readonly string[] | null = null;
     let configuredSources: TriageListEntriesResultV1['configuredSources'] = [];
     let configuredSourcesStatus: TriageListEntriesResultV1['configuredSourcesStatus'] = 'complete';
+    let configuredSourceTaskScope: boolean | undefined;
     let window: TriageListWindowV1 | null = null;
     let error: TriageListWindowErrorV1 | null = null;
     let pending: TriageListWindowSnapshotV1['pending'] = 'idle';
@@ -607,6 +610,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(unreadable.length === 0 ? {} : { unreadableSources: unreadable }),
             ...(blocked === undefined ? {} : { refreshBlocked: blocked }),
             configuredSources,
+            ...(configuredSourceTaskScope === (lens.tasks !== undefined) ? { configuredSourcesReady: true } : {}),
         });
         // Nothing a subscriber can read changed: notifying would only make every consumer recompute.
         const snapshotChanged = !sameTriageListWindowSnapshot(snapshot, next);
@@ -752,7 +756,7 @@ export function createTriageListWindowStore(deps: Readonly<{
      * batch without reaching a provider. The opaque cursor stays only in this
      * running cycle; it is neither a second cache nor durable paging custody.
      */
-    function configuredSourcePageInput(cursor?: string): TriageListEntriesInputV1 {
+    function configuredSourcePageInput(censusLens: TriageListLensV1, cursor?: string): TriageListEntriesInputV1 {
         return {
             v: 1,
             sources: {
@@ -760,13 +764,13 @@ export function createTriageListWindowStore(deps: Readonly<{
                 ...(cursor === undefined ? {} : { cursor }),
             },
             limit: 0,
-            order: lens.order,
-            smartPolicy: lens.smartPolicy,
-            ...(lens.tasks === undefined ? {} : { tasks: lens.tasks }),
+            order: censusLens.order,
+            smartPolicy: censusLens.smartPolicy,
+            ...(censusLens.tasks === undefined ? {} : { tasks: censusLens.tasks }),
         };
     }
 
-    async function enumerateConfiguredSources(): Promise<Readonly<{
+    async function enumerateConfiguredSources(censusLens: TriageListLensV1): Promise<Readonly<{
         configuredSources: TriageListEntriesResultV1['configuredSources'];
         configuredSourcesStatus: 'complete';
     }>> {
@@ -774,7 +778,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         const seenCursors = new Set<string>();
         let cursor: string | undefined;
         do {
-            const result = await deps.readEntries(configuredSourcePageInput(cursor));
+            const result = await deps.readEntries(configuredSourcePageInput(censusLens, cursor));
             all.push(...result.configuredSources);
             if (result.configuredSourcesStatus === 'complete') {
                 if (result.configuredSourcesNextCursor !== undefined) {
@@ -1306,12 +1310,20 @@ export function createTriageListWindowStore(deps: Readonly<{
         pending = window === null ? 'initial' : 'refresh';
         publish();
 
+        // A Tasks roster omits sources without task kinds. Give every page the
+        // same scope, and let setLens's queued replacement answer for a new scope.
+        const censusLens = lens;
+        const taskScope = censusLens.tasks !== undefined;
+        const isCurrentRoster = () => isCurrent() && taskScope === (lens.tasks !== undefined);
         try {
             // Enumerating configured instances is a Collection read; it reaches no
             // provider, which is what lets a cold mount and the Composer picker
             // be visibly unsynchronized instead of falsely empty.
-            const enumeration = sourceRefresh ? { configuredSources, configuredSourcesStatus } : await enumerateConfiguredSources();
-            if (!isCurrent()) return;
+            const enumeration = sourceRefresh && configuredSourceTaskScope === taskScope
+                ? { configuredSources, configuredSourcesStatus }
+                : await enumerateConfiguredSources(censusLens);
+            if (!isCurrentRoster()) return;
+            configuredSourceTaskScope = taskScope;
             const configuredSourceChange = syncConfiguredSources(
                 enumeration.configuredSources,
                 enumeration.configuredSourcesStatus,
@@ -1327,6 +1339,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             }
             error = null;
         } catch (cause) {
+            if (!isCurrentRoster()) return;
             error = errorFrom(cause);
             // Nothing was read, so every connection this cycle was about to ask
             // is a connection it could not read. Naming them is what
@@ -1608,5 +1621,6 @@ function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: T
         && left.freshness === right.freshness && left.completedAtMs === right.completedAtMs
         && left.pending === right.pending && left.passes === right.passes
         && left.loadMore === right.loadMore && left.refreshBlocked === right.refreshBlocked
-        && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources;
+        && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources
+        && left.configuredSourcesReady === right.configuredSourcesReady;
 }

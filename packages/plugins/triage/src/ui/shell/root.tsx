@@ -877,7 +877,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner, entryOpenFailure };
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
   // environment every row reads a new value each time, re-rendering every row for nothing.
-  const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
+  const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1,
+    configuredSources = openAdmission.current.configuredSources) => {
     const key = triageEntryRowKey(entryRef);
     const hit = rowsByKeyRef.current.get(key);
     const current = openAdmission.current;
@@ -889,7 +890,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (sourceInstanceId === null) {
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
-      const candidates = current.configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
+      const candidates = configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
       const active = candidates.filter(source => source.available).map(source => source.sourceInstanceId);
       const selected = selectObservationInstance([], active, null, {
         allowUnobserved: true,
@@ -925,6 +926,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     const action = readRowActivation(key);
     if (action !== null) applyLensEdit(action, 'selection');
   }, [applyLensEdit, readRowActivation]);
+
+  const configuredSourcesReady = window.snapshot.configuredSourcesReady;
+  const readRoutedEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
+    if (configuredSourcesReady !== true) return null;
+    // The lens effect can invalidate the rendered roster earlier in this commit.
+    const current = window.readOwner?.getSnapshot();
+    return current?.configuredSourcesReady === true ? readEntryActivation(entryRef, current.configuredSources) : null;
+  }, [configuredSourcesReady, window.readOwner, readEntryActivation]);
 
   /**
    * The one focus producer (`core/SURFACE.md` §3.1).
@@ -1996,7 +2005,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     pageLaunch: props.pageLaunch,
     configuredSources: window.snapshot.configuredSources,
     targetedContributions: surfaceContext.targetedContributions,
-    readEntryActivation,
+    readEntryActivation: readRoutedEntryActivation,
     surface,
     rowsByKey,
     // The store can publish a window while its first source answers are still

@@ -185,11 +185,12 @@ function presentObservation(input: Readonly<{
     entryId: string;
     title: string;
     sourceUpdatedAtMs: number;
+    kindId?: string;
     involvement?: readonly 'reviewRequested'[];
 }>): TriageSourceScanObservationV1 {
     return {
         kind: 'present',
-        localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: input.entryId },
+        localRef: { kindId: input.kindId ?? 'pull-request', collisionScope: 'example/repository', entryId: input.entryId },
         locator: testkitLocator(),
         snapshot: testkitSnapshot({ title: input.title }),
         viewer: testkitViewer(input.involvement ? { involvement: input.involvement } : {}),
@@ -199,6 +200,7 @@ function presentObservation(input: Readonly<{
 
 function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; completedTask?: boolean; sourceBUnavailable?: boolean;
     unlinkedTaskOnFirstPage?: boolean;
+    taskSourceB?: boolean;
     sourceSettings?: boolean;
     /** Derived from the existing 1,000-row store fixture, not an observed F cardinality. */
     mixedFailureScale?: boolean;
@@ -222,6 +224,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
         sessionReadOverrides: new Map<string, 'ready' | 'missing' | 'failed'>(),
         scanGate: null as Promise<void> | null,
+        readExactEntryTitle: null as ((entryId: string) => Promise<string>) | null,
         /** The host refusing one connection's list invocation (an offline Machine, a broken transport). */
         listInvocationFailure: null as ((sourceInstanceId: string) => PluginError | null) | null };
 
@@ -250,7 +253,8 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
                 purpose: 'triage-source',
                 displayName: 'Example forge',
                 ...(options.sourceSettings ? { settingsPageId: 'settings' } : {}),
-                kinds: (options.tasks ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }]
+                kinds: (options.tasks || (options.taskSourceB && source === SOURCE_B)
+                    ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }]
                     : [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }]).map(kind => ({
                         ...kind, ...(options.details ? { detailTabs: [{ kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' }] } : {}),
                     })),
@@ -303,7 +307,8 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         }
         return {
             kind: 'complete',
-            observations: [presentObservation({ entryId: '3', title: 'Middle change', sourceUpdatedAtMs: 2_000 })],
+            observations: [presentObservation({ entryId: '3', title: 'Middle change', sourceUpdatedAtMs: 2_000,
+                ...(options.taskSourceB ? { kindId: 'issue' } : {}) })],
             evidence: { kind: 'walkFinished' },
         };
     };
@@ -384,10 +389,13 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
                 targetedContributions: { observeForSelf: () => ({
                     readCurrent: async () => ({ contributions: admitted }), dispose() {},
                 }) },
-                actions: { executeAdmittedTargetedOperation: async () => ({
-                    ...presentObservation({ entryId: input.entryRef.entryId, title: 'Replace the duplicated normalizer', sourceUpdatedAtMs: 3_000 }),
-                    localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
-                }) },
+                actions: { executeAdmittedTargetedOperation: async () => {
+                    const title = await state.readExactEntryTitle?.(input.entryRef.entryId) ?? 'Replace the duplicated normalizer';
+                    return {
+                        ...presentObservation({ entryId: input.entryRef.entryId, title, sourceUpdatedAtMs: 3_000 }),
+                        localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
+                    };
+                } },
             } } as unknown as TriageDataActionContext;
             return await createTriageReobserveEntryActionHandler()(input, context);
         }
@@ -2065,6 +2073,70 @@ describe('the mounted PRs & Issues surface', () => {
 
         // Explicit Refresh is the user asking, and the user is never paced.
         expect(harness.scanCalls.count).toBe(afterMount + 2);
+    });
+
+    it('keeps the current rows, selection and search after a superseded route read settles (QB-82)', async () => {
+        const harness = createHarness({ details: true, quietFirstPage: true, taskSourceB: true });
+        const entryA = { source: SOURCE_A, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '1' };
+        const entryB = { ...entryA, source: SOURCE_B, kindId: 'issue', entryId: '49' };
+        const routeA = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'normalizer', selection: entryA });
+        const routeB = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'late-response', selection: entryB,
+            filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, states: ['closed'], tasks: 'mine' } });
+        const started = Promise.withResolvers<void>();
+        const response = Promise.withResolvers<string>();
+        const returned = Promise.withResolvers<void>();
+        harness.state.readExactEntryTitle = async entryId => {
+            if (entryId !== entryB.entryId) return 'Replace the duplicated normalizer';
+            started.resolve();
+            const title = await response.promise;
+            returned.resolve();
+            return title;
+        };
+
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-late-route',
+            sourceContextFixture(harness), { subPath: routeA });
+        try {
+            await settleWindow('view', shell);
+            const stage = document.querySelector('[data-testid="triage-shell-fill:stage"]');
+            const onLayout: unknown = stage === null ? null : Reflect.get(stage, '__reactLayoutHandler');
+            if (typeof onLayout !== 'function') throw new Error('Missing RNW Collection layout boundary');
+            await act(async () => { onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 1000 } } }); });
+            const expectA = async () => {
+                const list = document.querySelector(`[data-testid="${TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}"]`);
+                expect(list?.textContent).toContain('Replace the duplicated normalizer');
+                expect(list?.textContent).not.toContain('Middle change');
+                expect(document.body.textContent).not.toContain('Late provider result for entry 49');
+                expect((await shell.getByRole('textbox')).value).toBe('normalizer');
+                expect(await shell.getByRole('radio', { name: 'PRs & Issues', state: { checked: true } })).toBeDefined();
+                expect(harness.publishedContexts.at(-1)?.entity?.reference).toEqual(entryA);
+            };
+            await expectA();
+
+            await act(async () => { await shell.updatePageLocation(routeB); });
+            await settleWindow('view', shell);
+            await started.promise;
+            expect((await shell.getByRole('textbox')).value).toBe('late-response');
+            expect(await shell.getByRole('radio', { name: 'Tasks', state: { checked: true } })).toBeDefined();
+            expect(harness.publishedContexts.at(-1)?.entity?.reference).toEqual(entryB);
+            await act(async () => { await shell.updatePageLocation(routeA); });
+            await settleWindow('view', shell);
+            await expectA();
+
+            const contextCount = harness.publishedContexts.length;
+            await act(async () => {
+                response.resolve('Late provider result for entry 49');
+                await returned.promise;
+            });
+            await expectA();
+            expect(harness.settledLocations).not.toContain(buildTriageRouteSubPathV1({
+                ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'normalizer',
+            }));
+            expect(harness.publishedContexts.slice(contextCount)).not.toContainEqual(
+                expect.objectContaining({ entity: expect.objectContaining({ reference: entryB }) }),
+            );
+        } finally {
+            response.resolve('Late provider result for entry 49');
+        }
     });
 
     it('publishes A, replaces it with B, and clears the mount on disposal', async () => {
