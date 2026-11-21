@@ -100,13 +100,20 @@ suggestion's `data: {kind: 'store'}` names that target, and the build Session
 creates the database through the target's own data Actions. A platform target's
 availability comes from the connected service its inspect Action's `credentialRef`
 purpose declares (`readPluginActionCredentialPurposeV1` in `@happier-dev/deployments`,
-used by both hosts' catalog ports): `available` when the Account has a working
-connected account for that service, `needs_connection` when it has none (the card
-says "Connect <platform>" and the build brief adds the connect step), and `unknown`
-when the connected-account read failed. A target that needs a connection stays
+used by both hosts' catalog ports): `available` when the Account holds any
+connected account for that service, `needs_connection` when it has none, and
+`unknown` when the connected-account read failed. Where it runs' Connect uses the
+same rule (`holdsConnectedAccountForService`): a broken account needs a reconnect
+from its attention state, never a second connection. For `needs_connection` the
+dialog's card says "Connect <platform>" and its build brief adds the connect step;
+the `happier:deploy` skill guide tells the agent the person must connect the
+platform before the first deploy. A target that needs a connection stays
 offerable. Each source remains owned by
 its existing registry, Machine, target, connected-account, or SCM plugin owner.
-The catalog is a snapshot held by the caller for the suggestion round.
+The catalog is a snapshot held by the caller for the suggestion round. The dialog
+rereads it once on the first follow-up after the Account's connected accounts
+change (a connect, a removal, or an account breaking or being reconnected); later
+follow-ups reuse it.
 
 Saving a token alongside a Saved Secret publishes the connected Account profile
 after the credential and resource commit together. Configure waits for that
@@ -123,8 +130,11 @@ input continues to compose the full catalog.
 
 The dialog uses a read-only `task` run on the first eligible Machine whose Agent
 can run the `deploy_suggestion` task. The run's working folder is that Machine's
-home folder, which always exists; nothing is created on the Machine for it. Its
-input contains the person's description,
+home folder, which always exists; nothing is created on the Machine for it. An
+online Machine whose record is still opening (no name or home folder yet) is not
+called unavailable: the suggestion waits on the Machine owner's update
+subscription until the record opens or settles unreadable, and Stop ends the
+wait. Its input contains the person's description,
 the catalog snapshot, and, when variable metadata is supplied, names with secret
 flags rather than secret values. When the catalog is read for a suggestion while
 the app shell still owes registry sources (`registrySourcesPending`) and no

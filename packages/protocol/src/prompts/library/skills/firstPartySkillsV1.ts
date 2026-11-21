@@ -94,7 +94,9 @@ const CREATE_APP_GUIDE_V1 = `# Create an app in a Session
 Keep the person's description unchanged. Discover the current schemas, then call
 \`deployments.suggestions.catalog\` for the current Home. Use only its declared
 starters, scratch source, targets, plans, stores, Machines and publish-capable
-forges; never invent identifiers or prices. Ask necessary clarifying questions
+forges; never invent identifiers or prices. A target whose \`availability\` is
+\`needs_connection\` needs the person to connect it before the first deploy.
+Ask necessary clarifying questions
 through the agent's native ask-user-question tool. Variable and secret names
 are enough: never put their values in the suggestion or conversation.
 

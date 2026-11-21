@@ -1626,8 +1626,7 @@ export type ActionExecutorDeps = Readonly<{
    * service its declaration needs; the catalog Action sets availability from the Account's connected accounts.
    */
   deploymentSuggestionTargets?: (context: ActionExecutorContext) => Promise<Readonly<{
-    targets: readonly (import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['targets'][number]
-      & Readonly<{ connectedService?: Readonly<{ pluginId: string; localId: string }> }>)[];
+    targets: readonly import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionTargetPortRowV1[];
     stores: import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['stores'];
   }>>;
   /** Publish-capable forges from the admitted SCM hosting-provider registry. */

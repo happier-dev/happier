@@ -7,7 +7,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import type { DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
-import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import type { DeploySuggestionCatalogV1, DeploySuggestionTargetPortRowV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 export type DeploymentTargetDeclarationV1 = Readonly<{ pluginId: string; identity: PluginContributionIdentityV1; definition: DeploymentTargetContributionV1 }>;
@@ -171,14 +171,10 @@ function readDeploymentTargetConnectedServiceV1(target: DeploymentTargetV1, mani
     return manifest && typeof inspect === 'string' ? readPluginActionCredentialPurposeV1(manifest, inspect)?.service ?? null : null;
 }
 
-/** A catalog target with the connected service it needs; the catalog Action turns that into the Account's availability. */
-export type DeploymentSuggestionTargetPortRowV1 = DeploySuggestionCatalogV1['targets'][number]
-    & Readonly<{ connectedService?: Readonly<{ pluginId: string; localId: string }> }>;
-
 /** Both hosts consume the normalized catalog; no suggestion-specific target list is maintained. */
 export function projectDeploymentSuggestionTargetsV1(targets: readonly DeploymentTargetV1[],
     manifests: readonly Readonly<{ manifest: ConnectedAccountManifest }>[] = [],
-): Readonly<{ targets: DeploymentSuggestionTargetPortRowV1[]; stores: DeploySuggestionCatalogV1['stores'] }> {
+): Readonly<{ targets: DeploySuggestionTargetPortRowV1[]; stores: DeploySuggestionCatalogV1['stores'] }> {
     return {
         targets: targets.flatMap(target => target.role === 'runtime' ? [{
             id: target.source.kind === 'host' ? target.source.id

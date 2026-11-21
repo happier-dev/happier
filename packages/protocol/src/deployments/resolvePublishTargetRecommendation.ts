@@ -1,12 +1,13 @@
 import type { DeployShapeV1 } from './deployShapeV1.js';
 import type { DeploymentTargetRecommendationV1 } from './deploymentTargetRecommendationV1.js';
 import type { DeploymentTargetContributionV1 } from '../plugins/contributions/deploymentTargets.js';
+import type { DeploySuggestionCatalogV1 } from './suggestions/deploySuggestionsV1.js';
 
 type Target = NonNullable<DeploymentTargetRecommendationV1['target']>;
 export type PublishTargetRecommendationInput = Readonly<{
     deploy?: DeployShapeV1;
     definition: Readonly<{ kind: 'repository'; compose?: unknown }> | Readonly<{ kind: 'stored' }> | Readonly<{ from: unknown }> | null;
-    targets: readonly (Target & Readonly<{ availability: 'available' | 'needs_connection' | 'unavailable' | 'unknown';
+    targets: readonly (Target & Readonly<{ availability: DeploySuggestionCatalogV1['targets'][number]['availability'];
         accepts?: Readonly<DeploymentTargetContributionV1['accepts']>;
         needs?: Readonly<DeploymentTargetContributionV1['needs']>;
         sources?: Readonly<DeploymentTargetContributionV1['sources']>;

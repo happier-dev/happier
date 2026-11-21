@@ -43,6 +43,9 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
         code: id() }))),
 }));
 export type DeploySuggestionCatalogV1 = z.infer<typeof DeploySuggestionCatalogV1Schema>;
+/** A catalog target with the connected service it needs; the catalog Action turns that into the Account's availability. */
+export type DeploySuggestionTargetPortRowV1 = DeploySuggestionCatalogV1['targets'][number]
+    & Readonly<{ connectedService?: Readonly<{ pluginId: string; localId: string }> }>;
 
 export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.strictObject({
     source: z.discriminatedUnion('kind', [
