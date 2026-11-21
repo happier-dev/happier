@@ -132,7 +132,8 @@ describe('SessionTarget at the Actions front door', () => {
       return { v: 1, rows: [{ ...source, sharedDefinitionEnvelope }] };
     } });
     const executor = createActionExecutor({ ...h.deps, actionAutomations: { ...port,
-      select: args => port.select({ ...args, prepareMatching: actions.prepareActionMatching('actor') }) },
+      select: (args: Parameters<typeof port.select>[0]) =>
+        port.select({ ...args, prepareMatching: actions.prepareActionMatching('actor') }) },
       roleActionExecute: async () => { roleWrites++; return { updated: true }; },
     } as unknown as ActionExecutorDeps);
     const input = { sessionId: 'exact-id', roleId: 'scout', role: {
