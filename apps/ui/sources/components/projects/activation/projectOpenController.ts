@@ -1,5 +1,5 @@
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { isManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectOpenDraftDocumentV2Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -250,7 +250,10 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                             const operationId = details && typeof details === 'object' && 'operationId' in details
                                 && typeof details.operationId === 'string' ? details.operationId.trim() : '';
                             result = { kind: 'outcomeUnknown', ...(operationId ? { operationId } : {}) };
-                        } else result = executed;
+                        } else {
+                            const refusal = OpenProjectRefusalV1Schema.safeParse(executed.details);
+                            result = refusal.success ? refusal.data : executed;
+                        }
                     }
                 } catch {
                     result = issued ? { kind: 'outcomeUnknown' } : failure('project_open_draft_unavailable');

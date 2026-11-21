@@ -1261,7 +1261,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     }
     return execution.ok ? args.actionId === 'projects.open'
-      ? await completeUiProjectOpenResult(accountContext, execution.result, context.signal)
+      ? await completeUiProjectOpenResult(accountContext, execution.result, { signal: context.signal, requestId })
       : execution.result : execution;
   };
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
@@ -3692,7 +3692,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertResultCurrent(getActionSpec('projects.open').sideEffectClass);
         if (execution) {
           if (!execution.ok) return execution;
-          return await completeUiProjectOpenResult(accountContext, execution.result, context.signal);
+          return await completeUiProjectOpenResult(accountContext, execution.result, { signal: context.signal, requestId: context.actionRequestId });
         }
       }
       try {
@@ -3706,7 +3706,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           signal: context.signal,
           operationTimeoutMs: null,
         });
-        return await completeUiProjectOpenResult(accountContext, response, context.signal);
+        return await completeUiProjectOpenResult(accountContext, response, { signal: context.signal, requestId: context.actionRequestId ?? undefined });
       } catch (error) {
         if (readRpcRequestDisposition(error) === 'notSent') {
           const { readProjectOpenUnsentRefusalV1 } = await import('@happier-dev/protocol/projects/openProjectV1');

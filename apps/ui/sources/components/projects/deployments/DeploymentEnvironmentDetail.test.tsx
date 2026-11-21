@@ -260,6 +260,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
     body: { ok: true, source: { ...source, revision: 2 }, canManage: true } });
   const effects: string[] = [];
   const sourceRevisions: number[] = [];
+  let checkoutRequestId: string | undefined;
   const reviewDigest = 'R'.repeat(43);
   await answerExternalActionAccountForHome(homes, scope.serverId, { machineId, installationId, actionId: 'projects.open', tokenEpoch: 0, requesterInvocation: 'optional',
     failure: result => typeof result === 'object' && result !== null && 'reviewRequired' in result
@@ -267,6 +268,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
           details: { review: { actionArgs: result.reviewRequired, preview: { summary: `Clone /home/me/src/app on ${machineId}` } }, reviewDigest } } : null,
     execute: (raw, context) => {
       const input = OpenProjectInputV1Schema.parse(raw);
+      if (context.invocation?.presentUserConfirmation?.reviewDigest === reviewDigest) checkoutRequestId = context.requestId;
       if (input.source.kind === 'source') sourceRevisions.push(input.source.revision);
       expect(input).toMatchObject({ machineId, source: { kind: 'source', id: source.id },
         materialization: { kind: 'clone', destinationParentPath: '/home/me/src', destinationDirectoryName: 'app' } });
@@ -310,6 +312,12 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
     await waitForHomeGovernance(() => {
       expect(effects, JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.controller?.outcome)))
         .toEqual(openResult === 'opened' ? ['open', 'deploy'] : openResult === 'declined' ? [] : ['open']);
+      if (openResult === 'refused') {
+        expect(checkoutRequestId).toEqual(expect.any(String));
+        expect(screen.findAllByType(DeployOutcomeBanner)[0]?.props.controller.outcome.failure).toMatchObject({
+          errorCode: 'destination_exists', effectAttempted: false, requestId: checkoutRequestId,
+        });
+      }
       if (openResult === 'opened') expect(openedReceipts).toEqual(['first-deploy']);
       else expect(screen.findByTestId('project-deployments.outcome.refused.other')).not.toBeNull();
       if (openResult === 'unsupported-forge') {
