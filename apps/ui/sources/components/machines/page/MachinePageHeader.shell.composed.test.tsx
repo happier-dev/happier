@@ -93,12 +93,18 @@ it.each([
         await flushHookEffects();
         expect(listReads()).toHaveLength(0);
         await screen.update(body(true));
+        if (refusal === 'machine_manage_required') {
+            await vi.waitFor(() => expect(listReads()).toHaveLength(1));
+            await flushHookEffects();
+            expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
+            expect(screen.findByTestId('machine-detail-shell-unavailable')).toBeNull();
+            return;
+        }
         if (refusal) {
             await vi.waitFor(() => expect(screen.findByTestId('machine-detail-shell-unavailable')).not.toBeNull());
             expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
             const line = screen.findByType(SurfaceFreshnessLine);
-            const reason = refusal === 'machine_manage_required' ? 'toolView.actionOutcome.cause.machineManageRequired'
-                : refusal === 'terminal_forbidden' ? 'machines.terminals.denied' : 'machines.terminals.unavailable';
+            const reason = refusal === 'terminal_forbidden' ? 'machines.terminals.denied' : 'machines.terminals.unavailable';
             expect(line.props.reason).toBe(t(reason));
             await act(async () => line.props.action.onPress());
             expect(vi.mocked(Modal.alert).mock.calls.at(-1)).toEqual([t('approvals.technicalDetails'), refusal]);

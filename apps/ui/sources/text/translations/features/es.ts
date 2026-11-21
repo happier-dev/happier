@@ -10677,7 +10677,7 @@ const machineDetailPageTranslations = { es: translated({
                     systemOomKill: "El sistema detuvo procesos para liberar memoria",
                     trashMoved: ({ count }) => `Se ${count === 1 ? 'movió 1 elemento' : `movieron ${count} elementos`} a la Papelera`,
                     trashEmptied: "Se vació la Papelera",
-                    closedTerminal: ({ label, duration }) => `Se cerró el terminal ${label} tras ${duration} inactivo`,
+                    closedTerminal: ({ label, duration }) => `Se cerró «${label}» tras ${duration} inactivo`,
                     housekeeping: "Se borraron registros y grabaciones antiguos",
                     startFailed: ({ label }) => `No se pudo volver a iniciar ${label}`,
                     undone: "Se deshizo una detención anterior",

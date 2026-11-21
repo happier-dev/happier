@@ -2,12 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { act, createSessionFixture, pressTestInstanceAsync, standardCleanup } from '@/dev/testkit';
+import { act, createSessionFixture, flushHookEffects, pressTestInstanceAsync, standardCleanup } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ActionOperationRpc } from '@/sync/ops/actionOperations';
@@ -108,6 +108,76 @@ describe('ActionOperationDetailModal', () => {
             );
             expect(onClose).toHaveBeenCalledOnce();
         } finally { await screen.unmount(); }
+    });
+
+    it('reads Account Agent actions for a guest setup failure whose Machine cannot execute them', async () => {
+        const serverUrl = 'https://failed-guest-setup.test';
+        const accountId = 'account-1';
+        const serverIdentityId = 'srv_failed_guest_setup';
+        const serverId = await homes.addHome({ name: 'Guest Home', serverUrl, accountId,
+            serverIdentityId, currentAccount: true });
+        const [{ TRIAGE_FAILURE_TEST_BINDING }, { createPluginPagePlacementFixture }, { EMPTY_PLUGIN_UI_PROJECTION },
+            { publishCommittedAppShellPluginUiProjection }, { registerCurrentUiContextActionPort },
+            { AgentActionButton }] = await Promise.all([
+            import('@/dev/testkit/harness/triageFailureActionBoundary'),
+            import('@/dev/testkit/fixtures/pluginPageProjectionFixture'),
+            import('@/sync/domains/plugins/ui/projection'),
+            import('@/components/appShell/plugins/committedPluginUiProjection'),
+            import('@/components/appShell/currentUiContext/currentUiContextActionRuntime'),
+            import('@happier-dev/plugin-ui/components'),
+        ]);
+        const connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId,
+            credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
+            configureSocket: configureConnectedServerSocketBoundary, request: homes.request,
+        });
+        const placement = createPluginPagePlacementFixture({ pluginId: TRIAGE_FAILURE_TEST_BINDING.pluginId,
+            localId: 'triage', title: 'Triage', targetKind: 'app' });
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => ({ ...EMPTY_PLUGIN_UI_PROJECTION,
+            surfacePlacementsById: { [placement.id]: { ...placement, failureActions: { action: TRIAGE_FAILURE_TEST_BINDING.action } } } }));
+        const readCatalog = vi.fn();
+        // Only the plugin's mounted executable is a fixture. The real Account
+        // owner and Action front door still decide its scope and target.
+        const unregisterPort = registerCurrentUiContextActionPort((surface, hostAction) => surface === 'ui' ? {
+            readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {},
+            async invokeAction({ action, input }) {
+                const target = hostAction?.context?.externalActionTarget;
+                readCatalog(input, target);
+                if (action.pluginId !== TRIAGE_FAILURE_TEST_BINDING.pluginId
+                    || action.localId !== TRIAGE_FAILURE_TEST_BINDING.action || target) {
+                    return { ok: false, code: 'unavailable', errorCode: 'rpc_method_not_available' };
+                }
+                return { ok: true, result: { kind: 'actions', actions: [{
+                    actionId: 'investigate', label: 'Investigate on the Account', launchMode: 'review', startable: true,
+                }] } };
+            },
+        } : null);
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'failed-guest-setup', revision: 1,
+                actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'failed',
+                scope: { accountId, machineId: 'guest-without-action-invoke' }, title: 'Apply machine setup',
+                createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+                error: { errorCode: 'machine_setup_setup_failed', error: 'Setup failed' },
+            });
+            actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+            const modal = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={() => {}} />);
+            screen = modal;
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(modal.findAllByType(AgentActionButton).map(button => button.props.title)).toContain('Investigate on the Account');
+            });
+            expect(readCatalog).toHaveBeenCalledWith(expect.objectContaining({ kind: 'readAgentActions',
+                context: { kind: 'failure', subject: { kind: 'managedMachineOperation', operation: {
+                    serverId, machineId: 'guest-without-action-invoke', operationId: snapshot.operationId,
+                } } },
+            }), undefined);
+            expect(modal.findByTestId('investigation.agentActions.unavailable')).toBeNull();
+        } finally {
+            await screen?.unmount();
+            unregisterPort();
+            unpublish();
+            await connection.dispose();
+        }
     });
 
     it('lists every failed attempt of the work item that the Inbox folded into one row', async () => {

@@ -128,7 +128,7 @@ export const MachineActivityPage = React.memo(function MachineActivityPage(props
                         ...(group.inTrashBytes > 0 ? [t('machineGuard.activity.dayInTrash', { amount: formatMachineBytes(group.inTrashBytes, 'storage') })] : []),
                     ].join(' · ')}</Text>}>
                     {group.entries.map((entry, index) => (
-                        <MachineActivityRow key={entry.id} entry={entry} pendingId={wayBack.pendingId} onWayBack={wayBack.run}
+                        <MachineActivityRow key={entry.id} entry={entry} machineName={props.machineName} pendingId={wayBack.pendingId} onWayBack={wayBack.run}
                             readOnly={all.offline} showDivider={index < group.entries.length - 1} />
                     ))}
                 </ItemGroup>

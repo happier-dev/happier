@@ -10776,7 +10776,7 @@ const machineDetailPageTranslations = { pt: translated({
                     systemOomKill: "O sistema parou processos para liberar memória",
                     trashMoved: ({ count }) => `Moveu ${count} ${count === 1 ? 'item' : 'itens'} para a Lixeira`,
                     trashEmptied: "Esvaziou a Lixeira",
-                    closedTerminal: ({ label, duration }) => `Fechou o terminal ${label} após ${duration} de inatividade`,
+                    closedTerminal: ({ label, duration }) => `Fechou «${label}» após ${duration} de inatividade`,
                     housekeeping: "Apagou logs e gravações antigos",
                     startFailed: ({ label }) => `Não foi possível iniciar ${label} novamente`,
                     undone: "Desfez uma parada anterior",

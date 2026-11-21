@@ -304,9 +304,10 @@ export const ActionOperationDetailModal = React.memo(
       serverId: operation.serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId,
     } : null;
     const setupRetry = failedAddress ? snapshot.error?.setupRetry : undefined;
+    const isMachineSetup = isMachineSetupOperationActionIdV1(snapshot.actionId);
     const investigationSubject: TriageFailureSubjectV1 | null = !failedAddress ? null
       : isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) ? { kind: 'backupRun', operation: failedAddress }
-      : snapshot.domainRef?.kind === 'managedMachine' || isMachineSetupOperationActionIdV1(snapshot.actionId)
+      : snapshot.domainRef?.kind === 'managedMachine' || isMachineSetup
         ? { kind: 'managedMachineOperation', operation: failedAddress } : null;
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
     const detail = projectActionOperationDetail(snapshot, observation);
@@ -654,8 +655,10 @@ export const ActionOperationDetailModal = React.memo(
         ) : null}
 
         {investigationSubject && operation.serverId ? <SectionContentRow>
+          {/* Setup evidence is on the guest. Its Agent actions use the Account's receiver. */}
           <FailureInvestigationActions subject={investigationSubject} serverId={operation.serverId}
-            controllerMachineId={snapshot.scope.machineId} compact={false} emphasis={setupRetry ? 'secondary' : undefined}
+            controllerMachineId={isMachineSetup ? undefined : snapshot.scope.machineId}
+            compact={false} emphasis={setupRetry ? 'secondary' : undefined}
             testID="action-operation-investigate" />
         </SectionContentRow> : null}
 

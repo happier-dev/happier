@@ -121,7 +121,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
                 reading={!view && !guard.offline && guard.status !== 'error'} nowMs={nowMs} save={policyState.save} />
             <IdleSessionsSection machineName={props.machineName} machineId={props.machineId} serverId={props.serverId} rule={policy.idleSessions} idle={view?.idle ?? null}
                 editable={editable} failure={failure} awaiting={awaiting} save={policyState.save} />
-            <IdleTerminalsSection machineId={props.machineId} serverId={props.serverId} rule={policy.idleTerminals} terminals={view?.idleTerminals ?? null}
+            <IdleTerminalsSection machineName={props.machineName} machineId={props.machineId} serverId={props.serverId} rule={policy.idleTerminals} terminals={view?.idleTerminals ?? null}
                 editable={editable} failure={failure} awaiting={awaiting} save={policyState.save} />
             <LeftBehindSection machineName={props.machineName} rule={policy.leftBehind} present={view?.leftBehind ?? null}
                 editable={editable} failure={failure} awaiting={awaiting} save={policyState.save} />
@@ -131,7 +131,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
             <ItemGroup title={t('machineGuard.activity.title')}
                 action={recent.length > 0 ? <TextLinkButton testID="machine-guard-all-activity" label={t('machineGuard.activity.all')} onPress={props.onOpenActivity} /> : undefined}>
                 {recent.length > 0 ? recent.map((entry, index) => (
-                    <MachineActivityRow key={entry.id} entry={entry} pendingId={wayBack.pendingId} onWayBack={wayBack.run}
+                    <MachineActivityRow key={entry.id} entry={entry} machineName={props.machineName} pendingId={wayBack.pendingId} onWayBack={wayBack.run}
                         readOnly={activity.offline} showDivider={index < recent.length - 1} />
                 )) : (
                     <SurfaceStateCard testID={`machine-guard-activity-${activityLine.id}`} kind={activityLine.kind} size="line"

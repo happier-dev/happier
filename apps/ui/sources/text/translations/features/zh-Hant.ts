@@ -10676,7 +10676,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     systemOomKill: "系統為釋放記憶體停止了一些程序",
                     trashMoved: ({ count }) => `已將 ${count} 項移到垃圾桶`,
                     trashEmptied: "已清空垃圾桶",
-                    closedTerminal: ({ label, duration }) => `終端機 ${label} 閒置 ${duration}後已關閉`,
+                    closedTerminal: ({ label, duration }) => `「${label}」閒置 ${duration}後已關閉`,
                     housekeeping: "已清除舊日志和錄制",
                     startFailed: ({ label }) => `無法重新啟動 ${label}`,
                     undone: "已復原先前的一次停止",

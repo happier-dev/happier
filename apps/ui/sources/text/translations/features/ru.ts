@@ -10813,7 +10813,7 @@ const machineDetailPageTranslations = { ru: translated({
                     systemOomKill: "Система остановила процессы, чтобы освободить память",
                     trashMoved: ({ count }) => `Перемещено в Корзину элементов: ${count}`,
                     trashEmptied: "Корзина очищена",
-                    closedTerminal: ({ label, duration }) => `Закрыт терминал ${label} после простоя ${duration}`,
+                    closedTerminal: ({ label, duration }) => `Закрыт «${label}» после простоя ${duration}`,
                     housekeeping: "Удалены старые журналы и записи",
                     startFailed: ({ label }) => `Не удалось запустить снова: ${label}`,
                     undone: "Отменена прежняя остановка",

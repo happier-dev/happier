@@ -737,6 +737,7 @@ function GuardRecent(
         <MachineActivityRow
           key={entry.id}
           entry={entry}
+          machineName={props.facts.name}
           pendingId={wayBack.pendingId}
           onWayBack={wayBack.run}
           readOnly={props.facts.recipient}

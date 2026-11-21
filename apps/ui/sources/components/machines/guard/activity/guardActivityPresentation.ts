@@ -1,6 +1,7 @@
 import { isMachineGuardRestorationWayBackV1, type MachineGuardActivityRowV1, type MachineGuardActivityWayBackV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
+import { describeMachineTerminalLabel } from '@/components/machines/terminal/machineTerminalTitle';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { t } from '@/text';
 
@@ -34,39 +35,39 @@ export type GuardActivityRowModel = Readonly<{
     wayBack: readonly MachineGuardActivityWayBackV1[];
 }>;
 
-function subjectTitle(entry: MachineGuardActivityRowV1): string {
+function subjectTitle(entry: MachineGuardActivityRowV1, machineName?: string): string {
     const subject = entry.subject;
     if (!subject) return t('machineGuard.activity.kinds.something');
     switch (subject.kind) {
         case 'session': return subject.title ?? t('session.untitled');
         case 'service': return subject.label;
-        case 'terminal': return subject.label;
+        case 'terminal': return describeMachineTerminalLabel(subject, machineName ?? t('machine.thisMachineInSentence'));
         default: return t('machineGuard.activity.kinds.something');
     }
 }
 
-function title(entry: MachineGuardActivityRowV1): string {
+function title(entry: MachineGuardActivityRowV1, machineName?: string): string {
     const subject = entry.subject;
     switch (entry.kind) {
         case 'stopped_session':
-            return t('machineGuard.activity.kinds.stoppedSession', { title: subjectTitle(entry) });
+            return t('machineGuard.activity.kinds.stoppedSession', { title: subjectTitle(entry, machineName) });
         case 'closed_browser': return t('machineGuard.activity.kinds.closedBrowser');
-        case 'stopped_service': return t('machineGuard.activity.kinds.stoppedService', { label: subjectTitle(entry) });
+        case 'stopped_service': return t('machineGuard.activity.kinds.stoppedService', { label: subjectTitle(entry, machineName) });
         case 'stopped_left_behind':
             return t('machineGuard.activity.kinds.stoppedLeftBehind', { count: subject?.kind === 'processes' ? subject.count : 1 });
         case 'out_of_steps': return t('machineGuard.activity.kinds.outOfSteps');
-        case 'stop_failed': return t('machineGuard.activity.kinds.stopFailed', { label: subjectTitle(entry) });
-        case 'kept_running': return t('machineGuard.activity.kinds.keptRunning', { title: subjectTitle(entry) });
-        case 'ceiling_near': return t('machineGuard.activity.kinds.ceilingNear', { title: subjectTitle(entry) });
-        case 'ceiling_reached': return t('machineGuard.activity.kinds.ceilingReached', { title: subjectTitle(entry) });
+        case 'stop_failed': return t('machineGuard.activity.kinds.stopFailed', { label: subjectTitle(entry, machineName) });
+        case 'kept_running': return t('machineGuard.activity.kinds.keptRunning', { title: subjectTitle(entry, machineName) });
+        case 'ceiling_near': return t('machineGuard.activity.kinds.ceilingNear', { title: subjectTitle(entry, machineName) });
+        case 'ceiling_reached': return t('machineGuard.activity.kinds.ceilingReached', { title: subjectTitle(entry, machineName) });
         case 'system_oom_kill': return t('machineGuard.activity.kinds.systemOomKill');
         case 'trash_moved': return t('machineGuard.activity.kinds.trashMoved', { count: subject?.kind === 'trash' ? subject.items : 1 });
         case 'trash_emptied': return t('machineGuard.activity.kinds.trashEmptied');
         case 'closed_terminal':
-            return t('machineGuard.activity.kinds.closedTerminal', { label: subjectTitle(entry),
+            return t('machineGuard.activity.kinds.closedTerminal', { label: subjectTitle(entry, machineName),
                 duration: formatGuardDuration(subject?.kind === 'terminal' ? subject.idleMs : 0) });
         case 'housekeeping': return t('machineGuard.activity.kinds.housekeeping');
-        case 'start_failed': return t('machineGuard.activity.kinds.startFailed', { label: subjectTitle(entry) });
+        case 'start_failed': return t('machineGuard.activity.kinds.startFailed', { label: subjectTitle(entry, machineName) });
         case 'undone': return t('machineGuard.activity.kinds.undone');
     }
 }
@@ -117,10 +118,10 @@ function tone(entry: MachineGuardActivityRowV1): GuardActivityTone {
     return 'plain';
 }
 
-export function describeGuardActivityRow(entry: MachineGuardActivityRowV1): GuardActivityRowModel {
+export function describeGuardActivityRow(entry: MachineGuardActivityRowV1, machineName?: string): GuardActivityRowModel {
     const undone = entry.undoneAt !== undefined;
     return {
-        id: entry.id, at: entry.at, icon: ICONS[entry.kind], title: title(entry), figure: undone ? null : figure(entry),
+        id: entry.id, at: entry.at, icon: ICONS[entry.kind], title: title(entry, machineName), figure: undone ? null : figure(entry),
         reason: reason(entry), tone: undone ? 'plain' : tone(entry), undone,
         startFailure: entry.kind === 'start_failed' && entry.failure ? {
             reasonKey: `machineGuard.activity.startFailure.${entry.failure.reason}`,

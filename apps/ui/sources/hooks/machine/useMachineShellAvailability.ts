@@ -7,7 +7,7 @@ import { useMachinePresenceSummary } from '@/components/sessions/model/useMachin
 import { useMachineField } from '@/sync/store/hooks';
 
 export type MachineShellAvailabilityState = Readonly<{
-    kind: 'loading' | 'available' | 'offline' | 'unsupported' | 'unavailable';
+    kind: 'loading' | 'available' | 'offline' | 'unsupported' | 'needsManage' | 'unavailable';
     cwd?: string;
 }>;
 
@@ -25,6 +25,7 @@ export function resolveMachineShellAvailabilityState(input: Readonly<{
     settled: boolean;
     unsupported: boolean;
     availability: DaemonTerminalShellAvailabilityV1 | null;
+    failure: ActionExecuteFailure | null;
 }>): MachineShellAvailabilityState {
     if (!input.enabled || !input.machineId) return { kind: 'loading' };
     if (input.reachability === 'unreachable') return { kind: 'offline' };
@@ -32,6 +33,7 @@ export function resolveMachineShellAvailabilityState(input: Readonly<{
     if (!input.settled) return { kind: 'loading' };
     if (input.availability?.ok === true) return { kind: 'available', cwd: input.availability.cwd };
     if (input.unsupported) return { kind: 'unsupported' };
+    if (input.failure?.errorCode === 'machine_manage_required') return { kind: 'needsManage' };
     return { kind: 'unavailable' };
 }
 
@@ -87,12 +89,13 @@ export function useMachineShellAvailability(input: Readonly<{
         return () => controller.abort();
     }, [input.enabled, input.machineId, input.serverId, execution.execute, execution.isCurrent, execution.ready, key]);
     const availability = input.enabled && execution.ready && state.key === key ? state.availability : null;
+    const failure = input.enabled && execution.ready && state.key === key
+        ? state.failure ?? (availability?.ok === false ? availability : null) : null;
     return {
         availability,
-        failure: input.enabled && execution.ready && state.key === key
-            ? state.failure ?? (availability?.ok === false ? availability : null) : null,
+        failure,
         state: resolveMachineShellAvailabilityState({ enabled: input.enabled, machineId: input.machineId,
             executionReady: execution.ready, reachability: presence.reachability, settled: input.enabled && execution.ready && state.key === key && state.settled,
-            unsupported: state.unsupported, availability }),
+            unsupported: state.unsupported, availability, failure }),
     } satisfies MachineShellAvailability;
 }

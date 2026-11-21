@@ -10782,7 +10782,7 @@ const machineDetailPageTranslations = { ca: translated({
                     systemOomKill: "El sistema ha aturat processos per alliberar memòria",
                     trashMoved: ({ count }) => `${count === 1 ? 'S’ha mogut 1 element' : `S’han mogut ${count} elements`} a la Paperera`,
                     trashEmptied: "S’ha buidat la Paperera",
-                    closedTerminal: ({ label, duration }) => `S’ha tancat el terminal ${label} després de ${duration} d’inactivitat`,
+                    closedTerminal: ({ label, duration }) => `S’ha tancat «${label}» després de ${duration} d’inactivitat`,
                     housekeeping: "S’han esborrat registres i gravacions antics",
                     startFailed: ({ label }) => `No s’ha pogut tornar a iniciar ${label}`,
                     undone: "S’ha desfet una aturada anterior",

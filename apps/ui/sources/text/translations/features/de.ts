@@ -10793,7 +10793,7 @@ const machineDetailPageTranslations = { de: translated({
                     systemOomKill: "Das System hat Prozesse beendet, um Speicher freizugeben",
                     trashMoved: ({ count }) => `${count} ${count === 1 ? 'Element' : 'Elemente'} in den Papierkorb verschoben`,
                     trashEmptied: "Papierkorb geleert",
-                    closedTerminal: ({ label, duration }) => `Terminal ${label} nach ${duration} Inaktivität geschlossen`,
+                    closedTerminal: ({ label, duration }) => `„${label}“ nach ${duration} Inaktivität geschlossen`,
                     housekeeping: "Alte Logs und Aufnahmen gelöscht",
                     startFailed: ({ label }) => `${label} konnte nicht erneut gestartet werden`,
                     undone: "Einen früheren Stopp rückgängig gemacht",

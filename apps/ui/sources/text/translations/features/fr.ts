@@ -10798,7 +10798,7 @@ const machineDetailPageTranslations = { fr: translated({
                     systemOomKill: "Le système a arrêté des processus pour libérer de la mémoire",
                     trashMoved: ({ count }) => `${count} ${count < 2 ? 'élément déplacé' : 'éléments déplacés'} dans la Corbeille`,
                     trashEmptied: "Corbeille vidée",
-                    closedTerminal: ({ label, duration }) => `Terminal ${label} fermé après ${duration} d’inactivité`,
+                    closedTerminal: ({ label, duration }) => `« ${label} » fermé après ${duration} d’inactivité`,
                     housekeeping: "Anciens journaux et enregistrements supprimés",
                     startFailed: ({ label }) => `Impossible de redémarrer ${label}`,
                     undone: "Un arrêt précédent a été annulé",

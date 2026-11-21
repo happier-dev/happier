@@ -10812,7 +10812,7 @@ const machineDetailPageTranslations = { pl: translated({
                     systemOomKill: "System zatrzymał procesy, by zwolnić pamięć",
                     trashMoved: ({ count }) => `Przeniesiono do Kosza elementy: ${count}`,
                     trashEmptied: "Opróżniono Kosz",
-                    closedTerminal: ({ label, duration }) => `Zamknięto terminal ${label} po ${duration} bezczynności`,
+                    closedTerminal: ({ label, duration }) => `Zamknięto „${label}” po ${duration} bezczynności`,
                     housekeeping: "Usunięto stare logi i nagrania",
                     startFailed: ({ label }) => `Nie udało się ponownie uruchomić ${label}`,
                     undone: "Cofnięto wcześniejsze zatrzymanie",

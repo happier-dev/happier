@@ -10,9 +10,9 @@ import { useTerminalApprovalOpener } from '@/components/terminal/embedded/useTer
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { t } from '@/text';
 
 import { MachineTerminalGuardWarning } from './MachineTerminalGuardWarning';
+import { describeMachineTerminalTitle } from './machineTerminalTitle';
 
 export type MachineTerminalSheetTarget = Readonly<{
   serverId: string;
@@ -38,9 +38,7 @@ export function showMachineTerminalSheet(
       kind: 'card',
       phonePresentation: 'sheet',
       testID: 'machine-terminal-modal',
-      title: t('machineDetailPage.terminalSheetTitle', {
-        machine: target.machineName,
-      }),
+      title: describeMachineTerminalTitle(target.machineName),
       scrollHost: 'body',
       bodyScroll: 'none',
       dimensions: { size: 'lg' },
@@ -79,9 +77,7 @@ const MachineTerminalModal = React.memo(function MachineTerminalModal(
         terminalKey={terminalKey}
       />
       <EmbeddedTerminalPane
-        title={t('machineDetailPage.terminalSheetTitle', {
-          machine: props.machineName,
-        })}
+        title={describeMachineTerminalTitle(props.machineName)}
         controller={{ ...controller, onOpenApproval }}
         terminalRef={terminalRef}
         chrome="none"

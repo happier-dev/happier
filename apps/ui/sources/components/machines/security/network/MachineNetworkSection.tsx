@@ -58,8 +58,8 @@ type ReviewControls = Readonly<{
   draft: MachineReachabilityPostureV1 | null;
   onDraft: (next: MachineReachabilityPostureV1 | null) => void;
   onPrepare: () => void;
-  /** Review a saved-base posture draft or an exact Join/Leave selection through the same review. */
-  onPrepareChange: (change: MachineReachabilityChangeV1) => void;
+  /** Review a posture or an exact Join/Leave selection. A null revision denotes the first posture. */
+  onPrepareChange: (change: MachineReachabilityChangeV1, savedPostureRevision?: null) => void;
   onApply: () => void;
   onCancel: () => void;
   onOpenApproval: (artifactId: string) => void;
@@ -124,8 +124,8 @@ export function MachineNetworkSection(
     onPrepare: () => {
       if (draft) void prepare({ kind: 'posture', posture: draft });
     },
-    onPrepareChange: (change) => {
-      void prepare(change);
+    onPrepareChange: (change, savedPostureRevision) => {
+      void prepare(change, savedPostureRevision);
     },
     onApply: () => {
       void apply();
@@ -230,7 +230,8 @@ export function MachineNetworkView(
       </ItemGroup>
     );
   }
-  const editable = props.online === true && network.facts.posture !== null && !needsManage;
+  const canReview = props.online === true && !needsManage;
+  const editable = canReview && network.facts.posture !== null;
   return (
     <View testID="machine-network">
       {needsManageLine}
@@ -246,6 +247,7 @@ export function MachineNetworkView(
         machineName={machine}
         controls={props.controls}
         editable={editable}
+        canReview={canReview}
       />
       <IngressGroup
         providerTitle={providerTitle}
@@ -326,6 +328,7 @@ function ManagementGroup(
     machineName: string;
     controls: ReviewControls;
     editable: boolean;
+    canReview: boolean;
   }>,
 ) {
   const { posture, observation } = props.network.facts;
@@ -334,6 +337,19 @@ function ManagementGroup(
   const draft = props.controls.draft ?? posture;
   const savedSsh = posture?.management.publicSsh ?? null;
   const draftSsh = draft?.management.publicSsh ?? null;
+  const canReviewObservedClosure = props.canReview && savedSsh?.kind !== 'open'
+    && observation.management.publicSsh === 'open'
+    && props.controls.review.kind === 'idle' && props.controls.draft === null;
+  const reviewObservedClosure = () => {
+    props.controls.onPrepareChange({
+      kind: 'posture',
+      posture: {
+        revision: posture?.revision ?? 0,
+        management: { providers: [], ...posture?.management, publicSsh: { kind: 'closed' } },
+        defaultServiceIngress: posture?.defaultServiceIngress ?? { kind: 'none' },
+      },
+    }, posture ? undefined : null);
+  };
   const recovery =
     observation.recovery ?? posture?.management.independentRecovery ?? null;
   // Ways in the person configured but this Machine is not on yet; each joins through the same reviewed change.
@@ -404,6 +420,7 @@ function ManagementGroup(
           machine,
         )}
         showChevron={false}
+        accessoryLayout={canReviewObservedClosure ? 'adaptive' : undefined}
         rightElement={
           // A Use grantee reads the value in the subtitle; no switch that looks live.
           savedSsh?.kind === 'open' && draft && props.network.state !== 'needsManage' ? (
@@ -422,6 +439,14 @@ function ManagementGroup(
                   },
                 })
               }
+            />
+          ) : canReviewObservedClosure ? (
+            <RoundButton
+              testID="machine-network-close-public-ssh"
+              size="small"
+              display="secondary"
+              title={t('machineDetailPage.network.closeSsh')}
+              onPress={reviewObservedClosure}
             />
           ) : undefined
         }

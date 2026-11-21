@@ -162,6 +162,24 @@ describe('Machine → Network page', () => {
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })).toBeTruthy();
     expect(line?.props.action).toBeUndefined();
   });
+
+  it('opens review of the first SSH closure from observed exposure without saving a draft or applying', async () => {
+    const read = { kind: 'settled' } as const;
+    const networkFacts = { posture: null, selections: null, observation };
+    const network = { ...model(read, true), ...presentMachineNetwork({ facts: networkFacts, read, reachable: true }) };
+    const onPrepareChange = vi.fn();
+    const onDraft = vi.fn();
+    const onApply = vi.fn();
+    const screen = await render(network, true, { kind: 'idle' }, { onPrepareChange, onDraft, onApply });
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })?.props.subtitle)
+      .toBe('machineDetailPage.network.publicSshObservedOpen');
+    await screen.pressByTestIdAsync('machine-network-close-public-ssh');
+    expect(onPrepareChange).toHaveBeenCalledWith({ kind: 'posture', posture: {
+      revision: 0, management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' },
+    } }, null);
+    expect(onDraft).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
+  });
   it.each([false, true])('presents administrator prerequisites and opens Security with retained facts=%s', async retained => {
     const failure = { ok: false as const, errorCode: 'mode_none', error: 'mode_none' };
     const networkFacts = retained ? facts : { posture: null, selections: null, observation: null };

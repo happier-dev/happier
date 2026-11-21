@@ -10736,7 +10736,7 @@ const machineDetailPageTranslations = { ja: translated({
                     systemOomKill: "システムがメモリを解放するためプロセスを停止しました",
                     trashMoved: ({ count }) => `${count} 件をゴミ箱に移動しました`,
                     trashEmptied: "ゴミ箱を空にしました",
-                    closedTerminal: ({ label, duration }) => `ターミナル ${label} を ${duration} の未使用後に閉じました`,
+                    closedTerminal: ({ label, duration }) => `「${label}」を ${duration} の未使用後に閉じました`,
                     housekeeping: "古いログと録画を削除しました",
                     startFailed: ({ label }) => `${label} を再度開始できませんでした`,
                     undone: "以前の停止を元に戻しました",

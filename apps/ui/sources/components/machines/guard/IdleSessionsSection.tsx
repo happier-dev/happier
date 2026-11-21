@@ -12,6 +12,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { MachineAgentMark } from '@/components/machines/agents/MachineAgentMark';
+import { describeMachineTerminalLabel } from '@/components/machines/terminal/machineTerminalTitle';
 
 import { GuardCountdown } from './GuardCountdown';
 import { GuardInsetFigure, GuardInsetList, GuardInsetRow, useGuardInsetFigureStyle } from './GuardInsetRows';
@@ -93,6 +94,7 @@ export const IdleSessionsSection = React.memo(function IdleSessionsSection(props
  * without a list.
  */
 export const IdleTerminalsSection = React.memo(function IdleTerminalsSection(props: Readonly<{
+    machineName: string;
     machineId: string;
     serverId: string;
     rule: IdleRule;
@@ -126,7 +128,7 @@ export const IdleTerminalsSection = React.memo(function IdleTerminalsSection(pro
             {rule.enabled && terminals.length > 0 ? (
                 <GuardInsetList testID="machine-guard-terminals-now">
                     {terminals.map((terminal, index) => (
-                        <IdleRow key={terminal.terminalKey} index={index} title={terminal.label} machineId={props.machineId} serverId={props.serverId}
+                        <IdleRow key={terminal.terminalKey} index={index} title={describeMachineTerminalLabel(terminal, props.machineName)} machineId={props.machineId} serverId={props.serverId}
                             qualifier={[t('machineGuard.idle.idleFor', { duration: formatGuardDuration(terminal.idleMs) }),
                                 ...terminal.reasons.filter(reason => reason !== 'not_yet').map(reason => t(`machineGuard.terminals.reasons.${reason}`))].join(' · ')}
                             trailing={terminal.status === 'stops_at' && terminal.stopAt !== undefined ? { kind: 'countdown', stopAt: terminal.stopAt, closes: true }

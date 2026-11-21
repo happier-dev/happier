@@ -155,6 +155,24 @@ const inspected = MachineReachabilityInspectResultV1Schema.parse({
 });
 
 describe('Machine → Network reviewed change', () => {
+  it('reviews an initial posture with revision zero', async () => {
+    const initial = MachineReachabilityChangeV1Schema.parse({ kind: 'posture', posture: {
+      ...posture, revision: 0,
+    } });
+    const reviewedPlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: {
+      ...plan.basis, currentPostureRevision: null, change: initial,
+    } });
+    executions['machines.reachability.inspect'] = { ok: true, result: {
+      ...inspected, posture: null, plan: reviewedPlan,
+    } };
+    const hook = await renderHook(() => useMachineNetworkReview({ serverId, machineId: 'network-machine' }));
+    try {
+      await act(async () => { await hook.getCurrent().prepare(initial, null); });
+      expect(requests[0]?.input).toEqual({ serverId, machineId: 'network-machine', change: initial });
+      expect(hook.getCurrent().review).toMatchObject({ kind: 'review', plan: reviewedPlan });
+    } finally { await hook.unmount(); }
+  });
+
   it('prepares the #83 saved revision-zero SSH draft at the next posture revision, including a repeated review', async () => {
     // MACH-QA-NET-83/owner-inspect.json: metadata 87, observation 14,
     // saved posture 0. Observation/metadata versions do not version this draft.

@@ -10789,7 +10789,7 @@ const machineDetailPageTranslations = { it: translated({
                     systemOomKill: "Il sistema ha fermato dei processi per liberare memoria",
                     trashMoved: ({ count }) => `${count === 1 ? 'Spostato 1 elemento' : `Spostati ${count} elementi`} nel Cestino`,
                     trashEmptied: "Cestino svuotato",
-                    closedTerminal: ({ label, duration }) => `Chiuso il terminale ${label} dopo ${duration} di inattività`,
+                    closedTerminal: ({ label, duration }) => `Chiuso «${label}» dopo ${duration} di inattività`,
                     housekeeping: "Cancellati vecchi log e registrazioni",
                     startFailed: ({ label }) => `Impossibile riavviare ${label}`,
                     undone: "Annullato un arresto precedente",

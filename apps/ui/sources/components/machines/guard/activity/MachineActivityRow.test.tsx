@@ -20,7 +20,7 @@ function startFailure(overrides: Record<string, unknown>) {
 
 describe('MachineActivityRow start failure', () => {
     it('tells why and what to try in plain words, never the raw reason or the daemon note', async () => {
-        const screen = await renderScreen(<MachineActivityRow entry={startFailure({})} />);
+        const screen = await renderScreen(<MachineActivityRow machineName="Lima" entry={startFailure({})} />);
         const text = screen.getTextContent();
         expect(text).toContain(t('machineGuard.activity.startFailure.no_ptys'));
         expect(text).toContain(t('machineGuard.activity.nextStep.close_idle_terminals'));
@@ -28,10 +28,10 @@ describe('MachineActivityRow start failure', () => {
     });
 
     it('reads the other failure, and an undone receipt only says when it was undone', async () => {
-        const plain = await renderScreen(<MachineActivityRow entry={startFailure({ failure: { reason: 'other' }, nextStep: 'review_processes' })} />);
+        const plain = await renderScreen(<MachineActivityRow machineName="Lima" entry={startFailure({ failure: { reason: 'other' }, nextStep: 'review_processes' })} />);
         expect(plain.getTextContent()).toContain(t('machineGuard.activity.startFailure.other'));
         expect(plain.getTextContent()).toContain(t('machineGuard.activity.nextStep.review_processes'));
-        const undone = await renderScreen(<MachineActivityRow entry={startFailure({ undoneAt: 2 })} />);
+        const undone = await renderScreen(<MachineActivityRow machineName="Lima" entry={startFailure({ undoneAt: 2 })} />);
         expect(undone.getTextContent()).not.toContain(t('machineGuard.activity.startFailure.no_ptys'));
     });
 });

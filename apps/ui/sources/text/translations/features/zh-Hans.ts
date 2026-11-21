@@ -10676,7 +10676,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     systemOomKill: "系统为释放内存停止了一些进程",
                     trashMoved: ({ count }) => `已将 ${count} 项移到回收站`,
                     trashEmptied: "已清空回收站",
-                    closedTerminal: ({ label, duration }) => `终端 ${label} 空闲 ${duration}后已关闭`,
+                    closedTerminal: ({ label, duration }) => `“${label}”空闲 ${duration}后已关闭`,
                     housekeeping: "已清除旧日志和录制",
                     startFailed: ({ label }) => `无法重新启动 ${label}`,
                     undone: "已撤销之前的一次停止",

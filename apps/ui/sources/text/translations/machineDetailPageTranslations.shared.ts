@@ -1917,7 +1917,7 @@ export const english = {
                 systemOomKill: 'The system stopped processes to free memory',
                 trashMoved: ({ count }: { count: number }) => `Moved ${count} ${count === 1 ? 'item' : 'items'} to Trash`,
                 trashEmptied: 'Emptied the Trash',
-                closedTerminal: ({ label, duration }: { label: string; duration: string }) => `Closed terminal ${label} after ${duration} idle`,
+                closedTerminal: ({ label, duration }: { label: string; duration: string }) => `Closed ${label} after ${duration} idle`,
                 housekeeping: 'Cleared old logs and recordings',
                 startFailed: ({ label }: { label: string }) => `Could not start ${label} again`,
                 undone: 'Undid an earlier stop',

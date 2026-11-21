@@ -64,6 +64,7 @@ type MachineActivityReading = Readonly<{
 type ActivityReceipt = Readonly<{
   entry: MachineGuardActivityRowV1;
   target: MachineWidgetTarget;
+  machineName: string;
   place: string | null;
   readOnly: boolean;
 }>;
@@ -226,6 +227,7 @@ function ActivityContent(
         all.push({
           entry,
           target: { serverId: props.serverId, machineId },
+          machineName: reading!.name,
           place: props.target ? null : reading!.name,
           readOnly: reading!.recipient || reading!.offline,
         });
@@ -433,6 +435,7 @@ const ActivityEntryRow = React.memo(function ActivityEntryRow(
   return (
     <MachineActivityRow
       entry={props.receipt.entry}
+      machineName={props.receipt.machineName}
       pendingId={wayBack.pendingId}
       onWayBack={wayBack.run}
       readOnly={props.receipt.readOnly}

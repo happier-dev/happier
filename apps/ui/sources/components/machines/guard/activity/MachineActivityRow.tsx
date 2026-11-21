@@ -23,6 +23,7 @@ import { describeGuardActivityRow, guardWayBackLabel } from './guardActivityPres
  */
 export const MachineActivityRow = React.memo(function MachineActivityRow(props: Readonly<{
     entry: MachineGuardActivityRowV1;
+    machineName: string;
     pendingId?: string | null;
     onWayBack?: (entry: MachineGuardActivityRowV1, item: MachineGuardActivityWayBackV1) => void;
     /** Read-only (offline, or not the person's to change): the ways back are not offered. */
@@ -37,7 +38,7 @@ export const MachineActivityRow = React.memo(function MachineActivityRow(props: 
     // A phone has no room for a clock column: the time closes the receipt's text (lab `rg` G7p), and the glyph takes
     // the rows' mark column, so a way back moved under the words starts where they do.
     const phone = useDeviceType() === 'phone';
-    const model = describeGuardActivityRow(props.entry);
+    const model = describeGuardActivityRow(props.entry, props.machineName);
     const tint = model.tone === 'danger' ? theme.colors.state.danger.textForeground
         : model.tone === 'attention' ? theme.colors.state.attention.textForeground : theme.colors.text.secondary;
     const { onWayBack, entry } = props;

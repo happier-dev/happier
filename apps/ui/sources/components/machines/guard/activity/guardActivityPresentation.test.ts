@@ -7,6 +7,20 @@ import { guardLevelWord } from '../guardPresentation';
 import { t } from '@/text';
 
 describe('Guard Activity presentation data', () => {
+    it('names an idle Machine terminal from its Machine when the receipt contains the historical terminal key', () => {
+        const terminalKey = 'machine-shell:9f442ac9:70fdceb2';
+        const receipt = MachineGuardActivityRowV1Schema.parse({
+            v: 1, id: 'idle-terminal', at: 1, kind: 'closed_terminal', rule: 'idle_terminals',
+            subject: { kind: 'terminal', terminalKey, label: terminalKey, idleMs: 360_000 },
+            outcome: 'done', attribution: { kind: 'unknown' },
+        });
+        const title = describeGuardActivityRow(receipt, 'Lima · 9f44').title;
+        expect(title).toContain(t('machineDetailPage.terminalSheetTitle', { machine: 'Lima · 9f44' }));
+        expect(title).not.toContain(terminalKey);
+        const namedReceipt = { ...receipt, subject: { kind: 'terminal' as const, terminalKey, label: 'Build shell', idleMs: 360_000 } };
+        expect(describeGuardActivityRow(namedReceipt, 'Lima · 9f44').title).toContain('Build shell');
+    });
+
     it('localizes an untitled Session while preserving a saved receipt title', () => {
         const receipt = (title: string | null) => MachineGuardActivityRowV1Schema.parse({
             v: 1, id: 'untitled', at: 1, kind: 'stopped_session', rule: 'idle_sessions',

@@ -67,12 +67,13 @@ export function useMachineNetworkReview(
   );
 
   const prepare = React.useCallback(
-    async (draft: MachineReachabilityChangeV1) => {
+    async (draft: MachineReachabilityChangeV1, savedPostureRevision?: null) => {
       if (inFlight()) return;
       // Posture drafts retain the saved revision they were edited from. Version
-      // the proposed write once here; never rebase it on a later observation.
+      // the proposed write once here, starting at zero when nothing was saved.
       const change: MachineReachabilityChangeV1 = draft.kind === 'posture'
-        ? { ...draft, posture: { ...draft.posture, revision: draft.posture.revision + 1 } }
+        ? { ...draft, posture: { ...draft.posture,
+          revision: savedPostureRevision === null ? 0 : draft.posture.revision + 1 } }
         : draft;
       const target = { serverId: input.serverId, machineId: input.machineId };
       setReview({ kind: 'preparing', change, approval: null });
