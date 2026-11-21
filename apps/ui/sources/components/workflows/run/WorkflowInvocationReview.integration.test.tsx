@@ -361,6 +361,7 @@ async function harness(options: Readonly<{ humanAnswer?: boolean; emptyResult?: 
             contains: () => false,
             closest: () => null,
             focus: () => {},
+            scrollTo: () => {},
             measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 400, 320, 160),
         }),
     });

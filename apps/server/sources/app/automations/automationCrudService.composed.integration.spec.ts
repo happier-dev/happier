@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { AutomationSessionLifecycleTriggerSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { readFileSync } from "node:fs";
@@ -81,6 +82,11 @@ function readV02Fixture(name: string): string {
 const AUTOMATION_TEMPLATE_V02_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V02_ENCRYPTED");
 const AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED");
 const AUTOMATION_TEMPLATE_V02_PLAIN = readV02Fixture("AUTOMATION_TEMPLATE_V02_PLAIN");
+
+function retainedPlainTemplate(fields: Readonly<Record<string, unknown>>): string {
+    const original: { kind: string; payload: Record<string, unknown> } = JSON.parse(AUTOMATION_TEMPLATE_V02_PLAIN);
+    return JSON.stringify({ ...original, payload: { ...original.payload, ...fields } });
+}
 
 function historicalRecipe(templateVersion: number) {
     return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
@@ -489,6 +495,88 @@ describe("automationCrudService (integration)", () => {
         await expect(db.automation.findUniqueOrThrow({ where: { id: retained.id } }))
             .resolves.toMatchObject({ name: "Unbound predecessor", templateVersion: 1 });
         await expect(deleteAutomation({ accountId: account.id, automationId: retained.id })).resolves.toEqual({ removedRevision: retained.templateVersion });
+    });
+
+    it.each([
+        { caseName: "retained encrypted Session", reason: "review_required",
+            targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED },
+        { caseName: "missing retained Session id", reason: "conversation_unrepresentable",
+            targetType: "existing_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN },
+        { caseName: "legacy encryption choice on a new Session", reason: "spawn_unrepresentable",
+            targetType: "new_session", templateCiphertext: retainedPlainTemplate({ sessionEncryptionMode: "plain" }) },
+        { caseName: "legacy terminal settings", reason: "settings_unrepresentable",
+            targetType: "new_session", templateCiphertext: retainedPlainTemplate({ terminal: { mode: "retired-0.2-mode" } }) },
+        { caseName: "predecessor UI Codex selector with incompatible settings", reason: "settings_unrepresentable",
+            targetType: "new_session", templateCiphertext: retainedPlainTemplate({
+                agent: "codex", terminal: { mode: "retired-0.2-mode" }, codexBackendMode: "mcp",
+            }) },
+        // The predecessor server accepted arbitrary plain payload fields. Its UI wrote the
+        // Codex selector above, while a direct client could include a runtime descriptor.
+        { caseName: "retained explicit runtime descriptor with incompatible settings", reason: "runtime_descriptor_unsupported",
+            targetType: "new_session", templateCiphertext: retainedPlainTemplate({
+                agent: "codex", terminal: { mode: "retired-0.2-mode" },
+                runtimeDescriptorV1: { v: 1, agentId: "codex", agent: { backendMode: "appServer" } },
+            }) },
+        { caseName: "legacy Machine id beyond the Workflow target bound", reason: "workspace_unrepresentable",
+            targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN, machineId: "m".repeat(192) },
+    ] as const)("refuses $caseName without changing a retained 0.2 row", async (fixture) => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const machineId = "machineId" in fixture ? fixture.machineId : await seedExecutionMachine(account.id);
+        if ("machineId" in fixture) await db.machine.create({ data: { id: machineId, accountId: account.id, metadata: "{}" } });
+        const row = await db.automation.create({ data: {
+            accountId: account.id, name: "Retained refusal", enabled: true, targetType: fixture.targetType,
+            templateCiphertext: fixture.templateCiphertext, templateVersion: 7,
+            assignments: { create: { machineId, enabled: true, priority: 3 } },
+            triggers: { create: { kind: "schedule", enabled: true, scheduleKind: "interval", everyMs: 60_000 } },
+        } });
+        const where = { id: row.id };
+        const readStored = () => db.automation.findUniqueOrThrow({ where, include: { assignments: true, triggers: true } });
+        const before = await readStored();
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const headers = { "x-test-user-id": account.id };
+            const url = `/v3/automations/${row.id}`;
+            const read = async () => {
+                const response = await app.inject({ method: "GET", url, headers });
+                expect(response.statusCode, response.body).toBe(200);
+                return AutomationDefinitionDetailSchema.parse(response.json());
+            };
+            const unused = async (): Promise<never> => { throw new Error("Unexpected Automation transport operation"); };
+            const actions = createAccountWorkflowTriggerActions({
+                resolveEncryption: async () => ({ kind: "available", witness: { mode: "plain", version: 1, contentKeyFingerprint: null } }),
+                randomBytes, newId: randomUUID, resolveWorkflow: unused,
+                automations: {
+                    get: read, list: unused, listDetails: unused, create: unused, delete: unused,
+                    reconcile: async (_id, input) => {
+                        const response = await app.inject({ method: "PUT", url, headers, payload: input });
+                        return AutomationDefinitionDetailSchema.parse(response.json());
+                    },
+                },
+            });
+            const persisted = await read();
+            expect(persisted.templateCiphertext).toBe(fixture.templateCiphertext);
+            expect(await actions.list({ automationId: row.id })).toMatchObject({
+                sets: [{ automationId: row.id, revision: 7, enabled: true, legacy: { editable: false, reason: "created_in_0_2" } }],
+            });
+            await expect(actions.update({ automationId: row.id, expectedRevision: 7, patch: { enabled: false } }))
+                .rejects.toMatchObject({ code: "legacy_conversion_unsupported", details: { reason: fixture.reason } });
+            expect(await read()).toEqual(persisted);
+        });
+        expect(await readStored()).toEqual(before);
+    });
+
+    it("leaves contradictory retained Session framing unchanged when the current read refuses it", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const retained = await db.automation.create({ data: {
+            accountId: account.id, name: "Wrong predecessor target", targetType: "new_session",
+            templateCiphertext: readV02Fixture("AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN"), templateVersion: 1,
+        } });
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const response = await app.inject({ method: "GET", url: `/v3/automations/${retained.id}`,
+                headers: { "x-test-user-id": account.id } });
+            expect(response.statusCode).toBe(409);
+            expect(response.json()).toEqual({ error: "automation_stored_content_unavailable" });
+        });
+        expect(await db.automation.findUniqueOrThrow({ where: { id: retained.id } })).toEqual(retained);
     });
 
     it.each(["zero", "plural"] as const)("converts a real 0.2 row through canonical reconciliation without changing its %s placements", async (placement) => {
