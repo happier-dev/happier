@@ -636,6 +636,11 @@ export function DeploymentDatabasePage(
           ) : database.kind === 'selfHosted' ? (
             <SubjectTriggersSectionReadState subjectKind="database"
               status={dataItem?.databaseSubjectFailure || dataRead.status === 'unavailable' || dataRead.status === 'ready' ? 'failed' : 'loading'}
+              // Its read failed with the database's own facts: say which, so the line is more than "couldn't load".
+              reason={dataItem?.databaseSubjectFailure?.code === 'machine_unavailable'
+                || dataItem?.databaseSubjectFailure?.code === 'target_unavailable'
+                ? t('workflows.triggers.section.automationsSubjectUnreachable')
+                : t('workflows.triggers.section.automationsSubjectFailed')}
               onRetry={automationSubject?.ok === false ? undefined : sizes.refresh} />
           ) : null}
 

@@ -22,6 +22,10 @@ import { createMachineExecutionRunRoute } from '@/sync/domains/workflows/workflo
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 
 import { useWorkflowEventPresentation } from './useWorkflowEventPresentation';
 
@@ -137,7 +141,27 @@ it('names the Machine from its owner in the event title', async () => {
   const hook = await renderHook(() => useWorkflowEventPresentation(online, lifetime.scope));
   expect(hook.getCurrent()).toMatchObject({
     title: t('workflows.events.machineOnline', { machine: machine.getCurrent()! }),
+    // A narrow row shortens the Machine's name before its verb.
+    rowTitle: { subject: machine.getCurrent()!, verb: t('workflows.events.cameOnline') },
   });
+  // Online and offline do not share one glyph.
+  const offline = await renderHook(() => useWorkflowEventPresentation({ ...online, key: 'machine-offline', event: 'offline' },
+    lifetime.scope));
+  expect(offline.getCurrent()?.rowTitle?.verb).toBe(t('workflows.events.wentOffline'));
+  expect(offline.getCurrent()?.glyph).not.toBe(hook.getCurrent()?.glyph);
+});
+
+it("names a Session's turn by its Agent and carries the Agent's mark (lab events:A)", async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const serverId = lifetime.scope.serverId;
+  const row = createSessionFixture({ id: 'turn-session', metadata: { ...createSessionFixture().metadata!, flavor: 'claude' } });
+  getStorage().setState((state) => ({ sessionListRowsByServerId: { ...state.sessionListRowsByServerId,
+    [serverId]: { ...state.sessionListRowsByServerId[serverId], [row.id]: row as unknown as SessionListRenderableSession } } }));
+  const turn = { key: 'turn', kind: 'session', sessionId: row.id, event: 'turn_started', turnId: 'turn-1',
+    sourceRevision: 1, occurredAt: 400, coverage: 'live' } as const satisfies WorkflowActivityFact;
+  const hook = await renderHook(() => useWorkflowEventPresentation(turn, lifetime.scope));
+  expect(hook.getCurrent()).toMatchObject({ agentId: 'claude',
+    title: t('workflows.events.agentTurnStarted', { agent: resolveAgentCatalogTitle('claude') }) });
 });
 
 it('waits for the selected event read despite a connected socket, then distinguishes failure from settled absence', async () => {

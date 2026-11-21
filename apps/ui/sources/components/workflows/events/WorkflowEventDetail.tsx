@@ -7,7 +7,9 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -41,6 +43,8 @@ import {
   type WorkflowEventPresentation,
 } from './useWorkflowEventPresentation';
 import { useWorkflowEventsFeed } from './WorkflowEventsList';
+import { WorkflowEventMark } from './WorkflowEventMark';
+import { WorkflowEventActionBar, WorkflowEventMoreMenu, type WorkflowEventMenuItem } from './WorkflowEventActionBar';
 import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
 
 /**
@@ -264,6 +268,13 @@ export const WorkflowEventDetailPage = React.memo(
     const router = useRouter();
     const picked = useWorkflowEventMatch(presentation, scope);
     const automate = useWorkflowEventIntents(presentation, presented, { match: picked.match });
+    // A phone keeps the event's actions in a foot bar (lab events:A:selected 390): Make, and the rest behind ⋯.
+    const phone = useDeviceType() === 'phone';
+    // On a phone ⋯ is where Add to a workflow… and Automate this… hang from.
+    const moreAnchorRef = React.useCallback((node: View | null) => {
+      automate.anchorRef.current = node;
+      automate.addToAnchorRef.current = node;
+    }, [automate.anchorRef, automate.addToAnchorRef]);
     // A picked row the feed hasn't settled is waiting or unreachable, not gone: say that, with the feed's Retry.
     if (presentation === null && props.eventKey !== null && (feed.status !== 'live' || feed.retained === null || feed.historyError !== null)) {
       return (
@@ -297,14 +308,22 @@ export const WorkflowEventDetailPage = React.memo(
         </View>
       );
     }
+    // A Machine event's row line is its time, which the header's own time already says: the header names it once.
     const meta = [
-      ...(presentation.subtitle === null
+      ...(presentation.subtitle === null || presentation.fact.kind === 'machine'
         ? []
         : [{ key: 'subject', text: presentation.subtitle }]),
       { key: 'at', text: formatAsOfTime(presentation.fact.occurredAt) },
     ];
     const openTarget = presentation.open;
+    const phoneMenu: WorkflowEventMenuItem[] = [
+      ...(automate.addTo === null ? [] : [{ id: 'add-to', title: t('workflows.events.addToAWorkflow'), run: automate.addTo }]),
+      ...(automate.open === null ? [] : [{ id: 'automate', title: t('workflows.events.automate'), run: automate.open }]),
+      ...(openTarget === null ? [] : [{ id: 'open', title: openTarget.label, run: () => router.push(openTarget.href as never) }]),
+    ];
+    const barred = phone && automate.make !== null;
     return (
+      <View style={styles.page}>
       <ItemList testID="workflow-events:detail">
         <View ref={automate.headerRef} collapsable={false}>
         <PageHeader
@@ -312,10 +331,11 @@ export const WorkflowEventDetailPage = React.memo(
           title={presentation.title}
           // The event's sentence is its identity (lab events:A:selected 390): the mark keeps its title on phones.
           alwaysShowTitle
-          leading={<PageHeaderMarkIcon name={presentation.glyph} />}
+          leading={<PageHeaderMarkSlot><WorkflowEventMark presentation={presentation}
+            size={HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx} /></PageHeaderMarkSlot>}
           meta={meta}
           actionsPlacement="page"
-          actions={
+          {...(barred ? {} : { actions: (
             <View style={styles.actions}>
               {automate.make === null ? null : (
                 <RoundButton
@@ -354,7 +374,7 @@ export const WorkflowEventDetailPage = React.memo(
                 />
               )}
             </View>
-          }
+          ) })}
         />
         </View>
         <WorkflowEventCarries
@@ -368,14 +388,25 @@ export const WorkflowEventDetailPage = React.memo(
           scope={scope}
           testID="workflow-events:detail"
         />
-        {automate.builder}
-        {automate.addToEditor}
       </ItemList>
+      {barred ? (
+        <WorkflowEventActionBar
+          testID="workflow-events:detail:bar"
+          more={<WorkflowEventMoreMenu items={phoneMenu} hint={presentation.title} anchorRef={moreAnchorRef}
+            testID="workflow-events:detail:more" />}
+          primary={<RoundButton testID="workflow-events:detail:make" title={t('workflows.events.makeWorkflow')}
+            onPress={automate.make!} />}
+        />
+      ) : null}
+      {automate.builder}
+      {automate.addToEditor}
+      </View>
     );
   },
 );
 
 const styles = StyleSheet.create((theme) => ({
+  page: { flex: 1, minHeight: 0 },
   pick: { flex: 1, minHeight: 0, justifyContent: 'center' },
   // Three actions and a link outgrow a phone's line: they wrap under each other instead of running off the edge.
   actions: {

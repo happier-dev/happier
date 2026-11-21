@@ -80,11 +80,12 @@ export function HappierSurfaceStateFrame(props: Readonly<{
 const LINE_TEXT_BASIS_PX = 180;
 /**
  * The room a state line's sentence keeps beside its recoveries. On a phone a lone "Retry" still fits beside a
- * readable sentence, while a pair ("Retry · Details") would squeeze it to three lines, so the pair moves beneath,
+ * readable sentence, also in a section's sheet with its glyph column (DESIGN-ACCEPT-4 M2: 260 put it beneath there),
+ * while a pair ("Retry · Details") would squeeze it to three lines, so the pair moves beneath,
  * on the sentence's edge (phones recompose: only a short value stays right of its words). A menu's line keeps the
  * shorter room: its rows are narrow by design and its recovery stays on the row.
  */
-const STATE_LINE_TEXT_BASIS_PX = 260;
+const STATE_LINE_TEXT_BASIS_PX = 220;
 
 /**
  * The one in-list state line (lab 0 "N"): one compact sentence, glyph and inline recovery; diagnostic

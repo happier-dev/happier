@@ -132,12 +132,18 @@ export const SubjectTriggersSection = React.memo(function SubjectTriggersSection
   return <SubjectTriggersSectionContent {...props} automations={automations} />;
 });
 
-type SubjectTriggersReadStateProps = Readonly<{ status: 'loading' | 'failed'; onRetry?: () => void | Promise<unknown> }>;
+type SubjectTriggersReadStateProps = Readonly<{
+  status: 'loading' | 'failed';
+  onRetry?: () => void | Promise<unknown>;
+  /** Why the read failed, when its host knows ("Its Machine isn't answering."): said after the failure, on its line. */
+  reason?: string;
+}>;
 
 function SubjectTriggersReadState(props: SubjectTriggersReadStateProps) {
+  const failed = t('workflows.triggers.section.automationsLoadFailed');
   return <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
     state={props.status === 'failed'
-      ? { kind: 'failed', reason: t('workflows.triggers.section.automationsLoadFailed'), onRetry: props.onRetry }
+      ? { kind: 'failed', reason: props.reason ? `${failed} ${props.reason}` : failed, onRetry: props.onRetry }
       : { kind: 'loading' }} />;
 }
 
@@ -162,7 +168,8 @@ function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof Ite
 export function SubjectTriggersSectionReadState(props: SubjectTriggersReadStateProps
   & Readonly<{ subjectKind: SubjectTriggersSectionProps['subject']['kind'] }>) {
   return <SubjectTriggersSectionFrame description={describeAutomationsSection(props.subjectKind, false)}>
-    <SubjectTriggersReadState status={props.status} onRetry={props.onRetry} />
+    <SubjectTriggersReadState status={props.status} onRetry={props.onRetry}
+      {...(props.reason === undefined ? {} : { reason: props.reason })} />
   </SubjectTriggersSectionFrame>;
 }
 

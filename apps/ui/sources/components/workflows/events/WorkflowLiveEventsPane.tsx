@@ -11,8 +11,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import type { TriggerWhenValue } from '@/components/workflows/triggers/sessionTriggerForm';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -31,6 +29,7 @@ import {
   useWorkflowEventFact,
   useWorkflowEventPresentation,
 } from './useWorkflowEventPresentation';
+import { WorkflowEventActionBar, WorkflowEventMoreMenu, type WorkflowEventMenuItem } from './WorkflowEventActionBar';
 import { WorkflowEventCarries, useWorkflowEventIntents, useWorkflowEventMatch, type WorkflowEventMatchState } from './WorkflowEventDetail';
 import type { WorkflowEventPresentation } from './useWorkflowEventPresentation';
 import { createWorkflowEventRoute } from '../workflowsRoutes';
@@ -224,7 +223,6 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
   const router = useRouter();
   const { presentation, onAdd, eventKey } = props;
   const intents = useWorkflowEventIntents(presentation, props.active, { addTo: false, match: props.match.match });
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const seed = !props.active ? null : readWorkflowEventDraftIntent(presentation.fact, undefined, props.match.match);
   const when: TriggerWhenValue | null = seed?.nativeEvent
     ? { kind: 'pluginEvent', value: null }
@@ -233,36 +231,14 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
   const canAdd = when !== null && onAdd !== null;
   const addsLine = canAdd && !props.added ? props.match.addsLine : null;
   // One primary in the pane (Add to this workflow); the rest of what the event allows waits behind its ⋯ (S2).
-  const menu: (DropdownMenuItem & { run: () => void })[] = [
+  const menu: WorkflowEventMenuItem[] = [
     ...(intents.make === null ? [] : [{ id: 'make', title: t('workflows.events.newWorkflowFromThis'), run: intents.make }]),
     ...(intents.open === null ? [] : [{ id: 'automate', title: t('workflows.events.automate'), run: intents.open }]),
     { id: 'events', title: t('workflows.events.openInEvents'), run: () => router.push(createWorkflowEventRoute(eventKey) as never) },
     ...(open === null ? [] : [{ id: 'open', title: open.label, run: () => router.push(open.href as never) }]),
   ];
   const more = (
-    <View ref={intents.anchorRef} collapsable={false}>
-      <DropdownMenu
-        open={menuOpen}
-        onOpenChange={setMenuOpen}
-        items={menu.map(({ run: _run, ...item }) => ({ ...item, testID: `${props.testID}:more:${item.id}` }))}
-        onSelect={(id) => menu.find((item) => item.id === id)?.run()}
-        placement="auto"
-        matchTriggerWidth={false}
-        trigger={({ open: shown, toggle }) => (
-          <IconButton
-            testID={`${props.testID}:more`}
-            iconName="dots-three"
-            variant="plain"
-            accessibilityRole="button"
-            accessibilityLabel={t('common.moreActions')}
-            accessibilityHint={presentation.title}
-            onPress={toggle}
-            expanded={shown}
-            hasPopup="menu"
-          />
-        )}
-      />
-    </View>
+    <WorkflowEventMoreMenu items={menu} hint={presentation.title} anchorRef={intents.anchorRef} testID={`${props.testID}:more`} />
   );
   const primary = !canAdd ? null : props.added ? (
     <InlineStatus tone="success" label={t('workflows.events.added')} />
@@ -274,23 +250,15 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
       onPress={() => onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined)}
     />
   );
-  const adds = addsLine === null ? null : (
-    <Text testID={`${props.testID}:adds`} variant="meta" style={props.bar ? styles.barAdds : styles.adds}>{addsLine}</Text>
-  );
   return (
     <>
       {props.bar ? (
-        // ⋯ leads and Add takes the rest of the bar, within reach of a thumb (lab 390); what Add brings reads above it.
-        <View testID={`${props.testID}:bar`} style={styles.bar}>
-          {adds}
-          <View style={styles.barRow}>
-            {more}
-            <View style={styles.barPrimary}>{primary}</View>
-          </View>
-        </View>
+        <WorkflowEventActionBar testID={`${props.testID}:bar`} more={more} primary={primary} note={addsLine} />
       ) : (
         <>
-          {adds}
+          {addsLine === null ? null : (
+            <Text testID={`${props.testID}:adds`} variant="meta" style={styles.adds}>{addsLine}</Text>
+          )}
           <View style={styles.actions}>
             {primary}
             {more}
@@ -318,18 +286,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.space.s8,
     paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
   },
-  // The sheet's own foot: a hairline over the list, the open row's actions on the head's band edge.
-  bar: {
-    gap: theme.space.s8,
-    paddingHorizontal: HEADER_BAND_HORIZONTAL_PADDING_PX,
-    paddingTop: theme.space.s8,
-    paddingBottom: theme.space.s12,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border.divider,
-  },
-  barRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-  barPrimary: { flex: 1, minWidth: 0 },
-  barAdds: { color: theme.colors.text.secondary },
   actions: {
     flexDirection: 'row',
     alignItems: 'center',

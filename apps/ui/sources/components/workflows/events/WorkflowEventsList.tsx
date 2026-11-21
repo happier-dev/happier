@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Icon } from '@/components/ui/icons/Icon';
+import { WorkflowEventMark } from './WorkflowEventMark';
 import {
   CollectionNavigationRow,
   CollectionSkeletonRows,
@@ -302,11 +302,13 @@ const WorkflowEventRow = React.memo(function WorkflowEventRow(
     <CollectionNavigationRow
       testID={`${props.testID}:row:${props.eventKey}`}
       surface={props.surface}
-      title={presentation.title}
-      {...(presentation.subtitle === null
-        ? {}
-        : { subtitle: presentation.subtitle })}
-      icon={<Icon name={presentation.glyph} />}
+      // A long subject would cut its verb off in a column ("NLDW3-5-36-33 · 9eee we…"): the row names the subject and
+      // its line leads with what happened ("went offline · 8:08 PM"), so both stay readable at every width.
+      title={presentation.rowTitle?.subject ?? presentation.title}
+      {...(presentation.rowTitle
+        ? { subtitle: joinHappierFacts(presentation.rowTitle.verb, presentation.subtitle) }
+        : presentation.subtitle === null ? {} : { subtitle: presentation.subtitle })}
+      icon={<WorkflowEventMark presentation={presentation} />}
       detail={formatRelativeTimeShort(occurredAt, nowMs)}
       needsYou={presentation.needsYou}
       {...(presentation.needsYou

@@ -24,6 +24,8 @@ import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workf
 import { formatWorkflowMachineEventTitle, readWorkflowEventStartedRuns } from './workflowEventFacts';
 import { createMachineExecutionRunRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { readSessionRowPresentationAgentId as readSessionRowAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
@@ -42,6 +44,13 @@ export type WorkflowEventPresentation = Readonly<{
   title: string;
   subtitle: string | null;
   glyph: IconName;
+  /** The Agent whose mark stands for a Session event (lab `events:A`), drawn in place of the glyph; null when unknown. */
+  agentId: string | null;
+  /**
+   * A list row's title in two parts when the sentence names a long subject: the row titles the subject and its line
+   * leads with the verb ("NLDW3-5-36-33 · 9eee" / "went offline · 8:08 PM"). The page header keeps the whole sentence.
+   */
+  rowTitle: Readonly<{ subject: string; verb: string }> | null;
   needsYou: boolean;
   lines: readonly WorkflowEventFactLine[];
   open: Readonly<{ label: string; href: string }> | null;
@@ -104,6 +113,11 @@ export function useWorkflowEventPresentation(
     sessionId,
     readSessionPath,
   );
+  const sessionAgentId = useSessionListRowSelector(
+    serverId,
+    sessionId,
+    readSessionRowPresentationAgentId,
+  );
   const machineName = useServerScopedMachineLabel(
     serverId,
     fact?.kind === 'machine' ? fact.machineId : executionSource?.machineId ?? sessionMachineId,
@@ -131,12 +145,7 @@ export function useWorkflowEventPresentation(
     const runsStarted = retainedRuns === undefined ? NO_RUNS : readWorkflowEventStartedRuns(fact, retainedRuns);
     switch (fact.kind) {
       case 'session': {
-        const glyph =
-          fact.event === 'started'
-            ? TRIGGER_LIFECYCLE_GLYPHS.sessionStarts
-            : fact.event === 'turn_started'
-              ? TRIGGER_LIFECYCLE_GLYPHS.turnStarts
-              : TRIGGER_LIFECYCLE_GLYPHS.sessionArchived;
+        const glyph = readSessionEventGlyph(fact.event);
         const lines: WorkflowEventFactLine[] = [];
         if (sessionName !== null)
           lines.push({
@@ -157,20 +166,19 @@ export function useWorkflowEventPresentation(
             value: sessionPath,
             mono: true,
           });
+        // The Agent names what its turn did ("Claude finished a turn", "Codex needs you"), as a Machine names its own
+        // event (M5); with its Agent unknown the sentence says "An agent".
+        const agent = sessionAgentId === null ? t('workflows.events.someAgent') : resolveAgentCatalogTitle(sessionAgentId);
         return {
           fact,
           runsStarted,
           glyph,
+          agentId: sessionAgentId,
+          rowTitle: null,
           needsYou: false,
           subtitle: sessionName,
           lines,
-          title: t(
-            fact.event === 'started'
-              ? 'workflows.events.sessionStarted'
-              : fact.event === 'turn_started'
-                ? 'workflows.events.turnStarted'
-                : 'workflows.events.sessionArchived',
-          ),
+          title: formatSessionEventTitle(fact.event, agent),
           open: {
             label: t('workflows.events.openSession'),
             href: `/session/${encodeURIComponent(fact.sessionId)}`,
@@ -182,7 +190,13 @@ export function useWorkflowEventPresentation(
         return {
           fact,
           runsStarted,
-          glyph: 'desktop',
+          // Online and offline read apart at a glance, not only by their verb.
+          glyph: fact.event === 'online' ? 'desktop' : 'cloud-slash',
+          agentId: null,
+          rowTitle: machineName === null ? null : {
+            subject: machineName,
+            verb: t(fact.event === 'online' ? 'workflows.events.cameOnline' : 'workflows.events.wentOffline'),
+          },
           needsYou: false,
           subtitle: formatAsOfTime(fact.occurredAt),
           title: formatWorkflowMachineEventTitle(fact, machineName),
@@ -210,6 +224,8 @@ export function useWorkflowEventPresentation(
           fact,
           runsStarted,
           glyph: 'tree-structure',
+          agentId: null,
+          rowTitle: null,
           needsYou: fact.event === 'needs_attention',
           subtitle,
           title: workflow,
@@ -229,7 +245,30 @@ export function useWorkflowEventPresentation(
         };
       }
     }
-  }, [fact, executionSource, machineName, sessionName, sessionPath, workflowName, executionTitle, serverId, retainedRuns]);
+  }, [fact, executionSource, machineName, sessionName, sessionPath, sessionAgentId, workflowName, executionTitle, serverId, retainedRuns]);
+}
+
+type SessionEvent = Extract<WorkflowActivityFact, { kind: 'session' }>['event'];
+
+function readSessionEventGlyph(event: SessionEvent): IconName {
+  switch (event) {
+    case 'started': return TRIGGER_LIFECYCLE_GLYPHS.sessionStarts;
+    case 'archived': return TRIGGER_LIFECYCLE_GLYPHS.sessionArchived;
+    case 'turn_started': return TRIGGER_LIFECYCLE_GLYPHS.turnStarts;
+  }
+}
+
+/** One sentence per Session event, led by its Agent where a turn is concerned (lab events:A). */
+function formatSessionEventTitle(event: SessionEvent, agent: string): string {
+  switch (event) {
+    case 'started': return t('workflows.events.sessionStarted');
+    case 'archived': return t('workflows.events.sessionArchived');
+    case 'turn_started': return t('workflows.events.agentTurnStarted', { agent });
+  }
+}
+
+function readSessionRowPresentationAgentId(row: SessionListRenderableSession | null): string | null {
+  return row === null ? null : readSessionRowAgentId(row);
 }
 
 function readSessionMachineId(
