@@ -11,7 +11,7 @@ import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './
 import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { projectActionInputIssues } from './actionInputValidation.js';
+import { ActionInputIssueSchema, projectActionInputIssues } from './actionInputValidation.js';
 import type { ActionAutomationWaitV1, ActionAutomationCancelV1 } from './actionAutomationAdmission.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
@@ -23,6 +23,14 @@ export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   durationMs: number;
 }>;
 
+function workflowInputIssues(issues: ReturnType<typeof projectActionInputIssues>) {
+  return issues.map(issue => ({
+    code: 'invalid_input' as const, severity: 'error' as const,
+    path: issue.path.map(segment => `/${String(segment).replace(/~/g, '~0').replace(/\//g, '~1')}`).join(''),
+    message: issue.message ?? issue.code,
+  }));
+}
+
 /** One closed failure projection for both the family and host preparation. */
 export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: Readonly<{
   operation: string;
@@ -31,11 +39,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
 }>, preEffect = false, phase = diagnostic?.operation ?? 'dispatch'): WorkflowActionFailureV1 {
   if (phase === 'workflow.run.start' && error instanceof z.core.$ZodError) {
     return { ok: false, errorCode: 'invalid_input', error: 'invalid_input', details: {
-      issues: projectActionInputIssues(error).map(issue => ({
-        code: 'invalid_input', severity: 'error',
-        path: issue.path.map(segment => `/${String(segment).replace(/~/g, '~0').replace(/\//g, '~1')}`).join(''),
-        message: issue.message ?? 'Invalid input',
-      })),
+      issues: workflowInputIssues(projectActionInputIssues(error)),
     } };
   }
   const thrown = error !== null && typeof error === 'object' ? error : null;
@@ -61,6 +65,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   // trigger owner. At the Action boundary they describe unreadable content,
   // not a failure to reach storage.
   const code = rawCode === 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' ? 'target_unavailable'
+    : rawCode === 'invalid_parameters' ? 'invalid_input'
     : rawCode === 'automation_disabled' ? 'ineligible_state'
     : rawCode === 'automation_not_found' || rawCode === 'artifact_not_found' || rawCode === 'not_found'
       || rawCode === 'automation_stored_content_unavailable' ? 'content_unavailable'
@@ -74,7 +79,12 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     : rawCode === 'session_key_required' || rawCode === 'encryption_material_unavailable'
     || rawCode === 'encryption_mode_mismatch' || rawCode === 'invalid_template' || rawCode === 'invalid_action_output'
     ? 'content_unavailable' : rawCode;
-  const details = rawCode === 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE'
+  const actionInputIssues = rawCode === 'invalid_parameters'
+    ? z.object({ issues: z.array(ActionInputIssueSchema) }).safeParse(thrown && 'details' in thrown ? thrown.details : undefined)
+    : undefined;
+  const details = rawCode === 'invalid_parameters'
+    ? actionInputIssues?.success ? { issues: workflowInputIssues(actionInputIssues.data.issues) } : undefined
+    : rawCode === 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE'
     ? { code: 'target_unavailable', reason: 'requester_runtime_unavailable', errorCode: rawCode }
     : sessionSnapshotUnavailable ? { code: 'target_unavailable', reason: 'session_unavailable' }
     : rawCode === 'account_role_overrides_unavailable' ? { reason: rawCode }

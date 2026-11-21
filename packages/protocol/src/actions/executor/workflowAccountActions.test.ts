@@ -256,6 +256,7 @@ describe('workflow Action refusal classification', () => {
     ['Session currentness conflict', Object.assign(new Error('Session snapshot unavailable'), { name: 'SessionSnapshotReadError', errorCode: 'currentness_conflict' }), 'currentness_conflict'],
     ['Session cancellation', Object.assign(new Error('Session snapshot unavailable'), { name: 'SessionSnapshotReadError', errorCode: 'cancelled' }), 'cancelled'],
     ['typed errorCode refusal', Object.assign(new Error('Source unavailable'), { errorCode: 'source_unavailable' }), 'source_unavailable'],
+    ['typed Action parameter refusal', Object.assign(new Error('invalid_parameters'), { code: 'invalid_parameters' }), 'invalid_input'],
     ['Artifact owner-only delete refusal', Object.assign(new Error('workflow_definition_delete_forbidden'), { code: 'artifact_access_forbidden' }), 'run_access_denied'],
     ['Artifact read missing', Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' }), 'content_unavailable'],
     ['Automation stored content refusal', Object.assign(new Error('automation_stored_content_unavailable'), { code: 'automation_stored_content_unavailable' }), 'content_unavailable'],

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -38,7 +39,7 @@ export function createWorkflowHostActionContractReader(
             // The host already decided availability; absence is the materializer's
             // typed unavailable contract, while all other failures still propagate.
             if (result.errorCode === 'action_disabled') throw disabledContract;
-            throw Object.assign(new Error(result.error), { code: result.errorCode });
+            throw createActionExecuteFailureError(result);
           }
           return result.result;
         },
