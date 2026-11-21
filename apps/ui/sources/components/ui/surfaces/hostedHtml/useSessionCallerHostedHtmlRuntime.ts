@@ -19,10 +19,13 @@ import type { CallerHostedHtmlRuntime } from './HostedHtmlSurfaceAdapter';
 import { createSessionCallerHostedHtmlRequestController } from './sessionCallerHostedHtmlRequestController';
 import { isHostedInlineDocumentFrameAvailable } from './hostedInlineDocumentFrameCapability';
 
-/** Who owns the document this HTML comes from, as its mounting host admitted it. */
-export type CallerHostedHtmlContentOwner =
+/**
+ * Who owns the document this HTML comes from, as its mounting host admitted it. `shared` says someone besides
+ * that owner can see or write it, so its HTML may be another person's even when the viewer is the owner.
+ */
+export type CallerHostedHtmlContentOwner = Readonly<{ shared?: boolean }> & (
     | Readonly<{ kind: 'account'; accountId: string }>
-    | Readonly<{ kind: 'session'; sessionId: string }>;
+    | Readonly<{ kind: 'session'; sessionId: string }>);
 
 /** Current viewer adapter for caller-authored HTML; a bound Session retains its read guard. */
 export function useSessionCallerHostedHtmlRuntime(
@@ -50,10 +53,11 @@ export function useSessionCallerHostedHtmlRuntime(
     const contentSessionId = contentOwner?.kind === 'session' ? contentOwner.sessionId : null;
     const contentSessionOwned = storage(state => contentSessionId !== null
         && selectSessionViewShellSessionForRouteState(state, contentSessionId, serverId)?.access?.role === 'owner');
-    // Someone else owns the containing surface: another Account's surface, or a Session the viewer does not own.
-    // Missing ownership fails closed, as it does for the target Session.
-    const contentForeign = contentOwner?.kind === 'account' ? contentOwner.accountId !== binding?.accountId
-        : contentOwner?.kind === 'session' && !contentSessionOwned;
+    // Someone else owns or can write the containing surface: a shared surface or definition, another Account's
+    // surface, or a Session the viewer does not own. Missing ownership fails closed, as it does for the target Session.
+    const contentForeign = contentOwner?.shared === true
+        || (contentOwner?.kind === 'account' ? contentOwner.accountId !== binding?.accountId
+            : contentOwner?.kind === 'session' && !contentSessionOwned);
     const contentForeignRef = React.useRef(contentForeign);
     contentForeignRef.current = contentForeign;
     const surfaceCurrentRef = React.useRef(isSurfaceCurrent);

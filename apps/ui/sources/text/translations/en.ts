@@ -15006,11 +15006,11 @@ const enSettingsActions = {
       },
     },
     foreign_session_html: {
-      title: 'HTML from other people',
-      subtitle: 'Allow HTML someone else owns, in their Sessions or on surfaces they share with you, to use this Action. Off by default.',
+      title: 'HTML others can change',
+      subtitle: 'Allow HTML that someone else wrote or can change — in their Sessions, on surfaces shared with you, or on your own shared Boards, dashboards and widgets — to use this Action. Off by default.',
     },
     foreign_session_html_resources: {
-      subtitle: 'Allow Resource reads and live updates from HTML someone else owns. Off by default; approval prompts aren’t available.',
+      subtitle: 'Allow Resource reads and live updates from HTML that someone else wrote or can change. Off by default; approval prompts aren’t available.',
     },
 
     voice: {

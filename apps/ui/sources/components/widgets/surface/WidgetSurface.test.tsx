@@ -961,9 +961,14 @@ function readGuestFrame(frame: Record<string, unknown>) {
 it.each([
     ['HTML on another Account\'s shared surface', 'foreign-account', true],
     ['HTML on a Board of a Session the viewer does not own', 'foreign-session', true],
+    // An editor of a shared surface or a shared library definition can write the HTML its owner then opens.
+    ['the owner\'s own HTML on their own shared surface', 'own-shared-surface', true],
+    ['the owner\'s HTML from a library definition shared for editing', 'own-shared-definition', true],
+    ['the owner\'s own HTML on their own Work Board that an editor can write', 'own-shared-work-board', true],
     ['the viewer\'s own HTML on their own surface', 'own-account', false],
+    ['the viewer\'s own HTML from their own private library definition', 'own-private-definition', false],
     ['the viewer\'s own HTML on their own Session Board', 'own-session', false],
-] as const)('classifies %s into the foreign-HTML Action audience only when someone else owns it', async (_label, shape, foreign) => {
+] as const)('classifies %s into the foreign-HTML Action audience only when someone else owns or can write it', async (_label, shape, foreign) => {
     const listedSession = createPlainSessionCurrentProjectionRecordFixture({ id: 'listed-session' });
     let listReads = 0;
     const http = createHomeHubArtifactHttpBoundary('viewer', undefined, {
@@ -973,7 +978,21 @@ it.each([
             return [listedSession];
         },
     });
-    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request: http.request });
+    const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'html', name: 'Session reader',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+        provenance: { source: { kind: 'authored' } },
+        body: { kind: 'html', source: artifactHtmlBundleFromBodyV1('<main>Sessions</main>'),
+            requestedCapabilities: { network: 'open', hostMethods: ['context', 'executeAction'], actions: ['session.list'] } } });
+    const library = shape === 'own-shared-definition' || shape === 'own-private-definition'
+        ? createLayoutArtifactHttpBoundary('viewer', { artifactId: definition.id, kind: 'widget-definition.v1',
+            defaultLayout: definition, parseLayout: value => WidgetDefinitionV1Schema.parse(value), buildHeader: buildWidgetDefinitionArtifactHeaderV1 })
+        : null;
+    library?.seed(definition);
+    // The owner granted an editor access to the saved definition; its grant roster is the server's sharing fact.
+    if (shape === 'own-shared-definition') library?.setGrants([{ principal: { kind: 'team', teamId: 'studio' }, accessLevel: 'edit',
+        createdByAccountId: 'viewer', createdAt: 1, display: { name: 'Studio' } }]);
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer',
+        request: (input, init) => library && new URL(String(input)).pathname.startsWith('/v1/artifacts') ? library.request(input, init) : http.request(input, init) });
     const viewer = getActiveServerAccountScope();
     if (!viewer) throw new Error('Expected restored viewer Account');
     const disposeActionLoader = await installRealActionExecutorModuleLoader();
@@ -981,21 +1000,33 @@ it.each([
         access: createSessionAccessFixture(shape === 'foreign-session' ? 'edit' : 'owner') }) } }));
     // Account A's shared Project dashboard, read by viewer B: the layout host admits B and keeps A as the surface Account.
     const scope: WidgetSurfaceRefV1 = shape === 'foreign-account' ? { serverId: viewer.serverId, accountId: 'owner-a', owner: { kind: 'project', projectId: 'shared' } }
-        : shape === 'own-account' ? { ...viewer, owner: { kind: 'project', projectId: 'mine' } }
-        : { ...viewer, owner: { kind: 'sessionBoard', sessionId: 'board' } };
-    const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'html', name: 'Session reader',
-        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
-        provenance: { source: { kind: 'authored' } },
-        body: { kind: 'html', source: artifactHtmlBundleFromBodyV1('<main>Sessions</main>'),
-            requestedCapabilities: { network: 'open', hostMethods: ['context', 'executeAction'], actions: ['session.list'] } } });
-    const instance: WidgetInstanceV1 = { v: 1, id: 'reader', definition: { kind: 'inline', definition }, bindings: {} };
+        : shape === 'foreign-session' || shape === 'own-session' ? { ...viewer, owner: { kind: 'sessionBoard', sessionId: 'board' } }
+        : shape === 'own-shared-work-board' ? { ...viewer, owner: { kind: 'workBoard', boardId: 'edited-board' } }
+        : { ...viewer, owner: { kind: 'project', projectId: 'mine' } };
+    // The Work Board store learns sharing from the same read that delivers the Board body (here: an edit grant).
+    let surfaceShared = shape === 'own-shared-surface' ? true : undefined;
+    if (shape === 'own-shared-work-board') {
+        const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [createWorkBoardV1({ id: 'edited-board', name: 'Edited' }),
+            createWorkBoardV1({ id: 'private-board', name: 'Private' })] });
+        persistence.rows.set('edited-board', { ...persistence.rows.get('edited-board')!, shared: true });
+        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const releaseViews = [store.retainView(() => () => {}, 'board:edited-board'), store.retainView(() => () => {}, 'board:private-board')];
+        await store.refresh();
+        await vi.waitFor(() => expect([store.isBoardShared('edited-board'), store.isBoardShared('private-board')]).toEqual([true, false]));
+        surfaceShared = store.isBoardShared('edited-board');
+        for (const release of releaseViews) release();
+    }
+    const instance: WidgetInstanceV1 = { v: 1, id: 'reader', bindings: {},
+        definition: library ? { kind: 'artifact', artifactId: definition.id } : { kind: 'inline', definition } };
     const runtime = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current' as const,
         interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime() };
     vi.stubGlobal('location', { origin: 'https://app.happier.dev' });
     frames.length = 0;
     // Resolve the real guest bootstrap first so a cold transform is not mistaken for a pending frame.
     await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
+    // The layout host admits the shared fact with the surface it read (WidgetArea from its read; Work Boards from theirs).
     const screen = await renderScreen(<WidgetSurface scope={scope} admittedViewer={viewer} instance={instance} descriptor={null} providedContext={{}}
+        surfaceShared={surfaceShared}
         appRuntime={runtime} presentation="content" recordRevision="reader:1" isCurrent={() => true} testID="html-audience" />);
     try {
         await React.act(async () => { await loadPluginUiHostSupport(); });

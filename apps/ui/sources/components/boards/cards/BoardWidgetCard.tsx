@@ -44,6 +44,8 @@ export type BoardWidgetCardProps = Readonly<{
     /** Runtime routing from the Board's current binding, never its retained placement label. */
     scope: WidgetSurfaceRefV1 | null;
     admittedViewer?: ServerAccountScope;
+    /** From the Board's own read: someone besides its owner can see or write it. Unknown counts as shared. */
+    surfaceShared?: boolean;
     /** The parent's current header projection, shared with Canvas sizing. */
     descriptor: WidgetCandidate | null;
     size: WidgetSizeV1;
@@ -68,7 +70,7 @@ export type BoardWidgetCardProps = Readonly<{
  * through the Board's one WorkBoard intent owner.
  */
 export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardWidgetCardProps) {
-    const { placement, boardId, dispatch, admittedViewer } = props;
+    const { placement, boardId, dispatch, admittedViewer, surfaceShared } = props;
     const { instance } = placement;
     const appRuntime = useAppShellPluginUiProjectionCurrentness();
     const scope = props.scope;
@@ -142,6 +144,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
             <View onLayout={onBodyLayout}><WidgetSurface
                 scope={scope}
                 admittedViewer={admittedViewer}
+                surfaceShared={surfaceShared !== false}
                 instance={instance}
                 descriptor={candidate}
                 providedContext={NO_CONTEXT}
@@ -154,7 +157,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
                 testID={`${props.testID}.widget`}
             /></View>
         ) : <View testID={`${props.testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [admittedViewer, appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, onDefinitionRead, props.active, props.testID, scope, size]);
+    }), [admittedViewer, surfaceShared, appRuntime, bodyHeight, candidate, inputs.onRepairInputs, instance, onBodyLayout, onDefinitionRead, props.active, props.testID, scope, size]);
 
     return (
         <>

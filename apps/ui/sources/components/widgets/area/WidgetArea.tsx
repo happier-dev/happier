@@ -961,6 +961,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             <WidgetSurface
                 scope={surface}
                 admittedViewer={props.admittedViewer ?? undefined}
+                surfaceShared={props.isShared}
                 isCurrent={props.isCurrent}
                 isReadPending={props.isReadPending}
                 instance={instance}
@@ -985,7 +986,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             </View>
             </PluginSurfaceFocusEligibilityProvider>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />,
-    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
+    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isShared, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (

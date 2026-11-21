@@ -13233,11 +13233,11 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
                 subtitle: 'Disponível para plugins integrados e instalados confiáveis.',
             },
             foreign_session_html: {
-                title: 'HTML de outras pessoas',
-                subtitle: 'Permita que o HTML de outra pessoa, nas sessões dela ou em superfícies que ela compartilha com você, use esta ação. Desativado por padrão.',
+                title: 'HTML que outras pessoas podem alterar',
+                subtitle: 'Permita que o HTML que outra pessoa escreveu ou pode alterar — nas sessões dela, em superfícies compartilhadas com você ou nos seus próprios quadros, painéis e widgets compartilhados — use esta ação. Desativado por padrão.',
             },
             foreign_session_html_resources: {
-                subtitle: 'Permita leituras de recursos e atualizações ao vivo por HTML de outra pessoa. Desativado por padrão; pedidos de aprovação não estão disponíveis.',
+                subtitle: 'Permita leituras de recursos e atualizações ao vivo por HTML que outra pessoa escreveu ou pode alterar. Desativado por padrão; pedidos de aprovação não estão disponíveis.',
             },
             contextual_ui: {
                 title: "Onde aparece",

@@ -125,7 +125,9 @@ function boardAccess(artifact: WorkBoardArtifactV1) {
 /** The only persisted Board edit path: one Artifact, pure semantic replay on its current CAS winner. */
 export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransportV1, options: Readonly<{
     shouldContinue?: () => boolean;
-    onBoard?: (boardId: string, board: WorkBoardV1 | null, revision?: WorkBoardArtifactRevisionV1) => void;
+    /** `access` is the read's own grant fact, delivered with the body it describes. */
+    onBoard?: (boardId: string, board: WorkBoardV1 | null, revision?: WorkBoardArtifactRevisionV1,
+        access?: Readonly<{ canEdit: boolean; isShared: boolean }>) => void;
 }> = {}): WorkBoardArtifactPortV1 {
     const check = (signal?: AbortSignal) => {
         signal?.throwIfAborted();
@@ -165,7 +167,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
         const artifact = await fetch(id, signal);
         if (!artifact) { options.onBoard?.(id, null); return null; }
         const board = readWorkBoardArtifactV1(artifact);
-        options.onBoard?.(id, board, artifact.revision);
+        options.onBoard?.(id, board, artifact.revision, boardAccess(artifact));
         return board;
     };
     return {
@@ -189,7 +191,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
                 }
                 if (!artifact) continue;
                 const board = readWorkBoardArtifactV1(artifact);
-                if (board) { boards.push(board); options.onBoard?.(board.id, board, artifact.revision); }
+                if (board) { boards.push(board); options.onBoard?.(board.id, board, artifact.revision, boardAccess(artifact)); }
                 else {
                     unreadable.push(readBody(artifact));
                     options.onBoard?.(artifact.artifactId, null, artifact.revision);
@@ -228,7 +230,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
                     : await transport.delete(id, { expectedRevision: artifact.revision, signal });
                 check(signal);
                 if (result.ok) {
-                    options.onBoard?.(id, next, result.revision);
+                    options.onBoard?.(id, next, result.revision, boardAccess(artifact));
                     return applied.boards;
                 }
                 if (result.errorCode !== 'version_mismatch') {
