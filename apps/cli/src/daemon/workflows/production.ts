@@ -829,7 +829,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         && sameStrictJsonValue(execution.input, actionLaunch.input);
       const exactAcceptance = fact.execution?.kind === 'session' || fact.execution?.kind === 'session_ready'
         ? sameStrictJsonValue(current.execution, fact.execution) && sameStrictJsonValue(refreshed?.execution, fact.execution)
-        : actionLaunch?.output !== undefined && (actionLaunch.awaitedRuns !== undefined || actionLaunch.awaitedOperations !== undefined)
+        : actionLaunch?.output !== undefined && (actionLaunch.awaitedRuns !== undefined || actionLaunch.awaitedOperations !== undefined || actionLaunch.awaitedWorkflows !== undefined)
           && matchesActionRequest(current.execution) && matchesActionRequest(refreshed?.execution);
       if (current.lifecycle === 'admitting' && fact.lifecycle === 'running'
         && refreshed?.lifecycle === 'cancel_requested' && exactAcceptance) {
@@ -838,7 +838,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         // without releasing input or reopening cancellation custody.
         return await this.commitFactNow({ ...fact, lifecycle: 'cancel_requested' });
       }
-      const exactImmediateOutput = actionLaunch?.output !== undefined && actionLaunch.awaitedRuns === undefined && actionLaunch.awaitedOperations === undefined
+      const exactImmediateOutput = actionLaunch?.output !== undefined && actionLaunch.awaitedRuns === undefined && actionLaunch.awaitedOperations === undefined && actionLaunch.awaitedWorkflows === undefined
         && fact.result !== undefined && sameStrictJsonValue(fact.result, actionLaunch.output)
         && matchesActionRequest(current.execution) && matchesActionRequest(refreshed?.execution);
       const exactCancelledCommand = fact.execution === undefined && fact.reason === 'command_cancelled'

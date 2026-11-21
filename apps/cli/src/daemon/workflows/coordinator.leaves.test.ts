@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema, AutomationRunCauseSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
+import { ActionIdSchema, AutomationRunCauseSchema, createWorkflowAccountRunActionOwner, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -21,6 +21,7 @@ import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
@@ -753,7 +754,86 @@ describe('workflow Action leaves', () => {
     expect(starts[1]).not.toHaveProperty('sessionConfigOptionOverrides');
   });
 
+  it('persists the accepted Review child Workflow before waiting and resumes without another admission', async () => {
+    let childStorage: ReturnType<typeof createWorkflowRunStorageTestkit> | undefined;
+    const storage: WorkflowAccountRunActionDeps['storage'] = { execute: async (operation, options) => {
+      childStorage ??= createWorkflowRunStorageTestkit({ runId: String(operation.runId), machineId: workspace.machineId,
+        origin: { kind: 'direct' } });
+      return await childStorage.execute(operation, options);
+    } };
+    const childOwner = createWorkflowAccountRunActionOwner({ storage, resolveAccountId: async () => 'account-1',
+      definitions: { get: async () => { throw new Error('Inline Review retains its accepted definition'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: path => path.startsWith('/') ? path : null,
+      randomBytes: () => { throw new Error('Plain Account'); },
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: workspace } }),
+    });
+    const unusedDefinition = async (): Promise<never> => { throw new Error('Inline Review needs no saved definition'); };
+    const executor = createTestActionExecutor({ workflowAction: createWorkflowActionExecutor({
+      isWorkflowFeatureEnabled: () => true,
+      definitions: { list: unusedDefinition, get: unusedDefinition, create: unusedDefinition, update: unusedDefinition,
+        edit: unusedDefinition, delete: unusedDefinition, importDocument: unusedDefinition, exportDocument: unusedDefinition },
+      runs: childOwner,
+    }) });
+    const reviewers = ['codex', 'claude', 'gemini'].map(engineId => ({ kind: 'engine', engineId }));
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'child-review', actionId: 'review.start', input: {
+      target: { kind: 'literal', value: { kind: 'detached' } },
+      scope: { kind: 'literal', value: 'repository' },
+      instructions: { kind: 'literal', value: 'Review once' },
+      reviewers: { kind: 'literal', value: reviewers },
+    } };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    let cut = true;
+    const boundary = { ...store, commitFact: async (fact: Parameters<typeof store.commitFact>[0]) => {
+      const row = await store.commitFact(fact);
+      if (cut && fact.lifecycle === 'running' && fact.execution?.kind === 'action' && fact.execution.awaitedWorkflows) {
+        cut = false;
+        throw new WorkflowRuntimeInterruption();
+      }
+      return row;
+    } };
+    let observations = 0;
+    const coordinator = createWorkflowCoordinator({ store: boundary,
+      executeStep: async () => { throw new Error('Review child owns Agent execution'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
+        kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } }),
+      observeRun: async () => { throw new Error('A Workflow child is not a native execution Run'); },
+      observeWorkflow: async (target, context) => {
+        if (!childStorage) throw new Error('Missing accepted child');
+        const child = childStorage.run();
+        expect(store.list()[0]?.execution).toMatchObject({ awaitedWorkflows: [{ key: 'review', runId: child.id }] });
+        expect(target).toEqual({ key: 'review', runId: child.id });
+        observations++;
+        await childOwner.execute({ actionId: 'workflow.run.cancel', input: { runId: target.runId, expectedRevision: child.revision }, context });
+        return await childOwner.execute({ actionId: 'workflow.run.wait', input: { runId: target.runId, conditions: ['terminal'] }, context });
+      } },
+    });
+    const actionInput = { target: { kind: 'detached' }, scope: 'repository', instructions: 'Review once', reviewers };
+    const request = { runId: 'parent-review', definition: definition([leaf]),
+      materializedLeaves: [{ ...frozen(leaf), actionInput }],
+      inputs: {}, executionTarget, authorization };
+    let interrupted = false;
+    try { await coordinator.run(request); }
+    catch (error) {
+      if (!(error instanceof WorkflowRuntimeInterruption)) throw error;
+      interrupted = true;
+    }
+    expect(interrupted).toBe(true);
+    expect(childStorage?.calls.filter(operation => operation.operation === 'admit')).toHaveLength(1);
+    expect(observations).toBe(0);
+    expect(await coordinator.run(request)).toMatchObject({ state: 'cancelled' });
+    expect(childStorage?.calls.filter(operation => operation.operation === 'admit')).toHaveLength(1);
+    expect(observations).toBe(1);
+    expect(store.list()[0]?.lifecycle).toBe('cancelled');
+  });
+
   it.each(['review.start', 'subagents.plan.start'] as const)('persists %s launches before observing, and replays only observations', async (actionId) => {
+    // Multi-reviewer Reviews compose a child Workflow; the native fallback is a single engine.
+    const expectedStarts = actionId === 'review.start' ? 1 : 3;
+    const expectedRunIds = actionId === 'review.start' ? ['run-1'] : ['run-1', 'run-2'];
     let starts = 0;
     const executor = createTestActionExecutor({
       executionRunCheckProtocolV2: async () => ({ ok: true }),
@@ -769,8 +849,11 @@ describe('workflow Action leaves', () => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'panel', actionId, input: {
       target: { kind: 'literal', value: { kind: 'detached' } },
       instructions: { kind: 'literal', value: 'Work' },
-      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: { kind: 'literal',
-        value: actionId === 'review.start' ? ['codex', 'claude', 'gemini'] : ['agent:codex', 'agent:claude', 'agent:gemini'] },
+      ...(actionId === 'review.start' ? { scope: { kind: 'literal' as const, value: 'repository' } } : {}),
+      [actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys']: { kind: 'literal',
+        value: actionId === 'review.start'
+          ? [{ kind: 'engine', engineId: 'codex' }]
+          : ['agent:codex', 'agent:claude', 'agent:gemini'] },
     } };
     const store = createInMemoryWorkflowCoordinatorStore();
     let cut = true;
@@ -787,23 +870,28 @@ describe('workflow Action leaves', () => {
       action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
         kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } }),
         observeRun: async (run) => {
-          expect(store.list()[0]?.execution).toMatchObject({ kind: 'action', awaitedRuns: [{ runId: 'run-1' }, { runId: 'run-2' }] });
+          expect(store.list()[0]?.execution).toMatchObject({ kind: 'action', awaitedRuns: expectedRunIds.map(runId => ({ runId })) });
           observed.push(run.runId);
           return run.runId === 'run-1' ? { kind: 'completed', result: { plan: 'ready' }, reviewedFingerprint: 'fingerprint',
             commentIds: ['comment'], materialization: { kind: 'complete' } } : { kind: 'failed', code: 'native_failed' };
         } },
     });
-    const params = { runId: actionId, definition: definition([leaf]), materializedLeaves: [frozen(leaf)], inputs: {}, executionTarget, authorization };
+    const admittedActionInput = Object.fromEntries(Object.entries(leaf.input ?? {}).map(([name, value]) => {
+      if (value.kind !== 'literal') throw new Error('This accepted fixture requires literal Action inputs');
+      return [name, value.value];
+    }));
+    const params = { runId: actionId, definition: definition([leaf]),
+      materializedLeaves: [{ ...frozen(leaf), actionInput: admittedActionInput }], inputs: {}, executionTarget, authorization };
     await expect(coordinator.run(params)).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
-    expect(starts).toBe(3);
+    expect(starts).toBe(expectedStarts);
     expect(observed).toEqual([]);
     expect(await coordinator.run(params)).toMatchObject({ state: 'succeeded' });
-    expect(observed).toEqual(['run-1', 'run-2']);
-    expect(starts).toBe(3);
-    expect(store.list()[0]?.result).toMatchObject({ perEngineOutcome: [
+    expect(observed).toEqual(expectedRunIds);
+    expect(starts).toBe(expectedStarts);
+    expect(store.list()[0]?.result).toMatchObject({ perEngineOutcome: actionId === 'review.start' ? [{ outcome: 'completed' }] : [
       { outcome: 'completed' }, { outcome: 'failed', errorCode: 'native_failed' }, { outcome: 'launch_failed' },
     ] });
-    if (actionId === 'review.start') expect(store.list()[0]?.result).toMatchObject({ reviewedFingerprint: null, commentIds: ['comment'] });
+    if (actionId === 'review.start') expect(store.list()[0]?.result).toMatchObject({ reviewedFingerprint: 'fingerprint', commentIds: ['comment'] });
   });
 
   it('holds the exact validated Action output and never re-invokes it on held replay', async () => {

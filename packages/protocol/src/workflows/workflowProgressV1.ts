@@ -356,6 +356,7 @@ export const WorkflowExecutionCorrespondenceV1Schema = lazyZodSchema(() => z.dis
     output: zMini.optional(ActionCompletionStateV1Schema.shape.output),
     awaitedRuns: zMini.optional(ActionCompletionStateV1Schema.shape.awaitedRuns),
     awaitedOperations: zMini.optional(ActionCompletionStateV1Schema.shape.awaitedOperations),
+    awaitedWorkflows: zMini.optional(ActionCompletionStateV1Schema.shape.awaitedWorkflows),
   })),
   (<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(WorkflowExecutionCorrespondenceBaseV1Schema, {
     kind: z.literal('session'),

@@ -12,13 +12,16 @@ import {
   WorkflowProgressEnvelopeV1Schema,
 } from '@happier-dev/protocol';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { WorkflowAcceptedWorkspaceTargetV1 } from '@happier-dev/protocol/workflows';
+import type { WorkflowAcceptedWorkspaceTargetV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows';
 import { createProductionWorkflowRunCoordinator, DurableWorkflowCoordinatorStore } from './production';
 import { workflowInvocationKey } from './coordinator';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
 import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON } from './coordinator';
+import { freezeActionCompletionContractV1, prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
 
 const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const accountId = 'account-1';
@@ -188,6 +191,69 @@ function heartbeatHttpFailure(status?: number) {
 }
 
 describe('Workflow root recovery', () => {
+  it.each(['succeeded', 'failed', 'cancelled'] as const)('retains a Review child Workflow across durable reload and observes its %s outcome without replay', async terminalState => {
+    const h = await interruptedRoot('running');
+    const childId = 'child-workflow';
+    const child: WorkflowRunSummaryV1 = { ...h.storage.run(), id: childId, state: 'running' };
+    const declaration = getActionSpec('review.start').completion!;
+    const prepared = prepareActionCompletionV1(declaration, { ok: true, result: { run: child, admission: 'created' } });
+    expect(prepared.kind).toBe('awaiting');
+    if (prepared.kind !== 'awaiting') throw new Error('Review did not retain its child Workflow');
+    const key = workflowInvocationKey({ runId, blockId: 'review-child', scope: [], attempt: 0 });
+    const execution = { kind: 'action' as const, actionId: 'review.start', actionRequestId: 'review-request',
+      localInputId: 'review-request', input: {}, ...prepared.state };
+    await h.store.ensureIntent({ key, recordId: 'review-child', runId, blockId: 'review-child', blockKind: 'action',
+      parentKey: h.rootKey, memberOrdinal: '0', path: { blockId: 'review-child', scope: [] }, attempt: 0,
+      acceptedAtMs: 1, lifecycle: 'pending' });
+    await h.store.commitFact({ key, lifecycle: 'admitting', execution });
+    await h.store.commitFact({ key, lifecycle: 'running', execution });
+    const reloaded = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: rootId, checkpoint: h.checkpoint, encryption, storage: h.storage, revision: h.storage.run().revision });
+    expect((await reloaded.readByLogicalInvocation('review-child'))?.execution).toEqual(execution);
+    const published = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(await h.reader.execute({
+      actionId: 'workflow.run.invocations.get', input: { runId, invocationId: 'review-child' }, context: {},
+    })).invocation.progress;
+    expect(published.execution).toEqual(execution);
+    const nativeBase = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(await h.reader.execute({
+      actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context: {},
+    }));
+    let snapshot: typeof nativeBase = { ...nativeBase, run: child };
+    const terminal = { ...child, state: terminalState, revision: child.revision + 1,
+      ...(terminalState === 'failed' ? { errorCode: 'review_failed' } : {}) };
+    let cancellations = 0;
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
+      actionExecutor: { execute: async () => { throw new Error('Recovery must never invoke the Review again'); } },
+      nativeActionWorkflows: {
+        get: async requested => { expect(requested).toBe(childId); return snapshot; },
+        cancel: async (requested, revision) => { expect([requested, revision]).toEqual([childId, child.revision]);
+          cancellations++; return {}; },
+        wait: async requested => { expect(requested).toBe(childId); snapshot = { ...nativeBase, run: terminal,
+          result: { findings: 3 }, finalOutputInvocationId: 'child-output' };
+          return { observation: 'terminal', matchedCondition: 'terminal', run: terminal, result: { findings: 3 } }; },
+      } });
+    const contract = freezeActionCompletionContractV1(declaration);
+    const request = { progress: published, frozenActionContract: { inputSchema: {}, outputSchema: contract.terminalOutputSchema, completion: contract },
+      terminalParent: false, cancellationRequested: terminalState === 'cancelled' };
+    expect(await observeWorkflowInvocationRecoveryEvidence({ runId, credentials: { token: 'token', encryption: null }, machineId,
+      progress: published, getRun: async () => { throw new Error('A Workflow receipt is not an execution Run'); },
+      getWorkflow: async () => snapshot })).toEqual({ activity: 'active', canReattach: true, canContinueConversation: false });
+    expect(await observe({ ...request, observationOnly: true })).toEqual({ kind: 'unresolved', code: 'workflow_outcome_unresolved' });
+    expect(cancellations).toBe(0);
+    const pending = await observe(request);
+    expect(pending).toMatchObject({ kind: 'unresolved', code: 'workflow_outcome_unresolved' });
+    if (pending.kind !== 'unresolved' || !pending.waitForCompletion) throw new Error('Missing native child wait');
+    await pending.waitForCompletion();
+    expect(cancellations).toBe(terminalState === 'cancelled' ? 1 : 0);
+    expect(await observe(request)).toEqual(terminalState === 'succeeded' ? { kind: 'completed', result: { findings: 3 } }
+      : terminalState === 'failed' ? { kind: 'failed', code: 'review_failed' } : { kind: 'cancelled', code: 'cancelled' });
+    if (terminalState === 'succeeded') {
+      snapshot = { ...nativeBase, run: { ...terminal, id: 'unrelated-child' } };
+      expect(await observe(request)).toMatchObject({ kind: 'unresolved' });
+      expect(await observeWorkflowInvocationRecoveryEvidence({ runId, credentials: { token: 'token', encryption: null }, machineId,
+        progress: published, getRun: async () => { throw new Error('No native Run'); },
+        getWorkflow: async () => snapshot })).toEqual({ activity: 'unknown', canReattach: false, canContinueConversation: false });
+    }
+  });
   it.each([true, false])('recovers an interrupted parallel comparison without replaying completed candidates (all completed: %s)', async allCompleted => {
     const branches = ['first', 'second', 'third'].map(id => ({ id, blocks: [{ kind: 'step', id: `implement-${id}`,
       document: { text: 'Implement independently', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] }));

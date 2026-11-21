@@ -15,9 +15,12 @@ import { discardPendingQueueV2Messages } from '@/api/session/pendingQueueV2Trans
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { SessionContinuationInspectionV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
 import type { WorkflowAccountRunActionDeps, WorkflowProgressEnvelopeV1, WorkflowMaterializedLeafV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { ActionOperationCompletionOutputV1Schema, resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -192,6 +195,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
   progress: WorkflowProgressEnvelopeV1;
   getRun: (request: Readonly<{ runId: string; includeStructured: false }>) => Promise<unknown>;
   getOperation?: (operation: ActionCompletionOperation) => Promise<unknown>;
+  getWorkflow?: (runId: string) => Promise<unknown>;
   getApproval?: (artifactId: string) => Promise<unknown>;
   signal?: AbortSignal;
 }>): Promise<WorkflowInvocationRecoveryEvidence> {
@@ -255,6 +259,16 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
         if (snapshots.some(snapshot => snapshot === undefined)) return unavailable;
         return { activity: snapshots.some(snapshot => snapshot?.state === 'running') ? 'active'
           : snapshots.some(snapshot => snapshot?.state === 'accepted') ? 'unknown' : 'not_active',
+          canReattach: true, canContinueConversation: false };
+      }
+      if (execution.awaitedWorkflows?.length) {
+        if (!params.getWorkflow) return unavailable;
+        const snapshots = await Promise.all(execution.awaitedWorkflows.map(async target => {
+          const parsed = WorkflowRunGetResultV1Schema.safeParse(await params.getWorkflow!(target.runId));
+          return parsed.success && parsed.data.run.id === target.runId ? parsed.data.run : undefined;
+        }));
+        if (snapshots.some(snapshot => snapshot === undefined)) return unavailable;
+        return { activity: snapshots.some(snapshot => snapshot && !isTerminalAutomationRunStateV3(snapshot.state)) ? 'active' : 'not_active',
           canReattach: true, canContinueConversation: false };
       }
       if (!execution.awaitedRuns?.length) return unavailable;
@@ -356,6 +370,11 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
     get: (runId: string, signal?: AbortSignal) => Promise<unknown>;
     stop: (runId: string, signal?: AbortSignal) => Promise<unknown>;
     wait: (runId: string, signal?: AbortSignal, observation?: ActionCompletionRun['observation']) => Promise<unknown>;
+  }>;
+  nativeActionWorkflows?: Readonly<{
+    get: (runId: string, signal?: AbortSignal) => Promise<unknown>;
+    cancel: (runId: string, expectedRevision: number, signal?: AbortSignal) => Promise<unknown>;
+    wait: (runId: string, signal?: AbortSignal) => Promise<unknown>;
   }>;
 }>) {
   const now = params.now ?? Date.now;
@@ -485,7 +504,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
       // losing its observer never authorizes replay or unsolicited cancellation.
       if (input.progress.blockKind === 'action' && id.success && getActionSpec(id.data).operation
         && resolveActionExecutionPlacementForInput(getActionSpec(id.data), execution.input, { kind: 'workflowRun' }, 'agent') === 'machine' && !execution.awaitedOperations?.length
-        && !execution.awaitedRuns?.length && execution.output === undefined && params.nativeActionOperations?.findAction) {
+        && !execution.awaitedRuns?.length && !execution.awaitedWorkflows?.length && execution.output === undefined && params.nativeActionOperations?.findAction) {
         try {
           const found = await params.nativeActionOperations.findAction(execution, input.signal);
           // Positive absence retires observation custody, never proves what
@@ -629,6 +648,40 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
             : { kind: completion.kind, code: completion.errorCode };
         } catch { return { kind: 'unresolved', code: 'action_operation_observation_unavailable' }; }
+      }
+      if (execution.awaitedWorkflows?.length) {
+        if (!id.success || execution.output === undefined || !input.frozenActionContract?.completion) {
+          return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
+        }
+        const transport = params.nativeActionWorkflows;
+        if (!transport) return { kind: 'unresolved', code: 'target_unavailable' };
+        try {
+          const snapshots = await Promise.all(execution.awaitedWorkflows.map(async target => {
+            const native = WorkflowRunGetResultV1Schema.parse(await transport.get(target.runId, input.signal));
+            if (native.run.id !== target.runId) throw new Error('workflow_correspondence_mismatch');
+            return { ...target, native };
+          }));
+          const active = snapshots.filter(({ native }) => !isTerminalAutomationRunStateV3(native.run.state));
+          if (active.length) {
+            if (!input.observationOnly && (input.terminalParent || input.cancellationRequested)) {
+              await Promise.allSettled(active.map(({ runId, native }) => transport.cancel(runId, native.run.revision, input.signal)));
+            }
+            return { kind: 'unresolved', code: 'workflow_outcome_unresolved', ...(!input.observationOnly ? { waitForCompletion: async () => {
+              // The native wait wakes reconciliation; only the completion owner settles it.
+              await Promise.all(active.map(target => transport.wait(target.runId, input.signal)));
+            } } : {}) };
+          }
+          const completion = await resumeActionCompletionV1({ actionId: execution.actionId, completion: input.frozenActionContract.completion,
+            context: { input: execution.input }, state: { output: execution.output, awaitedWorkflows: execution.awaitedWorkflows },
+            resolveDeclaration: () => getActionSpec(id.data).completion, observeWorkflow: async target => {
+              const observed = snapshots.find(snapshot => snapshot.key === target.key && snapshot.runId === target.runId);
+              if (!observed) throw new Error('workflow_correspondence_mismatch');
+              return { observation: 'terminal', matchedCondition: 'terminal', run: observed.native.run,
+                ...(observed.native.result === undefined ? {} : { result: observed.native.result }) };
+            } });
+          return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
+            : { kind: completion.kind, code: completion.errorCode };
+        } catch (error) { input.signal?.throwIfAborted(); return { kind: 'unresolved', code: readActionErrorCodeV1(error) ?? 'action_failed' }; }
       }
       if (!id.success || !execution.awaitedRuns?.length || execution.output === undefined || !input.frozenActionContract?.completion) {
         return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };

@@ -12,7 +12,7 @@ import type { WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowBloc
 import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import { prepareActionCompletionV1, resumeActionCompletionV1, type ActionCompletionResult } from '@happier-dev/protocol/actions/actionCompletion';
+import { prepareActionCompletionV1, resumeActionCompletionV1, type ActionCompletionResult, type ActionCompletionWorkflow } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
@@ -312,6 +312,7 @@ export type WorkflowActionExecutor = Readonly<{
   observeRun: (run: ActionCompletionRun, params: Readonly<{ workspace: WorkflowWorkspaceDescriptorV1;
     signal?: AbortSignal }>) => Promise<ExecutionRunTerminalObservation>;
   observeOperation?: (operation: ActionCompletionOperation, params: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+  observeWorkflow?: (workflow: ActionCompletionWorkflow, context: ActionExecutorContext) => Promise<unknown>;
 }>;
 
 export type WorkflowAcceptedAuthorizationCurrentness = (params: Readonly<{
@@ -1906,9 +1907,10 @@ async function executeActionBlock(
     throw new WorkflowLeafFailure(parentState, code, collectable);
   };
   let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
-    && (row.execution.awaitedRuns || row.execution.awaitedOperations) && row.execution.output !== undefined
+    && (row.execution.awaitedRuns || row.execution.awaitedOperations || row.execution.awaitedWorkflows) && row.execution.output !== undefined
     ? { output: row.execution.output, ...(row.execution.awaitedRuns ? { awaitedRuns: row.execution.awaitedRuns } : {}),
-      ...(row.execution.awaitedOperations ? { awaitedOperations: row.execution.awaitedOperations } : {}) } : undefined;
+      ...(row.execution.awaitedOperations ? { awaitedOperations: row.execution.awaitedOperations } : {}),
+      ...(row.execution.awaitedWorkflows ? { awaitedWorkflows: row.execution.awaitedWorkflows } : {}) } : undefined;
   if (row.lifecycle !== 'pending' && !setupConsentHold && !completionState && !approvalHold) return await fail('outcome_uncertain', 'outcome_uncertain');
   let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
@@ -2162,12 +2164,20 @@ async function executeActionBlock(
     const observationWorkspace = workspace;
     const completionActionId = builtinActionId.data;
     const completionExecution = row.execution;
+    const workflowObservationContext = completionState.awaitedWorkflows ? await context.deps.action!.buildContext({
+      runId: context.runId, invocationRecordId: row.recordId, authorization: context.authorization,
+      source: context.source,
+      workDepth: context.workDepth, workspace: observationWorkspace, ...(context.origin ? { origin: context.origin } : {}),
+      ...(context.signal ? { signal: context.signal } : {}),
+    }) : undefined;
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: completionActionId,
       completion: frozen.actionContract!.completion, state: completionState,
       ...(completionExecution?.kind === 'action' ? { context: { input: completionExecution.input } } : {}),
       resolveDeclaration: () => getActionSpec(completionActionId).completion,
       ...(context.deps.action!.observeOperation ? { observeOperation: async (operation: ActionCompletionOperation) =>
         await context.deps.action!.observeOperation!(operation, context.signal ? { signal: context.signal } : {}) } : {}),
+      ...(context.deps.action!.observeWorkflow && workflowObservationContext ? { observeWorkflow: async (workflow: ActionCompletionWorkflow) =>
+        await context.deps.action!.observeWorkflow!(workflow, workflowObservationContext) } : {}),
       observeRun: async (run) => await context.deps.action!.observeRun(run, { workspace: observationWorkspace, ...(context.signal ? { signal: context.signal } : {}) }) }));
   }
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
@@ -2201,8 +2211,9 @@ async function executeActionBlock(
     const declaration = builtinActionId.success ? getActionSpec(builtinActionId.data).completion : undefined;
     const collectable = completed.kind === 'failed'
       && (!frozen.actionContract.completion || noRunsLaunched || (completionState !== undefined
-        && (completionState.awaitedOperations !== undefined
-          || declaration?.awaits === 'execution_runs' && declaration.launched(completionState.output).failed.length === 0)));
+        && (completionState.awaitedOperations !== undefined || completionState.awaitedWorkflows !== undefined
+          || (declaration?.awaits === 'execution_runs' ? declaration : declaration?.awaits === 'workflow_runs' ? declaration.executionRuns : undefined)
+            ?.launched(completionState.output).failed.length === 0)));
     return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable,
       completed.kind === 'failed' ? completed.value : undefined, completed.kind === 'failed' ? completed.failureCause : undefined,
       completed.kind === 'failed' ? completed.error : undefined);

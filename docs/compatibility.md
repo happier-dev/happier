@@ -20,6 +20,19 @@ without the field. The inspected 0.2 frontier at `24731ff73c` has no Session
 readiness contract. Earlier strict 0.3 development readers require matching
 sources. There is no persisted format change.
 
+## Workflow child completion receipts (unreleased 0.3)
+
+Private Workflow invocation progress retains optional `awaitedWorkflows` from
+the Action completion owner. The closed receipt contains only each child's
+completion key and Run ID; its existing output retains the admission result.
+Daemon continuation and CLI recovery observe that exact child through ordinary
+Workflow get/wait/cancel Actions instead of invoking the parent Action again.
+Older progress without this field keeps its existing meaning. Matching 0.3
+Protocol and CLI readers load together because earlier strict writers reject
+the added correspondence and older stored readers cannot recover it. The
+inspected `../0.2` frontier `24731ff73c` has no Workflow progress module. No
+database migration, wire epoch, or mixed-development adapter is introduced.
+
 ## Workflow terminal failure codes (unreleased 0.3)
 
 The installed daemon's Workflow storage transition accepts optional `errorCode`

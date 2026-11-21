@@ -476,6 +476,11 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               if (observed.kind !== 'found') throw new Error('action_operation_observation_unavailable');
               return observed.operation;
             },
+            observeWorkflow: async (workflow, context) => {
+              const observed = await actionExecutor.execute('workflow.run.wait', { runId: workflow.runId, conditions: ['terminal'] }, context);
+              if (!observed.ok) throw new Error(observed.errorCode);
+              return observed.result;
+            },
             observeRun: async (run, observation) => {
               if (run.observation) {
                 const observed = ExecutionRunGetResponseSchema.safeParse(await input.machineActionDirectTargetTransport.invoke(
@@ -657,6 +662,23 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               if (!waited.success || !waited.data.ok || waited.data.status === 'running'
                 || waited.data.result.run.runId !== runId) throw new Error('execution_run_terminal_observation_unavailable');
               return waited.data.result;
+            },
+          },
+          nativeActionWorkflows: {
+            get: async (runId, signal) => {
+              const result = await actionExecutor.execute('workflow.run.get', { runId }, { surface: 'cli', authority: 'account_automation', ...(signal ? { signal } : {}) });
+              if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+              return result.result;
+            },
+            cancel: async (runId, expectedRevision, signal) => {
+              const result = await actionExecutor.execute('workflow.run.cancel', { runId, expectedRevision }, { surface: 'cli', authority: 'account_automation', ...(signal ? { signal } : {}) });
+              if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+              return result.result;
+            },
+            wait: async (runId, signal) => {
+              const result = await actionExecutor.execute('workflow.run.wait', { runId, conditions: ['terminal'] }, { surface: 'cli', authority: 'account_automation', ...(signal ? { signal } : {}) });
+              if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+              return result.result;
             },
           },
         }),
