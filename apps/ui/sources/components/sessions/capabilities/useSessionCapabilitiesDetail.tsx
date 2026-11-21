@@ -7,6 +7,7 @@ import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/me
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
+import { parseMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { CapabilityCost } from '@/components/capabilities/facts/CapabilityFacts';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -16,6 +17,7 @@ import { findMcpSignInGrant, mcpSignInFact, mcpSignInGrantView } from '@/compone
 import { useMcpSignInGrantDiagnostics } from '@/components/settings/mcpServers/signIn/useMcpSignInGrantDiagnostics';
 import { useMcpServerSignIn } from '@/components/settings/mcpServers/signIn/useMcpServerSignIn';
 import { useReachMachines } from '@/sync/domains/capabilities/reach/useReachProjection';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { mcpServerStatus } from '@/components/settings/mcpServers/status/mcpServerStatus';
 import { skillStatus } from '@/components/settings/skills/status/skillStatus';
@@ -31,7 +33,7 @@ import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/works
 import type { SessionCapabilitiesLastKnown, SessionCapabilitiesModelInput } from './sessionCapabilitiesModel';
 import type { NewSessionCapabilitiesDraft } from './useSessionCapabilitiesPopover';
 
-export type Detail = Pick<SessionCapabilitiesModelInput, 'rules' | 'mcpStatus' | 'skillStatus' | 'names' | 'context' | 'nativeSkills' | 'cost'>;
+export type Detail = Pick<SessionCapabilitiesModelInput, 'rules' | 'mcpProjectScope' | 'mcpStatus' | 'skillStatus' | 'names' | 'context' | 'nativeSkills' | 'cost'>;
 export type SheetTarget = Readonly<{ sessionId?: string; metadata?: unknown; draft?: Pick<NewSessionCapabilitiesDraft, 'machineId' | 'directory' | 'agentId' | 'projectKey'> }>;
 export type ModelInput = Pick<SessionCapabilitiesModelInput, 'view' | 'selection' | 'state' | 'readOnly' | 'change' | 'applyState' | 'bulk'>;
 const EMPTY_MESSAGES: Readonly<Record<string, Message>> = Object.freeze({});
@@ -78,6 +80,9 @@ export function useSessionCapabilitiesDetail(
   );
   const scope = binding?.scope ?? null;
   const { rules, skillRules, mcpCatalog } = useReachRulesLookup(scope);
+  const pluginAvailability = usePluginAccountAvailabilityReader(scope, undefined, {
+    enabled: modelInput.view?.mcp.items.some(item => item.source === 'plugin') === true,
+  });
   const savedSecretCatalog = useSavedSecretCatalog({ scope });
   // The Account's sign-in grants (P7's one reading of a grant): a row says "Sign-in expired" or
   // "Sign in" with its fix, as the server page does when no attempt is running.
@@ -181,6 +186,11 @@ export function useSessionCapabilitiesDetail(
   const detail = React.useMemo<Detail>(
     () => ({
       rules,
+      mcpProjectScope: (serverId) => {
+        const ref = parseMcpPluginItemIdV1(serverId);
+        const intent = ref && pluginAvailability ? pluginAvailability.readCurrentAccountIntent(ref.pluginId) : undefined;
+        return intent === undefined ? undefined : intent?.projectScope ?? null;
+      },
       names,
       context,
       nativeSkills,
@@ -220,7 +230,7 @@ export function useSessionCapabilitiesDetail(
       },
     }),
     [context, nativeSkills, freshCost, lastKnownCosts, notices, machineName, modelInput.view?.skills.plan, signInRequest, signIn.fact,
-      signInMachines, diagnostics, rules, names, skills, servers, savedSecretCatalog, grants, machineOnline, router],
+      signInMachines, diagnostics, rules, pluginAvailability, names, skills, servers, savedSecretCatalog, grants, machineOnline, router],
   );
   const renderMark = React.useCallback(
     (id: string) => (

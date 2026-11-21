@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionCapabilitiesV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
 import { SessionSkillPlanV1Schema } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
 import { setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
-import { SessionCapabilitiesGetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
+import { SessionCapabilitiesGetOutputV1Schema, SpawnCapabilitiesPreviewSuccessV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
+import { mcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { buildSessionCapabilitiesModel } from './sessionCapabilitiesModel';
 import { t } from '@/text';
@@ -29,6 +31,35 @@ function fixture() {
         cost: (kind: 'skill' | 'mcp_server') => kind === 'skill' ? { tokensWhenUsed: 42 } : { toolCount: 3, tokensPerTurn: 123 } };
 }
 describe('the session capability sheet data owner', () => {
+    it('shows the Account project restriction on a plugin MCP row with an Everywhere rule', () => {
+        const input = fixture();
+        const scoped = mcpPluginItemIdV1({ pluginId: 'fixture.scoped', localId: 'qa-1120-setup' });
+        const unscoped = mcpPluginItemIdV1({ pluginId: 'fixture.unscoped', localId: 'global' });
+        const rule = { ...rules[0], id: 'everywhere', target: { t: 'allMachines' } } as const;
+        const resolved = resolveSessionCapabilitiesV1({
+            context, selection: {}, agentAcceptsUserMcp: true, mcp: null, skills: null,
+            mcpPluginItems: [{ id: scoped, name: 'qa-1120-setup' }, { id: unscoped, name: 'global' }].map(({ id, name }) => ({
+                    itemId: id, name, rules: [{ ...rule, serverId: id }],
+                    config: { id, name, transport: 'http', remote: { url: 'https://example.test/mcp', headers: {} },
+                        env: {}, createdAt: 1, updatedAt: 1 },
+            })),
+        });
+        const view = SpawnCapabilitiesPreviewSuccessV1Schema.parse({
+            ok: true, machinePlatform: context.machinePlatform,
+            mcp: { strictMode: false, detected: [], items: resolved.mcp.items.map(({ effectiveConfig: _config, ...item }) => item) },
+            skills: { ...input.view.skills, items: [] }, applyTiming: input.view.applyTiming,
+        });
+        const mcpProjectScope = (id: string): PluginProjectScopeV1 | null =>
+            id === scoped ? { kind: 'only', projectKeys: [context.projectKey] } : null;
+        const modelInput = { ...input, view, rules: () => [rule], mcpProjectScope };
+        const model = buildSessionCapabilitiesModel(modelInput);
+        expect(model.groups[1]?.rows).toMatchObject([
+            { id: unscoped, scope: t('capabilities.where.everywhere') },
+            { id: scoped, scope: t('settingsPlugins.surfaces.projectScopeOnly', { projects: 'Project' }) },
+        ]);
+        const refreshing = buildSessionCapabilitiesModel({ ...modelInput, mcpProjectScope: () => undefined });
+        expect(refreshing.groups[1]?.rows.map(row => row.scope)).toEqual(['', '']);
+    });
     it('offers both explicit bulk choices when one target has enabled a capability and another has disabled it', () => {
         const input = fixture();
         const off = setSessionCapabilitySelectionItemV1(input.selection, 'skill', 'review', 'off');

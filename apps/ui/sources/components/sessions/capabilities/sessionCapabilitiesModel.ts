@@ -5,6 +5,7 @@ import { resolveSessionCapabilityItemSelected } from '@/sync/domains/capabilitie
 import type { ReachContextV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import type { CapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
+import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { CapabilityCost } from '@/components/capabilities/facts/CapabilityFacts';
 import { pickMostBlockingCapabilityStatus, presentCapabilityStatus, type CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { shortWhereItsOn, type WhereItsOnNames } from '@/components/capabilities/where/whereItsOnPresentation';
@@ -58,6 +59,8 @@ export type SessionCapabilitiesModelInput = Readonly<{
     skillStatus(skillId: string): readonly CapabilityStatus[];
     /** Null means the catalog has no known value yet, rather than a known empty rules list. */
     rules(kind: 'skill' | 'mcp_server', id: string): ReachRulesV1 | null;
+    /** Plugin Account intent. Undefined means its project scope is still unknown. */
+    mcpProjectScope?: (serverId: string) => PluginProjectScopeV1 | null | undefined;
     cost?: (kind: 'skill' | 'mcp_server', id: string) => CapabilityCost | null;
     names: WhereItsOnNames; readOnly: boolean;
     nativeSkills?: Readonly<{ items: readonly Readonly<{ name: string; path: string }>[]; canDisable: boolean; machineName: string; agentName: string;
@@ -120,11 +123,29 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
         const change = override === 'on' ? 'added' : override === 'off' ? 'turned_off' : null;
         const decidedBy = item.decidedBy;
         const decidingRule = decidedBy ? rules?.find(rule => rule.id === decidedBy.ruleId) : null;
+        let scopeLabel = '';
+        if (override === 'on') {
+            scopeLabel = t('capabilities.session.thisSession');
+        } else if (rules !== null && (!decidedBy || decidingRule)) {
+            if (item.kind === 'mcp_server' && item.source === 'plugin' && decidingRule?.target.t === 'allMachines'
+                && decidingRule.enabled && decidingRule.agentId === undefined) {
+                // An Everywhere binding applies only where the plugin itself is admitted.
+                const projectScope = input.mcpProjectScope?.(item.id);
+                if (projectScope) {
+                    scopeLabel = t('settingsPlugins.surfaces.projectScopeOnly', {
+                        projects: projectScope.projectKeys.map(input.names.projectName).join(', '),
+                    });
+                } else if (projectScope === null) {
+                    scopeLabel = shortWhereItsOn([decidingRule], input.names);
+                }
+            } else {
+                scopeLabel = shortWhereItsOn(decidingRule ? [decidingRule] : [], input.names);
+            }
+        }
         const row: SessionCapabilityRowModel = { key: itemKey, id: item.id, kind: item.kind, title: item.title ?? item.name,
             mark: item.kind === 'mcp_server' ? { mcpServerId: item.id } : 'none',
             line2: status ? { kind: 'status', status } : change ? { kind: 'change', change } : cost ? { kind: 'cost', cost } : null,
-            scope: override === 'on' ? t('capabilities.session.thisSession') : rules === null || (decidedBy && !decidingRule) ? ''
-                : shortWhereItsOn(decidingRule ? [decidingRule] : [], input.names),
+            scope: scopeLabel,
             // An item's own fix (Sign in, Add key) is an Account action, so a row read-only for this session keeps it.
             action: readOnlyReason !== 'viewer' && status?.fix ? { kind: 'fix', status } : readOnlyReason ? { kind: 'none' }
                 : !mixed && selected ? { kind: 'remove' } : { kind: 'turn_on',
