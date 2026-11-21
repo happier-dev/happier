@@ -84,7 +84,8 @@ describe('AE.P04.F4 Action attachment authoring', () => {
       expect(removed.ok, JSON.stringify(removed)).toBe(true);
       if (!removed.ok) throw new Error(`UI attachment removal refused (${removed.errorCode})`);
       expect(WorkflowTriggerRemoveResultV1Schema.parse(removed.result)).toMatchObject({
-        automationId: saved.set.automationId, deleted: true,
+        set: { automationId: saved.set.automationId, triggers: [] },
+        triggerId: saved.triggerId,
       });
     }
   }, 0);
