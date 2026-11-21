@@ -13761,6 +13761,7 @@ class Sync {
                                 // second time to the earlier content-free wake.
                                 publishHomeAccountChange(plannedServerId, changedEntityIds, {
                                     feedPageConsumed: true,
+                                    sessionIdsToCatchUp: publishedPlan.sessionIdsToCatchUp,
                                     entityRevisions: Object.fromEntries(changes.flatMap(change => {
                                         const hint = change.hint;
                                         if (!hint || typeof hint !== 'object' || !('revision' in hint)

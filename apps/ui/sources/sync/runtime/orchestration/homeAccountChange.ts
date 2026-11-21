@@ -65,6 +65,8 @@ export type HomeAccountChangeEvent = Readonly<{
     changesCatchUp?: true;
     /** Advisory committed ids are routing facts, not proof that a feed page was consumed. */
     entityIds?: readonly string[];
+    /** Session and share keys selected by the changes planner. */
+    sessionIdsToCatchUp?: readonly string[];
     /** The detailed page passed planner dispatch, not a cursor checkpoint or materialization proof. */
     feedPageConsumed?: true;
     /** Revision hints from the consumed change page; never inferred from a socket wake. */
@@ -148,6 +150,7 @@ export type HomeAccountChangeEvent = Readonly<{
 type HomeAccountChangeDetails = Readonly<{
     reviewCommentChanges?: readonly ReviewCommentChange[];
     entityRevisions?: Readonly<Record<string, number>>;
+    sessionIdsToCatchUp?: readonly string[];
     workflowRunsMaterialized?: true;
     savedSecretResourcesRefreshStarted?: true;
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
@@ -210,12 +213,12 @@ type HomeAccountChangeObserver = (event: HomeAccountChangeEvent) => void;
  *   failed during the outage; it hears the wake only while its own existing read state is not current.
  * A `connected` wake without a catch-up (a secondary Home transport) and every other wake reach all.
  */
-export type HomeAccountReconnectClass = 'refresh' | Readonly<{ readNotCurrent: () => boolean }>;
+export type HomeAccountReconnectClass = 'refresh' | Readonly<{ readNotCurrent: (event: HomeAccountChangeEvent) => boolean }>;
 
 function hearsHomeAccountChange(event: HomeAccountChangeEvent, reconnect: HomeAccountReconnectClass | undefined): boolean {
     if (event.source !== 'connected' || event.changesCatchUp !== true) return true;
     if (reconnect === undefined) return false;
-    return reconnect === 'refresh' || reconnect.readNotCurrent();
+    return reconnect === 'refresh' || reconnect.readNotCurrent(event);
 }
 
 const homeAccountChangeObservers = new Map<HomeAccountChangeObserver, Readonly<{
@@ -538,6 +541,7 @@ export function publishHomeAccountChangeForRouting(
         && details?.managedMachineChangedIds !== undefined ? new Set(details.managedMachineChangedIds) : undefined;
     const managedMachineRowsOnly = managedMachineChangedIds?.size && rawKinds?.length && rawKinds.every(kind => kind === 'account')
         && entityIds?.length && entityIds.every(id => managedMachineChangedIds.has(id));
+    const sessionIdsToCatchUp = details?.sessionIdsToCatchUp ?? routingPlan?.sessionIdsToCatchUp;
     const event = Object.freeze({
         serverId,
         publicProfileAffects,
@@ -549,6 +553,7 @@ export function publishHomeAccountChangeForRouting(
         ...((details?.source === 'connected' || details?.source === 'socket') && details.changesCatchUp
             ? { changesCatchUp: true as const } : {}),
         ...(admittedIds ? { entityIds: Object.freeze([...new Set(admittedIds)]) } : {}),
+        ...(sessionIdsToCatchUp ? { sessionIdsToCatchUp: Object.freeze([...sessionIdsToCatchUp]) } : {}),
         ...(admittedIds?.length && changeKinds?.length && changeKinds.every(kind => kind === 'artifact')
             ? { changedWorkflowDefinitionIds: Object.freeze([...new Set(admittedIds)]
                 .filter(id => WorkflowDefinitionIdV1Schema.safeParse(id).success)) } : {}),

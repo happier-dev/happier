@@ -1,12 +1,12 @@
 import { evaluateSessionFollowRuleOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1, isSessionFollowFrontierEqualV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
-import { isFollowDeliveryMutedV1, type FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
+import { followDeliveryMuteScopeKeyV1, isFollowDeliveryMutedV1, type FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { SessionFollowPersonalProgressRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { AcquiredSessionFollowRulesSnapshot } from '@/sync/api/session/sessionFollowRulesApi';
 import type { SessionFollowPersonalReceiverOccurrence } from '@/sync/api/session/sessionFollowPersonalReceiverApi';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { log } from '@/log';
 
@@ -36,19 +36,29 @@ export function createSessionFollowPersonalReceiverRuntime(input: Readonly<{
     lifetime: ActiveServerAccountScopeLifetime;
     readInputs(): Readonly<{ snapshot: AcquiredSessionFollowRulesSnapshot | null;
         mutedScopes: readonly FollowDeliveryMuteScopeV1[] | null }>;
-    readSourceSessionIds(): readonly string[];
+    readSourceSessionIds(): ReadonlySet<string>;
+    readOrdinarySessionIds(): readonly string[];
     acceptedProgress(previous: AcquiredSessionFollowRulesSnapshot, next: AcquiredSessionFollowRulesSnapshot): void;
     pending(occurrence: SessionFollowPersonalReceiverOccurrence, pending: boolean): void;
 }>) {
     const controller = new AbortController();
     const demanded = new Set<string>();
+    let lastSources: ReadonlySet<string> | null = null;
+    let lastConfiguration: { ruleVersions: Record<string, number>; muteKeys: string[] } | null = null;
+    let failedRead = false;
     let running: Promise<void> | null = null;
     const current = () => !controller.signal.aborted && input.lifetime.isCurrent();
     const dispose = () => { controller.abort(); demanded.clear(); };
     const retirement = input.lifetime.onRetire(dispose);
     const consume = async (occurrence: SessionFollowPersonalReceiverOccurrence) => {
         const { snapshot, mutedScopes } = input.readInputs();
-        if (!snapshot || mutedScopes === null || !current()) return false;
+        if (!current()) return false;
+        if (!snapshot || mutedScopes === null) {
+            // A configuration refresh can cross an in-flight read. Keep this
+            // source demanded until the private census becomes available again.
+            demanded.add(occurrence.sourceSessionId);
+            return false;
+        }
         const sourceMuted = isFollowDeliveryMutedV1(mutedScopes, { senderSessionId: occurrence.sourceSessionId,
             source: { kind: 'session', sessionId: occurrence.sourceSessionId } });
         const rules = snapshot.rules.filter(rule => rule.receiver.kind === 'account'
@@ -125,22 +135,54 @@ export function createSessionFollowPersonalReceiverRuntime(input: Readonly<{
                 // Failed or locked reads leave originals and server progress
                 // untouched. The next existing catch-up/configuration wake retries.
                 if (!controller.signal.aborted) {
+                    failedRead = true;
                     log.log(`[session-follow] Personal receiver catch-up read failed reason=${error instanceof Error ? error.name : typeof error}`);
                 }
             }
         }
     };
-    const reconcile = (sourceSessionIds = input.readSourceSessionIds()) => {
+    const start = () => {
+        if (running || !demanded.size || !current()) return;
+        const { snapshot, mutedScopes } = input.readInputs();
+        if (!snapshot || mutedScopes === null) return;
+        running = Promise.resolve().then(run).finally(() => { running = null; start(); });
+    };
+    const reconcile = () => {
         if (!current()) return;
-        for (const id of sourceSessionIds) demanded.add(id);
-        if (!running) {
-            running = Promise.resolve().then(run).finally(() => { running = null; });
+        const { snapshot, mutedScopes } = input.readInputs();
+        if (!snapshot || mutedScopes === null) return;
+        const rules = snapshot.rules.filter(rule => rule.receiver.kind === 'account' && rule.definition.enabled);
+        const configuration = {
+            ruleVersions: Object.fromEntries(rules.map(rule => [rule.ruleId, rule.version])),
+            muteKeys: mutedScopes.map(followDeliveryMuteScopeKeyV1).sort(),
+        };
+        const reread = !sameStrictJsonValue(lastConfiguration, configuration);
+        const sources = input.readSourceSessionIds();
+        if (reread || sources !== lastSources) {
+            for (const id of sources) if (reread || !lastSources?.has(id)) demanded.add(id);
         }
+        if (reread) {
+            for (const id of input.readOrdinarySessionIds()) demanded.add(id);
+            for (const rule of rules) for (const source of rule.sources ?? []) demanded.add(source.sourceSessionId);
+        }
+        lastSources = sources;
+        lastConfiguration = configuration;
+        start();
     };
     const stopChanges = subscribeHomeAccountChange(event => {
-        if (!current() || !areServerProfileIdentifiersEquivalent(event.serverId, input.lifetime.scope.serverId)) return;
-        if (event.changeKinds !== undefined && !event.changeKinds.some(kind => kind === 'session' || kind === 'share')) return;
-        reconcile(event.entityIds ?? input.readSourceSessionIds());
-    }, { reconnect: 'refresh' });
+        if (!current()) return;
+        // The primary reconnect's feed owns exact changes. A gap, a transport
+        // without a feed, or a failed traversal uses the existing snapshot repair.
+        if (event.source === 'snapshot' || event.source === 'connected') {
+            lastConfiguration = null;
+            failedRead = false;
+            reconcile();
+            return;
+        }
+        const sourceIds = event.sessionIdsToCatchUp
+            ?? (event.changeKinds?.some(kind => kind === 'session' || kind === 'share') ? event.entityIds : undefined);
+        for (const id of sourceIds ?? []) demanded.add(id);
+        start();
+    }, { serverIds: [input.lifetime.scope.serverId], reconnect: { readNotCurrent: () => failedRead } });
     return { reconcile, dispose() { dispose(); retirement.dispose(); stopChanges(); } };
 }

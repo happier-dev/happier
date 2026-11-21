@@ -5,6 +5,8 @@ import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/f
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { ABSENT_SESSION_FOLLOW_FACTS_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import { SessionFollowPersonalProgressRequestV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -206,27 +208,44 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
                 readState: { state: 'tracking' as const, lastViewedSessionSeq: 0, unreadSince: 1 } }] } : {}),
         }) });
     const ownSource = createSessionFixture({ ...source, id: 'own-source', ownerAccountId: 'alice', access: createSessionAccessFixture('owner') });
+    const siblings = represented ? [] : Array.from({ length: 5 }, (_, index) => createSessionFixture({
+        ...source, id: `foreign-sibling-${index}`,
+    }));
+    const offScreen = createSessionFixture({ ...source, id: 'newly-shared-source' });
+    const gapSource = createSessionFixture({ ...source, id: 'offline-source' });
+    const candidates = [source, ...siblings];
+    const readyToDeliver = new Set(represented ? [source.id] : [offScreen.id, gapSource.id]);
+    const delivered: { sourceSessionId: string; delivered: typeof SESSION_FOLLOW_ZERO_FRONTIER_V1 }[] = [];
     const rule = { ruleId: 'receiver-rule', receiver: { kind: 'account' }, version: 0, inception: { createdAt: 1 },
         content: { t: 'plain', v: { v: 1, enabled: true, policy: { preset: 'everything' },
             filter: normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'] }) } } };
     homes.answer(serverId, '/v2/sessions', { body: { sessions: [], hasNext: false, nextCursor: null } });
     homes.answer(serverId, '/v2/sessions/query', { select: input => ({ body: createSessionListSourceFixture({
         sessions: input && typeof input === 'object' && 'scope' in input && input.scope === 'all_accessible'
-            ? [source, ownSource].map(session => ({ ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: session.ownerAccountId,
+            ? [...candidates, ownSource].map(session => ({ ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: session.ownerAccountId,
                 viewer: session.viewer })) : [],
         hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
     }) }) });
-    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [rule] } });
+    homes.answer(serverId, '/v2/account/session-follow-rules', { select: () => ({ body: { rules: [{ ...rule, sources: delivered }] } }) });
     homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
     homes.answer(serverId, mutePath, { body: { scopes: [] } });
-    for (const session of [source, ownSource]) {
+    for (const session of [...candidates, ownSource, offScreen, gapSource]) {
         const response = createPlainSessionByIdResponseFixture(session);
-        homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: { ...response.session, ownerAccountId: session.ownerAccountId, viewer: session.viewer } } });
+        const viewer = session === source && represented ? session.viewer : createSessionViewerFixture({
+            follow: { ...ABSENT_SESSION_FOLLOW_FACTS_V1, follows: true },
+            readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 10 },
+            attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
+        });
+        homes.answer(serverId, `/v2/sessions/${session.id}`, { select: () => ({ body: { session: {
+            ...response.session, ownerAccountId: session.ownerAccountId, viewer: readyToDeliver.has(session.id) ? viewer : session.viewer,
+        } } }) });
         homes.answer(serverId, `/v1/sessions/${session.id}/messages`, { select: (_input, request) => ({ body: {
             messages: Number(new URL(request.url).searchParams.get('afterSeq')) >= 1 ? [] : [{
                 id: 'original-message', localId: 'original-local', seq: 1, createdAt: 10, messageRole: 'agent',
-                content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'codex',
-                    data: { type: 'message', message: 'Committed update' } } } },
+                content: { t: 'plain', v: session === gapSource
+                    ? { role: 'agent', content: { type: 'event', id: 'ready-event', data: { type: 'ready', completedTurnId: 'offline-turn' } } }
+                    : { role: 'agent', content: { type: 'acp', agentId: 'codex',
+                        data: { type: 'message', message: 'Committed update' } } } },
             }], hasMore: false, nextAfterSeq: null,
         } }) });
         homes.answer(serverId, `POST /v2/sessions/${session.id}/follows/occurrence-routes`, { body: {
@@ -235,15 +254,30 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         } });
     }
     let acceptedEffects = 0;
-    homes.answer(serverId, 'POST /v2/account/session-follow-rules/personal-progress', { select: () => ({
-        body: { accepted: true, alreadyRepresented: acceptedEffects++ > 0 },
-    }) });
+    const progressPath = '/v2/account/session-follow-rules/personal-progress';
+    homes.answer(serverId, `POST ${progressPath}`, { select: input => {
+        const progress = SessionFollowPersonalProgressRequestV1Schema.parse(input);
+        const alreadyRepresented = delivered.some(source => source.sourceSessionId === progress.sourceSessionId);
+        if (!alreadyRepresented) {
+            acceptedEffects++;
+            delivered.push({ sourceSessionId: progress.sourceSessionId, delivered: {
+                ...SESSION_FOLLOW_ZERO_FRONTIER_V1,
+                ...('sourceTurn' in progress ? { turn: progress.sourceTurn, readyEventSeq: 1 } : { transcriptSeq: 1 }),
+            } });
+        }
+        return { body: { accepted: true, alreadyRepresented } };
+    } });
     restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
         credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
         configureSocket: configureConnectedServerSocketBoundary,
         request: createSessionReadBatchFetchBoundary(homes.request) });
     await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
-    const hook = await renderHook(() => useActivityPersonalSessionMembership(), {
+    const publications = new Set<ReturnType<typeof useActivityPersonalSessionMembership>>();
+    const hook = await renderHook(() => {
+        const membership = useActivityPersonalSessionMembership();
+        publications.add(membership);
+        return membership;
+    }, {
         wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled>{children}</ActivityPersonalSessionMembershipProvider>,
     });
     await vi.waitFor(() => expect(hook.getCurrent().followRulesByServerId?.[serverId]?.status).toBe('ready'));
@@ -256,11 +290,12 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
             rules: [{ ruleId: 'receiver-rule', ruleVersion: 0 }], sourceMessage: { localId: 'original-local', seq: 1 },
         });
     } else {
-        await vi.waitFor(() => expect(hook.getCurrent().receiverRuleEvaluationByServerId?.[serverId]?.pendingBySourceSessionId[source.id])
-            .toBe('catch_up_pending'));
+        await vi.waitFor(() => expect(Object.keys(hook.getCurrent().receiverRuleEvaluationByServerId?.[serverId]?.pendingBySourceSessionId ?? {}).sort())
+            .toEqual(candidates.map(session => session.id).sort()));
         await flushHookEffects();
         expect(homes.requests.filter(request => request.path === '/v2/account/session-follow-rules/personal-progress')).toHaveLength(0);
     }
+    const coldRoutes = homes.requests.filter(request => request.path.endsWith('/follows/occurrence-routes')).length;
     const readsBefore = homes.requests.length;
     await act(async () => {
         for (let index = 0; index < 1_000; index++) publishHomeAccountChange(serverId, [`machine-${index}`], { changeKinds: ['machine'] });
@@ -270,14 +305,87 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
     expect(homes.requests.slice(readsBefore).filter(request => request.path === '/v2/account/session-follow-rules')).toHaveLength(0);
     expect(homes.requests.filter(request => request.path === '/v2/account/session-follow-rules/personal-progress')).toHaveLength(represented ? 1 : 0);
     expect(homes.requests.filter(request => request.path.startsWith('/v1/sessions/own-source/messages'))).toHaveLength(0);
+    if (!represented) {
+        const observed = () => homes.requests.filter(request => request.path.endsWith('/follows/occurrence-routes')).map(request => request.path);
+        const queries = () => homes.requests.filter(request => request.path === '/v2/sessions/query');
+        const changesSince = (before: number) => observed().slice(before);
+        const route = (id: string) => `/v2/sessions/${id}/follows/occurrence-routes`;
+        const record = (label: string, before: { routes: number; queries: number }) => {
+            const counts = { routes: changesSince(before.routes), queries: queries().length - before.queries };
+            console.info('Follow HTTP count', label, counts.routes.length, counts.queries, 'publications', publications.size);
+            return counts;
+        };
+        const mark = () => {
+            publications.clear();
+            return { routes: observed().length, queries: queries().length };
+        };
+        expect(hook.getCurrent().membershipByServerId[serverId]).toEqual([]);
+        expect(new Set(observed())).toEqual(new Set(candidates.map(session => route(session.id))));
+        const exhaustiveQueries = queries().filter(request => request.input && typeof request.input === 'object'
+            && 'scope' in request.input && request.input.scope === 'all_accessible');
+        console.info('Follow HTTP count cold', coldRoutes, queries().length, 'exhaustive', exhaustiveQueries.length);
+
+        let before = mark();
+        await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true }));
+        await flushHookEffects();
+        expect.soft(record('equal reconnect', before)).toEqual({ routes: [], queries: 0 });
+        expect.soft(publications.size).toBe(0);
+
+        before = mark();
+        const { invalidateSessionListQueryHome } = await import('@/sync/domains/session/listing/sessionListQueryInvalidation');
+        await act(async () => { await invalidateSessionListQueryHome(serverId); });
+        await flushHookEffects();
+        expect.soft(record('explicit equal refresh', before)).toEqual({ routes: [], queries: 2 });
+
+        before = mark();
+        readyToDeliver.add(source.id);
+        await act(async () => publishHomeAccountChange(serverId, [source.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
+        await vi.waitFor(() => expect(acceptedEffects).toBe(1));
+        await flushHookEffects();
+        expect.soft(record('one changed source', before)).toEqual({ routes: [route(source.id)], queries: 0 });
+
+        before = mark();
+        await act(async () => publishHomeAccountChange(serverId, [offScreen.id, siblings[0]!.id], {
+            feedPageConsumed: true, changeKinds: ['share', 'machine'], sessionIdsToCatchUp: [offScreen.id], sessionListQueryAffects: false,
+        }));
+        await vi.waitFor(() => expect(acceptedEffects).toBe(2));
+        await flushHookEffects();
+        expect.soft(record('exact off-screen share', before)).toEqual({ routes: [route(offScreen.id)], queries: 0 });
+
+        before = mark();
+        await act(async () => publishHomeAccountChange(serverId, [ownSource.id], { changeKinds: ['share'], sessionListQueryAffects: true }));
+        await vi.waitFor(() => expect(hook.getCurrent().statesByServerId[serverId]?.phase).toBe('ready'));
+        await flushHookEffects();
+        expect.soft(record('real list invalidation', before)).toEqual({ routes: [], queries: 2 });
+
+        before = mark();
+        candidates.push(gapSource);
+        await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'snapshot' }));
+        await vi.waitFor(() => expect(acceptedEffects).toBe(3));
+        await flushHookEffects();
+        expect(homes.requests.find(request => request.path === progressPath && request.input && typeof request.input === 'object'
+            && 'sourceSessionId' in request.input && request.input.sourceSessionId === gapSource.id)?.input).toMatchObject({
+            sourceTurn: { id: 'offline-turn', status: 'completed' }, terminalSourceMessage: { localId: 'original-local', seq: 1 },
+        });
+        const gap = record('snapshot repair', before);
+        expect.soft(gap.routes.filter(path => path === route(gapSource.id))).toHaveLength(1);
+        expect.soft(gap.queries).toBe(2);
+
+        before = mark();
+        await act(async () => publishHomeAccountChange(serverId, [gapSource.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
+        await flushHookEffects();
+        expect.soft(record('delivered Turn frontier', before)).toEqual({ routes: [], queries: 0 });
+    }
     await act(async () => getStorage().getState().clearProfileScope());
     await flushHookEffects();
     const receiverReads = () => homes.requests.filter(request => request.path.includes('/messages')
         || request.path.includes('/session-follow-rules') || request.path.includes('/follows/occurrence-routes'));
     const retiredReads = receiverReads();
+    const retiredQueries = homes.requests.filter(request => request.path === '/v2/sessions/query').length;
     await act(async () => publishHomeAccountChange(serverId, [source.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
     await flushHookEffects();
     expect(receiverReads()).toEqual(retiredReads);
+    expect(homes.requests.filter(request => request.path === '/v2/sessions/query')).toHaveLength(retiredQueries);
 });
 
 it('keeps personal membership identity when an equal refetch moves only the query lifecycle', async () => {

@@ -56,6 +56,7 @@ const EMPTY_ACCOUNT_DELIVERY_MUTES: NonNullable<ActivityPersonalSessionMembershi
 function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean, generation: number) {
     const [snapshot, setSnapshot] = React.useState({ serverIds, generation, rules: EMPTY_ACQUIRED_FOLLOW_RULES, mutes: EMPTY_ACCOUNT_DELIVERY_MUTES });
     const snapshotRef = React.useRef(snapshot);
+    const refreshingHomes = React.useRef<ReadonlyMap<string, unknown> | null>(null);
     snapshotRef.current = snapshot;
     React.useEffect(() => {
         const setRules = (update: (previous: Readonly<Record<string, SessionFollowRulesReadResult>>) => Readonly<Record<string, SessionFollowRulesReadResult>>) => {
@@ -77,6 +78,7 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
         };
         let disposed = false;
         const requests = new Map<string, { controller: AbortController; rerun: boolean }>();
+        refreshingHomes.current = requests;
         const refresh = (serverId: string, retire = false) => {
             const existing = requests.get(serverId);
             setMute(serverId, null);
@@ -87,26 +89,22 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
             } else if (existing) { existing.rerun = true; return; }
             const request = { controller: new AbortController(), rerun: false };
             requests.set(serverId, request);
-            const rulesRead = enabled ? import('@/sync/api/session/sessionFollowRulesApi').then(api => api.readSessionFollowRules(serverId, request.controller.signal))
-                .then(snapshot => {
-                    if (!disposed && !request.controller.signal.aborted) setRules(previous => ({ ...previous, [serverId]: snapshot }));
-                }).catch(() => {
-                    if (!disposed && !request.controller.signal.aborted) setRules(previous => ({ ...previous, [serverId]: { status: 'unavailable', reason: 'unavailable' } }));
-                }) : Promise.resolve();
+            const rulesRead = enabled ? import('@/sync/api/session/sessionFollowRulesApi')
+                .then(api => api.readSessionFollowRules(serverId, request.controller.signal))
+                .catch(() => ({ status: 'unavailable', reason: 'unavailable' } as const)) : Promise.resolve(undefined);
             const muteRead = resolveServerCredentialAccountScope(serverId).then(async resolution => {
                 if (resolution.kind !== 'bound') return null;
                 const { readAccountDeliveryMutedScopes } = await import('./accountDeliveryMutes');
                 const scopes = await readAccountDeliveryMutedScopes(resolution.scope);
                 return scopes === null ? null : { scope: resolution.scope, scopes };
-            }).then(mutes => {
-                if (!disposed && !request.controller.signal.aborted) setMute(serverId, request.rerun ? null : mutes);
-            }).catch(() => {
-                if (!disposed && !request.controller.signal.aborted) setMute(serverId, null);
-            });
-            void Promise.all([rulesRead, muteRead]).finally(() => {
+            }).catch(() => null);
+            void Promise.all([rulesRead, muteRead]).then(([rules, mutes]) => {
                     if (requests.get(serverId) !== request) return;
                     requests.delete(serverId);
-                    if (!disposed && request.rerun) refresh(serverId);
+                if (disposed || request.controller.signal.aborted) return;
+                if (request.rerun) { refresh(serverId); return; }
+                if (rules) setRules(previous => ({ ...previous, [serverId]: rules }));
+                setMute(serverId, mutes);
                 });
         };
         const refreshMatching = (serverId: string, retire = false) => {
@@ -114,10 +112,11 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
         };
         const unsubscribeChanges = subscribeHomeAccountChange(event => {
             if (isAccountFollowConfigurationChangeRelevant(event)) refreshMatching(event.serverId);
-        }, { reconnect: { readNotCurrent: () => {
+        }, { reconnect: { readNotCurrent: (event) => {
             const current = snapshotRef.current;
-            return current.serverIds !== serverIds || current.generation !== generation || serverIds.some(home =>
-                !current.mutes[home] || (enabled && current.rules[home]?.status !== 'ready'));
+            return serverIds.some(home => areServerProfileIdentifiersEquivalent(home, event.serverId)
+                && (current.serverIds !== serverIds || current.generation !== generation
+                    || !current.mutes[home] || (enabled && current.rules[home]?.status !== 'ready')));
         } } });
         const unsubscribeCredentials = subscribeHomeCredentialChange(event => refreshMatching(event.serverId, true));
         const retirement = captureActiveServerAccountScopeLifetime()?.onRetire(() => {
@@ -127,10 +126,12 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
         for (const serverId of serverIds) refresh(serverId);
         return () => {
             disposed = true;
+            refreshingHomes.current = null;
             retirement?.dispose(); unsubscribeChanges(); unsubscribeCredentials();
             for (const request of requests.values()) request.controller.abort();
         };
     }, [enabled, generation, serverIds]);
+    const isRefreshing = React.useCallback((serverId: string) => refreshingHomes.current?.has(serverId) === true, []);
     const acceptProgress = React.useCallback((previous: AcquiredSessionFollowRulesSnapshot, next: AcquiredSessionFollowRulesSnapshot) => {
         if (next === previous) return;
         setSnapshot(current => current.rules[previous.serverId] !== previous ? current
@@ -138,58 +139,48 @@ function usePersonalFollowInputs(serverIds: readonly string[], enabled: boolean,
     }, []);
     const current = snapshot.serverIds === serverIds && snapshot.generation === generation;
     return React.useMemo(() => ({ rules: enabled && current ? snapshot.rules : EMPTY_ACQUIRED_FOLLOW_RULES,
-        mutes: current ? snapshot.mutes : EMPTY_ACCOUNT_DELIVERY_MUTES, acceptProgress }), [acceptProgress, current, enabled, snapshot.mutes, snapshot.rules]);
+        mutes: current ? snapshot.mutes : EMPTY_ACCOUNT_DELIVERY_MUTES, acceptProgress, isRefreshing }), [acceptProgress, current, enabled, isRefreshing, snapshot.mutes, snapshot.rules]);
 }
 
 /** The existing census owns the only private snapshot and its accepted source progress. */
 function usePersonalReceiverEvaluation(input: Readonly<{
-    enabled: boolean; serverId: string | null; generation: number;
-    personalInputs: ReturnType<typeof usePersonalFollowInputs>;
-    membershipByServerId: Readonly<Record<string, readonly SessionAddress[] | null | undefined>>;
+    enabled: boolean; generation: number;
+    acquired: AcquiredSessionFollowRulesSnapshot | null;
+    mutes: NonNullable<ActivityPersonalSessionMembership['accountDeliveryMutesByServerId']>[string];
+    acceptProgress: ReturnType<typeof usePersonalFollowInputs>['acceptProgress'];
+    isRefreshing: ReturnType<typeof usePersonalFollowInputs>['isRefreshing'];
+    personalMembership: readonly SessionAddress[] | null | undefined;
+    receiverMembership: readonly SessionAddress[] | null | undefined;
 }>): ActivityReceiverRuleEvaluationByServerId {
     const [pending, setPending] = React.useState<ActivityReceiverRuleEvaluationByServerId>({});
-    const latest = React.useRef(input);
+    const sources = React.useMemo(() => new Set([
+        ...(input.personalMembership ?? []), ...(input.receiverMembership ?? []),
+    ].map(address => address.sessionId)), [input.personalMembership, input.receiverMembership]);
+    const latest = React.useRef({ ...input, sources });
     const runtime = React.useRef<ReturnType<typeof createSessionFollowPersonalReceiverRuntime> | null>(null);
-    const acceptedCensus = React.useRef<AcquiredSessionFollowRulesSnapshot | null>(null);
-    React.useLayoutEffect(() => { latest.current = input; });
-    const activeRules = input.serverId ? input.personalInputs.rules[input.serverId] : undefined;
-    const acquired = activeRules?.status === 'ready' ? activeRules : null;
-    const hasPersonalRules = acquired?.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled) === true;
+    React.useLayoutEffect(() => { latest.current = { ...input, sources }; });
+    const { acquired } = input;
     React.useEffect(() => {
-        if (!input.enabled || !acquired || !hasPersonalRules) return;
+        if (!input.enabled || !acquired) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !lifetime.isCurrent() || lifetime.scope.accountId !== acquired.accountId
             || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, acquired.serverId)) return;
         const serverId = acquired.serverId;
         const readInputs = () => {
-            const current = latest.current;
-            const snapshot = current.personalInputs.rules[serverId];
-            const mutes = current.personalInputs.mutes[serverId];
-            return { snapshot: snapshot?.status === 'ready' && snapshot.accountId === lifetime.scope.accountId ? snapshot : null,
-                mutedScopes: mutes?.scope.accountId === lifetime.scope.accountId ? mutes.scopes : null };
+            const { acquired: snapshot, mutes } = latest.current;
+            return {
+                snapshot: snapshot?.serverId === serverId && snapshot.accountId === lifetime.scope.accountId ? snapshot : null,
+                mutedScopes: !input.isRefreshing(serverId) && mutes?.scope.accountId === lifetime.scope.accountId ? mutes.scopes : null,
+            };
         };
-        const readSourceSessionIds = () => {
-            const current = latest.current;
-            const snapshot = current.personalInputs.rules[serverId];
-            const state = readRegisteredStorageState();
-            const sourceSessionIds = new Set([
-                ...(current.membershipByServerId[serverId] ?? []).map(address => address.sessionId),
-                ...(state?.ordinarySessionListMembershipByServerId[serverId] ?? []),
-                ...Object.values(state?.sessions ?? {}).filter(session => !session.serverId
-                    || areServerProfileIdentifiersEquivalent(session.serverId, serverId)).map(session => session.id),
-                ...(snapshot?.status === 'ready' ? snapshot.rules.filter(rule => rule.receiver.kind === 'account')
-                    .flatMap(rule => rule.sources?.map(source => source.sourceSessionId) ?? []) : []),
-            ]);
-            return [...sourceSessionIds];
-        };
-        const owner = createSessionFollowPersonalReceiverRuntime({ lifetime, readInputs, readSourceSessionIds,
+        const owner = createSessionFollowPersonalReceiverRuntime({ lifetime, readInputs,
+            readSourceSessionIds: () => latest.current.sources,
+            readOrdinarySessionIds: () => readRegisteredStorageState()?.ordinarySessionListMembershipByServerId[serverId] ?? [],
             acceptedProgress: (previous, next) => {
                 // Publish synchronously for another original in this same traversal;
                 // React then exposes the same accepted census to presentation.
-                latest.current = { ...latest.current, personalInputs: { ...latest.current.personalInputs,
-                    rules: { ...latest.current.personalInputs.rules, [serverId]: next } } };
-                acceptedCensus.current = next;
-                input.personalInputs.acceptProgress(previous, next);
+                latest.current = { ...latest.current, acquired: next };
+                input.acceptProgress(previous, next);
             },
             pending: (occurrence, waiting) => setPending(previous => {
                 if (!lifetime.isCurrent()) return previous;
@@ -205,9 +196,8 @@ function usePersonalReceiverEvaluation(input: Readonly<{
         });
         runtime.current = owner;
         const retirement = lifetime.onRetire(() => { owner.dispose(); setPending({}); });
-        owner.reconcile();
         return () => { owner.dispose(); retirement.dispose(); if (runtime.current === owner) runtime.current = null; };
-    }, [input.enabled, input.generation, hasPersonalRules, acquired?.accountId, acquired?.credentialScopeKey, acquired?.serverId]);
+    }, [input.enabled, input.generation, input.acceptProgress, input.isRefreshing, acquired?.accountId, acquired?.credentialScopeKey, acquired?.serverId]);
     React.useEffect(() => {
         if (!acquired) {
             setPending(previous => Object.values(previous).some(projection => Object.values(projection.pendingBySourceSessionId)
@@ -216,10 +206,8 @@ function usePersonalReceiverEvaluation(input: Readonly<{
                     .map(id => [id, 'waiting_for_authorized_device' as const])) }])) : previous);
             return;
         }
-        // A reflected source ACK changes consumption, not rule configuration.
-        // Its existing exact-source change wake owns any remaining suffix.
-        if (acquired !== acceptedCensus.current) runtime.current?.reconcile();
-    }, [acquired, input.membershipByServerId, input.personalInputs.mutes]);
+        runtime.current?.reconcile();
+    }, [acquired, input.generation, input.enabled, sources, input.mutes]);
     return pending;
 }
 
@@ -339,37 +327,27 @@ export function ActivityPersonalSessionMembershipProvider(props: React.PropsWith
     // page, including a first foreign source created while this app was closed.
     // This borrows the list owner's existing paging/cancellation; it stores no
     // delivery cursor or membership/enrollment edge.
-    const receiverEnabled = props.enabled && Object.values(personalInputs.rules).some(snapshot => snapshot.status === 'ready'
-        && areServerProfileIdentifiersEquivalent(snapshot.serverId, activeServer.serverId ?? '')
-        && snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled));
+    const activeRules = activeServer.serverId ? personalInputs.rules[activeServer.serverId] : undefined;
+    const acquired = activeRules?.status === 'ready' ? activeRules : null;
+    const receiverEnabled = props.enabled && acquired?.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled) === true;
     const receiverHomes = React.useMemo(() => !receiverEnabled || !activeServer.serverId ? [] : [{
         serverId: activeServer.serverId, query: { ...ACTIVITY_PERSONAL_SESSION_QUERY, scope: 'all_accessible' as const, includeAttention: false },
         queryMembership: 'rowOnly' as const,
+        // Replacement pages describe one census. Publishing a prefix would
+        // make the retained suffix look like newly admitted sources later.
+        readMode: 'complete' as const,
     }], [activeServer.serverId, receiverEnabled]);
     const receiverCorpus = useSessionListQueryHomeStates({ enabled: receiverEnabled, homes: receiverHomes });
-    React.useEffect(() => {
-        const state = activeServer.serverId ? receiverCorpus.statesByServerId[activeServer.serverId] : undefined;
-        if (receiverEnabled && state?.phase === 'ready' && state.appliedSourceKind === 'query' && state.hasNext) {
-            void receiverCorpus.loadNext().catch(() => { /* The query owner retains the exact failed page and repair state. */ });
-        }
-    }, [activeServer.serverId, receiverEnabled, receiverCorpus.loadNext, receiverCorpus.statesByServerId]);
-    const receiverMembership = React.useMemo(() => {
-        const result = { ...querySource.membershipByServerId };
-        for (const [serverId, addresses] of Object.entries(receiverCorpus.membershipByServerId)) {
-            if (!addresses) continue;
-            const sources = new Map((result[serverId] ?? []).map(address => [address.sessionId, address]));
-            for (const address of addresses) sources.set(address.sessionId, address);
-            result[serverId] = [...sources.values()];
-        }
-        return result;
-    }, [querySource.membershipByServerId, receiverCorpus.membershipByServerId]);
-    const receiverRuleEvaluationByServerId = usePersonalReceiverEvaluation({ enabled: props.enabled,
-        serverId: activeServer.serverId, generation: activeServer.generation, personalInputs,
-        membershipByServerId: receiverMembership });
+    const receiverRuleEvaluationByServerId = usePersonalReceiverEvaluation({
+        enabled: receiverEnabled, generation: activeServer.generation, acquired,
+        acceptProgress: personalInputs.acceptProgress, isRefreshing: personalInputs.isRefreshing,
+        mutes: activeServer.serverId ? personalInputs.mutes[activeServer.serverId] : null,
+        personalMembership: activeServer.serverId ? querySource.membershipByServerId[activeServer.serverId] : null,
+        receiverMembership: activeServer.serverId ? receiverCorpus.membershipByServerId[activeServer.serverId] : null,
+    });
     const ruleSessionMembershipByServerId = React.useMemo(() => Object.fromEntries(Object.entries(receiverCorpus.membershipByServerId)
         .map(([serverId, addresses]) => [serverId, (addresses ?? []).map(address => address.sessionId)])), [receiverCorpus.membershipByServerId]);
-    // Background membership observes its first page and reports partial coverage.
-    // Only a visible list or an explicit exhaustive operation demands more pages.
+    // The personal presentation query still observes its first page and reports partial coverage.
 
     const committedMembershipRef = React.useRef<ActivityPersonalSessionMembership['membershipByServerId'] | null>(null);
     const value = React.useMemo(() => ({ ...projectActivityPersonalSessionMembership({
