@@ -722,6 +722,10 @@ describe('agent catalog voice tools', () => {
 
     const models: any = await listAgentModelsForVoiceTool({ agentId: 'claude', limit: 2 });
     expect(models?.items).toHaveLength(2);
+    const { redactVoiceToolResultForProvider } = await import('@/voice/context/redactVoiceToolResult');
+    expect(redactVoiceToolResultForProvider('listAgentModels', models, {
+      shareDeviceInventory: true, shareSessionSummary: false, shareFilePaths: false, sharePermissionRequests: false,
+    })).toMatchObject({ hasMore: true });
   });
 
   it('prioritizes enabled plugin backends ahead of disabled built-ins when limiting discovery results', async () => {

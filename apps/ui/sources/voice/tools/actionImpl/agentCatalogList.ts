@@ -103,12 +103,17 @@ function getAgentLookupStaticModels(agentId: AgentId): ReadonlyArray<Readonly<{
   return getAgentStaticModels(agentId);
 }
 
+function limitVoiceModelInventory<T>(items: readonly T[], limit: number | null) {
+  return limit !== null && items.length > limit
+    ? { items: items.slice(0, limit), hasMore: true as const, totalCount: items.length }
+    : { items };
+}
+
 function buildVoiceToolPreflightModelResult(params: Readonly<{
   shouldExposeAgentId: boolean;
   agentId: AgentId;
   machineId: string;
   list: PreflightModelList;
-  limit: number | null;
 }>): Readonly<{
   agentId?: AgentId;
   machineId: string;
@@ -151,7 +156,7 @@ function buildVoiceToolPreflightModelResult(params: Readonly<{
   return {
     ...(params.shouldExposeAgentId ? { agentId: params.agentId } : {}),
     machineId: params.machineId,
-    items: params.limit ? items.slice(0, params.limit) : items,
+    items,
     supportsFreeform: params.list.supportsFreeform === true,
     source: 'preflight',
   };
@@ -168,6 +173,8 @@ type VoiceToolModelListResult = Readonly<{
     providerName?: string;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   }>>;
+  hasMore?: true;
+  totalCount?: number;
   supportsFreeform: boolean;
   source: 'preflight' | 'static' | 'unavailable';
   unavailable?: true;
@@ -180,7 +187,6 @@ async function projectVoiceToolProviderModels(params: Readonly<{
   agentTargetKey: string;
   machineId: string;
   serverId: string | null;
-  limit: number | null;
 }>): Promise<VoiceToolModelListResult> {
   const providersEnabled = await isVoiceProvidersFeatureEnabledForSpawn({ serverId: params.serverId });
   if (!params.serverId) {
@@ -258,7 +264,6 @@ async function projectVoiceToolProviderModels(params: Readonly<{
           : {}),
       }];
     }));
-    const limitedItems = params.limit ? items.slice(0, params.limit) : items;
     const hasProviderModels = items.some((item) => item.providerConnectionId !== null || item.teamCredentialModel !== undefined);
     const supportsProviderFreeform = providersEnabled && projection.groups.some((group) => (
       group.authorization.authorized
@@ -271,7 +276,7 @@ async function projectVoiceToolProviderModels(params: Readonly<{
     return {
       ...(params.base.agentId ? { agentId: params.base.agentId } : {}),
       machineId: params.machineId,
-      items: limitedItems,
+      items,
       supportsFreeform: params.base.supportsFreeform || supportsProviderFreeform,
       source: params.base.source,
       ...(params.base.refreshError ? { refreshError: true as const } : {}),
@@ -476,7 +481,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   if (supportsSelection !== true) {
     return {
       ...(shouldExposeAgentId ? { agentId } : {}),
-      items: [{ modelId: 'default', label: 'Default' }].slice(0, limit ?? 1),
+      items: [{ modelId: 'default', label: 'Default' }],
       supportsFreeform: false,
       source: 'static' as const,
     };
@@ -489,17 +494,12 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       ?? backendTarget
       ?? { kind: 'backend', backendId: agentId },
   );
-  const withProviderProjection = async (base: VoiceToolModelListResult): Promise<VoiceToolModelListResult> => (
-    machineId
-      ? projectVoiceToolProviderModels({
-        base,
-        agentTargetKey: canonicalTargetKey,
-        machineId,
-        serverId,
-        limit,
-      })
-      : base
-  );
+  const finish = async (base: VoiceToolModelListResult): Promise<VoiceToolModelListResult> => {
+    const inventory = machineId
+      ? await projectVoiceToolProviderModels({ base, agentTargetKey: canonicalTargetKey, machineId, serverId })
+      : base;
+    return { ...inventory, ...limitVoiceModelInventory(inventory.items, limit) };
+  };
   if (machineId) {
     const cacheKey = buildDynamicModelProbeCacheKey({
       machineId,
@@ -525,8 +525,8 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       };
       const failed = entry?.kind === 'error' || (entry?.kind === 'success' && entry.errorUpdatedAt !== undefined);
       const list = entry?.kind === 'success' ? entry.value : createUnavailablePreflightModelList();
-      return await withProviderProjection({
-        ...buildVoiceToolPreflightModelResult({ shouldExposeAgentId, agentId, machineId, list, limit }),
+      return await finish({
+        ...buildVoiceToolPreflightModelResult({ shouldExposeAgentId, agentId, machineId, list }),
         ...(failed ? { refreshError: true as const } : {}),
         ...(entry?.failureCause ? { failureCause: entry.failureCause } : {}),
       });
@@ -534,9 +534,9 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   }
 
   if (isLegacyCompatProbe) {
-    return await withProviderProjection({
+    return await finish({
       ...(shouldExposeAgentId ? { agentId } : {}),
-      items: [{ modelId: 'default', label: 'Default' }].slice(0, limit ?? 1),
+      items: [{ modelId: 'default', label: 'Default' }],
       supportsFreeform: supportsFreeformFallback,
       source: 'static' as const,
     });
@@ -558,9 +558,9 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     return true;
   });
 
-  return await withProviderProjection({
+  return await finish({
     ...(shouldExposeAgentId ? { agentId } : {}),
-    items: limit ? items.slice(0, limit) : items,
+    items,
     supportsFreeform: supportsFreeformFallback,
     source: 'static' as const,
   });

@@ -1,4 +1,4 @@
-import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { projectSpokenSpawnModelChoices } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionInputOptionSchema } from '@happier-dev/protocol/actions/actionInputHints';
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
@@ -7,6 +7,8 @@ import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settin
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { ConnectedServiceCredentialHealthStatusV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import {
   isInventoryPrivacyVoiceToolName,
   isRecentMessagesPrivacyVoiceToolName,
@@ -57,6 +59,37 @@ const MODEL_LIST_ACTION_ID = 'agents.models.list';
 const MODEL_LIST_TOOL_NAME = getActionSpec(MODEL_LIST_ACTION_ID).bindings?.voiceClientToolName;
 const OPTIONS_ACTION_ID = 'action.options.resolve';
 const OPTIONS_TOOL_NAME = getActionSpec(OPTIONS_ACTION_ID).bindings?.voiceClientToolName;
+const CONNECTED_SERVICES_TOOL_NAME = getActionSpec(SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1).bindings?.voiceClientToolName;
+
+// Options can delegate to an inventory producer even though the lookup Action
+// itself also serves static and non-inventory choices.
+const MODEL_OPTIONS_SOURCE_IDS: ReadonlySet<string> = new Set([
+  'agents.models.available',
+  'teams.credential_models.available',
+]);
+const CONNECTED_SERVICES_OPTIONS_SOURCE_ID = 'sessions.spawn.connected_services.available';
+const INVENTORY_OPTIONS_SOURCE_IDS: ReadonlySet<string> = new Set([
+  ...MODEL_OPTIONS_SOURCE_IDS,
+  'agents.backends.enabled',
+  'agents.config_options.available',
+  'agents.session_modes.available',
+  'execution.backends.enabled',
+  'host-input:machine',
+  'host-input:workspace',
+  'machines.volumes.available',
+  'review.engines.available',
+  CONNECTED_SERVICES_OPTIONS_SOURCE_ID,
+  SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID,
+  'sessions.spawn.capabilities.preview',
+  'sessions.spawn.machines.available',
+  'sessions.spawn.mcp_servers.preview',
+  'sessions.spawn.paths.recent',
+  'sessions.spawn.profiles.available',
+  'sessions.spawn.servers.available',
+  'usage.filters.machines',
+  'usage.filters.projects',
+]);
+
 const SETTINGS_LIST_TOOL_NAME = String(getActionSpec(SETTINGS_LIST_ACTION_ID_V1).bindings?.voiceClientToolName ?? '').trim();
 const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
   (['agents.backends.list', 'settings.list'] as const).flatMap(id => [
@@ -289,7 +322,7 @@ function readResultRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
 }
 
-function isSpeakableModelLabel(label: unknown, prefs: VoiceToolResultRedactionPrefs): label is string {
+function isSpeakableLabel(label: unknown, prefs: VoiceToolResultRedactionPrefs): label is string {
   // A scrubbed label is not a usable retry operand. Omit it rather than reading back a path token.
   return typeof label === 'string' && label.trim().length > 0
     && (prefs.shareFilePaths === true || redactVoicePathLikeString(label) === label);
@@ -308,7 +341,68 @@ function projectModelChoices(value: unknown, prefs: VoiceToolResultRedactionPref
     if (typeof label !== 'string' || Object.keys(privateFields).length > 0) return [];
     return [needsModelPicker === true ? { label, needsModelPicker: true as const } : { label }];
   });
-  return choices.filter(({ label }) => isSpeakableModelLabel(label, prefs));
+  return choices.filter(({ label }) => isSpeakableLabel(label, prefs));
+}
+
+function projectModelPaging(result: Readonly<Record<string, unknown>>) {
+  const hasMore = typeof result.nextCursor === 'string' && result.nextCursor.length > 0
+    ? true
+    : result.hasMore;
+  const totalCount = result.totalCount;
+  return {
+    ...(typeof hasMore === 'boolean' ? { hasMore } : {}),
+    ...(typeof totalCount === 'number' && Number.isSafeInteger(totalCount) && totalCount >= 0 ? { totalCount } : {}),
+  };
+}
+
+function projectConnectedServiceLabel(label: unknown, id: string, prefs: VoiceToolResultRedactionPrefs) {
+  return isSpeakableLabel(label, prefs) && label !== id && !label.includes('@') ? { label } : {};
+}
+
+function projectConnectedServicesList(value: unknown, prefs: VoiceToolResultRedactionPrefs): unknown {
+  const result = readResultRecord(value);
+  if (result.ok === false) {
+    const code = result.errorCode;
+    const hostCode = PluginUiHostApiErrorCodeV1Schema.safeParse(code);
+    const errorCode = code === 'unknown_agent' || code === 'action_home_not_found'
+      ? code
+      : hostCode.success ? hostCode.data : 'action_failed';
+    return { ok: false, errorCode, error: errorCode };
+  }
+  const supportedServiceIds = Array.isArray(result.supportedServiceIds)
+    ? result.supportedServiceIds.filter((id): id is string => typeof id === 'string' && !id.includes('@'))
+    : [];
+  // The existing launch resolver still requires a qualified profile or group
+  // selector. Membership, provider identity, and other presentation fields
+  // are irrelevant to that selection.
+  const projectOptions = (options: unknown, idKey: 'profileId' | 'groupId') => {
+    const byService = readResultRecord(options);
+    return Object.fromEntries(supportedServiceIds.flatMap(serviceId => {
+      const rows = byService[serviceId];
+      if (!Array.isArray(rows)) return [];
+      return [[serviceId, rows.flatMap(row => {
+        const record = readResultRecord(row);
+        const id = record[idKey];
+        if (typeof id !== 'string' || !id || id.includes('@')
+          || (prefs.shareFilePaths !== true && redactVoicePathLikeString(id) !== id)) return [];
+        const status = record.status;
+        const knownStatus = idKey === 'profileId'
+          ? status === 'unsupported_kind' || ConnectedServiceCredentialHealthStatusV1Schema.safeParse(status).success
+          : status === 'ready' || status === 'needs_members' || status === 'exhausted';
+        return [{
+          [idKey]: id,
+          ...projectConnectedServiceLabel(record.label, id, prefs),
+          ...(knownStatus ? { status } : {}),
+        }];
+      })]];
+    }));
+  };
+  return {
+    ...(result.ok === true ? { ok: true } : {}),
+    supportedServiceIds,
+    profileOptionsByServiceId: projectOptions(result.profileOptionsByServiceId, 'profileId'),
+    groupOptionsByServiceId: projectOptions(result.groupOptionsByServiceId, 'groupId'),
+  };
 }
 
 function projectModelList(value: unknown, prefs: VoiceToolResultRedactionPrefs): unknown {
@@ -320,16 +414,17 @@ function projectModelList(value: unknown, prefs: VoiceToolResultRedactionPrefs):
   const status = result.ok === true ? { ok: true } : {};
   if (result.source === 'auto' || result.source === 'explicit') {
     return { ...status, source: result.source,
-      ...(isSpeakableModelLabel(result.title, prefs) ? { title: result.title } : {}) };
+      ...(isSpeakableLabel(result.title, prefs) ? { title: result.title } : {}) };
   }
   const labels = (rows: unknown, key: 'label' | 'title') => Array.isArray(rows) ? rows.flatMap(row => {
     const label = readResultRecord(row)[key];
-    return isSpeakableModelLabel(label, prefs) ? [{ [key]: label }] : [];
+    return isSpeakableLabel(label, prefs) ? [{ [key]: label }] : [];
   }) : [];
   const catalog = readResultRecord(result.scmDiffSummaryCatalog);
   return {
     ...status,
     items: labels(result.items, 'label'),
+    ...projectModelPaging(result),
     ...(result.scmDiffSummaryCatalog === undefined ? {} : {
       scmDiffSummaryCatalog: { profiles: labels(catalog.profiles, 'title'), automaticProfiles: labels(catalog.automaticProfiles, 'title'),
         ...(catalog.unavailableReason === 'account_metadata_unavailable' ? { unavailableReason: catalog.unavailableReason } : {}) },
@@ -370,19 +465,38 @@ export function redactVoiceToolResultForProvider(
     }
     if (optionsLookup) {
       const { optionsSourceId } = result;
-      const modelSource = optionsSourceId === 'agents.models.available' || optionsSourceId === 'teams.credential_models.available';
+      const source = typeof optionsSourceId === 'string' ? optionsSourceId : '';
       const spawnModelField = result.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && result.fieldPath === 'modelSelection';
+      if (prefs?.shareDeviceInventory !== true && (INVENTORY_OPTIONS_SOURCE_IDS.has(source) || spawnModelField)) {
+        return { ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled' };
+      }
+      const modelSource = MODEL_OPTIONS_SOURCE_IDS.has(source);
       if (modelSource || spawnModelField) {
-        if (prefs.shareDeviceInventory !== true) {
-          return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
-        }
         return {
           ...(result.ok === true ? { ok: true } : {}),
           ...(modelSource ? { optionsSourceId } : { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, fieldPath: 'modelSelection' }),
           options: projectModelChoices(result.options, prefs),
+          ...projectModelPaging(result),
+        };
+      }
+      if (source === CONNECTED_SERVICES_OPTIONS_SOURCE_ID) {
+        // This producer flattens a profile into a selector and may use the
+        // provider email as the option label when no authored label exists.
+        return {
+          ...(result.ok === true ? { ok: true } : {}),
+          optionsSourceId: source,
+          options: Array.isArray(result.options) ? result.options.flatMap(option => {
+            const { value, label } = readResultRecord(option);
+            if (typeof value !== 'string' || value.includes('@')) return [];
+            const fallbackLabel = value.replace(':profile:', ':');
+            return [{ value, ...projectConnectedServiceLabel(label, fallbackLabel, prefs) }];
+          }) : [],
         };
       }
     }
+  }
+  if (toolName === CONNECTED_SERVICES_TOOL_NAME || toolName === SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1) {
+    return projectConnectedServicesList(value, prefs);
   }
   if (toolName === MODEL_LIST_TOOL_NAME || toolName === MODEL_LIST_ACTION_ID) {
     return projectModelList(value, prefs);

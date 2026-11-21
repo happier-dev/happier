@@ -33,9 +33,9 @@ describe('redactVoiceToolResultValue', () => {
   it('projects inventory labels without descriptions, refs or connection details', () => {
     const result = redactVoiceToolResultForProvider('listAgentModels', {
       items: [{ modelId: 'model', label: 'Model', providerConnectionId: 'private-connection', providerName: 'Private name', description: 'Private description' }],
-      hasMore: true, nextCursor: 'next', totalCount: 12,
+      hasMore: true, nextCursor: 'private-model-cursor', totalCount: 12,
     }, { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true });
-    expect(result).toEqual({ items: [{ label: 'Model' }] });
+    expect(result).toEqual({ items: [{ label: 'Model' }], hasMore: true, totalCount: 12 });
     // Inventory permission is not permission to disclose a Session summary
     // nested in another inventory-family Action's result.
     expect(redactVoiceToolResultForProvider('projects.open', { session: { id: 's1', title: 'PRIVATE SESSION' } }, {
@@ -99,6 +99,110 @@ describe('redactVoiceToolResultValue', () => {
         .toEqual({ ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' });
     },
   );
+
+  it.each([
+    ['sessions.spawn.machines.available', 'Studio Computer', 'private-machine-id'],
+    ['host-input:machine', 'Studio Computer', { machineId: 'private-machine-id', serverId: 'private-home' }],
+    ['sessions.spawn.paths.recent', 'Private Workspace', '{"kind":"path","path":"/home/example/private-workspace"}'],
+    ['host-input:workspace', 'Private Workspace', { path: '/home/example/private-workspace' }],
+    ['sessions.spawn.connected_services.available', 'Work Account', 'service:profile:private-profile'],
+    ['session.connected_services_auth.available', 'Work Account', { profileId: 'private-profile' }],
+    ['sessions.spawn.profiles.available', 'Work Profile', 'private-profile'],
+  ])('withholds %s choices without explicit inventory sharing', (optionsSourceId, label, value) => {
+    const result = { optionsSourceId, options: [{ label, value, description: 'PRIVATE DESCRIPTION' }] };
+    for (const shareDeviceInventory of [false, undefined, 'true']) {
+      for (const shareSessionSummary of [false, true]) {
+        for (const shareFilePaths of [false, true]) {
+          const prefs = { ...SHARE_ALL, shareDeviceInventory, shareSessionSummary, shareFilePaths };
+          const direct = Reflect.apply(redactVoiceToolResultForProvider, undefined, ['resolveActionOptions', result, prefs]);
+          const wrapped = Reflect.apply(redactVoiceActionExecutionResultForProvider, undefined,
+            ['action.options.resolve', { ok: true, result }, prefs]);
+          expect(JSON.parse(JSON.stringify(direct))).toEqual({
+            ok: false, errorCode: 'privacy_disabled', errorMessage: 'privacy_disabled',
+          });
+          expect(JSON.parse(JSON.stringify(wrapped))).toEqual({
+            ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled',
+          });
+        }
+      }
+    }
+  });
+
+  it.each([false, true])('retains connected-account selection without sending provider email (summaries=%s)', shareSessionSummary => {
+    const result = {
+      supportedServiceIds: ['happier.openai/account'],
+      profileOptionsByServiceId: { 'happier.openai/account': [
+        { profileId: 'work', label: 'Work Account', providerEmail: 'private@example.test', status: 'connected' },
+        { profileId: 'personal', providerEmail: 'personal@example.test', status: 'connected' },
+        { profileId: 'email-label', label: 'label@example.test', status: 'connected' },
+      ] },
+      groupOptionsByServiceId: { 'happier.openai/account': [{ groupId: 'group', label: 'Work Pool', providerEmail: 'group@example.test' }] },
+      items: [{ value: 'happier.openai/account:profile:personal', label: 'personal@example.test' }],
+      agentId: 'private-agent',
+    };
+    for (const shareFilePaths of [false, true]) {
+      const prefs = { ...SHARE_ALL, shareSessionSummary, shareFilePaths, shareDeviceInventory: true };
+      const projected = redactVoiceToolResultForProvider('listSpawnConnectedServices', result, prefs);
+      const serialized = JSON.stringify(projected);
+      expect(serialized).not.toContain('@example.test');
+      expect(serialized).not.toContain('private-agent');
+      expect(JSON.parse(serialized)).toEqual({
+        supportedServiceIds: ['happier.openai/account'],
+        profileOptionsByServiceId: { 'happier.openai/account': [
+          { profileId: 'work', label: 'Work Account', status: 'connected' },
+          { profileId: 'personal', status: 'connected' },
+          { profileId: 'email-label', status: 'connected' },
+        ] },
+        groupOptionsByServiceId: { 'happier.openai/account': [{ groupId: 'group', label: 'Work Pool' }] },
+      });
+      expect(redactVoiceActionExecutionResultForProvider('sessions.spawn.connected_services.list', { ok: true, result }, prefs))
+        .toEqual({ ok: true, result: projected });
+      expect(redactVoiceToolResultForProvider('listSpawnConnectedServices', projected, prefs)).toEqual(projected);
+      for (const shareDeviceInventory of [false, undefined, 'true']) {
+        expect(Reflect.apply(redactVoiceToolResultForProvider, undefined, [
+          'listSpawnConnectedServices', result, { ...prefs, shareDeviceInventory },
+        ])).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+      }
+    }
+  });
+
+  it('keeps a connected-account refusal valid for wrapped delivery without diagnostics', () => {
+    const failure = { ok: false, errorCode: 'unknown_agent', error: 'PRIVATE ERROR', details: { secret: 'PRIVATE DETAIL' } };
+    const execution = redactVoiceActionExecutionResultForProvider('listSpawnConnectedServices', failure, {
+      ...SHARE_ALL, shareDeviceInventory: true,
+    });
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toEqual({
+      ok: false, errorCode: 'unknown_agent', error: 'unknown_agent',
+    });
+  });
+
+  it('keeps non-inventory action options available with inventory sharing off', () => {
+    const result = { optionsSourceId: null, options: [{ label: 'Manual', value: 'manual' }] };
+    expect(redactVoiceToolResultForProvider('resolveActionOptions', result, {
+      ...SHARE_ALL, shareDeviceInventory: false,
+    })).toEqual(result);
+  });
+
+  it('withholds a connected account email even when the options source uses it as a label', () => {
+    const result = { optionsSourceId: 'sessions.spawn.connected_services.available', options: [
+      { value: 'happier.openai/account:profile:work', label: 'Work Account' },
+      { value: 'happier.openai/account:profile:personal', label: 'person@example.test' },
+    ] };
+    expect(redactVoiceToolResultForProvider('resolveActionOptions', result, {
+      ...SHARE_ALL, shareSessionSummary: false, shareFilePaths: false, shareDeviceInventory: true,
+    })).toEqual({ optionsSourceId: result.optionsSourceId, options: [
+      { value: 'happier.openai/account:profile:work', label: 'Work Account' },
+      { value: 'happier.openai/account:profile:personal' },
+    ] });
+  });
+
+  it('retains incompleteness in model options and withholds opaque cursor values', () => {
+    const result = { optionsSourceId: 'agents.models.available', options: [{ value: 'private-ref', label: 'Model' }],
+      hasMore: true, nextCursor: 'private-model-cursor', totalCount: 3 };
+    const prefs = { ...SHARE_ALL, shareDeviceInventory: true };
+    expect(redactVoiceActionExecutionResultForProvider('action.options.resolve', { ok: true, result }, prefs))
+      .toEqual({ ok: true, result: { optionsSourceId: 'agents.models.available', options: [{ label: 'Model' }], hasMore: true, totalCount: 3 } });
+  });
 
   it('projects runner catalog titles and the task result without selectors or refs', () => {
     const prefs = { ...SHARE_ALL, shareDeviceInventory: true };
