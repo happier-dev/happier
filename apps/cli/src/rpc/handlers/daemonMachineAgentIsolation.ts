@@ -17,6 +17,7 @@ import { compareMachineSetupEffectPlansV1 } from '@happier-dev/cli-common/machin
 import { logger } from '@/ui/logger';
 import { runElevatedEffect } from '@/machines/adminAccess/runElevatedEffect';
 import { observeAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
+import { resolveAgentIsolationSharedLaunchCli } from '@/daemon/agentIsolation/memberCliRuntime';
 import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentExecutionIdentity,
   type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -135,7 +136,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy)
           && resolveMachineAgentExecutionPlacementV1({ policy: preview.policy, platform: effects.platform }) === 'sharedAgent'
           && !preview.plan.requiresAdmin && preview.plan.sessionsToReplace === 0 && effects.nativeReadiness
-          ? await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+          ? await observeAgentIsolationNativeReadiness({ installedCli: resolveAgentIsolationSharedLaunchCli(effects),
             roots: preview.plan.roots.map(root => root.path), signal: context?.signal,
             privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system }) : undefined);
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
@@ -307,7 +308,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
               comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, ready.setupPlan),
               pendingFields: ready.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
                 : [`nativeFacts[${index}].status`]) });
-          } else if (effects.nativeReadiness) status = await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+          } else if (effects.nativeReadiness) status = await observeAgentIsolationNativeReadiness({ installedCli: resolveAgentIsolationSharedLaunchCli(effects),
             roots: ready.preview.plan.roots.map(root => root.path), signal: context?.signal,
             privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system });
           // Neither changed policy/Workspace census nor a newly admitted

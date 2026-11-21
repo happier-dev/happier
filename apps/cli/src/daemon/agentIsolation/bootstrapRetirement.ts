@@ -5,17 +5,22 @@ import { buildAgentIsolationMemberRetirementSteps, buildAgentIsolationProvisioni
 import { projectAgentIsolationMemberBinding, type AgentIsolationMemberBinding } from './memberBindings';
 
 type Retirement = NonNullable<AgentIsolationEffectPlanV1['retirement']>;
+const legacySharedRunAsId = 'agent-runas-legacy';
 
 /** Inventory comes from the bootstrap producer, including useradd's implicit
  * primary group. This program is CHECK-only; only exact removable files enter APPLY. */
 export function buildAgentIsolationBootstrapRetirementObservations(input: Readonly<{
-  daemonUsername: string; daemonPrimaryGroup: string; binaryPath: string; memberBinaryPath?: string;
+  daemonUsername: string; daemonPrimaryGroup: string; binaryPath: string; memberBinaryPath?: string; sharedBinaryPath?: string;
   memberBindings?: readonly AgentIsolationMemberBinding[];
 }>): MachineRecipeStepV1[] {
   const bootstrap = buildAgentIsolationProvisioningSteps(input).flatMap((step): MachineRecipeStepV1[] => {
-    if (step.kind === 'file' && step.content?.kind === 'literal') return [{ id: step.id, kind: 'file',
-      path: step.path, owner: step.owner, group: step.group, mode: step.mode, state: 'absent',
-      expectedContentDigest: createHash('sha256').update(step.content.value).digest('hex') }];
+    if (step.kind === 'file' && step.content?.kind === 'literal') {
+      const retirement = { id: step.id, kind: 'file', path: step.path, owner: step.owner, group: step.group,
+        mode: step.mode, state: 'absent', expectedContentDigest: createHash('sha256').update(step.content.value).digest('hex') } as const;
+      return step.id === 'agent-runas' && step.expectedContentDigest
+        ? [retirement, { ...retirement, id: legacySharedRunAsId, expectedContentDigest: step.expectedContentDigest }]
+        : [retirement];
+    }
     return step.kind === 'user' ? [step, { id: 'agent-primary-group', kind: 'group', name: step.username, members: [] }] : [step];
   });
   return [...bootstrap, ...(input.memberBindings ?? []).flatMap(binding => {
@@ -30,6 +35,9 @@ export function buildAgentIsolationBootstrapRetirementObservations(input: Readon
 /** Native CHECK owns presence and exact-file safety. Legacy bootstrap did not
  * record prior ownership/configuration, so retirement never guesses those values. */
 export function projectAgentIsolationBootstrapRetirement(plan: Pick<MachineSetupEffectPlanV1, 'steps' | 'nativeFacts'>): Retirement {
+  // Both facts concern one sudoers file. Only a native match for the exact
+  // legacy bytes can supersede the current rule's observation.
+  const legacyMatched = plan.nativeFacts.some(fact => fact.stepId === legacySharedRunAsId && fact.status === 'drifted');
   return plan.steps.map((step, index): Retirement[number] => {
     const fact = plan.nativeFacts[index];
     const base = { stepId: step.id, kind: step.kind, target: 'path' in step ? step.path
@@ -54,7 +62,7 @@ export function projectAgentIsolationBootstrapRetirement(plan: Pick<MachineSetup
         : 'Back up and inspect retained home or workspace files before an administrator removes the directory; disabling isolation never deletes authored data.' };
     return { ...base, observation, action: 'retain', reasonCode: 'prior_value_unknown',
       remedy: 'Bootstrap did not retain the previous permission or Git configuration. Have an administrator review current users and restore the intended value explicitly.' };
-  });
+  }).filter(effect => effect.stepId !== (legacyMatched ? 'agent-runas' : legacySharedRunAsId));
 }
 
 /** Derive the inventory without claiming an OS principal or actionable plan.

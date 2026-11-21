@@ -75,6 +75,7 @@ function buildMemberRunAsStep(input: Readonly<{ daemonUsername: string; binaryPa
 export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   daemonUsername: string; daemonPrimaryGroup: string | null; binaryPath: string; requesterIdentity?: AgentIsolationMemberRequester;
   memberBinaryPath?: string;
+  sharedBinaryPath?: string;
   retainedMemberUid?: number;
   /** Retire named-user ancestry grants left by the former private plugin code root. */
   legacyPluginCodeRoot?: string;
@@ -93,8 +94,17 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
     return steps;
   };
   if (!input.requesterIdentity && input.daemonPrimaryGroup) {
+    const bootstrapInput = { ...input, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: tools.toolsRoot };
+    let bootstrap = buildAgentIsolationBootstrapSteps(bootstrapInput);
+    if (input.sharedBinaryPath && input.sharedBinaryPath !== input.binaryPath) {
+      const legacyRule = bootstrap.find(step => step.id === 'agent-runas');
+      if (legacyRule?.kind !== 'file' || legacyRule.content?.kind !== 'literal') throw new Error('Missing shared RunAs rule');
+      const digest = createHash('sha256').update(legacyRule.content.value, 'utf8').digest('hex');
+      bootstrap = buildAgentIsolationBootstrapSteps({ ...bootstrapInput, binaryPath: input.sharedBinaryPath })
+        .map(step => step.id === legacyRule.id && step.kind === 'file' ? { ...step, expectedContentDigest: digest } : step);
+    }
     return [...(tools.persistence ? [machineStateRootStep, ...toolsParent] : []),
-      ...buildAgentIsolationBootstrapSteps({ ...input, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: tools.toolsRoot }),
+      ...bootstrap,
       ...toolsLayout,
       ...retirePluginTraversal('happier-agent')];
   }

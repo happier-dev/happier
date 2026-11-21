@@ -13,7 +13,7 @@ import type { SessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTran
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
-import { isAgentIsolationMemberCliCurrent, type AgentIsolationMemberCliRuntime } from './memberCliRuntime';
+import { isAgentIsolationMemberCliCurrent, resolveAgentIsolationSharedLaunchCli, type AgentIsolationMemberCliRuntime } from './memberCliRuntime';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 
 /** Explicit launch preparation may qualify a successor's unknown shared-user
@@ -48,7 +48,12 @@ export async function observeUnqualifiedAgentIsolationNativeReadiness(input: Rea
     || status.setup || status.prerequisite || status.probeFailure || !effects.nativeReadiness) return;
   const roots = effects.readRoots();
   if (!roots) return;
-  return observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+  signal?.throwIfAborted();
+  if (effects.sharedCliRuntime && !await isAgentIsolationMemberCliCurrent(effects.sharedCliRuntime)) {
+    signal?.throwIfAborted();
+    return { kind: 'unavailable', code: 'payload_not_accessible' };
+  }
+  return observeAgentIsolationNativeReadiness({ installedCli: resolveAgentIsolationSharedLaunchCli(effects),
     roots: roots.map(root => root.path), privateRoots: effects.nativeReadiness.privateRoots,
     system: effects.nativeReadiness.system, signal });
 }

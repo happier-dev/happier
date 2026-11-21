@@ -17,6 +17,13 @@ export function resolveAgentIsolationMemberCliRuntime(installedCli: string) {
 
 export type AgentIsolationMemberCliRuntime = ReturnType<typeof resolveAgentIsolationMemberCliRuntime>;
 
+export function resolveAgentIsolationSharedLaunchCli(input: Readonly<{
+  installedCli: string;
+  sharedCliRuntime?: AgentIsolationMemberCliRuntime;
+}>): string {
+  return input.sharedCliRuntime?.executable ?? input.installedCli;
+}
+
 function isProtectedDirectory(path: string): boolean {
   const stat = lstatSync(path);
   return stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o022) === 0;

@@ -19,10 +19,66 @@ import { createDaemonAgentIsolationEffects } from './createDaemonAgentIsolationE
 import { buildAgentIsolationMemberCliRuntimeSteps, isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
 import { resolveAgentLaunchRuntimeCustody } from './agentLaunchAccountSettings';
 import { resolveRetainedBundledPluginRoot } from '@/plugins/runtime/retainedPluginSourceAttestation';
+import { buildAgentIsolationBootstrapRetirementObservations, projectAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
+  it.skipIf(process.platform !== 'linux')('replaces and retires only recognized shared RunAs rules', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-shared-runas-'));
+    const path = join(root, '91-happier-agent');
+    const input = { daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
+      binaryPath: '/home/happier-bootstrap.guest/.happier/cli/current/happier' };
+    const protectedInput = { ...input, sharedBinaryPath: '/opt/happier-member-cli-test/current/happier' };
+    const runAsRule = (params: typeof input) => {
+      const step = buildAgentIsolationProvisioningSteps(params).find(candidate => candidate.id === 'agent-runas');
+      if (step?.kind !== 'file' || step.content?.kind !== 'literal') throw new Error('Missing shared RunAs rule');
+      return { step: { ...step, path }, bytes: step.content.value };
+    };
+    const legacy = runAsRule(input);
+    const replacement = runAsRule(protectedInput);
+    const foreign = `${legacy.bytes}# administrator-managed content\n`;
+    const basis = { kind: 'setup' as const, machineId: 'machine', desiredRevision: 1 };
+    const backend = createMachineSetupNativeBackend({ run: async ({ executable, args }) => {
+      // Only system identities and visudo are substituted. Native CHECK and
+      // APPLY inspect ownership, mode, exact bytes and atomic file effects.
+      if (executable === 'getent') return { code: 0, stderr: '', stdout: args.includes('passwd')
+        ? `root:x:${process.getuid!()}:${process.getgid!()}::/root:/bin/sh\n` : `root:x:${process.getgid!()}:\n` };
+      if (executable === 'visudo') return { code: 0, stderr: '', stdout: '' };
+      throw new Error(`Unexpected OS command ${executable}`);
+    } });
+    try {
+      await writeFile(path, legacy.bytes, { mode: 0o440 });
+      const enabling = await checkMachineSetupEffectPlan({ basis, steps: [replacement.step], backend });
+      expect(enabling.nativeFacts[0]).toMatchObject({ status: 'drifted' });
+      expect(await applyMachineSetupEffectPlan({ plan: enabling, backend })).toMatchObject({ status: 'applied' });
+      expect(await readFile(path, 'utf8')).toContain(` = ${protectedInput.sharedBinaryPath} agent-launch`);
+
+      const retirementSteps = buildAgentIsolationBootstrapRetirementObservations(protectedInput)
+        .flatMap(step => step.kind === 'file' && step.path === '/etc/sudoers.d/91-happier-agent' ? [{ ...step, path }] : []);
+      for (const bytes of [replacement.bytes, legacy.bytes, foreign]) {
+        await chmod(path, 0o640).catch(error => { if (error.code !== 'ENOENT') throw error; });
+        await writeFile(path, bytes, { mode: 0o440 });
+        await chmod(path, 0o440);
+        const disabling = await checkMachineSetupEffectPlan({ basis, steps: retirementSteps, backend });
+        const reviewed = projectAgentIsolationBootstrapRetirement(disabling);
+        expect(reviewed).toHaveLength(1);
+        if (bytes === foreign) {
+          expect(reviewed[0]).toMatchObject({ action: 'retain', reasonCode: 'foreign_effect_conflict' });
+          const refused = await checkMachineSetupEffectPlan({ basis, steps: [replacement.step], backend });
+          expect(refused.nativeFacts[0]).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+          expect(await readFile(path, 'utf8')).toBe(foreign);
+        } else {
+          expect(reviewed[0]).toMatchObject({ action: 'remove' });
+          const exact = await checkMachineSetupEffectPlan({ basis,
+            steps: retirementSteps.filter(step => step.id === reviewed[0]!.stepId), backend });
+          expect(await applyMachineSetupEffectPlan({ plan: exact, backend })).toMatchObject({ status: 'applied' });
+          await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+        }
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it.skipIf(process.platform !== 'linux')('reviews the member CLI payload through the elevated setup interpreter', async () => {
     const root = await mkdtemp(join(tmpdir(), "happier member's CLI-"));
     try {

@@ -2166,13 +2166,15 @@ owner. Setup, administrator-policy transitions, Updates, reachability and
 self-hosted deployment effects share this resolver; native executable
 availability is still checked before sudo.
 
-Agent isolation (Separate users) is the exception: its root interpreter and its
-member `agent-launch` both run the identity's installed managed CLI
-(`<install home>/cli/current/happier`), because member users execute that exact
-path through their sudoers rule and cannot read the source runtime. A missing
-binary settles as `managed_cli_unavailable` with its install remedy; an older
-installed payload runs older isolation code under a newer daemon. A source Stack
-does not install that binary. Each source daemon bundle carries a revision-matched native payload at
+Agent isolation (Separate users) uses the identity's installed managed CLI
+(`<install home>/cli/current/happier`) for the elevated setup interpreter. The
+reviewed setup publishes the CLI and its companion files to a root-owned Linux
+runtime for member `agent-launch`. The shared Agent uses the same runtime when
+the managed CLI lives under a private daemon or user home. Each RunAs rule names
+the selected installed launch path exactly. Isolation requires a managed CLI
+installation. A missing or unreadable payload reports a typed unavailability,
+and an older installed payload runs older isolation code under a newer daemon.
+Each source daemon bundle carries a revision-matched native payload at
 `source-runtime/tree-daemon-*/guest-payload`, but a reload neither promotes it
 into an identity's CLI home nor refreshes an earlier hand-installed one; the
 reload verdict only checks that a managed CLI is present at an unchanged path.

@@ -27,6 +27,7 @@ export type AgentIsolationEffectDependencies = Readonly<{
   platform: NodeJS.Platform;
   installedCli: string;
   memberCliRuntime?: AgentIsolationMemberCliRuntime;
+  sharedCliRuntime?: AgentIsolationMemberCliRuntime;
   /** Former code root whose named-UID ancestor grants retire at provisioning. */
   legacyPluginCodeRoot?: string;
   readRoots(): readonly Readonly<{ rootId: string; path: string }>[] | null;

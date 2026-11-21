@@ -30,6 +30,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { prepareRequesterNativeOperation } from './prepareNativeOperation';
 import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { resolveAgentIsolationMemberCliRuntime, resolveAgentIsolationSharedLaunchCli } from './memberCliRuntime';
 
 const nativeAccount = vi.hoisted(() => ({ home: '/var/lib/happier-agent' }));
 
@@ -50,7 +51,7 @@ vi.mock('node:child_process', async importOriginal => {
   } };
 });
 
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 it.skipIf(process.platform !== 'linux')('reports unresolved probe cleanup without deleting a substituted path or losing cancellation', async () => {
   const warning = vi.spyOn(logger, 'warn');
@@ -89,7 +90,11 @@ it.skipIf(process.platform !== 'linux')('reports unresolved probe cleanup withou
   } finally { warning.mockRestore(); }
 });
 
-it.skipIf(process.platform !== 'linux').each([false, true])('settles applied effects through one native qualification (available initially: %s), preserves refusal and performs no idle probes', async initiallyAvailable => {
+it.skipIf(process.platform !== 'linux').each([
+  { initiallyAvailable: false, privateInstall: false },
+  { initiallyAvailable: true, privateInstall: false },
+  { initiallyAvailable: true, privateInstall: true },
+])('settles through one native qualification (available: $initiallyAvailable, private install: $privateInstall)', async ({ initiallyAvailable, privateInstall }) => {
   await withTempDir('isolation-readiness-', async directory => {
     const workspace = join(directory, 'workspace');
     await mkdir(workspace);
@@ -107,15 +112,26 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     await writeFile(outside, 'agent');
     const privateRoot = join(directory, 'daemon-private');
     await mkdir(privateRoot, { mode: 0o700 });
+    const installedCli = privateInstall ? join(privateRoot, 'cli/current/happier') : '/opt/happier/cli/current/happier';
+    if (privateInstall) {
+      const version = join(privateRoot, 'cli/versions/carrying-cut');
+      await mkdir(version, { recursive: true, mode: 0o755 });
+      await writeFile(join(version, 'happier'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      await symlink('versions/carrying-cut', join(privateRoot, 'cli/current'));
+    }
+    const memberCliRuntime = privateInstall ? resolveAgentIsolationMemberCliRuntime(installedCli) : undefined;
+    const runAsCli = memberCliRuntime?.executable ?? installedCli;
     const publications: MachineAgentIsolationStatusV1[] = [];
     const native = createAgentIsolationEffectsBoundary({ installationId: 'installation',
-      installedCli: '/opt/happier/cli/current/happier', readRoots: () => [{ rootId: 'workspace', path: workspace }],
+      installedCli, readRoots: () => [{ rootId: 'workspace', path: workspace }],
       readSessionsToReplace: () => trackedSessions.size, publishStatus: async value => { publications.push(value); status = value; } });
+    vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', privateInstall ? privateRoot : '/opt/happier');
     const production = createDaemonAgentIsolationEffects({ getMachineClient: () => null,
       adminAccess: { target: () => ({ serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' }),
         observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
       readRoots: native.effects.readRoots, trackedSessions,
       protectedRoots: [privateRoot], privateRoots: [privateRoot] });
+    expect(production.installedCli).toBe(installedCli);
     let qualificationEnabled = initiallyAvailable;
     const nativeReadiness = production.nativeReadiness && { ...production.nativeReadiness, system: {
       // Process/OS boundary only. The actual frame, finite readiness owner,
@@ -126,7 +142,11 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
           : `happier-agent:x:999:988::${nativeAccount.home}:/usr/sbin/nologin\n`, stderr: '' };
         probes++;
         expect(command).toBe('sudo');
-        expect(args).toEqual(['-n', '-u', 'happier-agent', '--', effects.installedCli, 'agent-launch']);
+        // As on the sandbox guest, the shared UID cannot traverse the daemon's mode-0700 home.
+        if (privateInstall && args[4] === installedCli) {
+          throw Object.assign(new Error('sudo: unable to execute private daemon CLI'), { code: 1 });
+        }
+        expect(args).toEqual(['-n', '-u', 'happier-agent', '--', runAsCli, 'agent-launch']);
         const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes!], { objectMode: false }));
         expect(frame.executable).toBe('/bin/sh');
         await execFileWithDeadline('/bin/sh', ['-n', '-c', frame.args[1]!], { encoding: 'utf8' });
@@ -158,7 +178,8 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
       // Native local transport setup is exercised separately below the same
       // OS boundary; this handler test has no Session/socket authority.
     } };
-    const effects = { ...native.effects, readSessionsToReplace: production.readSessionsToReplace,
+    const effects = { ...native.effects, memberCliRuntime, sharedCliRuntime: production.sharedCliRuntime,
+      readSessionsToReplace: production.readSessionsToReplace,
       get nativeReadiness() { return qualificationEnabled ? nativeReadiness : undefined; } };
     const handlers: RpcHandlerMap = new Map();
     registerDaemonMachineAgentIsolationRpcHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
@@ -213,7 +234,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     // This registered global readiness path owns the existing shared account.
     // Member-native qualification is covered through its separate own-status owner.
     const ownerAgent = createAgentIsolationSessionContext({ machine: machineContext,
-      managedHappierBinaryPath: effects.installedCli, readMaterial: () => material,
+      managedHappierBinaryPath: resolveAgentIsolationSharedLaunchCli(effects), readMaterial: () => material,
       sessionRequester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
       sessionCustodianAccountId: 'owner', hostHomeServerIdentityId: 'home', sessionRequesterHomeServerIdentityId: 'home' });
     const input = { launch: { command: '/usr/bin/true', args: [], cwd: workspace,
@@ -248,12 +269,22 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     expect(probes).toBe(1);
     const admitted = await restrictedLaunch();
     expect(admitted.command).toBe('sudo');
-    expect(admitted.args).toEqual(['-n', '-u', 'happier-agent', '--', effects.installedCli, 'agent-launch']);
+    expect(admitted.args).toEqual(['-n', '-u', 'happier-agent', '--', runAsCli, 'agent-launch']);
     const frame = await readAgentLaunchFrame(Readable.from([admitted.stdinPreamble!], { objectMode: false }));
     expect(frame.executable).toBe(input.launch.command);
     expect(frame.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
     expect(frame.selectedMaterials.some(file => file.relativePath === '.happier/session-mcp.json')).toBe(true);
     await admitted.release();
+    if (privateInstall) {
+      expect(native.mutations.filter(step => step === 'member-cli-payload')).toEqual(['member-cli-payload']);
+      // The OS fixture does not publish the actual protected generation. When
+      // a successor needs qualification, the missing generation must fail closed.
+      status = { kind: 'unavailable', code: 'provisioning_unavailable' };
+      await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+        details: { reason: 'payload_not_accessible' }, execLaunch: 'notStarted' });
+      expect(probes).toBe(1);
+      return;
+    }
     const terminal = await authorizeResolvedProjectExecLaunchForHost({ ...input, agentIsolation: ownerAgent, agentLaunchKind: 'terminal' });
     expect(terminal.command).toBe('sudo');
     await terminal.release();

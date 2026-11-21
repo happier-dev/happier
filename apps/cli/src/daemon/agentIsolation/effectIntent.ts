@@ -42,6 +42,7 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
       remedy: 'Restore the private member binding inventory and retry, or have an administrator inspect retained managed member RunAs rules.' }] : [];
   const daemon = await effects.elevation.observe().catch(() => null);
   const memberBinaryPath = effects.memberCliRuntime?.executable;
+  const sharedBinaryPath = effects.sharedCliRuntime?.executable;
   if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) {
     if (!enabled) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, steps: [],
       retirement: [...buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli, memberBindings, memberBinaryPath), ...retirementWarnings] } };
@@ -49,13 +50,14 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   }
   if (!enabled) {
     const retirementObservations = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: daemon.daemonUsername,
-      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, memberBinaryPath, memberBindings });
+      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, sharedBinaryPath, memberBinaryPath, memberBindings });
     return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, daemonObservation: daemon,
       steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations, retirementWarnings } };
   }
   let runtimeSteps: MachineRecipeStepV1[] = [];
-  if (effects.memberCliRuntime && (requesterIdentity || memberProvisioning === 'linuxUsersV1')) {
-    try { runtimeSteps = await buildAgentIsolationMemberCliRuntimeSteps(effects.memberCliRuntime); }
+  const cliRuntime = requesterIdentity || memberProvisioning === 'linuxUsersV1' ? effects.memberCliRuntime : effects.sharedCliRuntime;
+  if (cliRuntime) {
+    try { runtimeSteps = await buildAgentIsolationMemberCliRuntimeSteps(cliRuntime); }
     catch { return { kind: 'unavailable' as const, status: { kind: 'unavailable', code: 'payload_not_accessible' } satisfies UnavailableStatus }; }
   }
   if (requesterIdentity) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
@@ -76,7 +78,8 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   }
   const { roots, ancestorAcls } = workspace;
   const provisioningSteps = buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername,
-    daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, legacyPluginCodeRoot: effects.legacyPluginCodeRoot });
+    daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, sharedBinaryPath,
+    legacyPluginCodeRoot: effects.legacyPluginCodeRoot });
   // An explicitly admitted shared Workspace still owns its required ancestry.
   // Do not give one native plan contradictory present/absent effects.
   const workspaceTraversalPaths = new Set(ancestorAcls.map(acl => acl.path));

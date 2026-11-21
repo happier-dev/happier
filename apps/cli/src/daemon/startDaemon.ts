@@ -284,6 +284,7 @@ import { createDaemonPluginRuntimeOwner, createDaemonPluginTransferRpcResolver }
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
 import { createAgentIsolationNativeReadinessQualification } from './agentIsolation/agentIsolationReadiness';
 import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
+import { resolveAgentIsolationSharedLaunchCli } from './agentIsolation/memberCliRuntime';
 import { createDaemonPluginDevelopmentReviewApprovalPublisher } from '@/plugins/daemon/developmentReviewApproval';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -1904,7 +1905,7 @@ export async function startDaemon(
     });
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
     const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
-      managedHappierBinaryPath: isolationEffects.installedCli,
+      managedHappierBinaryPath: resolveAgentIsolationSharedLaunchCli(isolationEffects),
       memberManagedHappierBinaryPath: isolationEffects.memberCliRuntime?.executable,
       qualifyNativeReadiness: createAgentIsolationNativeReadinessQualification({
         read: () => agentIsolation.read(), effects: isolationEffects,
