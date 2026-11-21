@@ -227,7 +227,9 @@ export async function exchangeConnectedServiceOauthViaProxy(
 
   if (!response.ok) {
     // Keep the status on every failure so the caller can tell a server error from a rejected code.
-    const json = await response.json().catch(() => null);
+    // Only a rejected request carries a body worth reading; a 5xx/408/429 may stall its body.
+    const rejected = response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429;
+    const json = rejected ? await response.json().catch(() => null) : null;
     throw createConnectedServiceApiError(json, {
       status: response.status,
       fallbackCode: 'connect_oauth_exchange_failed',
