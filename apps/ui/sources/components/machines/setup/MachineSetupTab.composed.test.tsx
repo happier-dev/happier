@@ -227,6 +227,84 @@ it('opens an opaque saved setup source from the exact plan projection without fe
   });
   expect(harness.requests.some(request => request.path.startsWith('/v1/machines/presets/'))).toBe(false);
 });
+it('names an attached encrypted preset from the owner’s opened catalog on a bodyless Check', async () => {
+  const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+  const { createAccountEncryptionCurrentnessFixtureForCredentials } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+  const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+  const { sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+  const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+  const { ExternalActionRequestEnvelopeV2Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+  const { openExternalActionRequestV2, prepareExternalActionResponseV2 } = await import('@happier-dev/protocol/actions/externalActionEncryption');
+  const { projectExternalActionMachineRuntimeDemandV1 } = await import('@happier-dev/protocol/actions/actionSpecs');
+  const { readOriginalAccountActionAuthentication } = await import('@/sync/api/externalActionAccountTransport');
+  const { getRandomBytes } = await import('@/platform/cryptoRandom');
+  const { MachineSetupTab } = await import('./MachineSetupTab');
+  const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }),
+    secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') };
+  const encryption = await createEncryptionFromAuthCredentials(credentials);
+  const authentication = readOriginalAccountActionAuthentication(credentials.token);
+  if (!authentication) throw new Error('Missing owner Action authentication');
+  const material = { type: 'dataKey' as const, machineKey: encryption.getContentPrivateKey() };
+  const homeId = 'srv_owner_preset';
+  const home = await harness.addHome({ name: 'Private preset', serverUrl: 'https://owner-preset.example',
+    serverIdentityId: homeId, accountId: 'owner', currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+  harness.answer(home, '/v1/account/encryption/currentness', {
+    body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
+  });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  const machine = await publishManagedDevbox(serverId);
+  const presetId = 'owner-preset';
+  const name = 'Private build tools';
+  const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+    content: { v: 1, name, setup: { scripts: [{ body: 'echo private' }] } },
+    recipientCensus: [{ account: { kind: 'account', accountId: 'owner', name: null, firstName: null, lastName: null,
+      username: null, avatarUrl: null }, readiness: { status: 'available',
+      contentPublicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+      contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) },
+    envelopeStatus: 'missing' }], randomBytes: getRandomBytes });
+  const identity = createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner', machine });
+  harness.answer(home, '/v1/machines/devbox', { body: { machine: {
+    ...identity, storageMode: 'e2ee', access: { ...identity.access, resourceMode: 'e2ee' },
+    dataEncryptionKey: null, metadata: null, daemonState: null,
+  } } });
+  const header = { id: presetId, homeId, revision: 3, setupRevision: 1 };
+  harness.answer(home, '/v1/machines/presets/list', { select: input =>
+    input && typeof input === 'object' && 'projection' in input && input.projection === 'revisions'
+      ? { body: { kind: 'revisions', presets: [header] } }
+      : { body: { kind: 'listed', presets: [{
+        ...header, owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'e2ee', ...sealed,
+      }] } } });
+  const source = { kind: 'accountPresetOpaque', presetId, presetRevision: 3, setupRevision: 1,
+    contentEncryptionMode: 'e2ee' } as const;
+  const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 2, exclusions: [], support: [],
+    sources: [source, { kind: 'direct', setup: {} }] });
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const request = ExternalActionRequestEnvelopeV2Schema.parse(input);
+    const binding = { serverIdentityId: homeId, accountId: 'owner', authentication,
+      actionId: 'machines.setup.plan' as const, requestId: request.requestId, target: request.target };
+    expect(openExternalActionRequestV2({ envelope: request, binding, material,
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 })?.input)
+      .toEqual({ homeId, machineId: 'devbox', mode: 'check' });
+    const { response } = prepareExternalActionResponseV2({ binding, request, material, randomBytes: getRandomBytes,
+      executedMachineId: 'devbox', execution: { ok: true, result: plan } });
+    return { body: response };
+  } });
+  const { machineSetupSourceApplyOriginKeyV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+  const { ItemList } = await import('@/components/ui/lists/ItemList');
+  const screen = await renderScreen(<ItemList>
+    <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />
+  </ItemList>);
+  onTestFinished(() => screen.unmount());
+  const testID = `machine-setup-source:${machineSetupSourceApplyOriginKeyV1(source)}`;
+  const { readMachinePresetsSnapshot } = await import('@/sync/engine/machines/machinePresetsResource');
+  await waitForHomeGovernance(() => expect(readMachinePresetsSnapshot(serverId, homeId, 'owner').value)
+    .toEqual([expect.objectContaining({ id: presetId, name })]));
+  await waitForHomeGovernance(() => expect(harness.requests.map(request => request.path)).toContain('/v1/actions/machines.setup.plan'));
+  await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === testID
+    && typeof node.props.title === 'string')[0]?.props.title).toBe(name));
+});
+
 it('reads bodyless setup notices and preserves the attached copy until candidate Review', async () => {
   const home = await harness.addHome({ name: 'Preset headers', serverUrl: 'https://preset-headers.example',
     serverIdentityId: 'srv_preset_headers', accountId: 'owner', currentAccount: true });

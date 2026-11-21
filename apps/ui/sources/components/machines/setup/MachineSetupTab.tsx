@@ -139,10 +139,10 @@ function MachineSetupRoot(
   const localize = usePluginLocalizedTextResolver({ projection });
   const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
   const presets = useMachinePresets(serverIds);
+  const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
   const presetList = React.useMemo(
-    () =>
-      readMachineSetupPresetChoices(presets.presetsByServerId[props.serverId] ?? [], projection, localize),
-    [presets.presetsByServerId, props.serverId, projection, localize],
+    () => readMachineSetupPresetChoices(presetCatalog, projection, localize),
+    [presetCatalog, projection, localize],
   );
   const openedSources = React.useMemo(
     () => readOpenedMachineSetupSources(setup.sourcePresentations),
@@ -172,13 +172,9 @@ function MachineSetupRoot(
   const attachable = presetList.filter(
     (entry) => !attachedKeys.has(presetOriginKey(entry)),
   );
-  const nameOf = (source: AttachedSetupSource) => {
-    if (!source.opened) return t('machinePresets.setup.tab.presetUnreadable');
-    return source.opened.source.kind === 'accountPreset'
-      ? source.opened.presetName ?? t('machinePresets.setup.tab.presetUnreadable')
-      : source.opened.source.kind === 'bundledPreset' ? machineSetupSourceName(source.opened.source, presetList)
-        : t('machinePresets.setup.tab.presetUnreadable');
-  };
+  // A bodyless Check still identifies the preset. The Account catalog supplies its opened name.
+  const nameOf = (source: AttachedSetupSource) => source.opened?.presetName
+    ?? machineSetupSourceName(source.reference, source.reference.kind === 'bundledPreset' ? presetList : presetCatalog);
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
@@ -189,7 +185,6 @@ function MachineSetupRoot(
     && setup.sourcePresentations.every((source) => source.kind === 'opened');
   const capturable = allSourcesOpened
     && openedSources.some(({ source }) => describeMachineSetup(source.setup).length > 0);
-  const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
   const toolsSection = (
     <ItemGroup
       title={t('machinePresets.setup.tab.tools')}
@@ -803,6 +798,7 @@ function RecipeRow(
 type AttachedSource = Exclude<MachineSetupSourceEntryV1, { kind: 'direct' }>;
 type AttachedSetupSource = Readonly<{
   sourceKey: string;
+  reference: Exclude<MachineSetupSourceApplyV1[number], { kind: 'direct' }>;
   opened: MachineSetupOpenedSourceV1 | null;
 }>;
 const NO_SOURCES: readonly MachineSetupSourceApplyV1[number][] = Object.freeze([]);
@@ -816,6 +812,7 @@ function readAttachedMachineSetupSources(
       ? []
       : [{
           sourceKey: machineSetupSourceApplyOriginKeyV1(source),
+          reference: source,
           opened: openedByIndex.get(sourceIndex) ?? null,
         }],
   );
