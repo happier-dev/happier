@@ -1056,6 +1056,11 @@ Runs keep their own permission and cancellation lifetimes. A late acknowledged
 partial can enrich the same unreturned cancelled reply; an already returned reply
 is never replayed.
 
+While OpenCode's exact-turn cancellation request is in flight, its native abort
+result can arrive through terminal history before the HTTP response. The adapter
+publishes that result through the existing host cancellation event. Other
+provider errors still publish a failure, even while Stop is in progress.
+
 [`AgentRuntime`](../packages/plugin-sdk/src/agentRuntime/runtime.ts) has two mutually exclusive forms: a Session factory or an execution-only Run factory. A Session-capable Agent does not add an independent Run lifecycle. For Session-owned Runs, the host binds its Session runtime into the shared Execution Run adapter in [`nativeAgentExecutionRun.ts`](../apps/cli/src/agent/runtime/bridges/executionRun/nativeAgentExecutionRun.ts). Detached execution requires the Session factory's declared `executionRunContextV1` facet; it cannot fabricate a parent Session. The shared SDK implementation in [`executionRun.ts`](../packages/plugin-sdk/src/agentRuntime/executionRun.ts) owns correlated Run events, cancellation, terminalization and disposal for the finite/conversation adapters.
 
 In 0.3 development, a detached native Run with host-owned MCP placement receives

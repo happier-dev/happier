@@ -1,4 +1,4 @@
-import { asRecord } from './openCodeParsing.js';
+import { asRecord, isOpenCodeNativeAbortError } from './openCodeParsing.js';
 import { classifyOpenCodeAssistantCompletion } from './transcript/projection/index.js';
 
 export type OpenCodeNativeChildStatus = 'running' | 'completed' | 'failed' | 'aborted';
@@ -20,8 +20,7 @@ export function readOpenCodeNativeChildOutcome(messages: readonly unknown[]): Ex
     if (info.role !== 'assistant' && info.type !== 'assistant') continue;
     if (asRecord(info.time)?.completed === undefined) return null;
     if (info.error) {
-      const error = asRecord(info.error);
-      return error?.name === 'MessageAbortedError' || error?.name === 'AbortError' ? 'aborted' : 'failed';
+      return isOpenCodeNativeAbortError(info.error) ? 'aborted' : 'failed';
     }
     return classifyOpenCodeAssistantCompletion(info).kind === 'terminal_success' ? 'completed' : null;
   }

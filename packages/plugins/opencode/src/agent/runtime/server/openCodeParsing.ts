@@ -4,6 +4,12 @@ export function asRecord(value: unknown): Readonly<Record<string, unknown>> | nu
     : null;
 }
 
+/** OpenCode V1 names the error, while V2 tags it with a type. */
+export function isOpenCodeNativeAbortError(value: unknown): boolean {
+  const error = asRecord(value);
+  return error?.name === 'MessageAbortedError' || error?.name === 'AbortError' || error?.type === 'aborted';
+}
+
 export function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }

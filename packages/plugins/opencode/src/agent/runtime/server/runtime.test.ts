@@ -5961,6 +5961,67 @@ describe('createOpenCodeServerRuntime', () => {
     } finally { subscription.dispose(); await native.dispose(); await prepared.dispose(); }
   });
 
+  it.each([
+    { label: 'V2 interruption during Stop', error: { type: 'aborted', message: 'Step interrupted' }, stop: true, cancelled: true },
+    { label: 'V1 abort during Stop', error: { name: 'MessageAbortedError', data: { message: 'Aborted' } }, stop: true, cancelled: true },
+    { label: 'provider abort without Stop', error: { type: 'aborted', message: 'Provider connection aborted' }, stop: false, cancelled: false },
+    { label: 'provider failure during Stop', error: { name: 'ProviderAuthError', data: { message: 'Token refresh failed' } }, stop: true, cancelled: false },
+  ])('settles exact-parent terminal history once for $label', async ({ error, stop, cancelled }) => {
+    const { ctx, harness, runtimeEvents } = createContextFixture();
+    const client = createClientFixture();
+    let providerUserMessageId = '';
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async ({ messageId }) => {
+      providerUserMessageId = messageId ?? '';
+    });
+    const runtime = await createStartedRuntime({ ctx, client, harness });
+    const native = createNativeSessionRuntimeForTest(runtime);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = native.watch(event => events.push(event));
+    try {
+      await expect(native.send({
+        inputIds: ['stop-input'],
+        input: { text: 'Ask which file to review' },
+        delivery: { kind: 'newTurn', turnId: 'stop-turn' },
+      })).resolves.toMatchObject({ status: 'admitted' });
+      const observeTerminalHistory = async () => {
+        client.setMessages([
+          {
+            info: { id: providerUserMessageId, role: 'user', sessionID: 'ses-1', time: { created: 10 } },
+            parts: [{ id: 'user-text', type: 'text', text: 'Ask which file to review' }],
+          },
+          {
+            info: {
+              id: 'stop-assistant', role: 'assistant', sessionID: 'ses-1', parentID: providerUserMessageId,
+              time: { created: 11, completed: 12 }, error,
+            },
+            parts: [],
+          },
+        ]);
+        await runtime.handleProviderEvent('type' in error && stop
+          ? normalizeOpenCodeV2Event('session.execution.interrupted', { sessionID: 'ses-1', reason: 'user' })
+          : { type: 'session.idle', properties: { sessionID: 'ses-1' } });
+      };
+      if (stop) {
+        // OpenCode can publish terminal history before the abort HTTP response resolves.
+        vi.mocked(client.sessionAbort).mockImplementationOnce(observeTerminalHistory);
+        await expect(native.cancel!({ turnId: 'stop-turn', reason: 'user' })).resolves.toMatchObject({ status: 'requested' });
+      } else {
+        await observeTerminalHistory();
+      }
+      const terminal = events.filter(event =>
+        event.kind === 'turn-cancelled' || event.kind === 'turn-failed' || event.kind === 'turn-complete');
+      expect(terminal).toEqual([expect.objectContaining(cancelled
+        ? { kind: 'turn-cancelled', turnId: 'stop-turn' }
+        : { kind: 'turn-failed', turnId: 'stop-turn', diagnostic: expect.objectContaining({ code: 'opencode_provider_session_error' }) })]);
+      expect(runtimeEvents.flatMap(event => event.kind === 'transcript-agent-message-committed'
+        && (event.body.type === 'turn_failed' || event.body.type === 'turn_cancelled') ? [event.body.type] : []))
+        .toEqual([cancelled ? 'turn_cancelled' : 'turn_failed']);
+    } finally {
+      subscription.dispose();
+      await native.dispose();
+    }
+  });
+
   it('defers a live session.error until exact-parent terminal history follows idle', async () => {
     const { ctx, harness, runtimeEvents, transcriptAppends } = createContextFixture();
     const client = createClientFixture();

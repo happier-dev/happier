@@ -26,7 +26,7 @@ import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.
 import { OpenCodeSkillIdentityError } from './openCodeV2Wire.js';
 import type { OpenCodeMcpRegistrationResult, OpenCodeSessionMcpProjection } from './mcpRegistration.js';
 import { OpenCodeMcpRegistrationError, resolveOpenCodeProjectedMcpToolName } from './mcpRegistration.js';
-import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
+import { asRecord, isOpenCodeNativeAbortError, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import type { OpenCodeToolPart } from './foregroundToolTracker.js';
 import { isTerminalOpenCodeToolPartStatus, createOpenCodeForegroundToolTracker } from './foregroundToolTracker.js';
@@ -207,6 +207,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   let modeCatalog: OpenCodeModeCatalogSnapshot = { observedAt: 0, modes: null, currentModeId: null };
   let commandCatalog: Array<Readonly<{ name: string; description?: string }>> | null = null;
   let providerObservedBusy = false;
+  let pendingCancellation: Readonly<{ turnId: string; completion: Promise<void> }> | null = null;
   let nativeCommandTurnId: string | null = null;
   let nativeCommandResponsePending = false;
   let observePendingPromptAcceptance: (() => Promise<void>) | null = null;
@@ -1312,6 +1313,25 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     return foregroundToolTracker.hasActiveToolCalls();
   };
 
+  const settleCancelledTurn = async (turnId: string): Promise<boolean> => {
+    if (!ownsActiveHostTurn(turnId)) return false;
+    claimOpenCodeActiveTurnForTerminalEvent(state);
+    foregroundToolTracker.reset();
+    resetCurrentTurnObservations();
+    providerObservedBusy = false;
+    nativeCommandTurnId = null;
+    nativeCommandResponsePending = false;
+    wakeServerConnectedWaiters();
+    await publishOpenCodeTurnCancelled({
+      publishRuntimeEvent,
+      scope: params.scope,
+      turnId,
+      reason: 'cancelled',
+      emittedAtMs: Date.now(),
+    });
+    return true;
+  };
+
   const failCurrentTurnForProviderSessionError = async (
     error: unknown,
     options: Readonly<{ historyAlreadyInspected?: boolean; providerId?: string | null }> = {},
@@ -1322,6 +1342,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       await markCurrentProviderUserMessageFromHistoryBestEffort('agent_session_error', hostTurnId);
     }
     if (!ownsActiveHostTurn(hostTurnId)) return false;
+    // Terminal history may arrive before the interrupt request responds.
+    // A transport exception alone does not identify a native turn abort.
+    if (pendingCancellation?.turnId === hostTurnId && !(error instanceof Error) && isOpenCodeNativeAbortError(error)) {
+      return await settleCancelledTurn(hostTurnId);
+    }
     const turnId = claimOpenCodeActiveTurnForTerminalEvent(state);
     if (!turnId) return false;
     const emittedAtMs = Date.now();
@@ -2728,24 +2753,22 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     async cancelTurn() {
       const turnId = state.turnInFlight ? state.activeTurnId : null;
       if (!turnId) return;
-      if (state.providerSessionId) {
-        await client.sessionAbort({ sessionId: state.providerSessionId });
+      if (pendingCancellation?.turnId === turnId) return await pendingCancellation.completion;
+      const completion = createDeferred<void>();
+      const cancellation = { turnId, completion: completion.promise };
+      pendingCancellation = cancellation;
+      try {
+        if (state.providerSessionId) {
+          await client.sessionAbort({ sessionId: state.providerSessionId });
+        }
+        await settleCancelledTurn(turnId);
+        completion.resolve();
+      } catch (error) {
+        completion.reject(error);
+      } finally {
+        if (pendingCancellation === cancellation) pendingCancellation = null;
       }
-      if (!state.turnInFlight || state.activeTurnId !== turnId) return;
-      claimOpenCodeActiveTurnForTerminalEvent(state);
-      retirePendingQuestions();
-      resetCurrentTurnObservations();
-      providerObservedBusy = false;
-      nativeCommandTurnId = null;
-      nativeCommandResponsePending = false;
-      wakeServerConnectedWaiters();
-      await publishOpenCodeTurnCancelled({
-        publishRuntimeEvent,
-        scope: params.scope,
-        turnId,
-        reason: 'cancelled',
-        emittedAtMs: Date.now(),
-      });
+      return await completion.promise;
     },
     async listSkills(input = {}) {
       const directory = normalizeString(input.directory) || params.directory;
