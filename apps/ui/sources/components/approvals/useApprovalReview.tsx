@@ -366,9 +366,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     requestKey: props.artifactId,
     actionId: consentActionId,
     address: consentAddress,
-    // Seam for the "On {Machine}" rung: the stored request does not carry its admitted scope yet (the Session
-    // consent core lane adds it as `approvalScope`). Pass that field here once the schema has it.
-    scope: null,
+    // The Machine or Environment admission scoped this request to: the "On {Machine}" rung.
+    scope: parsed?.kind === 'built_in' && parsed.request.v === 2 ? parsed.request.approvalScope ?? null : null,
   });
   const machineId = readDisplayMachineIdForSession({
     sessionId: null,

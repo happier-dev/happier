@@ -1510,6 +1510,29 @@ describe('ApprovalDetailScreen', () => {
     expect(decisionButton(screen, 'approvals.reject')?.props.title).toBe('session.collaboration.discussion.draftReview.decline');
   });
 
+  it.each([['admitted on a Machine', { kind: 'machine', machineId: 'machine-target' }], ['with no admitted scope', undefined]] as const)(
+    'offers "Next time in this Session" for an agent ask %s from the viewer\'s own Session', async (_label, approvalScope) => {
+      const artifact = await createCurrentApprovalArtifact('server-cache');
+      const produced = JSON.parse(artifact.body);
+      const post = { discussionId: 'discussion-1', localId: 'draft-local-1', mentionedSessionIds: [],
+        content: { v: 1, parts: [{ type: 'text', text: 'Start backoff at 800 ms.' }] } };
+      const request = ApprovalRequestV2Schema.parse({ ...produced, actionId: 'discussion.post', actionArgs: post,
+        requestedSurface: 'agent', createdBy: { surface: 'agent', sessionId: 'session-1' },
+        ...(approvalScope ? { approvalScope } : {}),
+        executionOriginV1: { ...produced.executionOriginV1, actionId: 'discussion.post', surface: 'agent',
+          caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 } } });
+      currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+      const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
+      await vi.waitFor(() => expect(screen.findByTestId('approvals.session-consent:always')).not.toBeNull());
+      // The Machine rung exists exactly when admission scoped the request, and reads the Machine by name.
+      if (approvalScope) {
+        expect(screen.findByTestId('approvals.session-consent:scoped')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('machine-target');
+      } else {
+        expect(screen.findByTestId('approvals.session-consent:scoped')).toBeNull();
+      }
+    });
+
   it('keeps settled capability review fields readable without offering another approval', async () => {
     const { getActionSpec } = await import('@happier-dev/protocol/actions');
     const { settleApprovalRequestActionArgs } = await import('@happier-dev/protocol/approvals/approvalRequestTransition');
