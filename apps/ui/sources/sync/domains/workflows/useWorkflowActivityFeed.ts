@@ -80,8 +80,8 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
             if (close === null) {
                 const release = source.acquire({
                     onLive: batch => projection.apply(batch),
-                    onRetained: retained => {
-                        projection.applyRetained(retained.runs);
+                    onRetained: (retained, changedRuns) => {
+                        projection.applyRetained(changedRuns);
                         publish({ ...state, retained, status: connectionStatus(), error: null, historyError: null });
                     },
                     onError: error => publish({ ...state, status: 'failed', error }),

@@ -132,7 +132,7 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
     let unavailable = false;
     const first = createWorkflowRunSummaryFixture({ id: 'first-run', createdAt: '2026-09-08T10:00:01.000Z',
         state: 'succeeded', finishedAt: '2026-09-08T10:00:02.000Z' });
-    const second = createWorkflowRunSummaryFixture({ id: 'second-run' });
+    const second = createWorkflowRunSummaryFixture({ id: 'second-run', state: 'succeeded', finishedAt: '2026-09-08T10:00:03.000Z' });
     const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-host-account',
         fixtureResponse: async (id, input) => {
             if (id !== 'workflow.run.list') throw new Error(`Unexpected activity read: ${id}`);
@@ -188,7 +188,21 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
         }
         // The memoized Events list receives the feed as one prop.
         expect(listInputs.size).toBe(1);
-        await act(async () => { await Promise.all([column.getCurrent().loadMore(), companion.getCurrent().loadMore()]); });
+        const parseDate = vi.spyOn(Date, 'parse');
+        try {
+            await act(async () => {
+                await Promise.all([column.getCurrent().loadMore(), companion.getCurrent().loadMore()]);
+                (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow();
+            });
+            expect(parseDate.mock.calls.filter(([value]) => value === first.finishedAt)).toHaveLength(0);
+        } finally {
+            parseDate.mockRestore();
+        }
+        expect(column.getCurrent().keys.map(key => column.getCurrent().getRow(key))).toEqual([
+            expect.objectContaining({ runId: second.id, event: 'terminal', coverage: 'retained' }),
+            expect.objectContaining({ runId: first.id, event: 'terminal', coverage: 'retained' }),
+        ]);
+        expect(companion.getCurrent().keys).toBe(column.getCurrent().keys);
         expect(reads).toBe(2);
         expect(column.getCurrent().retained?.runs.map(run => run.id)).toEqual(['first-run', 'second-run']);
         expect(column.getCurrent().retained).toBe(companion.getCurrent().retained);
@@ -213,7 +227,7 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
             socketApplyFrame.flushNow();
         });
         const keys = column.getCurrent().keys;
-        expect(keys).toHaveLength(2);
+        expect(keys).toHaveLength(3);
         expect(companion.getCurrent().keys).toBe(keys);
         expect(column.getCurrent().projection.getRow(keys[0]!)).toMatchObject({ kind: 'session', sessionId: 'arrived' });
         await column.rerender({ active: false });
@@ -225,7 +239,7 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
             (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow();
         });
         expect(column.getCurrent().keys).toBe(hiddenKeys);
-        expect(companion.getCurrent().keys).toHaveLength(3);
+        expect(companion.getCurrent().keys).toHaveLength(4);
         const observedProjection = companion.getCurrent().projection;
         const observedKeys = observedProjection.getKeys();
         await companion.rerender({ active: false });

@@ -60,7 +60,8 @@ export type WorkflowActivityPageInput = WorkflowActivityListRequestV1;
 
 export type WorkflowActivityObserver = Readonly<{
     onLive(batch: WorkflowActivityLiveBatch): void;
-    onRetained(page: WorkflowRunListResultV1): void;
+    /** A new observer receives the current window. Later publications include only changed Runs. */
+    onRetained(page: WorkflowRunListResultV1, changedRuns: readonly WorkflowRunSummaryV1[]): void;
     onError?(error: unknown): void;
     onHistoryError?(error: unknown): void;
 }>;

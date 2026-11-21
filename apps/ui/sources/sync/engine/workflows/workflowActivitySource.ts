@@ -70,19 +70,24 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         if (batch.length === 0) return;
         for (const observer of observers) observer.onLive(batch);
     };
-    const publishPage = (nextPage: WorkflowRunListResultV1, recovered = false) => {
+    const publishPage = (nextPage: WorkflowRunListResultV1, changedRuns: readonly WorkflowRunSummaryV1[], recovered = false) => {
         // Recovery changes freshness even when the retained rows are identical.
         const recoveredFromFailure = recovered && failed;
         if (recovered) failed = false;
         if (nextPage === page && !recoveredFromFailure) return;
         page = nextPage;
-        for (const observer of observers) observer.onRetained(nextPage);
+        for (const observer of observers) observer.onRetained(nextPage, changedRuns);
     };
-    const mergePage = (retained: WorkflowRunListResultV1): WorkflowRunListResultV1 => {
+    const mergePage = (retained: WorkflowRunListResultV1, recovered = false) => {
+        const changedRuns: WorkflowRunSummaryV1[] = [];
         for (const run of retained.runs) {
-            retainedRuns.set(run.id, retainDeep(retainedRuns.get(run.id), run));
+            const previous = retainedRuns.get(run.id);
+            const member = retainDeep(previous, run);
+            if (member === previous) continue;
+            retainedRuns.set(run.id, member);
+            changedRuns.push(member);
         }
-        return retainDeep(page, { ...retained, runs: [...retainedRuns.values()].sort(compareRuns) });
+        publishPage(retainDeep(page, { ...retained, runs: [...retainedRuns.values()].sort(compareRuns) }), changedRuns, recovered);
     };
     const close = () => {
         for (const release of detach.splice(0)) release();
@@ -188,7 +193,8 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         detach.push(subscribeHomeAccountChange(event => {
             if (!event.workflowRunsMaterialized) return;
             const batch: WorkflowActivityLiveFact[] = [];
-            let membershipChanged = false;
+            const changedRuns: WorkflowRunSummaryV1[] = [];
+            let memberRemoved = false;
             const frontier = page?.runs.at(-1);
             for (const entityId of event.entityIds ?? []) {
                 const id = readWorkflowRunAccountChangeRunId(entityId);
@@ -196,7 +202,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 const row = storage.getState().workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]?.summary;
                 if (!row) {
                     runs.delete(id);
-                    if (retainedRuns.delete(id)) membershipChanged = true;
+                    if (retainedRuns.delete(id)) memberRemoved = true;
                     continue;
                 }
                 const previousMember = retainedRuns.get(id);
@@ -206,7 +212,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                     const member = retainDeep(previousMember, projectWorkflowRunMembershipV1(row));
                     if (member !== previousMember) {
                         retainedRuns.set(id, member);
-                        membershipChanged = true;
+                        changedRuns.push(member);
                     }
                 }
                 const previous = runs.get(id);
@@ -218,8 +224,8 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                     ? projectWorkflowActivityRunFact(row, 'needs_attention', 'live') : null;
                 if (attention && attention.occurredAt >= listeningSince) batch.push(attention);
             }
-            if (page && membershipChanged) {
-                publishPage({ ...page, runs: [...retainedRuns.values()].sort(compareRuns) });
+            if (page && (changedRuns.length > 0 || memberRemoved)) {
+                publishPage({ ...page, runs: [...retainedRuns.values()].sort(compareRuns) }, changedRuns);
             }
             publish(batch);
         }, { serverIds: [serverId] }));
@@ -231,7 +237,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         queue = new ViewDemandSync(async () => {
             const retained = await readPage();
             if (signal.aborted) return;
-            publishPage(mergePage(retained), true);
+            mergePage(retained, true);
         }, { onError: reportError, onRetryFailure: reportError });
         for (const id of machines.keys()) void readMachineHistory(id);
     };
@@ -244,7 +250,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             const subscription = { ...observer };
             observers.add(subscription);
             const releaseDemand = queue!.acquire();
-            if (page) observer.onRetained(page);
+            if (page) observer.onRetained(page, page.runs);
             return () => {
                 if (!observers.delete(subscription)) return;
                 releaseDemand();
@@ -259,7 +265,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             const cursor = page?.nextCursor;
             if (!signal || !cursor) return;
             const retained = await readPage({ cursor });
-            if (!signal.aborted) publishPage(mergePage(retained));
+            if (!signal.aborted) mergePage(retained);
         },
         retry: async () => { if (queue) await queue.read(); },
     };
