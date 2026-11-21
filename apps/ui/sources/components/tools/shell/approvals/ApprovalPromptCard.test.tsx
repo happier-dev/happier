@@ -24,7 +24,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { deriveTranscriptInteraction, deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
-import { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from './transcriptSettledApprovalPresentations';
+import { COMPOSER_SETTLED_APPROVAL_PRESENTATIONS, TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from './transcriptSettledApprovalPresentations';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
@@ -321,6 +321,43 @@ describe('ApprovalPromptCard', () => {
             toolOutput={options.toolOutput}
         />, createApprovalTestSource());
     }
+
+    function preparedMachinePetApproval(): ApprovalRequest {
+        return ApprovalRequestSchema.parse({
+            ...approvalRequest(),
+            actionId: 'pet.import',
+            actionArgs: { source: { kind: 'machine', machineId: 'machine-exact', sourceKey: 'pet:prepared-rust-logo' } },
+            summary: 'Add to my pets',
+            preview: {
+                validation: {
+                    ok: true, packageFormat: 'codex-compatible-atlas-v1',
+                    manifest: { id: 'rust-logo', displayName: 'Rust Logo', description: 'Rust gear', spritesheetPath: 'spritesheet.webp' },
+                    spritesheetPath: '/home/happier/pet-runs/preview/spritesheet.webp', mediaType: 'image/webp',
+                    width: 1536, height: 1872, digest: `sha256:${'a'.repeat(64)}`, sizeBytes: 518400,
+                },
+                previewHandle: { kind: 'daemonSourceKey', sourceKey: 'pet:prepared-rust-logo' },
+            },
+        });
+    }
+
+    it('shows the prepared Machine pet in the Session approval before allowing Add', async () => {
+        const screen = await renderCard(preparedMachinePetApproval(), { chrome: 'inline' });
+        expect(screen.getTextContent()).toContain('Rust Logo');
+        expect(screen.getTextContent()).toContain('settingsPets.store.checkedAll');
+        expect(screen.getTextContent()).toContain('settingsPets.store.add');
+        expect(screen.findByTestId('approval-prompt-card-facts')).toBeNull();
+    });
+
+    it('keeps a Machine pet refusal in the composer attention owner without a second transcript card', () => {
+        const approval = ApprovalRequestSchema.parse({
+            ...preparedMachinePetApproval(),
+            status: 'failed',
+            decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: { executedAtMs: 3, ok: false, errorCode: 'feature_disabled', error: 'feature_disabled' },
+        });
+        expect(COMPOSER_SETTLED_APPROVAL_PRESENTATIONS.some(presents => presents(approval))).toBe(true);
+        expect(TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS.some(presents => presents(approval))).toBe(false);
+    });
 
     it('shows the immutable proposed passage and reason before posting a document suggestion', async () => {
         const revision = { headerVersion: 1, bodyVersion: 1 };

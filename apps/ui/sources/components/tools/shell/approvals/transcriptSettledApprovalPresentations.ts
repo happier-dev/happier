@@ -2,6 +2,7 @@ import type { ApprovalSettledPresentation } from '@/sync/domains/artifacts/appro
 import { presentsSettledResourceProposal } from '@/components/approvals/resourceProposal/readResourceProposalApproval';
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
+import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { presentsApprovalVisualTranscriptOccurrence } from '@/components/approvals/approvalVisualTranscriptOccurrence';
 import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
@@ -16,6 +17,8 @@ export const TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS: readonly ApprovalSettled
     presentsApprovalVisualTranscriptOccurrence,
     (approval) => readApprovedSavedSkillResult(approval) !== null,
     presentsSettledResourceProposal,
+    // A successful pet import settles here with Undo. Refusals stay with composer attention.
+    (approval) => readPetImportConfirmationV1(approval)?.outcome?.kind === 'added',
     // An Agent's enable request settles into its one line with Undo (P8 U8.5).
     (approval) => readCapabilityEnableApproval(approval) !== null,
     // An approved Browser open stays while its operation is still preparing, connecting or failed.

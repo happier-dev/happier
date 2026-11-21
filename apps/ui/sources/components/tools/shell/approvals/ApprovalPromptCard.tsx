@@ -20,6 +20,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
 import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, useApprovalAutomaticChecksControls } from '@/components/approvals/ApprovalAutomaticChecks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { PetImportConfirmationCard } from '@/components/approvals/PetImportConfirmationCard';
 import { ApprovalPromptChrome } from './ApprovalPromptChrome';
 import { ApprovalOpenButton } from './ApprovalOpenButton';
 import { BrowserOpenApprovalProgress } from '@/components/approvals/BrowserOpenOperationStatus';
@@ -236,6 +237,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         serverId: transcriptSource.serverId ?? approvalHome.serverId });
     const reviewedBindingRequest = bindingChoice.reviewRequest ?? props.approval;
     const review = useActionApprovalReview(reviewedBindingRequest);
+    const { petImport } = review;
     // An agent's private Discussion draft reads as the answer it would post, as in the Discussion thread.
     const discussionDraft = React.useMemo(() => readDiscussionDraftApproval(props.approval), [props.approval]);
     const draftAnswer = props.approval.status === 'open' ? discussionDraft?.answer ?? null : null;
@@ -414,10 +416,10 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     // A Computer ask is asked by its one act line ("Click in Safari?"); its card starts at where.
     const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : actionTitle);
     // A failed approval leads with its outcome; what was approved follows once, as its summary.
-    const cardTitle = failureOutcome?.headline ?? requestTitle;
+    const cardTitle = petImport?.outcome ? requestTitle : failureOutcome?.headline ?? requestTitle;
     // A summary that only repeats the title says nothing more: the card reads it once.
     // The failure headline names the action, so a summary that only repeats that name is not a second line.
-    const failureSummary = failureOutcome && !projectCommand ? props.approval.summary?.trim() || null : null;
+    const failureSummary = failureOutcome && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
     const sameWords = (left: string, right: string) => left.replace(/[.\s]+$/, '').toLowerCase() === right.replace(/[.\s]+$/, '').toLowerCase();
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
@@ -503,7 +505,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {confidentialOutcome ? (
                 <Text testID="approval-prompt-confidential-outcome" style={styles.previewText}>{confidentialOutcome}</Text>
             ) : null}
-            {(failureOutcome?.reason && !checksCarryRefusal) || failureOutcome?.serviceStartFailure?.recovery ? (
+            {(!petImport?.outcome && failureOutcome?.reason && !checksCarryRefusal) || failureOutcome?.serviceStartFailure?.recovery ? (
                 // The outcome is one paragraph: why it failed and its output, set apart from what was
                 // approved below, so "Review output" never reads as the caption of the command block.
                 <View style={styles.failureGroup}>
@@ -533,6 +535,9 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 <ResourceProposalBody controller={proposal} decisionsAvailable={!decisionDisabled}
                     arrive={Date.now() - props.approval.createdAtMs < 15_000}
                     onApproveKeepingUndo={() => { void onDecision('approve', { keepUndo: true }); }} />
+            ) : petImport ? (
+                <PetImportConfirmationCard confirmation={petImport} serverId={approvalHome.serverId}
+                    testID="approval-prompt-pet-import" />
             ) : projectCommand ? (
                 <ProjectCommandApprovalFacts presentation={projectCommand} testID="approval-prompt-project-command" />
             ) : docEditProposal ? (
@@ -550,7 +555,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                     collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && phone && props.approval.status === 'open')} />
             ) : null}
             {/* A specialized body keeps the same failure facts when it replaces the generic fields card. */}
-            {failureOutcome?.code && (proposal || projectCommand || promptDocUpdate || docEditProposal) ? (
+            {failureOutcome?.code && (proposal || projectCommand || promptDocUpdate || docEditProposal || petImport) ? (
                 <ApprovalTechnicalDetails lines={failureOutcome.technicalDetails} />
             ) : null}
             {cannotRun ? (

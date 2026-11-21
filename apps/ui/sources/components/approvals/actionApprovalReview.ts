@@ -1,3 +1,4 @@
+import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isProjectSetupTrustRequestV1, PROJECT_ACTION_INPUT_SCHEMAS_V1, readProjectSetupTrustRequestOperationV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -39,6 +40,7 @@ export type ActionApprovalReview = Readonly<{
     /** Declared secret inputs the consuming Action is waiting for; chosen privately, never by plain Approve. */
     confidentialInputs: ReturnType<typeof readConfidentialActionInputsApproval>;
     capabilityEnable: ReturnType<typeof readCapabilityEnableApproval>;
+    petImport: ReturnType<typeof readPetImportConfirmationV1>;
     promptDocUpdate: ReturnType<typeof readPromptDocUpdateApproval>;
     docEditProposal: DocEditProposeResolvedInputV1 | null;
     resourceProposal: ReturnType<typeof readResourceProposalApproval>;
@@ -95,6 +97,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     const confidential = readConfidentialSecretApproval(request);
     const confidentialInputs = readConfidentialActionInputsApproval(request);
     const capabilityEnable = readCapabilityEnableApproval(request);
+    const petImport = readPetImportConfirmationV1(request);
     const promptDocUpdate = readPromptDocUpdateApproval(request);
     const docEditProposal = readApprovalDocEditProposal(request);
     const resourceProposal = readResourceProposalApproval(request);
@@ -105,7 +108,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     // A compact row cannot substitute an unchanged decision for one of those interactions.
     const requiresReview = confidentialAction || confidentialInputs !== null || isComputerApprovalAction(request.actionId)
         || capabilityEnable !== null || promptDocUpdate !== null || docEditProposal !== null || resourceProposal !== null
-        || visualPreview !== null || request.handoffTargetReplacementApproval !== undefined
+        || visualPreview !== null || petImport !== null || request.handoffTargetReplacementApproval !== undefined
         || Boolean(spec?.approvalNarrowing || spec?.approvalInputCustody === 'live_only'
             || spec?.approvalResultCustody === 'live_only')
         || readPluginInstallApprovalPendingReview(request.preview) !== null
@@ -115,9 +118,10 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
         || readDeploymentReviewApproval(request) !== null;
     const simple = request.v === 2 && request.status === 'open' && admission?.status === 'available'
         && spec !== null && spec.inputSchema.safeParse(request.actionArgs).success && !requiresReview;
-    return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, promptDocUpdate, docEditProposal, resourceProposal,
+    return { admission, confidentialAction, confidential, confidentialInputs, capabilityEnable, petImport, promptDocUpdate, docEditProposal, resourceProposal,
         visualPreview, simple, workspaceFileSource: readApprovalFileSource(request),
-        approveVerb: spec?.id === 'plugins.install' && readPluginInstallApprovalChange(request.preview) === 'update'
+        approveVerb: petImport ? t('settingsPets.store.add')
+            : spec?.id === 'plugins.install' && readPluginInstallApprovalChange(request.preview) === 'update'
             ? t('common.update') : spec ? readActionApprovalConfirmLabel(spec.id) : null,
         irreversible: spec?.irreversible === true };
 }
