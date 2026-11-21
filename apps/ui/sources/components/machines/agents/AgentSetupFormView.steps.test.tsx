@@ -332,6 +332,17 @@ describe('agent setup steps', () => {
     await signIn.screen.unmount();
   });
 
+  it('labels a cancelled install step without showing an error', async () => {
+    const cancelled = await stepsOf(pi({
+      job: job([step(cliStep, 'Pi', 'failed')], {
+        kind: 'failed', code: 'cancelled', stepId: cliStep, message: 'Cancelled',
+      }),
+    }));
+    expect(cancelled.steps).toEqual(['idle-agent', 'queued-check', 'queued-signin']);
+    expect(cancelled.screen.getTextContent()).toContain(t('status.canceled'));
+    expect(cancelled.screen.findByTestId('setup.retry')).toBeNull();
+  });
+
   it('shows the failing step with its Retry', async () => {
     const failed = await stepsOf(
       pi({

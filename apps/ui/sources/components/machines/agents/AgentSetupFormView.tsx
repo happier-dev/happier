@@ -98,14 +98,17 @@ function choiceKey(choice: AgentSignInChoice): string {
 
 type JobStep = NonNullable<MachineAgent['job']>['steps'][number];
 
-function stepState(step: JobStep | undefined): SetupStepState {
+function stepState(step: JobStep | undefined, cancelledStepId: string | undefined): SetupStepState {
+    if (step && step.stepId === cancelledStepId) return 'cancelled';
     return step?.state === 'running' || step?.state === 'done' || step?.state === 'failed' ? step.state : 'upcoming';
 }
 
-function aggregateState(steps: readonly JobStep[]): SetupStepState {
-    if (steps.some((step) => step.state === 'failed')) return 'failed';
-    if (steps.some((step) => step.state === 'running')) return 'running';
-    return steps.length > 0 && steps.every((step) => step.state === 'done') ? 'done' : 'upcoming';
+function aggregateState(steps: readonly JobStep[], cancelledStepId: string | undefined): SetupStepState {
+    const states = steps.map((step) => stepState(step, cancelledStepId));
+    if (states.includes('failed')) return 'failed';
+    if (states.includes('cancelled')) return 'cancelled';
+    if (states.includes('running')) return 'running';
+    return states.length > 0 && states.every((state) => state === 'done') ? 'done' : 'upcoming';
 }
 
 function bytesDetail(step: JobStep | undefined): string | null {
@@ -123,6 +126,7 @@ function bytesDetail(step: JobStep | undefined): string | null {
 function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState): SetupStep[] {
     const job = agent.job?.intent === 'install' ? agent.job : null;
     const succeeded = job?.outcome?.kind === 'succeeded';
+    const cancelledStepId = job?.outcome?.kind === 'failed' && job.outcome.code === 'cancelled' ? job.outcome.stepId : undefined;
     const cliStepId = buildAgentInstallJobCliStepId(agent);
     const cliStep = job?.steps.find((step) => step.stepId === cliStepId);
     const verifyStep = job?.steps.find((step) => step.stepId === AGENT_INSTALL_JOB_VERIFY_STEP_ID);
@@ -133,12 +137,12 @@ function buildSetupSteps(agent: MachineAgent, signIn: SetupStepState): SetupStep
     });
     const dependencyRows = plannedDependencies.length > 0
         ? plannedDependencies.map((dependency) => row(dependency.key, dependency.title,
-            succeeded ? 'done' : aggregateState(dependencySteps), bytesDetail(dependencySteps.find((step) => step.state === 'running'))))
-        : dependencySteps.map((step) => row(step.stepId, step.label, succeeded ? 'done' : stepState(step), bytesDetail(step)));
+            succeeded ? 'done' : aggregateState(dependencySteps, cancelledStepId), bytesDetail(dependencySteps.find((step) => step.state === 'running'))))
+        : dependencySteps.map((step) => row(step.stepId, step.label, succeeded ? 'done' : stepState(step, cancelledStepId), bytesDetail(step)));
     return [
-        row('agent', t('machineAgents.installAgent', { agent: agent.title }), succeeded ? 'done' : stepState(cliStep), bytesDetail(cliStep)),
+        row('agent', t('machineAgents.installAgent', { agent: agent.title }), succeeded ? 'done' : stepState(cliStep, cancelledStepId), bytesDetail(cliStep)),
         ...dependencyRows,
-        row('check', t('machineAgents.stepCheck'), succeeded ? 'done' : stepState(verifyStep)),
+        row('check', t('machineAgents.stepCheck'), succeeded ? 'done' : stepState(verifyStep, cancelledStepId)),
         row('signIn', t('machineAgents.stepSignIn'), signIn),
     ];
 }
