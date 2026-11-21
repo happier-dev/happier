@@ -147,7 +147,6 @@ export type ReviewWalkthroughTranslations = {
         seenBefore: string;
         /** Where an opened finding sits in the Review ("3 of 6"), on its pushed phone page. */
         findingPosition: (params: Readonly<{ index: number; total: number }>) => string;
-        historyEmpty: string;
         newInRound: (params: Readonly<{ round: number }>) => string;
         stillThere: string;
         notFoundInRound: (params: Readonly<{ round: number }>) => string;
@@ -204,6 +203,21 @@ export type ReviewWalkthroughTranslations = {
         noRuns: string;
         workflowRun: string;
         reviewerRun: (params: Count) => string;
+        fixed: string;
+        fixedCount: (params: Count) => string;
+        reviewersDidntFinish: (params: Readonly<{ names: string }>) => string;
+        eventDecided: (params: Readonly<{ decision: string; title: string }>) => string;
+        eventFixed: (params: Readonly<{ title: string }>) => string;
+        eventApproved: string;
+        eventRequestedChanges: string;
+        eventCommented: string;
+        eventRunFinished: string;
+        eventRunFinishedWith: (params: Count) => string;
+        eventRunDidntFinish: string;
+        eventRoundStarted: (params: Readonly<{ round: number }>) => string;
+        eventRoundFinished: (params: Readonly<{ round: number }>) => string;
+        eventRoundPartial: (params: Readonly<{ round: number }>) => string;
+        eventRoundFailed: (params: Readonly<{ round: number }>) => string;
         noMachineTitle: string;
         noMachineReason: string;
     };
@@ -380,7 +394,6 @@ export const en: ReviewWalkthroughTranslations = {
         historyEarlierRuns: ({ count }) => count === 1 ? 'Also in 1 earlier run' : `Also in ${count} earlier runs`,
         seenBefore: 'Seen before',
         findingPosition: ({ index, total }) => `${index} of ${total}`,
-        historyEmpty: 'No earlier findings to show',
         newInRound: ({ round }) => `New in round ${round}`,
         stillThere: 'Still there',
         notFoundInRound: ({ round }) => `Not found in round ${round}`,
@@ -437,6 +450,21 @@ export const en: ReviewWalkthroughTranslations = {
         noRuns: 'No runs in this round yet',
         workflowRun: 'Workflow run',
         reviewerRun: ({ count }) => `Reviewer ${count}`,
+        fixed: 'Fixed',
+        fixedCount: ({ count }) => `${count} fixed`,
+        reviewersDidntFinish: ({ names }) => `${names} didn’t finish`,
+        eventDecided: ({ decision, title }) => `chose ${decision} for “${title}”`,
+        eventFixed: ({ title }) => `marked “${title}” fixed`,
+        eventApproved: 'approved the changes',
+        eventRequestedChanges: 'requested changes',
+        eventCommented: 'commented',
+        eventRunFinished: 'finished',
+        eventRunFinishedWith: ({ count }) => count === 1 ? 'finished with 1 finding' : `finished with ${count} findings`,
+        eventRunDidntFinish: 'didn’t finish',
+        eventRoundStarted: ({ round }) => `Round ${round} started`,
+        eventRoundFinished: ({ round }) => `Round ${round} finished`,
+        eventRoundPartial: ({ round }) => `Round ${round} finished without every reviewer`,
+        eventRoundFailed: ({ round }) => `Round ${round} couldn’t finish`,
         noMachineTitle: 'Open the full changes on a Machine you can use',
         noMachineReason: 'These changes are on a Machine that isn’t shared with you. Each finding’s code excerpt is below.',
     },

@@ -1,5 +1,5 @@
 import type { ReviewFinding } from './ReviewFinding.js';
-import { readReviewFindingDecisionV1 } from './reviewTriageStatus.js';
+import { isReviewFindingFixedV1, readReviewFindingDecisionV1 } from './reviewTriageStatus.js';
 import type { ReviewCommentV1, ReviewCommentAnchorV1, ReviewCommentSnapshotV1 } from './comments/v1.js';
 import type { WorkspaceAnchorV1, WorkspaceAnchorSnapshotV1, WorkspaceAnchorResolutionV1 } from '../workspace/anchors/v1.js';
 
@@ -42,7 +42,9 @@ export function buildAcceptedReviewFindingsForVerifyV1(
   const selected = selectedCommentIds === undefined ? undefined : new Set(selectedCommentIds);
   return groups.flatMap(group => {
     const decided = group.filter(source => source.comment !== null);
-    if (decided.length === 0 || !decided.every(source => readReviewFindingDecisionV1(source.comment?.reviewTriageStatus, source.comment?.state) === 'accept')) return [];
+    // Accepted and not yet fixed: a resolved finding's fix has landed, so Implement leaves it out.
+    if (decided.length === 0 || !decided.every(source => readReviewFindingDecisionV1(source.comment?.reviewTriageStatus, source.comment?.state) === 'accept'
+      && !isReviewFindingFixedV1(source.comment?.state))) return [];
     return group.flatMap(source => {
       const comment = source.comment;
       if (selected && (!comment || !selected.has(comment.id))) return [];

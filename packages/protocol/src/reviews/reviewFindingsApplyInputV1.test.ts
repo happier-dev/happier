@@ -32,7 +32,7 @@ describe('review findings verification input', () => {
   });
 });
 
-it('excludes dismissed roots with retained acceptance from Apply until deliberately reopened, preserving resolved acceptance', () => {
+it('excludes dismissed roots with retained acceptance from Apply until deliberately reopened, and fixed (resolved) ones for good', () => {
   const finding = { id: 'finding-1', title: 'Total subtracts prices', summary: 'The reducer subtracts instead of adding.' };
   const comment: ReviewCommentV1 = {
     v: 1, id: 'comment-1', accountId: 'account-1', reviewId: 'review-1',
@@ -47,7 +47,8 @@ it('excludes dismissed roots with retained acceptance from Apply until deliberat
   expect(accepted(comment).map(item => item.id)).toEqual([finding.id]);
   const dismissed = { ...comment, state: 'dismissed' as const, serverRevision: 5 };
   expect(accepted(dismissed)).toEqual([]);
-  expect(accepted({ ...comment, state: 'resolved' }).map(item => item.id)).toEqual([finding.id]);
+  // A resolved finding keeps its acceptance, but its fix has landed: Implement never sends it again.
+  expect(accepted({ ...comment, state: 'resolved' })).toEqual([]);
   const reopen = buildReviewTriageTransitionRequestV1({ comment: dismissed, decision: 'accept', clientMutationId: 'reopen' });
   expect(reopen).toMatchObject({ expectedState: 'dismissed', expectedServerRevision: 5, toState: 'open', reviewTriageStatus: 'accept' });
   expect(accepted({ ...dismissed, state: reopen.toState, reviewTriageStatus: reopen.reviewTriageStatus }).map(item => item.id)).toEqual([finding.id]);

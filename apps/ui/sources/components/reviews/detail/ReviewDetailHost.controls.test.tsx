@@ -104,6 +104,68 @@ it('leads with one Implement primary while findings await, and keeps selection b
   } finally { await screen.unmount(); }
 });
 
+it('shows a fixed finding as Fixed, counts it on its chip and never offers to implement it again', async () => {
+  const reviewId = 'fixed-finding-review';
+  const fixed = buildReviewCommentFixture({ id: 'fixed-root', threadId: 'fixed-root', reviewId,
+    accountId: 'alice', state: 'resolved', reviewTriageStatus: 'accept', roundOrdinal: 1, findingIdentity: '8'.repeat(64),
+    finding: { id: 'fixed-finding', title: 'Fixed finding', summary: 'Already fixed', severity: 'high', category: 'correctness' } });
+  const pending = buildReviewCommentFixture({ id: 'still-pending', threadId: 'still-pending', reviewId,
+    accountId: 'alice', state: 'open', roundOrdinal: 1, findingIdentity: '9'.repeat(64),
+    finding: { id: 'still-pending-finding', title: 'Pending finding', summary: 'Waiting', severity: 'medium', category: 'correctness' } });
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://fixed-finding-review.test', request: async url => {
+    if (new URL(String(url)).pathname === '/v1/reviews/comments') return Response.json({ items: [fixed, pending].map(storePlainReviewCommentFixture), cursor: null });
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Fixed finding', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Fixed finding' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { ReviewFindingRow } = await import('@/components/sessions/reviews/findings/ReviewFindingRow');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  try {
+    await vi.waitFor(() => expect(screen.findAllByType(ReviewFindingRow)).toHaveLength(2));
+    const row = screen.findAllByType(ReviewFindingRow).find(item => item.props.rowId === fixed.id)!;
+    // The fixed row reads Fixed and offers no decision (Implement) control.
+    expect(row.props.resolution).toBe(t('reviewWalkthrough.detail.fixed'));
+    expect(row.props.decisionEditable).toBe(false);
+    // Nothing is left to implement and one finding still waits: no header primary, no Implement anywhere.
+    const view = screen.findByType(ReviewDetailView);
+    expect(view.props.primaryAction ?? null).toBeNull();
+    expect(view.props.menu.some((item: { id: string }) => item.id === 'implement')).toBe(false);
+    expect(screen.findHostByTestId('review-findings:filter:fixed')).not.toBeNull();
+  } finally { await screen.unmount(); }
+});
+
+it('says the Review is shared, with whom through the Artifact audience owner, and offers Share and Delete in its "…"', async () => {
+  const reviewId = 'shared-review-page';
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://shared-review-page.test', request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Shared review', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Shared review' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  fixture.artifacts.seedAccountGrant(reviewId, 'bob', 'view');
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  try {
+    // A Team grant reads "Shared with ⟨Team⟩" through the same audience owner (useApprovalProfileAudience test).
+    await vi.waitFor(() => expect(screen.findByType(ReviewDetailView).props.meta).toContainEqual(
+      expect.objectContaining({ key: 'audience', text: t('artifacts.browser.facts.shared') })));
+    const menu = screen.findByType(ReviewDetailView).props.menu.map((item: { id: string }) => item.id);
+    expect(menu).toEqual(expect.arrayContaining(['share', 'delete']));
+  } finally { await screen.unmount(); }
+});
+
 it.each([
   { decision: 'needs_refinement', expected: 'undecided' },
   { decision: 'defer', expected: 'defer' },

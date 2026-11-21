@@ -5,7 +5,7 @@ import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestion';
-import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { isReviewFindingFixedV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewFindingsApplyResultV1Schema } from '@happier-dev/protocol/reviews/reviewApplyV1';
 import { projectReviewFindingRoundStatusV1,
@@ -64,6 +64,12 @@ function rowDecision(row: ReviewFindingRowModel, pending: Readonly<Record<string
     if (decided.length === 0) return 'undecided';
     const first = sourceDecision(decided[0]!, pending);
     return decided.every((source) => sourceDecision(source, pending) === first) ? first : 'undecided';
+}
+
+/** A merged row is fixed when every source that has a comment was resolved (the protocol's fixed fact). */
+function rowFixed(row: ReviewFindingRowModel, pending: Readonly<Record<string, ReviewTriageStatus>>): boolean {
+    const decided = row.sources.filter((source) => source.comment !== null);
+    return decided.length > 0 && decided.every(source => isReviewFindingFixedV1(source.comment?.state, pending[source.comment!.id]));
 }
 
 const FOLLOW_UP_AVAILABLE: ReviewFollowUpAvailability = Object.freeze({ available: true });
@@ -146,11 +152,13 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         return root ? [root.id] : rowById.get(id)?.sources.flatMap(source => source.comment ? [source.comment.id] : []) ?? [];
     }))], [rootById, rowById, selectedRows]);
     const acceptedRows = React.useMemo(
-        () => rows.filter((row) => (selectedRows === null || selectedRows.has(row.rowId)) && rowDecision(row, pending) === 'accept'),
+        () => rows.filter((row) => (selectedRows === null || selectedRows.has(row.rowId)) && rowDecision(row, pending) === 'accept'
+            && !rowFixed(row, pending)),
         [pending, rows, selectedRows],
     );
     const acceptedCount = record ? sealedRows.filter(row => (selectedRows === null || selectedRows.has(row.rowId))
-        && readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]) === 'accept').length
+        && readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]) === 'accept'
+        && !isReviewFindingFixedV1(row.comment.state, pending[row.rowId])).length
         : acceptedRows.length;
     const hasPendingDecisions = Object.keys(pending).length > 0;
 
@@ -416,7 +424,9 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             currentBodyMarkdown: typeof row.comment.body === 'string' ? row.comment.body : undefined,
             taskOrigin: taskOriginOf([row.comment]),
             decision: readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]),
-            decisionEditable: canAct,
+            fixed: isReviewFindingFixedV1(row.comment.state, pending[row.rowId]),
+            // A fixed finding has nothing left to decide: no decision control (and so no Implement fix).
+            decisionEditable: canAct && !isReviewFindingFixedV1(row.comment.state, pending[row.rowId]),
             decidable: true, reviewers,
             attribution: reviewers.length > 1 ? { label: formatReviewerSet(reviewers.map(reviewer => reviewer.label)),
                 backendIds: reviewers.map(reviewer => reviewer.backendId).filter(Boolean) } : null,
@@ -437,7 +447,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             currentBodyMarkdown: undefined,
             taskOrigin: taskOriginOf(row.sources.flatMap(source => source.comment ? [source.comment] : [])),
             decision: rowDecision(row, pending),
-            decisionEditable: canAct,
+            fixed: rowFixed(row, pending),
+            decisionEditable: canAct && !rowFixed(row, pending),
             decidable: row.sources.some(source => source.comment !== null),
             reviewers: rowMembers.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
             attribution: reviewerCount > 1 ? {

@@ -32,14 +32,18 @@ export type ReviewFindingsListRow = Readonly<{
   title?: string;
   severity: ReviewFinding['severity'];
   decision: ReviewFindingDecision | 'undecided';
+  /** Its fix landed (the protocol's fixed fact): it leaves the decision filters for Fixed. */
+  fixed?: boolean;
 }>;
 
-type DecisionFilter = 'all' | ReviewFindingDecision | 'undecided';
+type DecisionFilter = 'all' | ReviewFindingDecision | 'undecided' | 'fixed';
+const rowFilter = (row: ReviewFindingsListRow): Exclude<DecisionFilter, 'all'> => row.fixed ? 'fixed' : row.decision;
 
 const FILTER_ORDER: readonly DecisionFilter[] = [
   'all',
   'undecided',
   'accept',
+  'fixed',
   'reject',
   'defer',
 ];
@@ -71,7 +75,7 @@ export function ReviewFindingsList(
   const [filter, setFilter] = React.useState<DecisionFilter>('all');
   const commands = useCurrentUiContextLocalCommands([{
     key: 'review.detail.filter_findings', title: t('runPage.review.findings'),
-    description: 'Filter findings with {filter: all | undecided | accept | reject | defer}.',
+    description: 'Filter findings with {filter: all | undecided | accept | fixed | reject | defer}.',
     invoke: input => {
       if (!isJsonObject(input)) return false;
       const value = FILTER_ORDER.find(id => id === input.filter);
@@ -82,18 +86,19 @@ export function ReviewFindingsList(
   const counts = React.useMemo(() => {
     const next = new Map<DecisionFilter, number>([['all', props.rows.length]]);
     for (const row of props.rows)
-      next.set(row.decision, (next.get(row.decision) ?? 0) + 1);
+      next.set(rowFilter(row), (next.get(rowFilter(row)) ?? 0) + 1);
     return next;
   }, [props.rows]);
-  // A decision nobody has taken is no filter; All and Pending always stand so the row never jumps.
+  // A decision nobody has taken is no filter; All and Pending always stand so the row never jumps, and a chip with
+  // nothing under it carries no count ("Pending", never "Pending 0").
   const tabs = React.useMemo(
     (): readonly SegmentedTab<DecisionFilter>[] =>
       FILTER_ORDER.filter(
         (id) => id === 'all' || id === 'undecided' || (counts.get(id) ?? 0) > 0,
       ).map((id) => ({
         id,
-        label: id === 'all' ? t('common.all') : reviewFindingDecisionLabel(id),
-        count: String(counts.get(id) ?? 0),
+        label: id === 'all' ? t('common.all') : id === 'fixed' ? t('reviewWalkthrough.detail.fixed') : reviewFindingDecisionLabel(id),
+        ...((counts.get(id) ?? 0) > 0 ? { count: String(counts.get(id)) } : {}),
         testID: `review-findings:filter:${id}`,
       })),
     [counts],
@@ -103,7 +108,7 @@ export function ReviewFindingsList(
     const visible =
       active === 'all'
         ? props.rows
-        : props.rows.filter((row) => row.decision === active);
+        : props.rows.filter((row) => rowFilter(row) === active);
     const bySeverity = new Map<
       ReviewFinding['severity'],
       ReviewFindingsListRow[]

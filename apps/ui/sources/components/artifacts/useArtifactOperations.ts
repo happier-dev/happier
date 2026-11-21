@@ -39,8 +39,11 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
     const canManage = canRead && access.canManage;
     const header = artifact?.rawHeader ?? artifact?.header ?? {};
     const sharing = getArtifactKindPolicyV1(header.kind);
+    // A kind its owner lets people share and open by its address (a Review) is shared from its own page even when the
+    // Artifacts browser does not list it; a kind shared through its own owner's flow (a Deployment) is not.
     const canShare = canRead && access.canShare
-        && (sharing.browserListed || classifyArtifactViewKind(artifact) === 'dashboard'
+        && (sharing.browserListed || (sharing.peopleSharingAllowed && sharing.addressedReadAllowed)
+            || classifyArtifactViewKind(artifact) === 'dashboard'
             || getArtifactUseTargetV1({ artifactId: artifact.id, header, body: artifact.body ?? null }, 'signed_in').publicLinkAllowed)
         && (sharing.peopleSharingAllowed || sharing.publicLinkAllowed);
     const name = artifact?.title || t('artifacts.untitled');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readReviewFindingDecisionV1, reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
+import { isReviewFindingFixedV1, readReviewFindingDecisionV1, reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
 
 describe('Review decision demand', () => {
   it('keeps undecided, deferred and clarification findings actionable without reopening decided findings', () => {
@@ -28,5 +28,15 @@ describe('effective Review finding decision', () => {
     expect(readReviewFindingDecisionV1('defer', 'open')).toBe('defer');
     expect(readReviewFindingDecisionV1('needs_refinement', 'open')).toBe('undecided');
     expect(readReviewFindingDecisionV1(undefined)).toBe('undecided');
+  });
+});
+
+describe('fixed Review findings', () => {
+  it('reads a resolved finding as fixed while it keeps its decision, until a new choice is pending', () => {
+    expect(isReviewFindingFixedV1('resolved')).toBe(true);
+    expect(readReviewFindingDecisionV1('accept', 'resolved')).toBe('accept');
+    expect(isReviewFindingFixedV1('open')).toBe(false);
+    expect(isReviewFindingFixedV1('dismissed')).toBe(false);
+    expect(isReviewFindingFixedV1('resolved', 'accept')).toBe(false);
   });
 });

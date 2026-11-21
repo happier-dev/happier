@@ -53,6 +53,8 @@ it('distinguishes an unreachable reviewer, missing retained output, and a succes
         reply = { run };
         latest().retry();
         await vi.waitFor(() => expect(latest()).toMatchObject({ state: { kind: 'no_questions' } }));
+        // The same read names who reviewed and how it ended, for the Runs tab (lab `detail-runs`).
+        expect(latest().runs.get('review-run')).toMatchObject({ run: { status: 'succeeded', backendTarget: { agentId: 'claude' } } });
     } finally {
         await screen.unmount();
     }

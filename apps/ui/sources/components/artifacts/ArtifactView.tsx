@@ -78,7 +78,7 @@ function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): Rea
     const artifact = body.result?.artifact ?? props.artifact;
     if (artifact && artifact.isDecrypted !== false && isReviewArtifact(artifact)) {
         return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry}
-            focusThreadId={props.focusThreadId} pluginPageSelection={props.pluginPageSelection} />;
+            focusThreadId={props.focusThreadId} pluginPageSelection={props.pluginPageSelection} onDeleted={props.onDeleted} />;
     }
     return <ArtifactDocumentView {...props} body={body} />;
 }

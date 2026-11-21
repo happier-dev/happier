@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ReviewRunReferenceV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { resolveReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
@@ -23,9 +23,17 @@ export type ReviewQuestionRunsState =
 
 type Read = Readonly<{
     key: string;
+    runId: string;
     member: ReviewFindingsMember | null;
+    /** The reviewer run's public state (who ran it, on which model, how it ended), last known on a failed read. */
+    run: ExecutionRunPublicState | null;
+    /** How many findings its retained result holds; `null` when it published none. */
+    findingsCount: number | null;
     unavailableReason: ReviewQuestionRunsUnavailableReason | null;
 }>;
+
+/** One reviewer run of the round as its Machine last answered. */
+export type ReviewRoundRunRead = Pick<Read, 'run' | 'findingsCount' | 'unavailableReason'>;
 
 function readUnavailableReason(error: unknown): ReviewQuestionRunsUnavailableReason {
     const code = error instanceof WorkflowActionError ? error.rawCode : null;
@@ -36,10 +44,14 @@ function readUnavailableReason(error: unknown): ReviewQuestionRunsUnavailableRea
 const EMPTY_RUNS: readonly ReviewRunReferenceV1[] = Object.freeze([]);
 const EMPTY_READS: readonly Read[] = Object.freeze([]);
 const EMPTY_MEMBERS: readonly ReviewFindingsMember[] = Object.freeze([]);
+const EMPTY_RUN_READS: ReadonlyMap<string, ReviewRoundRunRead> = new Map();
 const EMPTY_COMMENTS: ReviewFindingsMember['commentByFindingId'] = new Map();
 const referenceKey = (reference: Reference) => JSON.stringify([reference.machineId, reference.sessionId ?? null, reference.runId]);
 
-/** Only opened Findings demand the selected round's retained question results, at their original Home and Machine. */
+/**
+ * The selected round's reviewer runs, read at their original Home and Machine while a tab that shows them is open
+ * (Findings for questions, Runs and Activity for who ran and how it ended): one read per run serves all three.
+ */
 export function useReviewQuestionRuns(params: Readonly<{
     runs: readonly ReviewRunReferenceV1[] | undefined;
     accountLifetime: ServerAccountScopeLifetime | null;
@@ -80,9 +92,11 @@ export function useReviewQuestionRuns(params: Readonly<{
                             questions: normalized.questions, assumptions: normalized.assumptions,
                             findings: normalized.findings, commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {},
                         } : null;
-                        return { key: referenceKey(reference), member, unavailableReason: null };
+                        return { key: referenceKey(reference), runId: reference.runId, member, run: response.run,
+                            findingsCount: normalized ? normalized.findings.length : null, unavailableReason: null };
                     } catch (error) {
-                        return { key: referenceKey(reference), member: null, unavailableReason: readUnavailableReason(error) };
+                        return { key: referenceKey(reference), runId: reference.runId, member: null, run: null, findingsCount: null,
+                            unavailableReason: readUnavailableReason(error) };
                     }
                 }));
                 if (controller.signal.aborted || !lifetime.isCurrent()) return;
@@ -94,7 +108,8 @@ export function useReviewQuestionRuns(params: Readonly<{
                         const id = referenceKey(reference);
                         const before = previousByKey.get(id);
                         const update = updates.get(id);
-                        return update ? [{ ...update, member: update.unavailableReason ? before?.member ?? null : update.member }] : before ? [before] : [];
+                        return update ? [update.unavailableReason ? { ...update, member: before?.member ?? null, run: before?.run ?? null,
+                            findingsCount: before?.findingsCount ?? null } : update] : before ? [before] : [];
                     });
                     const reads = retainKeyedRows(prior, incoming, read => read.key);
                     if (previous.key === key && reads === prior && !previous.loading) return previous;
@@ -116,11 +131,12 @@ export function useReviewQuestionRuns(params: Readonly<{
     }, [params.enabled, lifetime, references, key, retryVersion]);
     const reads = snapshot.key === key ? snapshot.reads : EMPTY_READS;
     const members = React.useMemo(() => reads.length > 0 ? reads.flatMap(read => read.member ? [read.member] : []) : EMPTY_MEMBERS, [reads]);
+    const runReads = React.useMemo(() => reads.length > 0 ? new Map(reads.map(read => [read.runId, read])) : EMPTY_RUN_READS, [reads]);
     const unavailableReason = reads.find(read => read.unavailableReason === 'temporarily_unavailable')?.unavailableReason
         ?? reads.find(read => read.unavailableReason !== null)?.unavailableReason;
     let state: ReviewQuestionRunsState;
     if (unavailableReason) state = { kind: 'unavailable', reason: unavailableReason };
     else if (params.enabled && references.length > 0 && (snapshot.key !== key || snapshot.loading)) state = { kind: 'loading' };
     else state = { kind: members.some(member => member.questions.length > 0) ? 'ready' : 'no_questions' };
-    return { members, state, retry };
+    return { members, runs: runReads, state, retry };
 }

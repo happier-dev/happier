@@ -92,8 +92,9 @@ it('withdraws a dismissed durable finding from Implement when a later bulk trans
         expect(hook.getCurrent().rows[0]?.decision).toBe('accept');
         expect(hook.getCurrent().implement.destinationDisabled).toBe(true);
         await hook.rerender({ comment: { ...root, state: 'resolved', serverRevision: 6 }, pending: {} });
-        expect(hook.getCurrent().rows[0]?.decision).toBe('accept');
-        expect(hook.getCurrent().implement.count).toBe(1);
+        // Resolved: the decision stays accepted, but the fix landed, so it is Fixed and nothing is left to implement.
+        expect(hook.getCurrent().rows[0]).toMatchObject({ decision: 'accept', fixed: true, decisionEditable: false });
+        expect(hook.getCurrent().implement.count).toBe(0);
     } finally { await hook.unmount(); }
 });
 

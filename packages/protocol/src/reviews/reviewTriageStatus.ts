@@ -18,6 +18,14 @@ export function readReviewFindingDecisionV1(
   return decision === 'accept' || decision === 'reject' || decision === 'defer' ? decision : 'undecided';
 }
 
+/**
+ * A finding whose fix landed: its comment was resolved. It keeps its decision (an accepted finding stays accepted),
+ * but Implement never sends it again. A new choice the person just made wins until its transition settles.
+ */
+export function isReviewFindingFixedV1(state?: ReviewCommentStateV1, pendingDecision?: ReviewTriageStatus): boolean {
+  return pendingDecision === undefined && state === 'resolved';
+}
+
 /** Deferred and clarification decisions still require a person's attention. */
 export const REVIEW_TRIAGE_NEEDS_DECISION_STATUSES_V1 = ['defer', 'needs_refinement'] as const satisfies readonly ReviewTriageStatus[];
 

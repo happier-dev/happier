@@ -28,6 +28,8 @@ import {
   type SegmentedTab,
 } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { Text } from '@/components/ui/text/Text';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -102,6 +104,8 @@ export type ReviewDetailViewProps = Readonly<{
   testID?: string;
 }>;
 
+const LOADING_STATE: ItemLoadState = Object.freeze({ kind: 'loading' });
+
 const TAB_LABEL_KEYS = {
   findings: 'reviewWalkthrough.detail.tabFindings',
   changes: 'reviewWalkthrough.detail.tabChanges',
@@ -167,17 +171,7 @@ export function ReviewDetailView(
           />
         ) : null}
         {props.submit ?? null}
-        <View style={styles.tabs}>
-          <SegmentedTabBar<ReviewDetailTabId>
-            tabs={tabs}
-            activeTabId={props.activeTab}
-            onSelectTab={props.onSelectTab}
-            presentation="plain"
-            segmentSizing="content"
-            testIDPrefix="review-detail:tabs"
-            overflow={{ label: t('common.more') }}
-          />
-        </View>
+        <ReviewDetailTabsLine tabs={tabs} activeTab={props.activeTab} onSelectTab={props.onSelectTab} />
         <View testID={`review-detail:panel:${props.activeTab}`}>
           {props.children}
         </View>
@@ -185,6 +179,30 @@ export function ReviewDetailView(
     </ItemList>
   );
 }
+
+/** The page tabs on their hairline: the loaded page and its loading state draw the same line. */
+function ReviewDetailTabsLine(props: Readonly<{
+  tabs: readonly SegmentedTab<ReviewDetailTabId>[];
+  activeTab: ReviewDetailTabId;
+  onSelectTab: (tab: ReviewDetailTabId) => void;
+}>) {
+  return (
+    <View style={styles.tabs}>
+      <SegmentedTabBar<ReviewDetailTabId>
+        tabs={props.tabs}
+        activeTabId={props.activeTab}
+        onSelectTab={props.onSelectTab}
+        presentation="plain"
+        segmentSizing="content"
+        testIDPrefix="review-detail:tabs"
+        overflow={{ label: t('common.more') }}
+      />
+    </View>
+  );
+}
+
+const LOADING_TAB_IDS = ['findings', 'changes', 'runs', 'activity'] as const satisfies readonly ReviewDetailTabId[];
+const ignoreTab = () => {};
 
 /** One verdict sentence, then its facts on one quiet line (lab glance; no stat strip). */
 export function ReviewGlanceLine(
@@ -327,12 +345,20 @@ export function ReviewDetailState(
     reason?: string;
   }>,
 ): React.ReactElement {
-  // Loading keeps the page's header geometry (pending title), so it never reads as a Review with no findings.
+  // Loading keeps the page's shape (lab `detail-loading`): the pending title, the glance line, the tab line and the
+  // findings' rows reserved, so nothing moves when the Review lands and it never reads as a Review with no findings.
   if (props.kind === 'loading')
     return (
       <ItemList testID="review-detail:loading" pageColumn="wide">
         <PageHeaderPlaceholder testID="review-detail:loading:header" />
-        <View style={styles.loading} />
+        <PageContentColumn style={styles.column}>
+          <View style={styles.lead}>
+            <View style={styles.leadInset}><SkeletonTitle lineHeight={ITEM_SUBTITLE_TEXT_METRICS.comfortable.lineHeight} /></View>
+          </View>
+          <ReviewDetailTabsLine tabs={LOADING_TAB_IDS.map(id => ({ id, label: t(TAB_LABEL_KEYS[id]), testID: `review-detail:tab:${id}` }))}
+            activeTab="findings" onSelectTab={ignoreTab} />
+          <ItemGroup header="none"><ItemLoadStateRows state={LOADING_STATE} rows={3} /></ItemGroup>
+        </PageContentColumn>
       </ItemList>
     );
   return (
@@ -377,5 +403,4 @@ const styles = StyleSheet.create((theme) => ({
     participantQuiet: { color: theme.colors.text.secondary },
     tabs: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.default, paddingBottom: theme.space.s8,
         marginHorizontal: CONTENT_INSET_PX },
-    loading: { minHeight: theme.space.s48 * 6 },
 }));

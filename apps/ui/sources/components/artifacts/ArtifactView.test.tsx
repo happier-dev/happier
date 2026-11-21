@@ -1204,7 +1204,7 @@ describe('Artifact composed view reads', () => {
         } finally { held.resolve(Response.json({ matches: [] })); await screen.unmount(); }
     });
 
-    it('opens workflow finding history only from the Review Activity tab and makes no history read for a direct Review', async () => {
+    it('reads workflow finding history with the Review Findings and makes no history read for a direct Review', async () => {
         const { served } = await setup('document', undefined, false, request => {
             if (request.path === '/v1/reviews/get') {
                 const reviewId = (request.body as { reviewId: string }).reviewId;
@@ -1231,9 +1231,10 @@ describe('Artifact composed view reads', () => {
         const screen = await renderScreen(<ArtifactView artifactId="workflow-review-history" artifact={review('workflow-review-history')} presentation="page" />);
         try {
             await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(1));
-            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(0);
+            // A Hunt finding's standing across runs is a fact on its row: one read, with the opened Findings.
+            await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(1));
             await screen.pressByTestIdAsync('review-detail:tab:activity');
-            await waitForHomeGovernance(() => expect(screen.findByTestId(`review-history:finding:${'f'.repeat(64)}`)).not.toBeNull());
+            await flushHookEffects();
             expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
                 { accountId: 'owner', body: { workflowId: 'repository-hunt', reviewId: 'workflow-review-history' } },
             ]);
@@ -1241,7 +1242,6 @@ describe('Artifact composed view reads', () => {
             await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(2));
             await flushHookEffects();
             expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(1);
-            expect(screen.findByTestId(`review-history:finding:${'f'.repeat(64)}`)).toBeNull();
         } finally { await screen.unmount(); }
     });
     it('demands Review metadata only in the opened Artifact Home', async () => {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import {
   openReviewArtifactV1,
   projectReviewRoundQualityV1,
@@ -29,16 +30,25 @@ import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTri
 import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
 import { useReviewFindingsModel, type ReviewFindingDecisionTarget } from '../finding/useReviewFindingsModel';
 import { ReviewQuestions, ReviewFollowUpDock } from '../finding/ReviewQuestions';
-import { useReviewQuestionRuns } from './useReviewQuestionRuns';
+import { useReviewQuestionRuns, type ReviewRoundRunRead } from './useReviewQuestionRuns';
+import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
+import { formatElapsedDuration } from '@/components/machines/durationWords';
+import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { formatReviewerSet } from '@/components/sessions/reviews/findings/reviewFindingsMerge';
 import { ReviewFindingsList } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
+import { useArtifactOperations } from '@/components/artifacts/useArtifactOperations';
+import { useArtifactAudience } from '@/components/artifacts/useArtifactAudience';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewSubmitPanel } from './ReviewSubmitPanel';
 import { ReviewPeopleEditor } from './ReviewPeopleEditor';
 import { reviewFindingFacts, reviewHistoryFacts } from './reviewFindingFacts';
+import { projectReviewActivity, type ReviewActivityEvent } from './reviewActivity';
+import { ReviewActivityFeed } from './ReviewActivityFeed';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { useReviewNewRound } from './useReviewNewRound';
 import { projectReviewGlance } from './reviewGlance';
@@ -46,6 +56,7 @@ import { reviewSubjectLabel } from '../list/useReviewsCollectionView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -122,6 +133,8 @@ const VERDICT_KEYS = {
 } as const satisfies Record<ReviewVerdictKindV1, string>;
 
 const EMPTY_PRINCIPALS: readonly PrincipalRefV1[] = Object.freeze([]);
+const LOADING_ROWS: ItemLoadState = Object.freeze({ kind: 'loading' });
+const NO_ACTIVITY: readonly ReviewActivityEvent[] = Object.freeze([]);
 const NO_SELECTED_FINDINGS: ReadonlySet<string> = new Set();
 
 /** Every person the opened Review names: requested reviewers of every round and every verdict's author. */
@@ -213,6 +226,8 @@ export function ReviewDetailHost(props: Readonly<{
   onRetry: () => void;
   pluginPageSelection?: PluginReviewPageSelection | null;
   focusThreadId?: string;
+  /** After Delete: the opener's own way back; otherwise the Artifact owner's. */
+  onDeleted?: () => void;
 }>): React.ReactElement {
   const { artifact } = props;
   const router = useRouter();
@@ -274,15 +289,22 @@ export function ReviewDetailHost(props: Readonly<{
   const tabs = React.useMemo((): readonly ReviewDetailTab[] => [
     { id: 'findings' },
     { id: 'changes' },
-    { id: 'runs', count: round?.runs.length ?? 0 },
+    // A tab with nothing under it carries no count ("Runs", never "Runs 0").
+    { id: 'runs', count: round?.runs.length || null },
     { id: 'activity' },
   ], [round?.runs.length]);
   const activeTab = tabs.some(item => item.id === tab) ? tab : tabs[0]!.id;
   const presented = useLayoutPresentationActive();
   const comments = useReviewComments({ scope, reviewId: record?.reviewId ?? null,
-    enabled: presented && (activeTab === 'findings' || activeTab === 'changes') });
+    enabled: presented && activeTab !== 'runs' });
   const { binding } = useServerCredentialAccountScopeBinding(scope?.serverId);
   const canEdit = readArtifactAccessCapabilities(artifact.access).canEdit;
+  // Share and Delete are the Artifact owner's operations, as on every other Artifact page (plan 04 D parity).
+  const operations = useArtifactOperations(artifact, props.onDeleted);
+  const audienceResource = React.useMemo(() => ({ artifactId: artifact.id, header: {}, ownerAccountId: artifact.ownerAccountId,
+    access: artifact.access, ...(artifact.publicAudience ? { publicAudience: artifact.publicAudience } : {}) }),
+  [artifact.access, artifact.id, artifact.ownerAccountId, artifact.publicAudience]);
+  const audience = useArtifactAudience(audienceResource);
   const newRoundPeople = React.useMemo(() => {
     if (!human) return [];
     const people = projectPeople({ human, round: lastOrdinal, names, viewerAccountId: scope?.accountId ?? null });
@@ -298,23 +320,43 @@ export function ReviewDetailHost(props: Readonly<{
   const findingRound = React.useMemo(() => round && record ? { round: { reviewId: record.reviewId,
     roundOrdinal: round.ordinal, reviewerIds: round.reviewerIds, state: round.state }, comments: comments.comments } : undefined,
   [comments.comments, record, round]);
+  // The round's reviewer runs: questions on Findings, who ran and how it ended on Runs and Activity, and which
+  // reviewer didn't finish on the page's notice line.
   const questionRuns = useReviewQuestionRuns({ runs: round?.runs, accountLifetime: binding,
-    enabled: presented && activeTab === 'findings' });
+    enabled: presented && (activeTab !== 'changes' || round?.state === 'partial') });
+  // Which reviewers of a partial round didn't finish, by the runs their Machines answered for: the notice names them.
+  const unfinishedRuns = React.useMemo(() => round?.state !== 'partial' ? [] : round.runs.flatMap(run => {
+    const read = run.kind === 'execution' ? questionRuns.runs.get(run.runId)?.run : undefined;
+    return read && read.status !== 'running' && read.status !== 'succeeded' ? [read] : [];
+  }), [questionRuns.runs, round]);
+  const partialReason = unfinishedRuns.length === 1 ? presentExecutionRunFailureSummary(unfinishedRuns[0]!.error ?? null)?.summary ?? null : null;
   const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
     selectedRowIds: selectedRowIds.length > 0 ? selectedRowIds : undefined,
     onDecideComment: decide, onBulkDecideComments: comments.decideMany });
   const findingById = React.useMemo(() => new Map(findings.rows.map(row => [row.rowId, row])), [findings.rows]);
+  const findingListRows = React.useMemo(() => findings.rows.map(row => ({ rowId: row.rowId, title: row.finding.title,
+    severity: row.finding.severity, decision: row.decision, fixed: row.fixed })), [findings.rows]);
+  const fixedCount = React.useMemo(() => findings.rows.filter(row => row.fixed).length, [findings.rows]);
   const commentById = React.useMemo(() => new Map(comments.comments.map(comment => [comment.id, comment])), [comments.comments]);
   const openedFindingComment = openFinding && findingById.has(openFinding) ? commentById.get(openFinding) : undefined;
   const seenBefore = useReviewHistory({ reviewId: record?.reviewId ?? artifact.id,
     findingIdentity: openedFindingComment?.findingIdentity ?? '' },
   { scope, enabled: presented && activeTab === 'findings' && openedFindingComment !== undefined });
-  const findingTitles = React.useMemo(() => new Map(comments.comments.flatMap(comment =>
-    comment.findingIdentity && comment.finding ? [[comment.findingIdentity, comment.finding.title] as const] : [])), [comments.comments]);
+  // A Hunt finding's standing across runs ("also in 4 earlier runs") is a fact on its row, read with the Findings.
   const history = useReviewHistory({ reviewId: record?.reviewId ?? artifact.id, workflowId: review?.workflowId },
-    { scope, enabled: activeTab === 'activity' });
+    { scope, enabled: presented && activeTab === 'findings' && Boolean(review?.workflowId) });
+  const historyFactsByIdentity = React.useMemo(() => new Map(history.data?.items.map(item =>
+    [item.findingIdentity, reviewHistoryFacts(item)] as const) ?? []), [history.data]);
+  const activityEvents = React.useMemo(() => activeTab !== 'activity' || !record ? NO_ACTIVITY : projectReviewActivity({
+    rounds: record.rounds, comments: comments.comments, verdicts: human?.verdicts ?? [],
+    runs: (round?.runs ?? []).flatMap(run => {
+      const read = run.kind === 'execution' ? questionRuns.runs.get(run.runId) : undefined;
+      return read?.run ? [{ runId: run.runId, status: read.run.status, backendTarget: read.run.backendTarget,
+        findingsCount: read.findingsCount, ...(read.run.finishedAtMs === undefined ? {} : { finishedAtMs: read.run.finishedAtMs }) }] : [];
+    }),
+  }), [activeTab, comments.comments, human?.verdicts, questionRuns.runs, record, round?.runs]);
   const roundComments = React.useMemo(() => comments.comments.filter(comment =>
     comment.appearances?.some(appearance => appearance.roundOrdinal === selectedRound)
       || comment.roundOrdinal === selectedRound), [comments.comments, selectedRound]);
@@ -393,14 +435,22 @@ export function ReviewDetailHost(props: Readonly<{
 
   const canSubmit = Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
   const canEditPeople = canEdit && human?.roundOrdinal === selectedRound && setReviewers !== undefined;
-  // One primary (lab `detail-findings`): Submit review when the Review asks it of you; otherwise, until the round is
-  // settled (nothing left to decide or implement), "Implement N fixes"; New round leads only once it is settled.
-  const implementAction = canEdit && (findings.implement.count > 0 || findings.rows.some(row => row.decision === 'undecided')) ? {
+  // One primary (lab `detail-findings`): Submit review when the Review asks it of you; otherwise "Implement N fixes"
+  // once a finding is accepted and not yet fixed. While findings still wait for a decision and none is accepted there
+  // is no primary (the glance names the next step); New round leads only once the round is settled.
+  const implementAction = canEdit && findings.implement.count > 0 ? {
     title: t('runPage.review.implementFixes', { count: findings.implement.count }), testID: 'review-detail:implement-primary',
     disabled: findings.implement.destinationDisabled, loading: findings.implement.busy, onPress: implementFindings } : null;
+  const awaitingDecision = findings.rows.some(row => row.decision === 'undecided' && !row.fixed);
   const newRoundAction = newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null;
   const primaryAction = canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
-    : implementAction ?? newRoundAction;
+    : implementAction ?? (awaitingDecision ? null : newRoundAction);
+  // A finding's standing words: its round status and captured scope, then (a Hunt's) its standing across runs.
+  const findingFacts = (row: (typeof findings.rows)[number]) => {
+    const comment = commentById.get(row.rowId);
+    return [...reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound, scopeAttribution: comment?.scopeAttribution }),
+      ...(comment?.findingIdentity ? historyFactsByIdentity.get(comment.findingIdentity) ?? [] : [])];
+  };
   const renderFindingRow = (rowId: string, divided: boolean) => {
     const row = findingById.get(rowId);
     return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
@@ -409,11 +459,11 @@ export function ReviewDetailHost(props: Readonly<{
         href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
       attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
       decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
+      resolution={row.fixed ? t('reviewWalkthrough.detail.fixed') : null}
       onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
       expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
       onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
-      facts={reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound,
-        scopeAttribution: commentById.get(row.rowId)?.scopeAttribution })} /> : null;
+      facts={findingFacts(row)} /> : null;
   };
   if (pushedFindingId) {
     const index = findings.rows.findIndex(row => row.rowId === pushedFindingId);
@@ -431,6 +481,9 @@ export function ReviewDetailHost(props: Readonly<{
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
     ...(record.rounds[0] ? [{ key: 'started', text: t('reviewWalkthrough.detail.startedAt', {
       time: formatShortRelativeTime(record.rounds[0].startedAt) }) }] : []),
+    // Who it reaches, once it reaches anyone (the Artifact audience owner's words); a private Review says nothing.
+    ...(audience?.shared ? [{ key: 'audience', icon: 'users' as const, text: audience.team
+      ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team }) : t('artifacts.browser.facts.shared') }] : []),
   ];
   return (
     <ReviewPagePluginContent reviewId={artifact.id} serverId={artifact.sourceServerId ?? artifactScope?.serverId ?? null}
@@ -439,8 +492,15 @@ export function ReviewDetailHost(props: Readonly<{
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
       primaryAction={primaryAction}
-      notice={scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
-        || (humanActions.approval.approvalPending && humanActions.approval.approvalId)) ? <>{newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
+      notice={round?.state === 'partial' || (scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
+        || (humanActions.approval.approvalPending && humanActions.approval.approvalId))) ? <>
+        {/* A partial round says once, here, who didn't finish and why (lab notice line); the score line says no more. */}
+        {round?.state === 'partial' ? <SurfaceStateCard testID="review-detail:partial" kind="warning" size="line"
+          title={unfinishedRuns.length > 0 ? t('reviewWalkthrough.detail.reviewersDidntFinish', {
+            names: formatReviewerSet(unfinishedRuns.map(run => resolveExecutionRunBackendLabel(run.backendTarget)
+              ?? t('reviewWalkthrough.detail.reviewerRun', { count: 1 }))) }) : t('reviewWalkthrough.detail.qualityPartial')}
+          {...(partialReason ? { reason: partialReason } : {})} /> : null}
+        {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
         {humanActions.approval.approvalPending && humanActions.approval.approvalId && scope ? <ActionApprovalPendingNotice
@@ -453,8 +513,13 @@ export function ReviewDetailHost(props: Readonly<{
         ...(canEditPeople ? [{ id: 'edit-reviewers', testID: 'review-detail:edit-reviewers', title: t('reviewWalkthrough.detail.people'),
           disabled: !humanActions.ready, onSelect: () => setPeopleOpen(true) }] : []),
         { id: 'copy-fix-prompt', testID: 'review-detail:copy-fix-prompt', title: t('reviewWalkthrough.detail.copyFixPrompt'),
-        disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } }, ...menu]}
-      glance={projectReviewGlance(round, review, { countsOnChips: true })}
+        disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } },
+        ...(operations.canShare ? [{ id: 'share', testID: 'review-detail:share', title: t('artifacts.browser.actions.share'),
+          onSelect: () => operations.share() }] : []),
+        ...menu,
+        ...(operations.canManage ? [{ id: 'delete', testID: 'review-detail:delete', title: t('artifacts.delete'), destructive: true,
+          loading: operations.deleting, onSelect: operations.remove }] : [])]}
+      glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount })}
       quality={projectReviewRoundQualityV1(round, qualityAggregation)}
       rounds={rounds}
       selectedRound={selectedRound}
@@ -471,8 +536,8 @@ export function ReviewDetailHost(props: Readonly<{
           .map(request => ({ principal: request.principal, required: request.required }))}
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
-        {comments.status === 'idle' || comments.status === 'loading' ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
-          : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findings.rows.map(row => ({ rowId: row.rowId, title: row.finding.title, severity: row.finding.severity, decision: row.decision }))}
+        {comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
+          : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findingListRows}
               selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
                 active: selecting, onStart: startSelecting } : undefined}
               renderRow={renderFindingRow} /> : null}
@@ -523,23 +588,26 @@ export function ReviewDetailHost(props: Readonly<{
           comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment}
           viewedFilter={viewedFilter} />
       ) : null}
-      {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} /> : null}
-      {activeTab === 'activity' ? <>
-        {history.data ? <ItemGroup header="none">{history.data.items.map(item => <Item key={item.findingIdentity}
-          testID={`review-history:finding:${item.findingIdentity}`} title={findingTitles.get(item.findingIdentity) ?? t('runPage.review.findings')}
-          subtitle={joinHappierFacts(...reviewHistoryFacts(item))} />)}</ItemGroup> : null}
-        {review?.workflowId && !history.data && history.status !== 'error' ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
-        {history.status === 'error' ? <SurfaceStateCard kind="error" size="line" title={t('common.error')}
-          action={{ label: t('common.retry'), onPress: () => void history.refresh() }} /> : null}
-        {!review?.workflowId || history.data?.items.length === 0 ? <SurfaceStateCard kind="empty" size="line" title={t('reviewWalkthrough.detail.historyEmpty')} /> : null}
-      </> : null}
+      {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs} /> : null}
+      {activeTab === 'activity' ? (
+        comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
+          : <ReviewActivityFeed events={activityEvents} viewerAccountId={scope?.accountId ?? null} names={names} />
+      ) : null}
     </ReviewDetailView>
     )}</ReviewPagePluginContent>
   );
 }
 
-/** The round's runs, each opening its own result page (where its findings are decided today). */
-export function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scope: ServerAccountScope | null }>) {
+/**
+ * The round's runs (lab `detail-runs`), each opening its own result page. A reviewer run its Machine answered for is
+ * the shared Run row: its Agent's mark and name, model, state, then how many findings it reported and how long it
+ * took. A run not read (yet, or its Machine is away) keeps its place by its kind.
+ */
+export function ReviewRoundRuns(props: Readonly<{
+  round: ReviewRecordRound;
+  scope: ServerAccountScope | null;
+  reads?: ReadonlyMap<string, ReviewRoundRunRead>;
+}>) {
   const router = useRouter();
   const { scope } = props;
   if (props.round.runs.length === 0) {
@@ -569,6 +637,19 @@ export function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scop
                   serverId: scope?.serverId ?? null,
                 })
               : null;
+        const onPress = href ? () => router.push(href as never) : undefined;
+        const read = run.kind === 'execution' ? props.reads?.get(run.runId)?.run ?? null : null;
+        if (run.kind === 'execution' && read) {
+          const findingsCount = props.reads?.get(run.runId)?.findingsCount ?? null;
+          const duration = read.finishedAtMs !== undefined ? formatElapsedDuration(read.finishedAtMs - read.startedAtMs) : null;
+          return (
+            <View key={run.runId} testID={`review-detail:run:${run.runId}`}>
+              <ExecutionRunRow run={read} serverId={scope?.serverId ?? null} machineId={run.machineId} onPress={onPress}
+                subtitle={joinHappierFacts(findingsCount === null ? null : t('reviewWalkthrough.detail.findingsCount', { count: findingsCount }),
+                  duration) || undefined} />
+            </View>
+          );
+        }
         return (
           <Item
             key={run.runId}
@@ -576,12 +657,11 @@ export function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scop
             title={
               run.kind === 'workflow'
                 ? t('reviewWalkthrough.detail.workflowRun')
-                : t('reviewWalkthrough.detail.reviewerRun', {
-                    count: index + 1,
-                  })
+                : props.round.reviewerDisplayNames?.[props.round.reviewerIds[index] ?? '']
+                  ?? t('reviewWalkthrough.detail.reviewerRun', { count: index + 1 })
             }
             subtitle={t(ROUND_STATE_KEYS[props.round.state])}
-            {...(href ? { onPress: () => router.push(href as never) } : {})}
+            {...(onPress ? { onPress } : {})}
           />
         );
       })}

@@ -104,6 +104,8 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     decision: ReviewFindingDecision | 'undecided' | null;
     /** Read-only recipients retain the decision without its editing controls. */
     decisionEditable?: boolean;
+    /** What became of the finding once it was settled ("Fixed in a5c09e2"); it replaces the decision word. */
+    resolution?: string | null;
     /** The decision can't be recorded yet (its comment is loading or missing). */
     decisionDisabled: boolean;
     /** Why a decision can't be recorded, shown under the control. */
@@ -217,7 +219,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
                         ) : null}
                     </View>
                     {decisionControl ?? (props.decision !== null ? <Text style={styles.decisionAside} variant="meta">
-                        {reviewFindingDecisionLabel(props.decision)}
+                        {props.resolution ?? reviewFindingDecisionLabel(props.decision)}
                     </Text> : null)}
                 </View>
                 <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} findBlockPrefix={props.findBlockPrefix} />
@@ -317,7 +319,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                 </View>
             ) : null}
             facts={props.facts}
-            decision={props.decision === null ? null : { value: props.decision, label: reviewFindingDecisionLabel(props.decision) }}
+            decision={props.decision === null ? null : { value: props.decision, label: props.resolution ?? reviewFindingDecisionLabel(props.decision) }}
             decisionEditable={props.decisionEditable}
             decisionControl={props.decisionControl}
             decisionGlyph={<Icon name={reviewFindingDecisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
