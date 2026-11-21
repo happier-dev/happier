@@ -4,7 +4,11 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '../../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
+  DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DeploymentBindingsPatchInputV1Schema } from '../../deployments/deploymentBindingPatchV1.js';
+import { projectDeploymentReadAdmissionV1, readDeploymentDatabaseReadAccessBindingChildV1 } from '../../deployments/deploymentReadAdmissionV1.js';
+import { DeploymentSecretBindingSourceV1Schema } from '../../deployments/storedAppInputV1.js';
 import { isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
@@ -483,6 +487,27 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const admittedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
   const reviewAdmitted = params.reviewAdmitted ?? (params.admittedReview !== undefined || parentProof !== undefined
     || admittedParent?.actionId === parent.actionId && sameStrictJsonValue(admittedParent.input, parentInput));
+  if (child.role === DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1) {
+    const admission = projectDeploymentReadAdmissionV1(parent.actionId, parentInput);
+    const setup = readDeploymentDatabaseReadAccessBindingChildV1(admission, { actionId: qualifiedActionId, role: child.role });
+    const patch = DeploymentBindingsPatchInputV1Schema.safeParse(proofInput);
+    if (!reviewAdmitted || !setup || !admission || !('databaseTarget' in admission) || !patch.success
+      || patch.data.serverId !== admission.databaseTarget.environment.serverId || patch.data.environmentId !== setup.environmentId
+      || patch.data.set.length !== 1 || patch.data.remove.length
+      || patch.data.telemetryMachineId !== undefined || patch.data.telemetry !== undefined
+      || patch.data.telemetryCollector !== undefined || patch.data.providerVariables !== undefined) return reviewedChildScopeDenied('child_mismatch');
+    const selected = patch.data.set[0];
+    if (!selected || selected.purpose !== 'dataRole' || !('targetLinkId' in selected) || selected.targetLinkId !== setup.targetLinkId
+      || selected.role !== 'readOnlyPassword')
+      return reviewedChildScopeDenied('child_mismatch');
+    const source = DeploymentSecretBindingSourceV1Schema.safeParse(selected.source);
+    if (!source.success) return reviewedChildScopeDenied('child_mismatch');
+    if (!setup.requiresDatabaseWriter) {
+      const attach = readRecord(readRecord(parentInput).input);
+      if (source.data.ref !== attach.savedSecretRef || source.data.resourceRevision !== attach.resourceRevision)
+        return reviewedChildScopeDenied('child_mismatch');
+    }
+  }
   const rootActionId = parentProof?.rootActionId ?? parent.actionId;
   const reviewedChild = reviewAdmitted && binding?.actionId === rootActionId
     ? createReviewedChildProof(qualifiedActionId, child.role, proofInput, rootActionId,

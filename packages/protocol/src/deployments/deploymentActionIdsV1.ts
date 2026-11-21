@@ -85,6 +85,7 @@ export function readDeploymentReferenceServiceListEnvironmentIdV1(
 export const DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 = 'deployments.environments.telemetry.set';
 export const DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 = 'telemetry.bindings';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
+export const DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1 = 'database.readAccess.bindings';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add' as const;

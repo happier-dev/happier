@@ -17,10 +17,10 @@ import {
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
-import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { computeSha256HexDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
 import {
   createPluginUiActionControlTestHost,
   createPluginUiTestkit,
@@ -35,6 +35,7 @@ import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { renderSurface as renderPage } from './WorkbenchPage.js';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
 import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
+import { encodeWorkbenchRootSubPath } from './subPath.js';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -281,11 +282,71 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       expect(await fixture.getByText('Databases could not be read')).toBeTruthy();
+      expect(document.body.textContent).not.toContain('Create read-only login');
       expect(watchResource).toHaveBeenCalledTimes(1);
       await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
       await settle(20);
       expect(await fixture.getByRole('button', { name: '48212' })).toBeTruthy();
       expect(watchResource).toHaveBeenCalledTimes(2);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('reviews the exact read-only login SQL after a typed setup refusal and opens the database once configured', async () => {
+    const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+        targetLinkId: 'link', contribution: { pluginId: 'fixture.database', contributionId: 'postgres' },
+        platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
+    const connected = { ...descriptor, target };
+    const content = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
+    const digest = `sha256:${computeSha256HexDigest(content)}`;
+    const statements = ['CREATE ROLE happier_read LOGIN', 'GRANT CONNECT ON DATABASE billing_dev TO happier_read'];
+    const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+    type Control = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
+    let apply: Control | undefined;
+    let configured = false;
+    const daemon = daemonAnswers([connected]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'managed-read-setup', mountNonce: 'managed-read-setup' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      subPath: encodeWorkbenchRootSubPath(target),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(),
+        async watchResource() {
+          if (!configured) throw new PluginError({ code: 'read_role_setup_required' });
+          return { digest };
+        },
+        async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(content) }; },
+        async executeAction(request) {
+          if (request.action !== create) return daemon(request);
+          expect(request.input).toEqual({ target, mode: 'preview' });
+          return { ok: true, status: 'review', role: 'happier_read', statements };
+        },
+        actionControl(control) {
+          const { request } = control;
+          if (request.kind === 'bind' && request.action === create) apply = control;
+          if (request.kind !== 'prepared' || request.requestId !== 'create-login') return;
+          expect(request.preparation?.input).toEqual({ target, mode: 'apply', role: 'happier_read', statements });
+          configured = true;
+          return { ok: true, result: { ok: true, status: 'configured' } };
+        },
+      },
+    });
+    try {
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Use existing read-only login' }));
+      expect(await fixture.getByText('Saved secrets are unavailable on this host.')).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Back to setup options' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
+      await settle(20);
+      for (const sql of statements) expect(document.body.textContent).toContain(sql);
+      expect(configured).toBe(false);
+      if (!apply) throw new Error('The reviewed SQL did not offer an Action Control');
+      await act(async () => { apply?.publish({ kind: 'prepare', requestId: 'create-login' }); });
+      await settle(20);
+      expect(configured).toBe(true);
+      expect(await fixture.findByRole('button', { name: 'invoices' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

@@ -2,12 +2,18 @@ import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
+import { databaseConnectionUrlWithoutOptions, type VerifiedDatabaseTls } from '../connection.js';
 import {
     executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1,
     type PostgresqlCompiledStatement, type PostgresqlNativeResult, type PostgresqlSetupFactsV1,
     type PostgresqlExecutionOptions,
 } from '../postgresql/index.js';
+import { postgresqlReadRoleProof, postgresqlReadRoleSchemas } from '../postgresql/readRoleSetup.js';
+import {
+    DatabaseReadRoleError, matchesDatabaseReadRolePlan, planDatabaseReadRoleSetup, postgresqlReadRolePassword, readRoleFailure,
+    type DatabaseReadRoleConnection, type DatabaseReadRoleVerificationResult,
+} from '../readRoleSetup.js';
 
 export { postgresqlCapabilities } from '../capabilities.js';
 
@@ -18,10 +24,11 @@ export interface PostgresqlConnection {
 
 /** The caller owns this demand's credential and connection. No pool, timer or retry outlives it. */
 export async function openPostgresqlConnection(connectionString: string, signal?: AbortSignal,
-    options: Readonly<{ sessionGuardSql?: string;
+    options: Readonly<{ sessionGuardSql?: string; tls?: VerifiedDatabaseTls;
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
-    }> = {}): Promise<PostgresqlConnection> {
+    }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
+    const uri = options.tls ? databaseConnectionUrlWithoutOptions(connectionString) : connectionString;
     const openClient = async () => {
         const transport = await options.openStream?.();
         try {
@@ -32,7 +39,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                 setNoDelay() { return transport.stream; },
                 connect() { queueMicrotask(() => transport.stream.emit('connect')); return transport.stream; },
             }) : undefined;
-            return { client: new Client({ connectionString, ...(stream ? { stream: () => stream } : {}) }), transport };
+            return { client: new Client({ connectionString: uri, ...(stream ? { stream: () => stream } : {}),
+                ...(options.tls ? { ssl: { rejectUnauthorized: true, ...(options.tls.ca === undefined ? {} : { ca: options.tls.ca }) } } : {}),
+            }), transport };
         } catch (error) { await transport?.close(); throw error; }
     };
     const { client, transport } = await openClient();
@@ -110,6 +119,10 @@ export async function openPostgresqlConnection(connectionString: string, signal?
     finally { signal?.removeEventListener('abort', onConnectAbort); }
     const databaseIdentity = JSON.stringify({ database: setup.database, databaseOid: setup.databaseOid,
         serverAddress: setup.serverAddress, serverPort: setup.serverPort, engineStartedAt: setup.engineStartedAt });
+    const onAbort = () => {
+        if (!activeQuery) { void close().catch(() => {}); return; }
+        void cancelActive().catch(() => { void close().catch(() => {}); });
+    };
     const execute = async (input: DatabaseOperationInputV1, operationSignal?: AbortSignal): Promise<DatabaseOperationResultV1> => {
         if (operationSignal?.aborted) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
         if (closed || terminalError) return { ok: false, status: 'failed', code: 'database_connection_unavailable',
@@ -126,10 +139,6 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                 bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
                 selectionKey: JSON.stringify(input.request) },
         } } : {};
-        const onAbort = () => {
-            if (!activeQuery) { void close().catch(() => {}); return; }
-            void cancelActive().catch(() => { void close().catch(() => {}); });
-        };
         operationSignal?.addEventListener('abort', onAbort, { once: true });
         try {
             if (signalsBackend) return await executePostgresqlOperation(input, query);
@@ -174,12 +183,88 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (operationSignal?.aborted) await close().catch(() => {});
         }
     };
+    // The same queue owns ordinary transactions and read-role setup on this native session.
+    const schedule = <T>(run: () => Promise<T>): Promise<T> => {
+        const result = tail.then(run);
+        tail = result.catch(() => {});
+        return result;
+    };
+    const readRoleOperation = <T>(operationSignal: AbortSignal | undefined,
+        run: (nativeQuery: typeof query) => Promise<T>): Promise<T> => schedule(async () => {
+        if (operationSignal?.aborted) throw new DatabaseReadRoleError(readRoleFailure('database_cancelled', 'cancelled'));
+        if (closed || terminalError) throw new DatabaseReadRoleError(readRoleFailure('database_connection_unavailable'));
+        const nativeQuery: typeof query = statement => {
+            operationSignal?.throwIfAborted();
+            return query(statement);
+        };
+        operationSignal?.addEventListener('abort', onAbort, { once: true });
+        try { return await run(nativeQuery); }
+        catch (error) {
+            if (error instanceof DatabaseReadRoleError) throw error;
+            if (operationSignal?.aborted) throw new DatabaseReadRoleError(readRoleFailure('database_cancelled', 'cancelled'));
+            throw new DatabaseReadRoleError(readRoleFailure('database_read_role_setup_failed', 'failed', postgresqlFailureCause(error)));
+        } finally {
+            operationSignal?.removeEventListener('abort', onAbort);
+            if (cancellation) await cancellation.catch(() => {});
+            if (operationSignal?.aborted) await close().catch(() => {});
+        }
+    });
+    const prepare = async (role: string, nativeQuery: typeof query) => {
+        const result = await nativeQuery(postgresqlReadRoleSchemas);
+        const schemas = result.rows.map(row => {
+            const name = row[0];
+            if (typeof name !== 'string') throw new Error('PostgreSQL omitted schema metadata');
+            return name;
+        });
+        return { schemas, plan: planDatabaseReadRoleSetup({ engine: 'postgresql', database: setup.database, role, schemas }) };
+    };
+    const verify = async (role: string, schemas: readonly string[] | null, nativeQuery: typeof query): Promise<DatabaseReadRoleVerificationResult> => {
+        const result = await nativeQuery(postgresqlReadRoleProof(role, schemas));
+        return result.rows[0]?.[0] === 't' ? { ok: true } : readRoleFailure('database_read_role_not_read_only');
+    };
     return {
-        // pg queues individual queries; serialize whole operations so concurrent page requests cannot interleave transactions.
-        execute(input, operationSignal) {
-            const result = tail.then(() => execute(input, operationSignal));
-            tail = result.catch(() => {});
-            return result;
+        execute: (input, operationSignal) => schedule(() => execute(input, operationSignal)),
+        prepareReadRole: (role, operationSignal) => readRoleOperation(operationSignal, async nativeQuery => (await prepare(role, nativeQuery)).plan),
+        async setupReadRole(reviewed, operationSignal) {
+            try {
+                return await readRoleOperation(operationSignal, async nativeQuery => {
+                    const { plan, schemas } = await prepare(reviewed.role, nativeQuery);
+                    if (!matchesDatabaseReadRolePlan(reviewed, plan)) return readRoleFailure('database_read_role_plan_changed');
+                    const credential = await postgresqlReadRolePassword();
+                    const control = (text: string) => nativeQuery({ text, values: [] });
+                    await control('BEGIN');
+                    let committing = false;
+                    try {
+                        const [create, ...grants] = plan.statements;
+                        await control(credential.statement(create!));
+                        for (const statement of grants) await control(statement);
+                        const proof = await verify(plan.role, schemas, nativeQuery);
+                        if (!proof.ok) throw new DatabaseReadRoleError(proof);
+                        operationSignal?.throwIfAborted();
+                        committing = true;
+                        await control('COMMIT');
+                        return { ok: true, password: credential.password };
+                    } catch (error) {
+                        const cause = postgresqlFailureCause(error);
+                        if (!closed) {
+                            try { await query({ text: 'ROLLBACK', values: [] }); }
+                            catch { await close().catch(() => {}); }
+                        }
+                        if (committing && (closed || operationSignal?.aborted || cause.source === 'transport')) {
+                            return readRoleFailure('database_outcome_unknown', 'outcome_unknown', cause);
+                        }
+                        throw error;
+                    }
+                });
+            } catch (error) {
+                return error instanceof DatabaseReadRoleError ? error.failure : readRoleFailure('database_read_role_setup_failed');
+            }
+        },
+        async verifyReadRole(operationSignal) {
+            try { return await readRoleOperation(operationSignal, nativeQuery => verify(setup.currentUser, null, nativeQuery)); }
+            catch (error) {
+                return error instanceof DatabaseReadRoleError ? error.failure : readRoleFailure('database_read_role_setup_failed');
+            }
         },
         close,
     };

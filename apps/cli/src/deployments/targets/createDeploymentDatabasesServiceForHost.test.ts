@@ -188,6 +188,9 @@ describe('managed database attachment at the deployment owner', () => {
                 },
                 async query(sql: string) {
                     if (sql === 'COMMIT') committed = pending;
+                    if (sql === 'SELECT @@GLOBAL.partial_revokes, @@GLOBAL.mandatory_roles') {
+                        return frame(['0', ''], ['partial_revokes', 'mandatory_roles']);
+                    }
                     return [[], []];
                 },
             };
@@ -282,6 +285,19 @@ describe('managed database attachment at the deployment owner', () => {
             }
             // One data connection for each successful open; the mismatches never reach the driver.
             expect(createConnection).toHaveBeenCalledTimes(2);
+
+            // An adapter that exposes the exact direct endpoint uses the shared read-role setup owner.
+            runtime.readRoleEndpoint = vi.fn(async () => ({ connectionString: `mysql://selected/${target.database}` }));
+            await expect(service.resolve(read, 'read')).rejects.toMatchObject({ code: 'read_role_setup_required' });
+            expect(runtime.readRoleEndpoint).not.toHaveBeenCalled();
+            expect(createConnection).toHaveBeenCalledTimes(2);
+            stored.state.environment.environment.capabilities.manageBindings = true;
+            writeUrl = `mysql://writer:fixture@selected/${target.database}`;
+            const preview = await service.createReadAccess!({ target, mode: 'preview' });
+            expect(preview).toMatchObject({ ok: true, status: 'review', role: expect.stringMatching(/^happier_ro_/u),
+                statements: [expect.stringContaining('IDENTIFIED BY RANDOM PASSWORD'), expect.stringContaining('GRANT SELECT, SHOW VIEW'),
+                    expect.stringContaining('ACCOUNT UNLOCK')] });
+            expect(JSON.stringify(preview)).not.toContain('writer:fixture');
         } finally { await owners.dispose(); }
     });
 });

@@ -11,7 +11,8 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedChildRoleV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+    DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 type DeploymentEnvironmentGetResultV1 = ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse>;
@@ -91,8 +92,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(credentials);
             const input = DeploymentBindingsSetInputV1Schema.parse(request.input);
             const child = readHostAdmittedReviewedChildV1(request.context);
-            const telemetryChild = readHostAdmittedReviewedChildRoleV1(request.context,
-                DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input) === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
+            const childRole = readHostAdmittedReviewedChildRoleV1(request.context, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input);
+            const telemetryChild = childRole === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
+            const databaseReadAccessChild = childRole === DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1;
             if ((input.telemetryMachineId !== undefined || 'telemetry' in input && input.telemetry !== undefined
                 || 'telemetryCollector' in input && input.telemetryCollector !== undefined) && !telemetryChild)
                 return refuse('action_forbidden');
@@ -163,7 +165,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 const binding = context.externalActionExecutionAuthorization?.binding;
                 const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
                     || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                        && (child.role === 'backup.bindings' || child.role === 'template.bindings' || child.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1))
+                        && (child.role === 'backup.bindings' || child.role === 'template.bindings' || telemetryChild || databaseReadAccessChild))
                     ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                         environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
@@ -175,12 +177,13 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 await assertCurrent();
                 return { ...DeploymentBindingsPreparedInputV1Schema.parse({ serverId: input.serverId,
                     environmentId: input.environmentId, expectedRevision: input.expectedRevision,
-                    ...(input.telemetryMachineId === undefined ? {} : { telemetryMachineId: input.telemetryMachineId }), telemetryCapabilities,
+                    ...(input.telemetryMachineId === undefined ? {} : { telemetryMachineId: input.telemetryMachineId }),
+                    ...(databaseReadAccessChild ? {} : { telemetryCapabilities }),
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };
             const platformLink = loaded.targetLinks.find(link => link.id === targetLinkId && link.source.kind === 'plugin');
-            if (platformLink && !request.buildMachineId && !request.environmentUpdate) {
+            if (platformLink && !request.buildMachineId && !request.environmentUpdate && !databaseReadAccessChild) {
                 if (!host.preparePlatformBindings) return refuse('unsupported_action');
                 if (readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
                     bindings: candidate.content.bindings, existingGrants: [], writer: 'variables' }) === null) return refuse('deployment_invalid');

@@ -10,6 +10,7 @@ import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparation
 import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 
 type AcceptedIdentity = Omit<DeploymentAcceptedExecutionV1, 'v'>;
 type AcceptedTarget = Readonly<{ sourceKind: string; targetKind: string }>;
@@ -49,6 +50,8 @@ export function readDeploymentExecutionEffectFromRequest(request: FastifyRequest
             && reviewed?.actionId === actionId && reviewed.role === 'backup.bindings'
         || binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
             && reviewed?.actionId === actionId && reviewed.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
+        || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+            && readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, reviewed) !== undefined
         || reviewed !== undefined && isDeploymentDomainAddActionIdV1(reviewed.actionId) && actionId === reviewed.actionId
             && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, actionId) === actionId
         ? { binding, actionId } : null;

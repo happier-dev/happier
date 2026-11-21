@@ -121,6 +121,8 @@ export { DatabaseForeignKeyV1Schema } from './projections.js';
 export { DatabaseInsightBriefBuildInputV1ProtocolSchema } from './projections.js';
 export { DatabaseInsightSourceDescriptorV1ProtocolSchema } from './projections.js';
 export { DatabaseManagedDeploymentTargetV1Schema } from './projections.js';
+export { DatabaseReadAccessAttachInputV1Schema, DatabaseReadAccessCreateInputV1Schema, DatabaseReadAccessSetupResultV1Schema,
+    type DatabaseReadAccessAttachInputV1, type DatabaseReadAccessCreateInputV1, type DatabaseReadAccessSetupResultV1 } from './readAccess.js';
 export { DatabaseManualTargetV1Schema } from './projections.js';
 export { DatabaseOperationInputV1Schema } from './projections.js';
 export { DatabaseOperationResultV1Schema } from './projections.js';
@@ -272,6 +274,8 @@ export {
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
     DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_ACCESS_SET_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
     UI_DATABASE_OPEN_ACTION_ID_V1,
     UI_DATABASE_NAVIGATE_ACTION_ID_V1,
     UI_DATABASE_DRAFT_READ_ACTION_ID_V1,

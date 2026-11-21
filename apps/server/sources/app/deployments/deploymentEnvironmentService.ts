@@ -6,6 +6,8 @@ import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1S
     type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { resolveDeploymentStoredDefinitionRevisionV1, isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1, applyOwnServerEnvironmentConfigurationPatchV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1 } from '@happier-dev/deployments/contracts/v1';
 import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -79,7 +81,7 @@ export function readDeploymentPreviewTemplateEnvironmentId(row: Readonly<{
 export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{
     principals?: readonly DeploymentEnvironmentPrincipalRow[];
     previewCompanionOfEnvironment?: Readonly<{ previewTemplateEnvironmentId: string | null }> | null;
-}>, serverId: string, admission: DeploymentSourceAdmission) {
+}>, serverId: string, admission: DeploymentSourceAdmission, admittedBindingsManagement?: true) {
     const canDeploy = canDeployDeploymentEnvironment(admission, row);
     const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(row);
     return DeploymentEnvironmentHeaderV1Schema.parse({
@@ -102,7 +104,8 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         ...deploymentContentReference(row),
         capabilities: { role: admission.canManage ? 'manager' : canDeploy ? 'deployer' : 'reader',
             read: true, deploy: canDeploy, editData: canEditDeploymentEnvironmentData(admission, row), manage: admission.canManage && !row.deletedAt,
-            manageBindings: admission.canManage && !row.deletedAt, manageTargets: admission.canManage && !row.deletedAt,
+            manageBindings: (admission.canManage || admittedBindingsManagement === true) && !row.deletedAt,
+            manageTargets: admission.canManage && !row.deletedAt,
             delete: admission.canManage && !row.deletedAt },
         createdByAccountId: row.createdByAccountId, createdAtMs: row.createdAt.getTime(), updatedAtMs: row.updatedAt.getTime(),
         ...(row.deletedAt ? { deletedAtMs: row.deletedAt.getTime() } : {}),
@@ -614,6 +617,10 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         dataEditorMode?: string; dataAgentAccess?: string; dataEditors?: readonly PrincipalRefV1[] }>,
     executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
 ) {
+    // The signed binding writer admits this effect only for Attach or Create Apply.
+    const readAccessSetup = readDeploymentDatabaseReadAccessSetupV1(executionBinding?.deploymentReadAdmission);
+    const databaseReadBinding = readAccessSetup?.allowsBindingWrite && readAccessSetup.environmentId === input.environmentId
+        ? readAccessSetup : undefined;
     const telemetryMachineId = input.telemetryMachineId === undefined ? loaded.row.telemetryMachineId : input.telemetryMachineId;
     const telemetryChanged = telemetryMachineId !== loaded.row.telemetryMachineId;
     const previousTelemetryCapabilities = { metrics: loaded.row.telemetryMetricsEnabled,
@@ -643,7 +650,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
-    const platformVariables = link?.sourceKind === 'plugin' && !placement;
+    const platformVariables = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
     const linkCandidate = input.targetLinkContent;
     if (platformVariables && !linkCandidate || linkCandidate && (!platformVariables || !link
         || linkCandidate.targetLinkId !== link.id || linkCandidate.expectedTargetLinkRevision !== link.revision
@@ -682,6 +689,17 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         && !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content,
             input.telemetryCapabilities === undefined ? 'bindings' : 'telemetry')))) {
         return deploymentFailure('deployment_conflict');
+    }
+    if (databaseReadBinding && preparedContent.content && previous.content) {
+        const selected = environmentSecretBindingIdentityV1({
+            purpose: 'dataRole', targetLinkId: databaseReadBinding.targetLinkId, role: 'readOnlyPassword',
+        });
+        const otherBindings = (bindings: readonly EnvironmentSecretBindingV1[]) =>
+            bindings.filter(binding => environmentSecretBindingIdentityV1(binding) !== selected);
+        const replacement = preparedContent.content.bindings.find(binding => environmentSecretBindingIdentityV1(binding) === selected);
+        if (replacement?.source.kind !== 'secret'
+            || !isDeepStrictEqual(otherBindings(previous.content.bindings), otherBindings(preparedContent.content.bindings)))
+            return deploymentFailure('deployment_conflict');
     }
     if (preparedContent.content && input.telemetryCapabilities !== undefined
         && !isDeepStrictEqual(resolveDeploymentTelemetryCapabilitiesV1(preparedContent.content.telemetry), telemetryCapabilities))

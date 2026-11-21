@@ -20,6 +20,8 @@ import {
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
 import {
+    DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
     type DatabaseDescriptorV1,
     type DatabaseFindingsListInputV1,
     type DatabaseFindingsListResultV1,
@@ -34,6 +36,7 @@ import {
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { pluginActionDeclarationIsReadOnlyForInput, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { plugin as workbenchPlugin } from './manifest.js';
 import { createDatabaseActions } from './actions.js';
@@ -130,6 +133,48 @@ describe('producer-backed database Action declarations', () => {
             preloaded = true;
             await expect(kit.invokeAction(action, input)).resolves.toEqual({ ok: true, operation: 'stats.enable', status: 'enabled' });
             expect(installed).toBe(true);
+        } finally { await kit.dispose(); }
+    });
+
+    it('invokes read-only login setup through the contributed Actions and rejects a raw credential', async () => {
+        const database = { kind: 'managed_deployment',
+            environment: { serverId: 'home', environmentId: 'environment', projectSourceId: 'project-source' },
+            targetLinkId: 'link', contribution: { pluginId: 'fixture.database', contributionId: 'postgres' },
+            platformProjectId: 'project', branchId: 'branch', database: 'billing',
+        } as const;
+        const review = { ok: true, status: 'review', role: 'happier_read', statements: ['CREATE ROLE happier_read LOGIN'] } as const;
+        const configured = { ok: true, status: 'configured' } as const;
+        const attachment = { target: database, savedSecretRef: formatSharedSavedSecretRefV1('saved-connection'), resourceRevision: 7 };
+        const unavailable = async (): Promise<never> => { throw new Error('Read access setup must not open the unconfigured read connection'); };
+        const kit = await createPluginTestkit({ manifest: workbenchPlugin.manifest, module: workbenchPlugin, services: {
+            deploymentDatabases: {
+                listTargets: unavailable, resolve: unavailable, admit: unavailable,
+                async attachReadAccess(input) {
+                    expect(input).toEqual(attachment);
+                    return configured;
+                },
+                async createReadAccess(input) {
+                    if (input.mode === 'preview') return { ...review, statements: [...review.statements] };
+                    expect(input).toEqual({ target: database, mode: 'apply', role: review.role, statements: review.statements });
+                    return configured;
+                },
+            },
+        } });
+        try {
+            const attach = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
+            const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+            await expect(kit.invokeAction(attach, { ...attachment, password: 'raw credential' }))
+                .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+            await expect(kit.invokeAction(attach, attachment)).resolves.toEqual(configured);
+            await expect(kit.invokeAction(create, { target: database, mode: 'preview' })).resolves.toEqual(review);
+            await expect(kit.invokeAction(create, { target: database, mode: 'apply', role: review.role, statements: [...review.statements] }))
+                .resolves.toEqual(configured);
+            for (const id of [attach, create]) {
+                expect(workbenchPlugin.manifest.contributes.actions?.find(action => action.id === id)).toMatchObject({
+                    surfaces: expect.arrayContaining(['cli', 'ui', 'plugin', 'agent', 'mcp']),
+                    confirmation: { mountedReview: 'exact_input' },
+                });
+            }
         } finally { await kit.dispose(); }
     });
 

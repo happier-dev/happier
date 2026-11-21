@@ -1727,6 +1727,8 @@
 | `./database` | `DATABASE_INSIGHT_SOURCE_PROTOCOL_ID_V1` | value | any |
 | `./database` | `DATABASE_OPERATION_NAMES_V1` | value | any |
 | `./database` | `DATABASE_PLUGIN_ID_V1` | value | any |
+| `./database` | `DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1` | value | any |
+| `./database` | `DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_RELATIONS_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_ROWS_EXPORT_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1` | value | any |
@@ -1891,6 +1893,12 @@
 | `./database` | `DatabaseOrderV1` | type | any |
 | `./database` | `DatabasePageDemandV1` | type | any |
 | `./database` | `DatabasePartialCellV1` | type | any |
+| `./database` | `DatabaseReadAccessAttachInputV1` | type | any |
+| `./database` | `DatabaseReadAccessAttachInputV1Schema` | value | any |
+| `./database` | `DatabaseReadAccessCreateInputV1` | type | any |
+| `./database` | `DatabaseReadAccessCreateInputV1Schema` | value | any |
+| `./database` | `DatabaseReadAccessSetupResultV1` | type | any |
+| `./database` | `DatabaseReadAccessSetupResultV1Schema` | value | any |
 | `./database` | `DatabaseReadStatementInputV1` | type | any |
 | `./database` | `DatabaseReadStatementInputV1Schema` | value | any |
 | `./database` | `DatabaseRelationStructureInputV1` | type | any |

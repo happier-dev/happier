@@ -3,6 +3,7 @@ import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/execut
 import { warn } from '@/utils/logging/log';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, MachineConnectorSecretGrantResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readEnvironmentSecretLaunchAdmissionInTx, accessMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretLaunchAdmission';
 import { deploymentFailure } from '@/app/deployments/deploymentAdmission';
@@ -75,8 +76,9 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         }
         // A data-only Environment has no runtime Link for the installed request
         // shape. Home already verified the exact signed preparation for this root.
-        const managedController = 'kind' in request.body && request.authTokenKind === 'terminal'
-            && binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && request.body.dataRoleTargetLinkIds?.length
+        const managedController = 'kind' in request.body && binding && request.body.dataRoleTargetLinkIds?.length
+            && (request.authTokenKind === 'terminal' && binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                || readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, request.externalActionReviewedChildAdmission))
             ? binding : undefined;
         if ('kind' in request.body && request.authTokenKind !== 'account' && !managedController) {
             return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });

@@ -111,7 +111,8 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+    DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
     DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -120,7 +121,8 @@ import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_DESCRIBE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/deployments';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -6216,6 +6218,131 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction, { method: 'POST',
             path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
             body: preparation, routeInput: preparation, reviewedChild })).toBe(true);
+    });
+
+    it('admits only an Environment manager’s reviewed managed database read binding', async () => {
+        const f = await fixture('team', 'account', { readableEnvironment: true, platformTarget: 'vercel' });
+        const contribution = { pluginId: 'happier.deploy.railway', contributionId: 'railway-postgres' };
+        const managedLink = await db.deploymentTargetLink.create({ data: {
+            environmentId: f.environment.id, createdByAccountId: f.account.id, ...await f.content('deployment-target-link.v1'),
+            role: 'data', state: 'deployed', sourceKind: 'plugin', targetKind: 'platform',
+            pluginId: contribution.pluginId, contributionLocalId: contribution.contributionId,
+        } });
+        const databaseTarget = { kind: 'managed_deployment', environment: { serverId,
+            environmentId: f.environment.id, projectSourceId: f.environment.projectSourceId },
+            targetLinkId: managedLink.id, contribution, platformProjectId: 'project', branchId: 'branch', database: 'db' };
+        const resourceId = crypto.randomUUID();
+        const ref = formatSharedSavedSecretRefV1(resourceId);
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const mint = async (actionId: string, actionInput: Record<string, unknown>, kind: 'account' | 'terminal' = 'account') => {
+            const input = { action: parseQualifiedPluginActionId(actionId)!, input: StrictJsonValueSchema.parse(actionInput) };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                serverIdentityId: serverId, authentication: { kind, tokenEpoch: f.account.tokenEpoch },
+                actionId: ACTION_INVOKE_ACTION_ID_V1, machineId: f.controller.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, input) }, { input });
+        };
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { dataEditorMode: 'managers' } });
+        const attachInput = { target: databaseTarget, savedSecretRef: ref, resourceRevision: 1 };
+        const attach = await mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput);
+        const terminalAttach = await mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput, 'terminal');
+        const preview = await mint(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, { target: databaseTarget, mode: 'preview' });
+        expect(preview.binding.deploymentDatabaseEditor).toBe('allowed');
+        const bindingAction = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+        const selectedBinding = { purpose: 'dataRole', targetLinkId: managedLink.id, role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } } as const;
+        const bindingInput = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, remove: [],
+            set: [selectedBinding] };
+        const reviewedChild = { actionId: bindingAction, role: DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+            inputDigest: computeActionInputApprovalDigestV1(bindingAction, bindingInput) };
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...attach.binding,
+            actionId: bindingAction, environmentId: f.environment.id });
+        const sign = (active: typeof attach, body: unknown, child?: ReviewedActionChildHttpProofV1, url = path) =>
+            signExternalActionMachineRequestV1({ authorizationToken: active.token, effectActionId: bindingAction,
+                target, installationId: f.controller.installationId, requestId: active.binding.requestId, method: 'POST', path: url, body,
+                ...(child ? { reviewedChild: child } : {}), privateKey: f.controller.keys.secretKey });
+        const verify = (active: typeof attach, child?: ReviewedActionChildHttpProofV1, patch: Record<string, unknown> = {}) => {
+            const body = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+                contentArtifactId: createDeploymentEnvironmentContentArtifactIdV1({ ...active.binding,
+                    actionId: bindingAction, environmentId: f.environment.id }),
+                contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [], ...patch };
+            return verifyExternalActionDomainExecutionRequest({ authorizationToken: active.token,
+                effectActionId: bindingAction, encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'POST', path, body,
+                ...(child ? { reviewedChild: child } : {}), machineSignature: sign(active, body, child) });
+        };
+        expect(await verify(attach, reviewedChild)).toMatchObject({ reviewedChildAdmission: reviewedChild });
+        expect(await verify(attach)).toBeNull();
+        expect(await verify(attach, { ...reviewedChild, role: 'backup.bindings' })).toBeNull();
+        expect(await verify(attach, reviewedChild, { telemetryMachineId: f.controller.id })).toBeNull();
+        expect(await verify(attach, reviewedChild, { contentArtifactId: crypto.randomUUID() })).toBeNull();
+        expect(await verify(preview, reviewedChild)).toBeNull();
+        const secret = { v: 1 as const, kind: 'password' as const, name: 'Read login', value: 'fixture-read-login' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain',
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: secret }) })))
+            .toMatchObject({ ok: true });
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.controller.id, installationId: f.controller.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value: secret.value } });
+        const content = { ...createDeploymentEnvironmentDetailV1().content, bindings: [selectedBinding] };
+        // The runtime provider Link retains its identity while the Environment owns database custody.
+        const body = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+            ...await f.content('deployment-environment.v1', content, artifactId),
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings), grants: [grant] });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const reviewedHeaders = (active: typeof attach, payload: unknown, url: string) => ({
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: active.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: bindingAction,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: sign(active, payload, reviewedChild, url),
+            });
+            const metadata = `/v1/deployments/environments/${f.environment.id}?serverId=${encodeURIComponent(serverId)}`;
+            const read = await app.inject({ method: 'GET', url: metadata, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: attach.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: ACTION_INVOKE_ACTION_ID_V1,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: attach.token, effectActionId: ACTION_INVOKE_ACTION_ID_V1, target,
+                    installationId: f.controller.installationId, requestId: attach.binding.requestId,
+                    method: 'GET', path: metadata, privateKey: f.controller.keys.secretKey,
+                }),
+            } });
+            expect(read.statusCode, read.body).toBe(200);
+            expect.soft(read.json()).toMatchObject({ ok: true, environment: { revision: f.environmentRevision, capabilities: {
+                read: true, manageBindings: true, manage: false, manageTargets: false, delete: false,
+            } } });
+            const launchUrl = `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`;
+            const prepare = (dataRoleTargetLinkIds: string[]) => {
+                const payload = { kind: 'clientBindings', serverId, environmentId: f.environment.id,
+                    expectedRevision: f.environmentRevision, dataRoleTargetLinkIds };
+                return app.inject({ method: 'POST', url: launchUrl, payload,
+                    headers: reviewedHeaders(terminalAttach, payload, launchUrl) });
+            };
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: null } });
+            const prepared = await prepare([managedLink.id]);
+            expect.soft(prepared.statusCode, prepared.body).toBe(200);
+            expect.soft(prepared.json()).toMatchObject({ ok: true, bindingPreparation: { runtimeInstallations: [], controllerInstallation: {
+                machineId: f.controller.id, installationId: f.controller.installationId,
+            } } });
+            expect((await prepare([f.link.id])).statusCode).toBe(401);
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: f.link.id } });
+            const save = () => app.inject({ method: 'POST', url: path, payload: body, headers: reviewedHeaders(attach, body, path) });
+            const response = await save();
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, revision: f.environmentRevision + 1 });
+            expect((await save()).statusCode).toBe(409);
+        }, { authentication: 'real' });
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toMatchObject({ contentArtifactId: artifactId,
+            referencedSavedSecretRevisions: body.referencedSavedSecretRevisions });
+        expect(await db.machineSecretGrant.count({ where: { environmentId: f.environment.id, machineId: f.controller.id, resourceId } })).toBe(1);
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+            data: { role: 'member' } });
+        await expect(mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput)).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits telemetry setup only on its %s Environment controller and exact reviewed bindings', async mode => {

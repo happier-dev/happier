@@ -123,6 +123,16 @@ export const plugin = definePlugin({
                 : await manualTargets(context).setAccess({ target: input.target, agentAccess: input.agentAccess, signal: context.signal });
             return { ok: true, agentAccess };
         },
+        async attachReadAccess(input, context) {
+            const service = deploymentTargets(context.services);
+            if (!service.attachReadAccess) throw new PluginError({ code: 'database_read_access_setup_unavailable' });
+            return service.attachReadAccess(input);
+        },
+        async createReadAccess(input, context) {
+            const service = deploymentTargets(context.services);
+            if (!service.createReadAccess) throw new PluginError({ code: 'database_read_access_setup_unavailable' });
+            return service.createReadAccess(input);
+        },
         forgetTarget(input, context) {
             return manualTargets(context).forget({ target: input.target, signal: context.signal });
         },

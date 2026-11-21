@@ -84,6 +84,17 @@ const databaseActionDeclarations = {
         ...targetWrite, dangerLevel: 'writesLocal', title: 'Set database access', placementBindings: ['secondary'],
         confirmation: { title: 'Change access to this database?' },
     },
+    [database.DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1]: {
+        ...write, title: 'Attach read-only database login', approvalScope: 'environment',
+        confirmation: { title: 'Use this read-only login?', mountedReview: 'exact_input' },
+    },
+    [database.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1]: {
+        ...write, title: 'Create read-only database login', approvalScope: 'environment',
+        readOnly: { op: 'eq', path: 'mode', value: 'preview' },
+        confirmationWhen: { op: 'eq', path: 'mode', value: 'apply' },
+        confirmation: { title: 'Create this read-only login?', mountedReview: 'exact_input',
+            inputFields: [{ path: 'statements', title: 'SQL statements' }] },
+    },
     [database.UI_DATABASE_OPEN_ACTION_ID_V1]: { ...read, title: 'Open database', placementBindings: ['commandPalette', 'secondary'] },
     [database.UI_DATABASE_NAVIGATE_ACTION_ID_V1]: { ...read, title: 'Navigate database', placementBindings: ['toolbar', 'contextMenu'] },
     [database.UI_DATABASE_DRAFT_READ_ACTION_ID_V1]: { ...read, title: 'Read database draft' },

@@ -117,6 +117,12 @@ export type DeploymentDatabaseResolutionV1 = Readonly<{
 
 /** The deployment owner supplies its admitted selection and captured invocation custody. */
 export interface DeploymentTargetDatabaseRuntimeV1 {
+    /** Optional native setup for this exact linked database. Return the provider-selected
+     * endpoint without credentials. The host uses it with authenticated TLS. */
+    readRoleEndpoint?(input: Readonly<{
+        preparation: DeploymentTargetPreparationBaseV1;
+        target: DatabaseManagedDeploymentTargetV1;
+    }>, context: PluginAccountActionContext): Promise<Readonly<{ connectionString: string; ca?: string }>>;
     listTargets(input: Readonly<{
         preparation: DeploymentTargetPreparationBaseV1;
         target: Omit<DatabaseManagedDeploymentTargetV1, 'database'>;

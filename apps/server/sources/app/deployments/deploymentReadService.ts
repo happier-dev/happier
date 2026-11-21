@@ -192,8 +192,9 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     registryRead?: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'],
 ) {
     const registryEnvironment = registryRead?.environmentId === input.environmentId ? registryRead : undefined;
+    const acceptedEnvironment = acceptedEnvironmentRead(acceptedRead, input.environmentId);
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
-        acceptedEnvironmentRead(acceptedRead, input.environmentId) ?? registryEnvironment);
+        acceptedEnvironment ?? registryEnvironment);
     if (!loaded.ok) return loaded;
     const pending = readDeploymentPendingContent(loaded.row);
     if (!pending.ok) return pending;
@@ -203,7 +204,7 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.read.runtime_target', causeKind: 'binding_missing' });
     // Registry admission already selected this Environment. Its Artifact GET
     // consumes the current reference through the existing mode/envelope reader.
-    const failures = registryEnvironment || acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, input.environmentId)
+    const failures = registryEnvironment || acceptedRead?.contentCustody && acceptedEnvironment
         ? [] : await admitDeploymentStoredContentsInTx(tx, actorAccountId, loaded.admission.owner, [
         { reference: loaded.row, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read', pendingDeploy: pending.pendingDeploy },
         ...targetLinks.map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
@@ -252,7 +253,8 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
                         : { status: 'ready', reason: 'secret_scope_current' }),
     };
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-        environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission), targetLinks, controller,
+        environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission,
+            acceptedEnvironment ? acceptedRead?.manageBindings : undefined), targetLinks, controller,
         secretScope,
         ...(savedSecretRevisions === undefined ? {} : { savedSecretRevisions }),
         ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),

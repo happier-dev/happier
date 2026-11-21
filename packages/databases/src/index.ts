@@ -5,3 +5,7 @@ export * from './access.js';
 export * from './stats.js';
 export * from './rows.js';
 export * from './statsComparisons.js';
+export {
+    DatabaseReadRoleError, generateDatabaseReadRoleName, planDatabaseReadRoleSetup, type DatabaseReadRolePlan, type DatabaseReadRoleFailure,
+    type DatabaseReadRoleConnection, type DatabaseReadRoleSetupResult, type DatabaseReadRoleVerificationResult,
+} from './readRoleSetup.js';

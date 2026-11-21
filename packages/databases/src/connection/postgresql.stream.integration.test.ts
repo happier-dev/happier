@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Duplex } from 'node:stream';
 import { promisify } from 'node:util';
 import { expect, it, vi } from 'vitest';
+import { withDatabaseConnectionLogin } from '../connection.js';
 import { openPostgresqlConnection } from './postgresql.js';
 
 const run = promisify(execFile);
@@ -37,6 +38,33 @@ it.skipIf(!image)('preserves private PostgreSQL read-role framing and native can
             { openStream, sessionGuardSql: "DO $$BEGIN RAISE EXCEPTION 'fixture_guard' USING ERRCODE='42501'; END$$" }))
             .rejects.toMatchObject({ code: '42501' });
         expect(closed).toBe(1);
+        const writer = await openPostgresqlConnection('postgresql://postgres:native-admin@unreachable.invalid/native_fixture', undefined, { openStream });
+        try {
+            const role = 'happier_ro_0123456789abcdef';
+            expect(await writer.verifyReadRole()).toMatchObject({ ok: false, code: 'database_read_role_not_read_only' });
+            const plan = await writer.prepareReadRole(role);
+            expect(plan.statements).toContain(`GRANT SELECT ON ALL TABLES IN SCHEMA "public" TO "${role}"`);
+            expect(await writer.setupReadRole({ ...plan, statements: [...plan.statements, 'DROP TABLE items'] }))
+                .toMatchObject({ ok: false, code: 'database_read_role_plan_changed' });
+            const created = await writer.setupReadRole(plan);
+            expect(created.ok).toBe(true);
+            if (created.ok) {
+                const login = withDatabaseConnectionLogin('postgresql://unreachable.invalid/native_fixture', role, created.password);
+                const reader = await openPostgresqlConnection(login, undefined, { openStream,
+                    sessionGuardSql: 'SET default_transaction_read_only = off' });
+                try {
+                    expect(await reader.verifyReadRole()).toEqual({ ok: true });
+                    expect(await reader.execute({ operation: 'statement.run', target, mode: 'read', statement: {
+                        sql: 'SELECT id FROM items', parameters: [],
+                    } })).toMatchObject({ ok: true });
+                    expect(await reader.execute({ operation: 'statement.run', target, mode: 'write', statements: [{
+                        sql: 'UPDATE items SET note = NULL', parameters: [],
+                    }] })).toMatchObject({ ok: false, cause: { code: '42501' } });
+                    await sql(`GRANT UPDATE(note) ON items TO "${role}"`);
+                    expect(await reader.verifyReadRole()).toMatchObject({ ok: false, code: 'database_read_role_not_read_only' });
+                } finally { await reader.close(); }
+            }
+        } finally { await writer.close(); }
         const connection = await openPostgresqlConnection('postgresql://happier_ro:native-fixture-password@unreachable.invalid/native_fixture', undefined, { openStream });
         try {
             expect(await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
@@ -59,6 +87,6 @@ it.skipIf(!image)('preserves private PostgreSQL read-role framing and native can
             expect((await sql("SELECT COUNT(*) FROM pg_stat_activity WHERE usename='happier_ro' AND state='active' AND query LIKE '%pg_sleep(60)%'")).stdout.trim()).toBe('0');
         } finally { await connection.close(); }
         expect(closed).toBe(opened);
-        expect(opened).toBe(3);
+        expect(opened).toBe(5);
     } finally { await run('docker', ['stop', name]); }
 }, 120_000);

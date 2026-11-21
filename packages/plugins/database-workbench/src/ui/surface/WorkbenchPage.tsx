@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -27,6 +28,7 @@ import { RelationHeader } from './RelationHeader.js';
 import { RelationStructure } from './RelationStructure.js';
 import { StagedBar, StagedReview } from './StagedChanges.js';
 import { OverviewFacts } from './OverviewFacts.js';
+import { ReadAccessSetup } from './ReadAccessSetup.js';
 import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
 import {
@@ -126,6 +128,10 @@ function LinkedWorkbenchPage({ context, target, place, root }: Readonly<{
   const translate = usePluginTranslation();
   const linked = useLinkedWorkbench(context, target);
   if (linked.status === 'loading') return <LoadingState layout="line" rows={1} />;
+  if (linked.status === 'unavailable' && target.kind === 'managed_deployment'
+    && isPluginError(linked.error) && linked.error.code === 'read_role_setup_required') {
+    return <ReadAccessSetup target={target} onConfigured={linked.retry} />;
+  }
   if (linked.status === 'unavailable') return (
     <ErrorState
       layout="centered"

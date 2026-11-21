@@ -3,6 +3,7 @@ import type { DeploymentTelemetryAssignmentsV1, DeploymentTelemetryCapabilitiesV
 import type {
     DatabaseAccessSummaryV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
 } from '../database/index.js';
+import type { DatabaseReadAccessAttachInputV1, DatabaseReadAccessCreateInputV1, DatabaseReadAccessSetupResultV1 } from '../database/readAccess.js';
 import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */
@@ -49,6 +50,8 @@ export interface DeploymentTelemetryServiceV1 {
 
 /** Uses the existing deployment selection, admission and connection-custody owner. */
 export interface DeploymentDatabasesServiceV1 {
+    attachReadAccess?(input: DatabaseReadAccessAttachInputV1): Promise<Extract<DatabaseReadAccessSetupResultV1, { status: 'configured' }>>;
+    createReadAccess?(input: DatabaseReadAccessCreateInputV1): Promise<DatabaseReadAccessSetupResultV1>;
     /** Raw collector reads use this invocation's Environment data authority and selected collector,
      * independently of the Machine that runs the App. Absent on hosts without telemetry admission. */
     admitTelemetryRead?(input: Readonly<{ serverId: string; environmentId: string }>): Promise<Readonly<{

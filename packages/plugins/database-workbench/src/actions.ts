@@ -31,6 +31,10 @@ export type DatabaseActionProducers = Readonly<{
         => database.DatabaseAccessReadResultV1 | Promise<database.DatabaseAccessReadResultV1>;
     setAccess?: (input: database.DatabaseAccessSetInputV1, context: PluginInvocationContext)
         => database.DatabaseAccessSetResultV1 | Promise<database.DatabaseAccessSetResultV1>;
+    attachReadAccess?: (input: databaseAbi.DatabaseReadAccessAttachInputV1, context: PluginInvocationContext)
+        => Promise<databaseAbi.DatabaseReadAccessSetupResultV1>;
+    createReadAccess?: (input: databaseAbi.DatabaseReadAccessCreateInputV1, context: PluginInvocationContext)
+        => Promise<databaseAbi.DatabaseReadAccessSetupResultV1>;
 }>;
 
 /** The existing plugin producer supplies handlers; the SDK owns input/result admission. */
@@ -173,6 +177,28 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: database.DatabaseAccessSetResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 await setAccess(input as database.DatabaseAccessSetInputV1, context)),
+        };
+    }
+    const attachReadAccess = producers.attachReadAccess;
+    if (attachReadAccess) {
+        const id = databaseAbi.DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1;
+        actions[databaseActionLocalIdV1(id)] = {
+            ...common, ...databaseActionMetadata[id], surfaces: readSurfaces,
+            inputSchema: databaseAbi.DatabaseReadAccessAttachInputV1Schema,
+            resultSchema: databaseAbi.DatabaseReadAccessSetupResultV1Schema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await attachReadAccess(input as databaseAbi.DatabaseReadAccessAttachInputV1, context)),
+        };
+    }
+    const createReadAccess = producers.createReadAccess;
+    if (createReadAccess) {
+        const id = databaseAbi.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1;
+        actions[databaseActionLocalIdV1(id)] = {
+            ...common, ...databaseActionMetadata[id], surfaces: readSurfaces,
+            inputSchema: databaseAbi.DatabaseReadAccessCreateInputV1Schema,
+            resultSchema: databaseAbi.DatabaseReadAccessSetupResultV1Schema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await createReadAccess(input as databaseAbi.DatabaseReadAccessCreateInputV1, context)),
         };
     }
     return actions;

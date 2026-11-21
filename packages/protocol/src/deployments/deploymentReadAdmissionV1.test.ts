@@ -3,7 +3,8 @@ import { DeploymentReadAdmissionV1Schema, projectDeploymentReadAdmissionV1 } fro
 import { DeploymentLogsReadInputV1Schema, DeploymentLogsReadSuccessV1Schema, DeploymentHealthReadInputV1Schema } from './deploymentReadsV1';
 import { PluginUiDeploymentStageLogsReadReferenceV1Schema } from '../daemon/machineServiceLogsResource';
 import { FileSaveInputSchema } from '../actions/fileSaveActionFamily';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1';
+import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId';
 
 describe('target-shaped deployment logs', () => {
@@ -72,6 +73,23 @@ describe('deployment current-health read admission', () => {
         expect(DeploymentReadAdmissionV1Schema.parse(admission)).toEqual({ actionId: 'deployments.health.current',
             environmentId: 'environment', targetLinkId: 'link', machineId: 'controller' });
         expect(DeploymentReadAdmissionV1Schema.safeParse({ ...admission, deploymentId: 'fabricated' }).success).toBe(false);
+    });
+
+    it('keeps setup login operands private and marks only Create Apply for binding publication', () => {
+        const target = { kind: 'managed_deployment', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+            targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway', contributionId: 'postgres' },
+            platformProjectId: 'provider-project', branchId: 'branch', database: 'database' };
+        const project = (id: string, operands: Record<string, string | number>) => DeploymentReadAdmissionV1Schema.parse(
+            projectDeploymentReadAdmissionV1('action.invoke', { action: parseQualifiedPluginActionId(id), input: { target, ...operands } }));
+        const attach = project(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, { savedSecretRef: 'shared-secret-reference', resourceRevision: 3 });
+        expect(attach).toMatchObject({ access: 'write', databaseTarget: target });
+        expect(attach).not.toHaveProperty('databaseReadAccessMode');
+        expect(JSON.stringify(attach)).not.toContain('shared-secret-reference');
+        expect(project(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, { mode: 'preview' }))
+            .toMatchObject({ access: 'write', databaseReadAccessMode: 'preview' });
+        const apply = project(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, { mode: 'apply', role: 'private-role' });
+        expect(apply).toMatchObject({ access: 'write', databaseReadAccessMode: 'apply' });
+        expect(JSON.stringify(apply)).not.toContain('private-role');
     });
 
     it('does not admit retired native or provider query operands', () => {

@@ -16,6 +16,8 @@ export const DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1 = 'happier.database/actions
 export const DATABASE_EDITS_APPLY_ACTION_ID_V1 = 'happier.database/actions/edits/apply' as const;
 export const DATABASE_ACCESS_READ_ACTION_ID_V1 = 'happier.database/actions/access/read' as const;
 export const DATABASE_ACCESS_SET_ACTION_ID_V1 = 'happier.database/actions/access/set' as const;
+export const DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1 = 'happier.database/actions/read-access/attach' as const;
+export const DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1 = 'happier.database/actions/read-access/create' as const;
 export const UI_DATABASE_OPEN_ACTION_ID_V1 = 'happier.database/actions/ui/open' as const;
 export const UI_DATABASE_NAVIGATE_ACTION_ID_V1 = 'happier.database/actions/ui/navigate' as const;
 export const UI_DATABASE_DRAFT_READ_ACTION_ID_V1 = 'happier.database/actions/ui/draft/read' as const;
@@ -80,6 +82,8 @@ export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
     DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_ACCESS_SET_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
+    DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
     UI_DATABASE_OPEN_ACTION_ID_V1,
     UI_DATABASE_NAVIGATE_ACTION_ID_V1,
     UI_DATABASE_DRAFT_READ_ACTION_ID_V1,

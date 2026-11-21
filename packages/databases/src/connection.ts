@@ -78,3 +78,23 @@ export function withDatabaseConnectionUrlOptions(input: string, overrides: Reado
     }
     return url.toString();
 }
+
+export type VerifiedDatabaseTls = Readonly<{ ca?: string }>;
+
+/** Explicit TLS verification owns driver options; keep only the address and login in the URI. */
+export function databaseConnectionUrlWithoutOptions(input: string): string {
+    const { url } = readConnectionUrl(input);
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+}
+
+/** Replace the login with private material encoded once for the native driver. */
+export function withDatabaseConnectionLogin(input: string, username: string, password: string): string {
+    const { url } = readConnectionUrl(input);
+    url.username = encodeURIComponent(username);
+    url.password = encodeURIComponent(password);
+    url.searchParams.delete('user');
+    url.searchParams.delete('password');
+    return url.toString();
+}

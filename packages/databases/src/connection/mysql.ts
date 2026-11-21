@@ -1,12 +1,20 @@
 import { createConnection, type ConnectionOptions } from 'mysql2';
+import { isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
-import { DatabaseStatementError, fitDatabaseOperationResult, withDatabaseConnectionUrlOptions } from '../index.js';
+import { DatabaseStatementError } from '../statement.js';
+import { fitDatabaseOperationResult } from '../resultEnvelope.js';
+import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, type VerifiedDatabaseTls } from '../connection.js';
 import {
     executeMysqlOperation, mysqlFailureCause, MysqlOperationError, type MysqlCompiledStatement, type MysqlExecutionOptions,
     type MysqlNativeField, type MysqlNativeResult, type MysqlNativeValue,
 } from '../mysql/index.js';
+import { mysqlGeneratedReadPassword, mysqlManagedReadGrants, mysqlReadRoleSettings, mysqlReadRoleSettingsQuery, mysqlVerifyReadGrants } from '../mysql/readRoleSetup.js';
+import {
+    DatabaseReadRoleError, matchesDatabaseReadRolePlan, mysqlReadRoleAccount, planDatabaseReadRoleSetup, readRoleFailure,
+    type DatabaseReadRoleConnection,
+} from '../readRoleSetup.js';
 export { mysqlFailureCause } from '../mysql/index.js';
 
 export { mysqlCapabilities } from '../capabilities.js';
@@ -17,11 +25,12 @@ export interface MysqlConnection {
 }
 
 /** mysql2 3.24.6 merges URI options over explicit false values. Remove those keys at the URL owner first. */
-export function mysqlConnectionOptions(connectionString: string): ConnectionOptions {
-    const uri = withDatabaseConnectionUrlOptions(connectionString, {
+export function mysqlConnectionOptions(connectionString: string, tls?: VerifiedDatabaseTls): ConnectionOptions {
+    const uri = tls ? databaseConnectionUrlWithoutOptions(connectionString) : withDatabaseConnectionUrlOptions(connectionString, {
         multipleStatements: null, decimalNumbers: null, nestTables: null, namedPlaceholders: null, debug: null,
     });
-    return { uri, multipleStatements: false, namedPlaceholders: false, nestTables: false, debug: false,
+    return { uri, ...(tls ? { ssl: { rejectUnauthorized: true, verifyIdentity: true, ...(tls.ca === undefined ? {} : { ca: tls.ca }) } } : {}),
+        multipleStatements: false, namedPlaceholders: false, nestTables: false, debug: false,
         supportBigNumbers: true, bigNumberStrings: true, decimalNumbers: false, dateStrings: true,
         jsonStrings: true, rowsAsArray: true, flags: ['FOUND_ROWS', '-MULTI_STATEMENTS'],
         // mysql2 normally parses GEOMETRY into JS numbers, losing its native binary representation.
@@ -54,10 +63,15 @@ export function mysqlNativeResult(result: unknown, fields: ReadonlyArray<{ name:
 
 /** One connection belongs to one workbench demand, or to the caller's standalone request. */
 export async function openMysqlConnection(connectionString: string, signal?: AbortSignal, options: Readonly<{
+    tls?: VerifiedDatabaseTls;
     openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
-}> = {}): Promise<MysqlConnection> {
+}> = {}): Promise<MysqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
-    const connectionOptions = mysqlConnectionOptions(connectionString);
+    if (options.tls && options.openStream && isIP(parseDatabaseConnectionUrl(connectionString).hostname.replace(/^\[|\]$/gu, ''))) {
+        // mysql2 3.24.6 uses SNI for an explicit identity on borrowed sockets. Its IP fallback needs a native TCP socket.
+        throw new DatabaseReadRoleError(readRoleFailure('database_read_role_tls_hostname_required'));
+    }
+    const connectionOptions = mysqlConnectionOptions(connectionString, options.tls);
     const openNative = async () => {
         const transport = await options.openStream?.();
         try { return { core: createConnection({ ...connectionOptions, ...(transport ? { stream: transport.stream } : {}) }), transport }; }
@@ -121,6 +135,11 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
         try { return await Promise.race([pending, aborted]); }
         finally { cancellation.removeEventListener('abort', onAbort); }
     };
+    const request = async <T>(pending: Promise<T>, cancellation: AbortSignal): Promise<T> => {
+        activeRequest = pending;
+        try { return await race(pending, cancellation); }
+        finally { if (activeRequest === pending) activeRequest = undefined; }
+    };
     let lexical: MysqlExecutionOptions;
     let stats: Readonly<{ database: string; currentUser: string; databaseIdentity: string }> | undefined;
     try {
@@ -149,14 +168,9 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
         const onAbort = () => { void close().catch(() => {}); };
         operationSignal?.addEventListener('abort', onAbort, { once: true });
         let transaction = false; let committing = false;
-        const request = async <T>(pending: Promise<T>): Promise<T> => {
-            activeRequest = pending;
-            try { return await race(pending, cancellation); }
-            finally { if (activeRequest === pending) activeRequest = undefined; }
-        };
-        const control = (sql: string) => request(client.query(sql));
+        const control = (sql: string) => request(client.query(sql), cancellation);
         const query = async (statement: MysqlCompiledStatement): Promise<MysqlNativeResult> => {
-            const [native, fields] = await request(client.execute(statement.text, statement.values));
+            const [native, fields] = await request(client.execute(statement.text, statement.values), cancellation);
             return mysqlNativeResult(native, fields ?? []);
         };
         const executionOptions: MysqlExecutionOptions = input.operation === 'stats.read' && stats ? { ...lexical, stats: {
@@ -205,12 +219,95 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             return { ok: false, status: 'failed', code: cause.source === 'engine' ? 'database_engine_error' : 'database_transport_error', cause };
         } finally { operationSignal?.removeEventListener('abort', onAbort); }
     };
+    // mysql2 queues statements. Serialize complete transactions and role setup on the owned session.
+    const schedule = <T>(run: () => Promise<T>): Promise<T> => {
+        const pending = tail.then(run);
+        tail = pending.catch(() => {});
+        return pending;
+    };
+    const readRoleOperation = <T>(operationSignal: AbortSignal | undefined,
+        run: (nativeQuery: (sql: string) => Promise<MysqlNativeResult>) => Promise<T>): Promise<T> => schedule(async () => {
+        if (operationSignal?.aborted) throw new DatabaseReadRoleError(readRoleFailure('database_cancelled', 'cancelled'));
+        if (closed || terminalError) throw new DatabaseReadRoleError(readRoleFailure('database_connection_unavailable'));
+        const cancellation = operationSignal ? AbortSignal.any([operationSignal, lifetime.signal]) : lifetime.signal;
+        const onAbort = () => { void close().catch(() => {}); };
+        const nativeQuery = async (sql: string): Promise<MysqlNativeResult> => {
+            cancellation.throwIfAborted();
+            const [rows, fields] = await request(client.query(sql), cancellation);
+            return mysqlNativeResult(rows, fields ?? []);
+        };
+        operationSignal?.addEventListener('abort', onAbort, { once: true });
+        try { return await run(nativeQuery); }
+        catch (error) {
+            if (error instanceof DatabaseReadRoleError) throw error;
+            if (cancellation.aborted) throw new DatabaseReadRoleError(readRoleFailure('database_cancelled', 'cancelled'));
+            throw new DatabaseReadRoleError(readRoleFailure('database_read_role_setup_failed', 'failed', mysqlFailureCause(error)));
+        } finally {
+            operationSignal?.removeEventListener('abort', onAbort);
+            if (cancellation.aborted) await close().catch(() => {});
+        }
+    });
+    const selectedDatabase = (): string => {
+        if (!stats) throw new DatabaseReadRoleError(readRoleFailure('database_read_role_database_unavailable'));
+        return stats.database;
+    };
+    const prepare = async (role: string, nativeQuery: (sql: string) => Promise<MysqlNativeResult>) => {
+        const database = selectedDatabase();
+        const settings = mysqlReadRoleSettings(await nativeQuery(mysqlReadRoleSettingsQuery));
+        if (settings.mandatoryRoles.length > 0) throw new DatabaseReadRoleError(readRoleFailure('database_read_role_mandatory_roles'));
+        return { plan: planDatabaseReadRoleSetup({ engine: 'mysql', database, role, partialRevokes: settings.partialRevokes }),
+            partialRevokes: settings.partialRevokes };
+    };
     return {
-        execute(input, operationSignal) {
-            // mysql2 queues statements. Serialize complete transactions so requests cannot interleave them.
-            const pending = tail.then(() => execute(input, operationSignal));
-            tail = pending.catch(() => {});
-            return pending;
+        execute: (input, operationSignal) => schedule(() => execute(input, operationSignal)),
+        prepareReadRole: (role, operationSignal) => readRoleOperation(operationSignal, async nativeQuery => (await prepare(role, nativeQuery)).plan),
+        async setupReadRole(reviewed, operationSignal) {
+            try {
+                return await readRoleOperation(operationSignal, async nativeQuery => {
+                    const { plan, partialRevokes } = await prepare(reviewed.role, nativeQuery);
+                    if (!matchesDatabaseReadRolePlan(reviewed, plan)) return readRoleFailure('database_read_role_plan_changed');
+                    operationSignal?.throwIfAborted();
+                    const [create, grant, unlock] = plan.statements;
+                    let locked = false;
+                    let unlocking = false;
+                    try {
+                        const generated = await nativeQuery(create!);
+                        locked = true;
+                        const password = mysqlGeneratedReadPassword(generated, plan.role);
+                        if (!password) return readRoleFailure('database_read_role_setup_incomplete');
+                        await nativeQuery(grant!);
+                        const proof = await nativeQuery(`SHOW GRANTS FOR ${mysqlReadRoleAccount(plan.role)}`);
+                        if (!mysqlManagedReadGrants(proof, plan.role, plan.database, partialRevokes)) {
+                            return readRoleFailure('database_read_role_setup_incomplete');
+                        }
+                        unlocking = true;
+                        await nativeQuery(unlock!);
+                        return { ok: true, password };
+                    } catch (error) {
+                        const cause = mysqlFailureCause(error);
+                        if ((!locked || unlocking) && (closed || cause.source === 'transport')) {
+                            return readRoleFailure('database_outcome_unknown', 'outcome_unknown', cause);
+                        }
+                        if (locked) return readRoleFailure('database_read_role_setup_incomplete', 'failed', cause);
+                        throw error;
+                    }
+                });
+            } catch (error) {
+                return error instanceof DatabaseReadRoleError ? error.failure : readRoleFailure('database_read_role_setup_failed');
+            }
+        },
+        async verifyReadRole(operationSignal) {
+            try {
+                return await readRoleOperation(operationSignal, async nativeQuery => {
+                    const database = selectedDatabase();
+                    const { partialRevokes } = mysqlReadRoleSettings(await nativeQuery(mysqlReadRoleSettingsQuery));
+                    const proof = await nativeQuery('SHOW GRANTS');
+                    return mysqlVerifyReadGrants(proof, database, partialRevokes, lexical)
+                        ? { ok: true } : readRoleFailure('database_read_role_not_read_only');
+                });
+            } catch (error) {
+                return error instanceof DatabaseReadRoleError ? error.failure : readRoleFailure('database_read_role_setup_failed');
+            }
         },
         close,
     };

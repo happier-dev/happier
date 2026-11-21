@@ -1491,6 +1491,14 @@ Same-Machine copies and ordinary Account carriers keep their existing envelopes.
 
 ## Database copy and reference components (unreleased 0.3)
 
+Managed read-access setup adds Attach and Create Workbench Actions. They reuse
+the managed target's existing `dataRole` binding and `readOnlyPassword` slot.
+Providers that opt in with a direct SQL endpoint store a connection URL in that
+slot. The Neon transport still reads its password there. Create adds the closed
+`deploymentReadAccessMode` field to its signed `action.invoke` admission. Matching
+development Home, controller, and Workbench declarations need to load together for setup.
+Providers that omit the endpoint continue using their own read transport.
+
 Workbench target descriptors optionally carry `endpointLabel`, projected by the connection
 owner from hostname and explicit port only. Credentials and URL options stay private.
 Descriptors without this fact remain unknown; Machine names come from the existing

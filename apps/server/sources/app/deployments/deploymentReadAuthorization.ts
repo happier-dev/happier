@@ -2,6 +2,7 @@ import * as deploymentActionIds from '@happier-dev/protocol/deployments/deployme
 import * as registryIds from '@happier-dev/protocol/registries/registryActionIdsV1';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
@@ -123,7 +124,9 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.environmentId, authentication);
         if (!loaded.ok || loaded.row.deletedAt) return null;
-        const deploymentDatabaseEditor = admission.access === 'write'
+        const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
+        if (setup && !loaded.admission.canManage) return null;
+        const deploymentDatabaseEditor = admission.access === 'write' && (!setup || setup.requiresDatabaseWriter)
             ? loaded.row.dataEditorMode === 'off' ? 'editing_off' as const
                 : canEditDeploymentEnvironmentData(loaded.admission, loaded.row) ? 'allowed' as const : 'not_an_editor' as const
             : undefined;

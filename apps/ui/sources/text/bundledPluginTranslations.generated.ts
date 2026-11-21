@@ -10810,6 +10810,18 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.database.insights.setup.enableFailed": "Statistics could not be enabled.",
     "plugins.database.insights.setup.pending": "Waiting for approval.",
     "plugins.database.insights.setup.restartRequired": "Add pg_stat_statements to shared_preload_libraries and restart PostgreSQL before retrying.",
+    "plugins.database.readSetup.actionUnavailable": "This host can’t confirm the read-only login.",
+    "plugins.database.readSetup.attach": "Use existing read-only login",
+    "plugins.database.readSetup.back": "Back to setup options",
+    "plugins.database.readSetup.confirmAttach": "Use this login",
+    "plugins.database.readSetup.create": "Create read-only login",
+    "plugins.database.readSetup.description": "Choose a read-only login for {database} so you can browse its tables.",
+    "plugins.database.readSetup.pending": "Waiting for approval.",
+    "plugins.database.readSetup.review": "Review the read-only login",
+    "plugins.database.readSetup.reviewDescription": "These statements will create {role} and grant it read access to {database}.",
+    "plugins.database.readSetup.savedSecret": "Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.",
+    "plugins.database.readSetup.title": "Set up read-only access",
+    "plugins.database.readSetup.unknown": "Could not verify the setup result.",
     "plugins.github.actions.deploymentBanner.description": "{run} wants to deploy to {environment}",
     "plugins.github.actions.deploymentBanner.descriptionMany": "Waiting to deploy to {environments}",
     "plugins.github.actions.deploymentBanner.many": "{count} deployments are waiting for you",
@@ -56762,6 +56774,18 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.insights.setup.enableFailed'
     | 'plugins.database.insights.setup.pending'
     | 'plugins.database.insights.setup.restartRequired'
+    | 'plugins.database.readSetup.actionUnavailable'
+    | 'plugins.database.readSetup.attach'
+    | 'plugins.database.readSetup.back'
+    | 'plugins.database.readSetup.confirmAttach'
+    | 'plugins.database.readSetup.create'
+    | 'plugins.database.readSetup.description'
+    | 'plugins.database.readSetup.pending'
+    | 'plugins.database.readSetup.review'
+    | 'plugins.database.readSetup.reviewDescription'
+    | 'plugins.database.readSetup.savedSecret'
+    | 'plugins.database.readSetup.title'
+    | 'plugins.database.readSetup.unknown'
     | 'plugins.github.actions.deploymentBanner.description'
     | 'plugins.github.actions.deploymentBanner.descriptionMany'
     | 'plugins.github.actions.deploymentBanner.many'

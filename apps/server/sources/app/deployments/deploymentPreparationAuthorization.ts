@@ -5,6 +5,7 @@ import * as deploymentActionIds from '@happier-dev/protocol/deployments/deployme
 import * as managedIds from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import * as sourceActionIds from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { DeploymentApprovalEnvironmentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
@@ -47,7 +48,7 @@ import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArti
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowListRequestV1Schema, ProjectAccountRowMutationRequestV1Schema,
     PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -986,6 +987,39 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     // The Domain purpose owner already matched the prepared storage operand.
     // This owner binds that operand and private publication to the root's Environment.
     return publication ?? admittedEnvironmentId === admission.environmentId;
+}
+
+/** The reviewed database child can prepare and publish the selected Environment's bindings candidate. */
+export async function readDeploymentDatabaseReadAccessBindingHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
+): Promise<boolean> {
+    const setup = readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, proof.reviewedChild);
+    if (!setup) return false;
+    const { environmentId, targetLinkId } = setup;
+    const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 });
+    const publication = await readDeploymentPrivateCandidatePublicationHttpPurpose(tx, environmentId, proof, id,
+        DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+    if (publication !== null) return publication;
+    if (proof.method.toUpperCase() !== 'POST') return false;
+    const base = `/v1/deployments/environments/${encodeURIComponent(environmentId)}`;
+    const matches = (input: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, input);
+    if (proof.path === `${base}/secret-launch-admission`) {
+        const parsed = EnvironmentSecretAdmissionRequestV1Schema.safeParse(proof.body);
+        if (!parsed.success || parsed.data.serverId !== binding.serverIdentityId || parsed.data.environmentId !== environmentId
+            || !matches(parsed.data)) return false;
+        const launch = parsed.data;
+        const preparation = 'kind' in launch ? launch
+            : launch.machineId === binding.machineId && launch.installationId === binding.installationId
+                && launch.materialization.kind === 'bindings' ? launch.materialization : undefined;
+        return preparation !== undefined && preparation.buildMachineId === undefined
+            && preparation.dataRoleTargetLinkIds?.includes(targetLinkId) === true;
+    }
+    if (proof.path !== `${base}/bindings`) return false;
+    const parsed = DeploymentBindingsSetStorageInputV1Schema.safeParse(proof.body);
+    return parsed.success && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === environmentId
+        && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
+        && parsed.data.telemetryMachineId === undefined && parsed.data.telemetryCapabilities === undefined
+        && parsed.data.targetLinkContent === undefined && matches(parsed.data);
 }
 
 /** Environment setup publishes only its reviewed configuration and bindings candidate. */

@@ -331,6 +331,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               sessionInputSource: origin.sessionInputSource,
               sessionAgentSpawnPolicyV1: origin.sessionAgentSpawnPolicyV1,
               workspaceWrites: sourceSession?.workspaceWrites,
+              ...(context?.executeHostReviewedChildAction ? { executeHostReviewedChildAction: context.executeHostReviewedChildAction } : {}),
               ...(externalActionContext ?? {}),
             };
             replayContext.hostReviewedChild = createHostReviewedChildPortV1({

@@ -1,5 +1,6 @@
 import { PluginError, type DeploymentDatabasesServiceV1, type DeploymentTargetPreparationBaseV1,
     type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import {
     type DatabaseCompletenessV1,
     type DatabaseDescriptorV1,
@@ -14,7 +15,7 @@ import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConn
 import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
 import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
@@ -28,6 +29,17 @@ import { admitDeploymentTargetCredentialPrincipalForHost } from './admitDeployme
 import { readCurrentDeploymentTargetLinkForHost, readDeploymentTargetEnvironmentForHost,
     type DeploymentTargetRoleAdmissionHost } from './admitDeploymentTargetRoleForHost';
 import { createManagedDataRoleSecretReaderForHost } from '../secrets/createManagedDataRoleSecretReaderForHost';
+import { createManagedReadAccessForHost } from './managedReadAccessForHost';
+import { invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import * as deploymentActions from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
+import { createSharedSavedSecretForOperation } from '@/settings/secrets/createSharedSavedSecretForOperation';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 type AttachmentHost = Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'machineId' | 'installationId'
     | 'credentialOwnerAccountId' | 'credentials' | 'serverHttpBaseUrl' | 'readEnvironment' | 'readReceipt' | 'assertCurrent'> & Readonly<{
@@ -202,7 +214,109 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         return { target, admission, selected, summary: access(admission, operation, target) };
     };
 
+    const bindReadAccess = (admitted: Awaited<ReturnType<typeof admitTarget>>, bound: Awaited<ReturnType<typeof bind>>,
+        setup?: 'attach' | 'preview' | 'apply') => {
+        const { target, admission, selected } = admitted;
+        const endpoint = bound.runtime.readRoleEndpoint;
+        const engine = selected?.engine;
+        if (target.kind !== 'managed_deployment' || !endpoint || (engine !== 'postgresql' && engine !== 'mysql')) {
+            return refuse('deployment_target_role_unavailable');
+        }
+        const { host, detail, context } = admission;
+        const writeBinding = setup === 'attach' || setup === 'apply';
+        const parent = writeBinding ? readHostAdmittedReviewedParentV1(context.hostReviewedChild) : undefined;
+        const executeChild = writeBinding ? context.executeHostReviewedChildAction : undefined;
+        if (writeBinding && (!parent || !executeChild)) return refuse('admission_unavailable');
+        const author = writeBinding ? resolveRequesterSavedSecretActionCustody({
+            authorization: context.externalActionExecutionAuthorization, credentials: host.credentials,
+            operationContext: input.seed.requesterAccount,
+        }) : undefined;
+        const signal = input.seed.signal;
+        return createManagedReadAccessForHost({
+            engine, database: target.database, signal,
+            readEndpoint: () => endpoint.call(bound.runtime, { preparation: bound.preparation, target }, bound.invocation),
+            async readBinding(role) {
+                const reader = bound.invocation.services.secrets.readDataRole;
+                if (!reader) return refuse('deployment_target_role_unavailable');
+                try { return await reader({ role, signal }); }
+                catch (error) {
+                    if (role === 'readOnlyPassword' && isPluginError(error) && error.code === 'secret_missing') return undefined;
+                    throw error;
+                }
+            },
+            async readSavedSecret(secret) {
+                const { ref, resourceRevision } = secret;
+                if (!author) return refuse('admission_unavailable');
+                try {
+                    if (parseSavedSecretRefV1(ref).kind !== 'shared_resource') return refuse('secret_missing');
+                    const { materializer } = await readSavedSecretMaterializerForOperation({
+                        expectedScopeKey: resolveAccountSettingsScopeKeyForToken(author.credentials.token),
+                        operationContext: author.operation, signal, references: [{ ref, revision: resourceRevision }],
+                    });
+                    return materializeSavedSecretReferenceBinding({ requirementName: 'database read login',
+                        binding: { ref, revision: resourceRevision }, materializer, exactReference: true }) ?? refuse('secret_missing');
+                } catch {
+                    signal.throwIfAborted();
+                    return refuse('secret_missing');
+                }
+            },
+            saveSecret(value) {
+                if (!author) return refuse('admission_unavailable');
+                return runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createSharedSavedSecretForOperation({
+                    name: `${target.database} read-only login`, value, audience: {}, signal,
+                    expectedScopeKey: resolveAccountSettingsScopeKeyForToken(author.credentials.token),
+                    operationContext: author.operation, readCredentials: async () => author.credentials,
+                    assertCurrent: () => {
+                        if (!input.seed.isOccurrenceCurrent()) return refuse('plugin_generation_stale');
+                    },
+                }));
+            },
+            async setBinding(secret) {
+                if (!parent || !executeChild) return refuse('admission_unavailable');
+                const result = await invokeHostReviewedChildV1({ parent, context, environmentId: detail.environment.id,
+                    child: { action: deploymentActions.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                        role: deploymentActions.DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+                        input: normalizeStrictJsonValue({ serverId: target.environment.serverId, environmentId: detail.environment.id,
+                            expectedRevision: detail.environment.revision,
+                            set: [{ purpose: 'dataRole', targetLinkId: target.targetLinkId, role: 'readOnlyPassword',
+                                source: { kind: 'secret', ...secret } }], remove: [] }) },
+                    execute: (value, childContext, actionId) => executeChild(actionId, value, childContext),
+                });
+                if (!result.ok) return refuse(result.errorCode);
+                const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);
+                if (!saved.ok) return refuse(saved.error);
+            },
+            async open(engine, privateUrl, tls, signal) {
+                if (engine === 'postgresql') {
+                    const { openPostgresqlConnection } = await import('@happier-dev/databases/connection/postgresql');
+                    return { engine, ...await openPostgresqlConnection(privateUrl, signal, { tls }) };
+                }
+                const { openMysqlConnection } = await import('@happier-dev/databases/connection/mysql');
+                return { engine, ...await openMysqlConnection(privateUrl, signal, { tls }) };
+            },
+        });
+    };
+
+    const setupReadAccess = async <T>(target: DatabaseManagedDeploymentTargetV1, setup: 'attach' | 'preview' | 'apply',
+        run: (owner: ReturnType<typeof bindReadAccess>) => Promise<T>): Promise<T> => {
+        const operation = setup === 'attach' ? 'read' : 'write';
+        const admitted = await admitTarget({ operation: 'describe', target }, operation);
+        if (!admitted.admission.detail.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
+        const selected = admitted.selected ?? refuse('target_mismatch');
+        const bound = await bind(admitted.admission, selected, { access: operation, database: target.database });
+        try { return await run(bindReadAccess(admitted, bound, setup)); }
+        finally { bound.dispose(); }
+    };
+
     return Object.freeze<DeploymentDatabasesServiceV1>({
+        attachReadAccess(request) {
+            return setupReadAccess(request.target, 'attach', owner => owner.attach({
+                ref: request.savedSecretRef, resourceRevision: request.resourceRevision,
+            }));
+        },
+        createReadAccess(request) {
+            return setupReadAccess(request.target, request.mode, owner => owner.create(request));
+        },
         async admitTelemetryRead(request) {
             if (binding && telemetryCollector) {
                 const selected = telemetryFacts?.get(request.environmentId);
@@ -287,8 +401,13 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             const selected = admitted.selected ?? refuse('target_mismatch');
             const bound = await bind(admission, selected, { access: operation, database: target.database });
             try {
-                const resolved = await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
-                    placement: bound.placement }, bound.invocation);
+                const resolved = operation === 'read' && bound.runtime.readRoleEndpoint
+                    ? await bindReadAccess(admitted, bound).openRead().then(connection => ({ connection, descriptor: {
+                        target, engine: connection.engine, label: target.database, origin: { label: admission.detail.content.name },
+                        capabilities: builtinDatabaseCapabilities(connection.engine), access: summary, placement: bound.placement,
+                    } }))
+                    : await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
+                        placement: bound.placement }, bound.invocation);
                 const close = async () => { try { await resolved.connection.close(); } finally { bound.dispose(); } };
                 return { descriptor: { ...resolved.descriptor, target,
                     automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary, placement: bound.placement },

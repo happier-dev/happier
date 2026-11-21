@@ -54,6 +54,7 @@ import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchInputV1Sche
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { readDeploymentDatabaseReadAccessBindingChildV1, readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
@@ -69,6 +70,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
     readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentEnvironmentSetupHttpPurpose,
+    readDeploymentDatabaseReadAccessBindingHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
     readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
     readDeploymentReferenceServiceListInTx,
@@ -1175,7 +1177,9 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
         environmentId?: string;
         read?: Readonly<{ environmentId?: string; deploymentId?: string;
         /** Exact finite native read, including its captured content custody. */
-        contentCustody?: true }> }>;
+        contentCustody?: true;
+        /** Exact Environment bindings action already admitted by database read-access setup. */
+        manageBindings?: true }> }>;
     actionBrokerAdmission?: NonNullable<ReturnType<typeof readActionBrokerHttpPurpose>> & Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
     /** Exact signed requester Action; Team admission decides declaration and source before disclosure. */
     actionMaterialAdmission?: NonNullable<ReturnType<typeof readActionMaterialHttpPurpose>> & Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
@@ -1724,7 +1728,10 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const managedExecWake = readManagedExecWakePurpose(binding, effectActionId, proof);
-    const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
+    const databaseReadAccessBindings = binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+        && readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, proof.reviewedChild) !== undefined;
+    const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || databaseReadAccessBindings
+        || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowStart || machineGrantSetRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
@@ -1732,11 +1739,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
-    const usesRootCredential = managedExecWake !== undefined || deploymentReferenceServices || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
+    const usesRootCredential = managedExecWake !== undefined || deploymentReferenceServices || databaseReadAccessBindings || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowStart || machineGrantSetRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
-    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead, managedExecWake,
+    return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead, managedExecWake, databaseReadAccessBindings,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
         reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, deploymentReferenceServices, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
@@ -3265,6 +3272,9 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             ? { acceptedDeploymentReceipt: { read: { environmentId: input.data.environmentId } } } : false;
     }
     if (!('databaseTarget' in admission) && admission.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
+    if (verified.signedChildPurpose.databaseReadAccessBindings) {
+        return await readDeploymentDatabaseReadAccessBindingHttpPurpose(db, verified.binding, proof) ? {} : false;
+    }
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
@@ -3274,8 +3284,11 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             && (!('databaseTarget' in admission) || admission.access !== 'write')) return false;
         if ('databaseTarget' in admission) {
             const target = admission.databaseTarget;
-            if (admission.access === 'write' && verified.binding.deploymentDatabaseEditor !== 'allowed'
-                || body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
+            const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
+            if (setup && !setup.requiresDatabaseWriter
+                ? !('targetLinkId' in materialization) || materialization.role === 'write'
+                : admission.access === 'write' && verified.binding.deploymentDatabaseEditor !== 'allowed') return false;
+            if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
                 || body.targetLinkId !== admission.targetLinkId || body.machineId !== verified.binding.machineId
                 || body.installationId !== verified.binding.installationId
                 || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body)) return false;
@@ -3296,6 +3309,8 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     if (declaredRead) {
         if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, declaredRead, proof)) return false;
         return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
+            ...(declaredRead === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && readDeploymentDatabaseReadAccessSetupV1(admission)
+                ? { manageBindings: true as const } : {}),
             ...(declaredRead === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1
                 ? 'deploymentId' in admission ? { deploymentId: admission.deploymentId }
                     : 'databaseTarget' in admission && admission.databaseTarget.kind === 'deployment_service'

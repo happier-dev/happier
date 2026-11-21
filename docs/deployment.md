@@ -1047,6 +1047,18 @@ the admitted access class. Direct managed MySQL uses the same native driver
 as Worktree and manual MySQL. The shared drivers preserve native fields and
 transaction commit and rollback for direct connections.
 
+For a managed PostgreSQL or MySQL target that supplies a direct SQL endpoint to
+the Workbench, a missing limited login returns `read_role_setup_required`.
+The Workbench offers two Actions. **Attach read-only database login** selects the
+exact revision of a Saved Secret containing the login's connection URL. The
+controller checks the URL against the linked database and verifies the account's
+read privileges before binding it. **Create read-only database login** opens the
+admitted write connection to prepare the engine's role and grant statements.
+Review those statements before applying them. The controller uses authenticated
+TLS for the provider-selected endpoint and keeps generated authentication
+material private. Both Actions use the existing managed data-role binding and
+its Saved Secret custody. Agents use the same Actions and approval rules.
+
 The canonical psql input admission API has explicit query and dump modes.
 Dump mode accepts multiple SQL statements and PostgreSQL plain-text COPY data
 through its exact physical `\.` terminator, using the same incremental scanner
