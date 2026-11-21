@@ -281,9 +281,6 @@ export function createCurrentUiContextVoiceToolPort(
         if (request.expectedContributorOccurrenceId !== undefined && request.expectedContributorOccurrenceId !== resolved.action.occurrenceId) {
             return { ok: false, code: 'stale_surface', errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' };
         }
-        if (request.requiredDangerLevel === 'safe' && resolved.action.dangerLevel !== 'safe') {
-            return { ok: false, code: 'denied', errorCode: 'plugin_action_read_requires_safe', actionHandlerInvocation: 'notStarted' };
-        }
         const currentSessionId = input.reader.readCurrentSessionId?.() ?? null;
         const sessionId = request.defaultSessionId ?? request.messageActionReference?.sessionId ?? currentSessionId;
         // Only an implicit viewed-Session binding retires on navigation. An
@@ -350,6 +347,7 @@ export function createCurrentUiContextVoiceToolPort(
                     callerPluginId: resource.resourceCaller?.pluginId,
                     requiredReadOnly: resource.requiredReadOnly, readObservation: resource.readObservation } : {}),
                 ...(readObservation ? { requiredReadOnly: true, readObservation } : {}),
+                requiredDangerLevel: request.requiredDangerLevel,
                 resolveContributedAction: (identity) => (
                     createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(identity)
                 ),

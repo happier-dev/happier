@@ -153,24 +153,32 @@ export async function executeCurrentUiContextContributedAction(
     if (retained?.resume) return retained.resume(request, hostAction);
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
     const port = surface.success ? mountedPortFactory?.(surface.data, hostAction) : null;
-    if (accountLifetime && surface.success && surface.data === 'ui'
-        && (!port?.invokeAction || request.context.interactivePresentation === 'unavailable')) {
-        return executeCapturedScopeContributedAction(request, hostAction, accountLifetime);
+    const invokeMounted = async (): Promise<ActionExecuteResult> => {
+        const input = PluginJsonValueV2Schema.safeParse(request.input ?? null);
+        if (!port?.invokeAction || request.signal?.aborted || !input.success) {
+            return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_context_not_mounted', details: { actionHandlerInvocation: 'notStarted' } };
+        }
+        const outcome = await port.invokeAction({
+            action: request.action,
+            input: input.data,
+            ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
+            ...(request.context.expectedContributedActionOccurrenceId ? { expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId } : {}),
+            ...(request.context.defaultSessionId ? { defaultSessionId: request.context.defaultSessionId } : {}),
+            ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
+            ...(request.signal ? { signal: request.signal } : {}),
+        });
+        return projectCurrentUiContextActionOutcome(outcome);
+    };
+    if (accountLifetime && surface.success && surface.data === 'ui') {
+        if (!port?.invokeAction || request.context.interactivePresentation === 'unavailable') {
+            return executeCapturedScopeContributedAction(request, hostAction, accountLifetime);
+        }
+        if (request.context.externalActionTarget?.kind === 'machine' && request.clientId === undefined
+            && request.context.actionCaller?.kind !== 'plugin' && !request.context.resourceActionInvocation) {
+            return executeCapturedScopeContributedAction(request, hostAction, accountLifetime, invokeMounted);
+        }
     }
-    const input = PluginJsonValueV2Schema.safeParse(request.input ?? null);
-    if (!port?.invokeAction || request.signal?.aborted || !input.success) {
-        return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_context_not_mounted', details: { actionHandlerInvocation: 'notStarted' } };
-    }
-    const outcome = await port.invokeAction({
-        action: request.action,
-        input: input.data,
-        ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
-        ...(request.context.expectedContributedActionOccurrenceId ? { expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId } : {}),
-        ...(request.context.defaultSessionId ? { defaultSessionId: request.context.defaultSessionId } : {}),
-        ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
-        ...(request.signal ? { signal: request.signal } : {}),
-    });
-    return projectCurrentUiContextActionOutcome(outcome);
+    return invokeMounted();
 }
 
 /** Preserve the mounted dispatcher's authored settlement at every Action adapter. */

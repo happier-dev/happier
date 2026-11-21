@@ -349,6 +349,8 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
         sessionId?: string;
     }>;
     requiredReadOnly?: true;
+    /** Host source reads may execute only a contribution declared safe. */
+    requiredDangerLevel?: 'safe';
     readObservation?: Readonly<{
         invalidate(): void;
         retire?(): void;
@@ -2497,6 +2499,9 @@ async function executeContributedAction(
     if (!projectedAction) {
         input.onPreInvocationUnavailable?.();
         return failure('unavailable', 'plugin_surface_action_projection_unavailable');
+    }
+    if (input.requiredDangerLevel === 'safe' && projectedAction.dangerLevel !== 'safe') {
+        return failure('denied', 'plugin_action_read_requires_safe', { actionHandlerInvocation: 'notStarted' });
     }
     if (projectedAction.execution.target === 'client' && input.hostAction?.context?.interactivePresentation === 'unavailable') {
         return failure('unavailable', 'action_interactive_review_required');

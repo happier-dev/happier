@@ -105,10 +105,12 @@ describe('deployment scoped read transport', () => {
         expect(homes.requests).toHaveLength(beforeForeign);
     });
 
-    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment', 'selected_environment_refused'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
+    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment', 'selected_environment_refused',
+        'selected_environment_cold'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
         const disabled = kind === 'deployment_service_disabled';
         const nativeKind = kind !== 'managed_deployment';
-        const exactEnvironment = kind === 'selected_environment' || kind === 'selected_environment_refused';
+        const cold = kind === 'selected_environment_cold';
+        const exactEnvironment = kind === 'selected_environment' || kind === 'selected_environment_refused' || cold;
         const subjectReadRefused = kind === 'selected_environment_refused';
         // QA-B E14: the native PostgreSQL template names its service database and its database happier.
         const service = exactEnvironment ? 'database' : 'postgres';
@@ -183,7 +185,15 @@ describe('deployment scoped read transport', () => {
                         executionOrigin: { serverIdentityId, materializationRef: {
                             machineId, pluginId: DATABASE_PLUGIN_ID_V1, materializationId: 'database-materialization' } } } }];
             })) };
-        const withdraw = publishCommittedAppShellPluginUiProjection(() => disabled ? EMPTY_PLUGIN_UI_PROJECTION : projection);
+        const withdraw = publishCommittedAppShellPluginUiProjection(() => disabled || cold ? EMPTY_PLUGIN_UI_PROJECTION : projection);
+        const machineRpc = cold ? vi.spyOn(await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc'), 'machineRpcWithServerScope')
+            .mockImplementation(async (request) => {
+                expect(request).toMatchObject({ machineId: 'controller', method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE });
+                const { hostOrigin, ...declaration } = Object.values(projection.actionsById)[0]!;
+                return { protocolVersion: 1, projection: { v: 2, generation: 1, actionsById: {
+                    [`${DATABASE_PLUGIN_ID_V1}/${listLocalId}`]: { ...declaration, executionOrigin: hostOrigin.executionOrigin },
+                } } } as never;
+            }) : null;
         const invocations: unknown[] = [];
         const sizeInputs: unknown[] = [];
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.invoke', tokenEpoch: 0,
@@ -262,7 +272,8 @@ describe('deployment scoped read transport', () => {
             const workbenchRequests = homes.requests.filter(request => request.path === '/v1/actions/action.invoke');
             expect(workbenchRequests).toHaveLength(exactEnvironment ? 1 : 0);
             if (exactEnvironment) expect(workbenchRequests[0]?.serverId).toBe(serverId);
-        } finally { await exactRead?.unmount(); accountPage?.release(); controller?.retire(); withdraw(); }
+            if (machineRpc) expect(machineRpc).toHaveBeenCalledTimes(1);
+        } finally { await exactRead?.unmount(); accountPage?.release(); controller?.retire(); withdraw(); machineRpc?.mockRestore(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('projects %s live addresses from the serving receipt and current Domains in one batch, including latest commit facts', async mode => {

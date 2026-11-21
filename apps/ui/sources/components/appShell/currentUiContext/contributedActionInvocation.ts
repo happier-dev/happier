@@ -117,23 +117,32 @@ export async function executeCapturedScopeContributedAction(
     request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0],
     hostAction: PluginSurfaceHostActionBinding,
     accountLifetime: ServerAccountScopeLifetime,
+    invokeMounted?: () => Promise<ActionExecuteResult>,
 ): Promise<ActionExecuteResult> {
     const refused = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode,
         details: { actionHandlerInvocation: 'notStarted' } });
     const scope = accountLifetime.scope;
     const readProjection = () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true });
-    const resolved = resolveCurrentContributedAction(readProjection, request.action);
+    const target = request.context.externalActionTarget;
+    const machineId = target?.kind === 'machine' ? target.machineId : undefined;
+    const committed = resolveCurrentContributedAction(readProjection, request.action);
+    const resolved = machineId && committed?.kind === 'machine' && committed.origin.machineId !== machineId ? null : committed;
     const parsedInput = PluginJsonValueV2Schema.safeParse(request.input ?? null);
-    if (!resolved || !parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
+    if ((!resolved && !machineId) || !parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
         return refused('contributed_action_unavailable');
     }
-    if (!areServerProfileIdentifiersEquivalent(resolved.origin.serverId, scope.serverId)
-        || resolved.kind === 'account' && resolved.origin.accountId !== scope.accountId) return refused('action_account_scope_changed');
-    if (request.context.expectedContributedActionOccurrenceId !== undefined
+    if (resolved && (!areServerProfileIdentifiersEquivalent(resolved.origin.serverId, scope.serverId)
+        || resolved.kind === 'account' && resolved.origin.accountId !== scope.accountId)) return refused('action_account_scope_changed');
+    if (resolved && request.context.expectedContributedActionOccurrenceId !== undefined
         && request.context.expectedContributedActionOccurrenceId !== resolved.action.occurrenceId) return refused('plugin_action_generation_retired');
-    if (request.requiredDangerLevel === 'safe' && resolved.action.dangerLevel !== 'safe') return refused('plugin_action_read_requires_safe');
+    if (resolved && invokeMounted) return invokeMounted();
     const isCurrent = () => !request.signal?.aborted && accountLifetime.isCurrent()
-        && isResolvedContributedActionCurrent(readProjection, request.action, resolved);
+        && (!resolved || isResolvedContributedActionCurrent(readProjection, request.action, resolved));
+    // A cold exact Machine has no AppShell declaration yet. The common
+    // dispatcher joins that Machine's current Action projection before admission.
+    const daemonMachineId = resolved
+        ? resolved.kind === 'machine' && resolved.action.execution.target === 'daemon' ? resolved.origin.machineId : undefined
+        : machineId;
     const sessionId = request.context.defaultSessionId ?? request.messageActionReference?.sessionId;
     const outcome = await dispatchPluginSurfaceAction({
         action: request.action, input: parsedInput.data,
@@ -143,11 +152,15 @@ export async function executeCapturedScopeContributedAction(
             ? { managedBootstrapCredential: request.context.invocationServices.managedBootstrapCredential } : {}),
         ...(request.context.actionRequestId ? { actionRequestId: request.context.actionRequestId } : {}),
         invocationSurface: 'ui', hostAction, actionAccountLifetime: accountLifetime, pluginUiProjection: readProjection(),
-        resolveContributedAction: identity => createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity),
+        ...(resolved ? {
+            resolveContributedAction: identity => createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity),
+        } : {}),
+        requiredDangerLevel: request.requiredDangerLevel,
+        expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId,
         clientAction: { ...(sessionId ? { sessionId } : {}),
             ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) },
-        ...(resolved.kind === 'machine' && resolved.action.execution.target === 'daemon' ? {
-            contributedAction: { machineId: resolved.origin.machineId, serverId: scope.serverId, accountLifetime,
+        ...(daemonMachineId ? {
+            contributedAction: { machineId: daemonMachineId, serverId: scope.serverId, accountLifetime,
                 ...(sessionId ? { sessionId } : {}),
                 ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}) },
         } : {}),
