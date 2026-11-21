@@ -55,6 +55,8 @@ function formatActor(grant: OwnerGrant): string {
 export function SessionRemotePermissionGrantsView(props: Readonly<{
     sessionId: string;
     serverId: string | null;
+    /** The Session's Machine, whose contributed Actions the Actions section names. */
+    machineId?: string | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const routeKey = props.serverId
@@ -244,7 +246,9 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
         />
     );
     // The Session's own Action overrides lead; the native remote grants keep their own section and states.
-    const actions = actionsAddress ? <SessionAllowedActionsSection address={actionsAddress} /> : null;
+    const actions = actionsAddress
+        ? <SessionAllowedActionsSection address={actionsAddress} machineId={props.machineId ?? null} />
+        : null;
     const grantsTitle = t('sessionRemotePermissionGrants.listTitle');
 
     if (state.kind === 'loading') {

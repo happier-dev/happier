@@ -15,7 +15,13 @@ import {
   ActionScopedApprovalRow,
   type ActionScopedApprovalMode,
 } from '@/components/settings/actions/ActionScopedApprovalRow';
-import { buildActionSettingsEntries } from '@/components/settings/actions/buildActionSettingsEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import {
+  ACTION_SETTINGS_PROJECTION_SECTIONS,
+  buildActionSettingsContributedActions,
+  buildActionSettingsEntries,
+  type ActionSettingsContributedAction,
+} from '@/components/settings/actions/buildActionSettingsEntries';
 import { useActionSettingsAvailability } from '@/components/settings/actions/useActionSettingsAvailability';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -54,11 +60,26 @@ function rowKey(row: RowTarget): string {
   ]);
 }
 
-/** The Action's title as the Account's Action catalog names it. */
-export function sessionConsentActionTitle(actionId: string): string {
+/** The Session Machine's contributed Actions, read from the same daemon projection Settings › Actions reads. */
+export type SessionAllowedActionsCatalog = Readonly<{
+  actions: readonly ActionSettingsContributedAction[];
+  pluginTitles: ReadonlyMap<string, string>;
+}>;
+
+/**
+ * The Action's title as the Account's Action catalog names it. A contributed Action whose plugin is not
+ * loaded here reads as an Action from its plugin, never as its id.
+ */
+export function sessionConsentActionTitle(actionId: string, catalog: SessionAllowedActionsCatalog | null): string {
   const builtIn = ActionIdSchema.safeParse(actionId);
   if (builtIn.success) return getActionSpec(builtIn.data).title;
-  return parseQualifiedPluginActionId(actionId)?.localId ?? actionId;
+  const contributed = parseQualifiedPluginActionId(actionId);
+  const declared = contributed ? catalog?.actions.find((action) =>
+    action.pluginId === contributed.pluginId && action.localId === contributed.localId) : undefined;
+  if (declared) return declared.title;
+  const plugin = contributed ? catalog?.pluginTitles.get(contributed.pluginId) : undefined;
+  return plugin ? t('sessionRemotePermissionGrants.consent.actionFromPlugin', { plugin })
+    : t('sessionRemotePermissionGrants.consent.pluginAction');
 }
 
 /**
@@ -70,15 +91,34 @@ export const SessionAllowedActionsSection = React.memo(
   function SessionAllowedActionsSection(
     props: Readonly<{
       address: SessionAddress;
+      /** The Session's Machine, whose contributed Actions the rows and "Add an Action" name. */
+      machineId: string | null;
     }>,
   ) {
     const { state, setRow, ready } = useSessionApprovalConsents(props.address);
+    // The Machine's projection is read only while a plugin row is listed or the add menu is open.
+    const [addDemand, setAddDemand] = React.useState(false);
+    const pluginRow = state.status === 'ready'
+      && state.rows.some((row) => parseQualifiedPluginActionId(row.actionId) !== null);
+    const projection = useDaemonMergedProjectionInputs({
+      machineId: props.machineId,
+      serverId: props.address.serverId,
+      enabled: props.machineId !== null && (pluginRow || addDemand),
+      sections: ACTION_SETTINGS_PROJECTION_SECTIONS,
+    });
+    const byId = projection.inputs?.pluginProjectionById;
+    const catalog = React.useMemo((): SessionAllowedActionsCatalog | null => byId ? {
+      actions: buildActionSettingsContributedActions(byId).filter((action) => !action.resource),
+      pluginTitles: new Map(Object.values(byId).map((plugin) => [plugin.pluginId, plugin.title] as const)),
+    } : null, [byId]);
     return (
       <SessionAllowedActionsGroup
         serverId={props.address.serverId}
         state={state}
         setRow={setRow}
         ready={ready}
+        catalog={catalog}
+        onCatalogDemand={setAddDemand}
       />
     );
   },
@@ -90,14 +130,21 @@ export function SessionAllowedActionsGroup(
     state: SessionApprovalConsentsState;
     setRow: SetRow;
     ready: boolean;
+    catalog: SessionAllowedActionsCatalog | null;
+    /** The add menu opened or closed: the contributed catalog is read while it is open. */
+    onCatalogDemand?: (open: boolean) => void;
   }>,
 ) {
-  const { state, setRow } = props;
+  const { state, setRow, catalog, onCatalogDemand } = props;
   // Rows touched in this visit stay listed (at Default after a removal), as on the Settings Machine rows.
   const [kept, setKept] = React.useState<readonly RowTarget[]>(NO_ITEMS);
   const [pending, setPending] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
-  const [addOpen, setAddOpen] = React.useState(false);
+  const [addOpen, setAddOpenState] = React.useState(false);
+  const setAddOpen = React.useCallback((open: boolean) => {
+    setAddOpenState(open);
+    onCatalogDemand?.(open);
+  }, [onCatalogDemand]);
   const stored = state.status === 'ready' ? state.rows : NO_ITEMS;
   const rows = React.useMemo(() => {
     const byKey = new Map<
@@ -116,14 +163,14 @@ export function SessionAllowedActionsGroup(
       .map(([key, row]) => ({
         key,
         ...row,
-        title: sessionConsentActionTitle(row.target.actionId),
+        title: sessionConsentActionTitle(row.target.actionId, catalog),
       }))
       .sort(
         (left, right) =>
           left.title.localeCompare(right.title) ||
           left.key.localeCompare(right.key),
       );
-  }, [kept, stored]);
+  }, [catalog, kept, stored]);
 
   const change = React.useCallback(
     (target: RowTarget, mode: ActionScopedApprovalMode) => {
@@ -157,7 +204,7 @@ export function SessionAllowedActionsGroup(
       // A new row starts as Allowed: adding an Action here is the person's own choice to allow it.
       change({ actionId }, 'allowed');
     },
-    [change],
+    [change, setAddOpen],
   );
 
   const disabled = !props.ready || state.status !== 'ready';
@@ -181,6 +228,7 @@ export function SessionAllowedActionsGroup(
           open={addOpen}
           onOpenChange={setAddOpen}
           listed={listed}
+          contributed={catalog?.actions ?? NO_ITEMS}
           disabled={disabled}
           onSelect={add}
         />
@@ -286,19 +334,22 @@ function SessionAllowedAddAction(
     open: boolean;
     onOpenChange: (open: boolean) => void;
     listed: ReadonlySet<string>;
+    /** The Session Machine's contributed Actions, offered alongside the host catalog as Settings › Actions does. */
+    contributed: readonly ActionSettingsContributedAction[];
     disabled: boolean;
     onSelect: (actionId: string) => void;
   }>,
 ) {
   const raw = useSetting('actionsSettingsV1');
   const availability = useActionSettingsAvailability();
-  const { open, listed } = props;
+  const { open, listed, contributed } = props;
   const items = React.useMemo(() => {
     if (!open) return NO_ITEMS;
     return buildActionSettingsEntries({
       query: '',
       settings: normalizeActionsSettingsV1(raw),
       availability,
+      contributedActions: contributed,
       translate: t,
     })
       .filter(
@@ -312,7 +363,7 @@ function SessionAllowedAddAction(
         title: entry.title,
         testID: `session-allowed-actions:add:${entry.actionId}`,
       }));
-  }, [availability, listed, open, raw]);
+  }, [availability, contributed, listed, open, raw]);
   return (
     <DropdownMenu
       testID="session-allowed-actions:add"

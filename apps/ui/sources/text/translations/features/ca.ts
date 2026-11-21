@@ -15181,6 +15181,8 @@ const sessionRemotePermissionGrantTranslations = { ca: {
             onTargetDescription: ({ agent, action, target }) => `${agent} pot executar ${action} a ${target} en aquesta sessió sense preguntar. Canvia-ho a Sessió › Permès.`,
             approvedOnce: 'Aprovat un cop. No s’ha pogut desar per a aquesta sessió; se’t tornarà a preguntar.',
             agentFallback: 'L’agent',
+            actionFromPlugin: ({ plugin }) => `Acció de ${plugin}`,
+            pluginAction: 'Acció d’un connector',
         },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "ca">;
 

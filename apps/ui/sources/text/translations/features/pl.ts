@@ -15208,6 +15208,8 @@ const sessionRemotePermissionGrantTranslations = { pl: {
             onTargetDescription: ({ agent, action, target }) => `${agent} może uruchamiać ${action} na ${target} w tej sesji bez pytania. Zmień to w Sesja › Dozwolone.`,
             approvedOnce: 'Zatwierdzono raz. Nie udało się zapisać dla tej sesji; zostaniesz zapytany ponownie.',
             agentFallback: 'Agent',
+            actionFromPlugin: ({ plugin }) => `Akcja z ${plugin}`,
+            pluginAction: 'Akcja wtyczki',
         },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "pl">;
 

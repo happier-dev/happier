@@ -52,6 +52,8 @@ export type SessionRemotePermissionGrantTranslations = Readonly<{
         onTargetDescription: (params: Readonly<{ agent: string; action: string; target: string }>) => string;
         approvedOnce: string;
         agentFallback: string;
+        actionFromPlugin: (params: Readonly<{ plugin: string }>) => string;
+        pluginAction: string;
     }>;
 }>;
 
@@ -103,5 +105,7 @@ export const sessionRemotePermissionGrantTranslationsEnglish = { en: {
             onTargetDescription: ({ agent, action, target }) => `${agent} can run ${action} on ${target} in this Session without asking. Change it in Session › Allowed.`,
             approvedOnce: 'Approved once. Couldn’t save it for this Session; you’ll be asked again.',
             agentFallback: 'The agent',
+            actionFromPlugin: ({ plugin }) => `Action from ${plugin}`,
+            pluginAction: 'Plugin Action',
         },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "en">;

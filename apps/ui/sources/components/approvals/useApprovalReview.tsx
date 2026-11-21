@@ -357,7 +357,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     ? audience.presentationsBySessionKey.get(sessionAddressKey(audienceAddresses[0])) : null;
   const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
   // "Next time in this Session": an agent's ask from a Session this viewer owns, for an Action a Session row can change.
-  const consentActionId = React.useMemo(() => parsed?.kind === 'built_in'
+  // Built-in and contributed target-Action requests alike: a contributed Action keys on its qualified id.
+  const consentActionId = React.useMemo(() => (parsed?.kind === 'built_in' || parsed?.kind === 'target')
     && (parsed.request.createdBy.surface === 'agent' || parsed.request.createdBy.surface === 'session_agent')
     ? readSessionApprovalConsentActionIdV1(parsed.request) : null, [parsed]);
   const consentAddress = React.useMemo(() => approvalServerId && sessionId && session?.access?.role === 'owner'
@@ -459,6 +460,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         } else if (parsed.kind === 'target') {
           // The Action owner carries the deciding Account's signed authority to
           // the exact executor, including on another Account's Machine.
+          const consentSave = decision === 'approve' ? sessionConsentChoice.saveBeforeApprove() : null;
+          if (consentSave) await consentSave;
           if (!await decideActionApproval(decision)) return;
           setRecordedDecision(decision);
         } else if (parsed.kind === 'host_action') {

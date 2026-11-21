@@ -78,6 +78,7 @@ export default function SessionConsentDevScreen() {
         serverId={ADDRESS.serverId}
         state={state.state}
         setRow={SAVED}
+            catalog={null}
         ready
       />
       {STATES.filter((entry) => entry.key !== 'rows').map((entry) => (
@@ -86,6 +87,7 @@ export default function SessionConsentDevScreen() {
           serverId={ADDRESS.serverId}
           state={entry.state}
           setRow={SAVED}
+            catalog={null}
           ready
         />
       ))}

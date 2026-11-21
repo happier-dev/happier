@@ -15064,6 +15064,8 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hant': {
             onTargetDescription: ({ agent, action, target }) => `${agent} 可以在此工作階段中無需詢問在 ${target} 上執行 ${action}。可在 工作階段 › 已允許 中變更。`,
             approvedOnce: '已核准一次。無法為此工作階段儲存；你下次仍會被詢問。',
             agentFallback: '代理',
+            actionFromPlugin: ({ plugin }) => `來自 ${plugin} 的動作`,
+            pluginAction: '外掛程式動作',
         },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "zh-Hant">;
 

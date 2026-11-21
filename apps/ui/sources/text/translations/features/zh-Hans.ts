@@ -15064,6 +15064,8 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hans': {
             onTargetDescription: ({ agent, action, target }) => `${agent} 可以在此会话中无需询问在 ${target} 上运行 ${action}。可在 会话 › 已允许 中更改。`,
             approvedOnce: '已批准一次。无法为此会话保存；你下次仍会被询问。',
             agentFallback: '智能体',
+            actionFromPlugin: ({ plugin }) => `来自 ${plugin} 的操作`,
+            pluginAction: '插件操作',
         },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "zh-Hans">;
 

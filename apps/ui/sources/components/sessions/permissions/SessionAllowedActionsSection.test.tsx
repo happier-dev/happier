@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -35,9 +36,19 @@ function recordingWriter() {
   };
 }
 
+const publish = 'acme.publisher/actions/releases/publish';
+const publishKey = JSON.stringify([publish, null, null]);
+/** The Session Machine's contributed Actions, as Settings › Actions reads them from its daemon projection. */
+const CATALOG = {
+  actions: [{ pluginId: 'acme.publisher', localId: 'releases/publish', title: 'Publish release notes',
+    description: null, icon: null, surfaces: ['agent', 'ui'] }],
+  pluginTitles: new Map([['acme.publisher', 'Acme Publisher']]),
+} as const;
+
 function group(
   state: SessionApprovalConsentsState,
   write = recordingWriter().write,
+  catalog: typeof CATALOG | null = null,
 ) {
   // A page section: its header (title, description, Add an Action) is drawn on a page list.
   return (
@@ -47,6 +58,7 @@ function group(
         state={state}
         setRow={write}
         ready
+        catalog={catalog}
       />
     </ItemList>
   );
@@ -151,5 +163,29 @@ describe('Session › Allowed › Actions', () => {
     await screen.pressByTestIdAsync(`${prefix}${offered[0]}`);
     // The menu closes first, then hands the choice on.
     await vi.waitFor(() => expect(writes).toEqual([{ actionId: offered[0], audience: 'agent', mode: 'allowed' }]));
+  });
+
+  it('titles a plugin row by its contributed Action, never by its id', async () => {
+    const rows = { status: 'ready', rows: [{ actionId: publish, audience: 'agent', mode: 'allowed' }] } as const;
+    const loaded = await renderScreen(group(rows, undefined, CATALOG));
+    expect(loaded.getTextContent()).toContain('Publish release notes');
+    await standardCleanup();
+    // The plugin is not loaded here: a neutral line stands in for its title.
+    const unloaded = await renderScreen(group(rows));
+    expect(unloaded.findByTestId(`session-allowed-action:${publishKey}`)).not.toBeNull();
+    expect(unloaded.getTextContent()).not.toContain('releases/publish');
+    expect(unloaded.getTextContent()).not.toContain('acme.publisher');
+  });
+
+  it('offers the Session Machine\'s contributed Actions in Add an Action, as Settings › Actions does', async () => {
+    const { writes, write } = recordingWriter();
+    const screen = await renderScreen(group({ status: 'ready', rows: [] }, write, CATALOG));
+    await screen.pressByTestIdAsync('session-allowed-actions:add:trigger');
+    // The catalog is long; narrow it the way a person does, through the menu's search.
+    await vi.waitFor(() => expect(screen.findAll((node) => typeof node.props.onChangeText === 'function').length).toBeGreaterThan(0));
+    await act(async () => { screen.findAll((node) => typeof node.props.onChangeText === 'function')[0]?.props.onChangeText('Publish release'); });
+    await vi.waitFor(() => expect(screen.findByTestId(`session-allowed-actions:add:${publish}:scroll-frame`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`session-allowed-actions:add:${publish}`);
+    await vi.waitFor(() => expect(writes).toEqual([{ actionId: publish, audience: 'agent', mode: 'allowed' }]));
   });
 });

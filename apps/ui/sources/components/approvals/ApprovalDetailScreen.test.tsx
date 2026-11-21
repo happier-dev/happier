@@ -1851,6 +1851,14 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.approve')).toBeNull();
   });
 
+  it('offers "Next time in this Session" for a contributed target-Action ask from the viewer\'s own Session', async () => {
+    currentArtifact = createTargetActionApprovalArtifact();
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="target-artifact-1" />);
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.session-consent:always')).not.toBeNull());
+    expect(screen.findByTestId('approvals.session-consent:scoped')).toBeNull();
+  });
+
   it('renders the exact plugin target input and updates only that artifact', async () => {
     currentArtifact = createTargetActionApprovalArtifact();
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');

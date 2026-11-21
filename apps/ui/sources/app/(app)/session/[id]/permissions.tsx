@@ -10,6 +10,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { useProfile, useSession } from '@/sync/domains/state/storage';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -88,7 +89,8 @@ export function SessionRemotePermissionGrantsScreen() {
     return (
         <View style={{ flex: 1 }}>
             <Stack.Screen options={screenOptions} />
-            <SessionRemotePermissionGrantsView sessionId={sessionId} serverId={resolvedServerId} />
+            <SessionRemotePermissionGrantsView sessionId={sessionId} serverId={resolvedServerId}
+                machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} />
         </View>
     );
 }
