@@ -146,6 +146,8 @@ import { buildSessionOrganizationAssignmentSnapshotHttpRequestV1 } from '@happie
 import { SessionCreateRequestSchema } from '@/app/session/create/sessionCreateRequest';
 import { SessionMachineAccessKeyCreateBodySchema } from '@/app/accessKeys/sessionMachineAccessKeyRequest';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
+import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
@@ -4258,7 +4260,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (((rootSpec?.executionPlacements ?? [rootSpec?.executionPlacement]).includes('machine')
                 || verified.binding.sessionActionOrigin && isLedSubtreeSessionLifecycleActionId(root.data))
             && verified.binding.target.kind === 'machine' && verified.binding.target.machineId === verified.binding.machineId
-            || getActionSpec(root.data).executionPlacement === 'session' && verified.target.kind === 'session')
+            || getActionSpec(root.data).executionPlacement === 'session' && verified.target.kind === 'session'
+            || root.data === PET_IMPORT_ACTION_ID_V1
+            && resolveMachineRpcExternalActionEffectV1(PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE, verified.binding) === root.data)
         && (verified.effectActionId === verified.binding.actionId
             || isContributedActionRoot(verified.binding.actionId)
             || verified.signedChildPurpose.sibling.archiveStop

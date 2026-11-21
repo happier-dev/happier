@@ -1,6 +1,8 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
 import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../../../actions/actionIds.js';
 import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
+import { PET_IMPORT_ACTION_ID_V1 } from '../../../../actions/actionIdsPetsV1.js';
+import { PET_DAEMON_RPC_METHODS } from '../../../../pets/daemonRpc.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1, PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
@@ -1176,6 +1178,13 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       || signIn !== 'start' && method === RPC_METHODS.DAEMON_TERMINAL_LIST
       || signIn !== 'cancel' && (method === AGENT_SIGN_IN_PREPARE_RPC_METHOD || method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
     return phase && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
+  if (binding?.actionId === PET_IMPORT_ACTION_ID_V1) {
+    // Preview validation is the Machine phase of the client-owned import review.
+    return method === PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE
+      && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }

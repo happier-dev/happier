@@ -20,6 +20,9 @@ import {
   signExternalActionMachineRequestV1,
   signExternalActionMachineRpcRequestV1,
 } from '@happier-dev/protocol/actions';
+import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
 import { auth } from '@/app/auth/auth';
 import { verifyExternalActionDomainExecutionRequest, verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -147,6 +150,61 @@ async function createFixture() {
   };
   return { account, app, homeId, keys, machine, mint, verify };
 }
+
+it('admits signed Machine pet Preview preparation and keeps Add behind review', async () => {
+  const { account, app, homeId, keys, machine, verify } = await createFixture();
+  try {
+    const packagePath = '/pets/preview';
+    const effect = PET_IMPORT_ACTION_ID_V1;
+    const session = await db.session.create({ data: {
+      accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
+    } });
+    await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'source' } });
+    const target = { kind: 'machine' as const, machineId: machine.id };
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({
+      v: 1, requestId: crypto.randomUUID(), target, input: { source: { ...target, packagePath } },
+    });
+    const resolveCurrentSessionMachine = async () => machine.id;
+    const root = await auth.mintExternalActionExecutionAuthorization({
+      accountId: account.id, serverIdentityId: homeId, authentication: { kind: 'account', tokenEpoch: account.tokenEpoch },
+      actionId: effect, machineId: machine.id, target, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      sessionActionOrigin: SessionActionRpcOriginV1Schema.parse({
+        v: 1, requestId: envelope.requestId, caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 1 },
+        sourceTurnId: 'preview-turn', callerPermissionMode: 'default',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      }),
+      sessionActionSource: { machineId: machine.id, installationId: machine.installationId! },
+    }, { resolveCurrentSessionMachine });
+    const source = { privateKey: keys.secretKey, resolveCurrentSessionMachine };
+    const machinePath = `/v1/machines/${machine.id}`;
+    expect(await verify(root, effect, 'GET', machinePath, undefined, source))
+      .toEqual({ admitted: true, phase: undefined });
+    expect((await verify(root, effect, 'GET', `/v1/machines/${crypto.randomUUID()}`, undefined, source)).admitted).toBe(false);
+    expect((await verify(root, effect, 'GET', '/v1/machines', undefined, source)).admitted).toBe(false);
+    const verifyPhase = async (method: string, params: unknown) => {
+      const requestId = crypto.randomUUID();
+      const installationId = machine.installationId!;
+      const target = root.binding.target;
+      const machineSignature = signExternalActionMachineRpcRequestV1({
+        authorizationToken: root.token, effectActionId: effect, target, installationId,
+        method, requestId, params, privateKey: keys.secretKey,
+      });
+      return verifyExternalActionMachineRpcExecution(
+        { v: 1, authorization: root, effectActionId: effect, target, installationId, machineSignature },
+        { method, requestId, params, resolveCurrentSessionMachine },
+      );
+    };
+    expect(await verifyPhase(`${machine.id}:${PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE}`, { packagePath, strict: true }))
+      .not.toBeNull();
+    expect(await verifyPhase(`${crypto.randomUUID()}:${PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE}`, { packagePath, strict: true }))
+      .toBeNull();
+    expect(await verifyPhase(`${machine.id}:${PET_DAEMON_RPC_METHODS.IMPORT_ACCOUNT_PACKAGE}`, { packagePath }))
+      .toBeNull();
+  } finally {
+    await app.close();
+  }
+});
 
 it('admits setup autostart placement reads under the original prepare root without granting config writes', async () => {
   const { app, homeId, machine, mint, verify } = await createFixture();
