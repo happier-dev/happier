@@ -22,7 +22,7 @@ import { PluginListingAddsSection, PluginListingFacts } from '../listing/PluginL
 import { catalogReviewStatusLabel } from '../model/pluginMarketplaceModel';
 import { buildPluginListingRoute, type PluginListingRouteParams, type PluginsSurfaceHost } from '../model/pluginsSurfaceRoutes';
 import { usePluginCatalogWithSources } from '../model/usePluginCatalog';
-import { describePluginContentOmissions } from '../model/pluginInstallationReviewFacts';
+import { describePluginContentCounts, describePluginContentOmissions } from '../model/pluginInstallationReviewFacts';
 import type { PluginGitSourcePreviewResult } from '../model/usePluginSettingsScreenState';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 
@@ -190,6 +190,7 @@ function PluginGitPreviewSummary({ preview }: Readonly<{ preview: Extract<Plugin
             : t('settingsPlugins.gitInstall.defaultBranch'),
         t('settingsPlugins.gitInstall.commit', { commit: preview.resolvedCommit.slice(0, 7) }),
     ].filter((fact): fact is string => Boolean(fact));
+    const contents = describePluginContentCounts(summary.vendorPlugin?.contentCounts);
     const omissions = describePluginContentOmissions(summary.vendorPlugin?.notImported);
     return (
         <View testID={`${TEST_ID}.git.previewSummary`} style={gitStyles.preview}>
@@ -197,8 +198,11 @@ function PluginGitPreviewSummary({ preview }: Readonly<{ preview: Extract<Plugin
                 purpose={summary.description ?? undefined}
                 mark={<PluginMark title={summary.title} pluginId={summary.itemId || summary.title} size="page" />}
                 facts={{ source: { kind: 'registry', label: facts[0] ?? summary.title }, extra: facts.slice(1) }}
-                details={omissions.length > 0 ? (
+                details={contents.length > 0 || omissions.length > 0 ? (
                     <View style={gitStyles.previewDetails}>
+                        {contents.length > 0 ? (
+                            <Text variant="body" testID={`${TEST_ID}.git.contents`}>{contents.join(' · ')}</Text>
+                        ) : null}
                         {omissions.length > 0 ? (
                             <Text variant="meta" style={{ color: theme.colors.text.secondary }} testID={`${TEST_ID}.git.notImported`}>
                                 {`${t('settingsPlugins.gitInstall.notImported')} · ${omissions.join(', ')}`}

@@ -587,6 +587,8 @@ it('previews a Git link before Review and installs only from Review (Add from Gi
     const header = screen.findAll(node => node.props.testID === 'plugins.add.git.previewHeader' && node.props.facts !== undefined)[0];
     expect(header?.props.facts).toMatchObject({ source: { label: 'acme/tools' } });
     expect(header?.props.facts.extra).toHaveLength(2);
+    // What it contains, in the catalog's own counts (the shared Store facts formatter), beside what is left out.
+    expect(screen.findByTestId('plugins.add.git.contents')).not.toBeNull();
     expect(screen.findByTestId('plugins.add.git.notImported')).not.toBeNull();
     await screen.pressByTestIdAsync('plugins.add.git.review');
     expect(onInstallGit).toHaveBeenCalledExactlyOnceWith({ locator: 'https://github.com/acme/tools' });
