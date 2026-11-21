@@ -28,6 +28,9 @@ const revision = () => z.number().check(z.int(), z.nonnegative());
 
 /** Existing Account-change routing for saved preset content, including newly created records. */
 export const MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'machine-presets' as const;
+export const MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1 = '/v1/machines/presets/recipient-census' as const;
+export const MACHINE_PRESET_OWED_RECIPIENT_CENSUS_PATH_V1 = `${MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1}/owed` as const;
+
 
 /** Server computes the current Team audience/readiness; an existing preset binds mode to its stored author. */
 export const ManagedMachinePresetRecipientCensusInputV1Schema = lazyZodSchema(() => z.union([
@@ -54,6 +57,22 @@ export const ManagedMachinePresetRecipientCensusResultV1Schema = lazyZodSchema((
 export type ManagedMachinePresetRecipientCensusResultV1 = z.infer<
   typeof ManagedMachinePresetRecipientCensusResultV1Schema
 >;
+
+/** Carry only the existing wrap set and exact CAS basis used by the recipient-only update. */
+export const ManagedMachinePresetOwedRecipientCensusesV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({
+    homeId: id(),
+    id: id(),
+    expectedRevision: revision(),
+    recipients: ManagedMachinePresetRecipientsV1Schema,
+    census: z.strictObject({
+      kind: z.literal('ready'),
+      contentEncryptionMode: z.literal('e2ee'),
+      recipients: z.array(SavedSecretResourceEnvelopeCensusRecipientV1Schema),
+    }),
+  })),
+}));
+export type ManagedMachinePresetOwedRecipientCensusesV1 = z.infer<typeof ManagedMachinePresetOwedRecipientCensusesV1Schema>;
 
 /** One caller-relative envelope is enough to open a personally owned preset. */
 function managedMachinePresetMigrationRecipientProjectionShape() {

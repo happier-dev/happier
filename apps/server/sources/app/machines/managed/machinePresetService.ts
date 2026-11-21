@@ -9,7 +9,9 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plugins/contribution-identity";
 import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1, type ManagedMachinePresetOwedRecipientCensusesV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { isResourceRecipientEnvelopeOwedV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
 import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
@@ -44,7 +46,8 @@ import {
     type PresetContext,
     type PresetCreation,
 } from './machinePresetSave';
-import { hasStoredOpaquePresetEnvelope, readStoredPresetSnapshotContent } from './managedMachineProjection';
+import { hasStoredOpaquePresetEnvelope, readAdmittedOpaquePresetLaunch, readManagedController, readStoredPresetSnapshotContent } from './managedMachineProjection';
+import { readOwedMachinePresetIdsInTx } from './machinePresetOwedQuery';
 import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import { createValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -52,6 +55,8 @@ import type { ManagedControllerV1, ManagedControllerAccessV1, ValidatedLaunchSna
 import type { MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import {
     RESOURCE_RECIPIENT_ACCOUNT_SELECT,
+    projectResourceRecipientReadinessV1,
+    readTeamResourceRecipientAccountsInTx,
     readRequiredResourceRecipientEnvelopeRejectionV1,
     readSavedSecretAudienceRecipientEnvelopeCensusInTx,
     readTargetOwnerRecipientEnvelopeRejectionV1,
@@ -524,6 +529,94 @@ export async function readMachinePresetRecipientCensus(params: PresetContext & R
     } catch (error) {
         return refusal(error);
     }
+}
+
+/** The current key-holding Team manager can prepare the same recipient-only CAS as a preset read. */
+export async function readOwedMachinePresetRecipientCensuses(params: PresetContext): Promise<ManagedMachinePresetOwedRecipientCensusesV1> {
+    return await inReadSnapshot(async tx => {
+        const homeId = await readCurrentServerIdentityId(process.env, tx);
+        if (!homeId) return { items: [] };
+        const memberships = await tx.teamMembership.findMany({
+            where: { accountId: params.accountId, status: TeamMembershipStatus.active, team: { archivedAt: null } },
+            select: { teamId: true },
+        });
+        const actorContexts = await resolveTeamActorContextsInTx(tx, { actorAccountId: params.accountId,
+            teamIds: memberships.map(member => member.teamId) });
+        const manageable = [...actorContexts.values()].filter(context => context.teamCapabilities.manageSettings);
+        const qualified = await qualifyTeamOperationAuthenticationsInTx(tx, { ...params.authentication, contexts: manageable });
+        const teamIds = manageable.filter(context => qualified.get(context.team.id)?.ok === true).map(context => context.team.id);
+        const { memberIdsByTeam, accountsById } = await readTeamResourceRecipientAccountsInTx(tx, teamIds);
+        const fingerprints = new Map([...accountsById].flatMap(([accountId, account]) =>
+            account.encryptionMode === 'e2ee' && account.contentPublicKey && account.contentPublicKeySig
+                ? [[accountId, computeContentPublicKeyFingerprint(account.contentPublicKey)] as const] : []));
+        const ids = await readOwedMachinePresetIdsInTx(tx, { homeId, actorAccountId: params.accountId,
+            candidates: [...memberIdsByTeam].flatMap(([teamId, members]) => members.flatMap(accountId => {
+                const fingerprint = fingerprints.get(accountId);
+                return fingerprint === undefined ? [] : [{ teamId, accountId, fingerprint }];
+            })),
+        });
+        const projected = new Map<string, ReturnType<typeof projectResourceRecipientReadinessV1>>();
+        const project = (accountId: string) => {
+            const existing = projected.get(accountId);
+            if (existing) return existing;
+            const account = accountsById.get(accountId);
+            if (!account) return null;
+            const recipient = projectResourceRecipientReadinessV1(account);
+            projected.set(accountId, recipient);
+            return recipient;
+        };
+        const items: ManagedMachinePresetOwedRecipientCensusesV1['items'] = [];
+        for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 2 })) {
+            const rows = await tx.managedMachinePreset.findMany({
+                where: { id: { in: [...chunk] }, homeId, archivedAt: null },
+                select: { id: true, teamId: true, revision: true, launch: true, controllerMachineId: true, controllerInstallationId: true },
+                orderBy: { id: 'asc' },
+            });
+            for (const row of rows) {
+                const memberIds = row.teamId ? memberIdsByTeam.get(row.teamId) : undefined;
+                if (!row.teamId || !memberIds?.includes(params.accountId)) continue;
+                const stored = readAdmittedOpaquePresetLaunch(row.launch);
+                if (stored.contentEncryptionMode !== 'e2ee') continue;
+                const currentMembers = new Set(memberIds);
+                const admittedRecipients = stored.recipients.filter(recipient => currentMembers.has(recipient.accountId));
+                const envelopes = new Map(admittedRecipients.map(recipient => [recipient.accountId, recipient.envelope]));
+                if (!envelopes.has(params.accountId)) continue;
+                const owner = { kind: 'team' as const, teamId: row.teamId };
+                try {
+                    const custodian = await readPresetRecipientCustodianAccountIdInTx(tx, params, {
+                        homeId, owner, controller: readManagedController(row), controllerPoolId: stored.controllerPoolId,
+                    });
+                    if (custodian !== null && !currentMembers.has(custodian)) continue;
+                } catch (error) {
+                    if (error instanceof ManagedMachineError) continue;
+                    throw error;
+                }
+                const recipients = memberIds.flatMap(accountId => {
+                    const recipient = project(accountId);
+                    if (recipient === null) return [];
+                    const { readiness } = recipient;
+                    const envelope = envelopes.get(accountId);
+                    const owed = isResourceRecipientEnvelopeOwedV1({
+                        contentKey: readiness,
+                        contentPublicKeyFingerprint: readiness.status === 'available' ? readiness.contentPublicKeyFingerprint : null,
+                        encryptedDataKey: envelope?.encryptedDataKey ?? null,
+                        recipientContentPublicKeyFingerprint: envelope?.recipientContentPublicKeyFingerprint ?? null,
+                    });
+                    return [{ recipient, owed, hasEnvelope: envelope !== undefined }];
+                });
+                if (!recipients.some(recipient => recipient.owed)) continue;
+                items.push({ homeId, id: row.id, expectedRevision: row.revision, recipients: admittedRecipients,
+                    census: { kind: 'ready', contentEncryptionMode: 'e2ee',
+                        recipients: recipients.map(({ recipient, hasEnvelope, owed }) => ({
+                            ...recipient,
+                            envelopeStatus: !hasEnvelope ? 'missing' : owed || recipient.readiness.status !== 'available' ? 'stale' : 'prepared',
+                        })),
+                    },
+                });
+            }
+        }
+        return { items };
+    });
 }
 
 /** Retained snapshots keep their own key; the source relation supplies only their current audience. */

@@ -33,7 +33,8 @@ export function summarizeResourceRecipientReadinessV1(encryptionMode: ResourceAc
  * the resource carries. Unavailable recipients (Plain, setup required, inconsistent) are never owed.
  */
 export function isResourceRecipientEnvelopeOwedV1(
-  recipient: ResourceRecipientCensusRowV1 & Readonly<{ encryptedProvenanceDataKey?: string | null }>,
+  recipient: Pick<ResourceRecipientCensusRowV1, 'contentPublicKeyFingerprint' | 'recipientContentPublicKeyFingerprint' | 'encryptedDataKey'>
+    & Readonly<{ contentKey: Pick<ResourceRecipientCensusRowV1['contentKey'], 'status'>; encryptedProvenanceDataKey?: string | null }>,
   channels: Readonly<{ provenance?: boolean }> = {},
 ): boolean {
   if (recipient.contentKey.status !== 'available') return false;

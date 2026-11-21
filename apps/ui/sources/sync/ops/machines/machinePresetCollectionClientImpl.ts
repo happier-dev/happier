@@ -5,7 +5,7 @@ import {
     type MachinePresetHttpActionIdV1, type MachinePresetActionInputV1, type MachinePresetActionOutputV1,
 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import {
-    ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema,
+    MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema,
     type ManagedMachinePresetV1, type ManagedMachinePresetRecipientCensusInputV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import {
@@ -14,7 +14,6 @@ import {
     createManagedMachinePresetSetupOverrideV1,
     projectManagedMachinePresetForRecipientV1,
     replaceManagedMachinePresetAuthorContentV1,
-    rewrapManagedMachinePresetRecipientsV1,
     sealManagedMachinePresetContentV1,
     ManagedMachinePresetContentV1Schema,
     ManagedMachinePresetRecipientProjectionV1Schema,
@@ -68,7 +67,7 @@ import {
 } from '@/sync/domains/machines/presets/machinePresetEditDraft';
 import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 
-const PRESET_RECIPIENT_CENSUS_PATH = '/v1/machines/presets/recipient-census';
+import { commitMachinePresetRecipientRepair } from './machinePresetRecipientRepair';
 
 export type MachinePresetCollectionResult<T> =
     | Readonly<{ kind: 'succeeded'; value: T }>
@@ -392,11 +391,6 @@ function readPresetDomainFailureResult<T extends MachinePresetHttpActionIdV1>(ac
         ? value as MachinePresetActionOutputV1<T> : null;
 }
 
-function sameRecipientEnvelopes(left: Readonly<ManagedMachinePresetV1['recipients']>, right: Readonly<ManagedMachinePresetV1['recipients']>) {
-    return left.length === right.length && left.every((recipient, index) => recipient.accountId === right[index]?.accountId
-        && JSON.stringify(recipient.envelope) === JSON.stringify(right[index]?.envelope));
-}
-
 type ManagedMachinePresetSavedSecretCaptureContext = Readonly<{
     scope: ServerAccountScope;
     homeId: string;
@@ -415,7 +409,7 @@ export async function requestManagedMachinePresetRecipientCensusInContext(
     const parsed = ManagedMachinePresetRecipientCensusInputV1Schema.safeParse(input);
     if (!parsed.success || parsed.data.homeId !== context.homeId) return null;
     assertManagedMachinePresetSavedSecretCaptureCurrent(context);
-    const response = await context.account.request(PRESET_RECIPIENT_CENSUS_PATH, {
+    const response = await context.account.request(MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed.data), signal: context.signal,
     }, { retry: 'none' });
     assertManagedMachinePresetSavedSecretCaptureCurrent(context);
@@ -529,7 +523,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         const account = await captureLazyActionAccountContext(scope.serverId, signal);
         try {
             if (account.accountId !== scope.accountId) return null;
-            const response = await account.request(PRESET_RECIPIENT_CENSUS_PATH, {
+            const response = await account.request(MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed.data), signal,
             }, { retry: 'none' });
             account.assertCurrent();
@@ -608,32 +602,9 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             ...(raw.controller ? { controller: raw.controller } : {}),
             ...(raw.controllerPoolId ? { controllerPoolId: raw.controllerPoolId } : {}) }, signal);
         if (!census || census.kind !== 'ready' || census.contentEncryptionMode !== raw.contentEncryptionMode) return null;
-        const rawRecipientIds = new Set(raw.recipients.map(recipient => recipient.accountId));
-        const censusRecipientIds = new Set(census.recipients.map(recipient => recipient.account.accountId));
-        const audienceIsPreparedAndCurrent = rawRecipientIds.size === raw.recipients.length
-            && censusRecipientIds.size === census.recipients.length
-            && rawRecipientIds.size === censusRecipientIds.size
-            && census.recipients.every(recipient => recipient.envelopeStatus === 'prepared'
-                && rawRecipientIds.has(recipient.account.accountId));
-        if (audienceIsPreparedAndCurrent) return null;
-        const recipients = key.withAccountKey(({ accountId, accountKey }) => rewrapManagedMachinePresetRecipientsV1({
-            recipients: raw.recipients, accountId, accountKey, recipientCensus: [...census.recipients], randomBytes: getRandomBytes,
-        }));
-        if (!recipients || sameRecipientEnvelopes(raw.recipients, recipients)) return null;
-        const input = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse({
-            homeId: raw.homeId, id: raw.id, expectedRevision: raw.revision, patch: { recipients },
-        });
-        if (!input.success) return null;
-        try {
-            const outcome = classifyHomeActionOutcome(await executeAction('machines.presets.update', input.data, context(signal)),
-                'machines.presets.update');
-            if (outcome.kind !== 'completed') return null;
-            const result = MachinePresetActionOutputSchemasV1['machines.presets.update'].safeParse(outcome.result);
-            return result.success && result.data.kind === 'saved' ? result.data.preset : null;
-        } catch {
-            // A later keyholder read retries through the same owner.
-            return null;
-        }
+        return await commitMachinePresetRecipientRepair(scope, {
+            homeId: raw.homeId, id: raw.id, expectedRevision: raw.revision, recipients: raw.recipients, census,
+        }, key, signal);
     }
 
     async function openStoredPreset(raw: ManagedMachinePresetV1,

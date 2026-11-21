@@ -1881,6 +1881,9 @@ class Sync {
                     await prepareOwedArtifactRecipientKeys({ credentials, encryption,
                         artifactDataKeys: this.artifactDataKeys, request: createServerFetchForActiveServer(undefined, { credentials, isCurrent }),
                     }).catch((error: unknown) => log.log(`Artifact key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
+                    const { prepareOwedMachinePresetKeys } = await import('./ops/machines/machinePresetRecipientRepair');
+                    if (isCurrent()) await prepareOwedMachinePresetKeys(scope).catch((error: unknown) =>
+                        log.log(`Preset key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
                 }
                 await repairTeamLabelEnvelopes(target.serverId);
             }, { pause, backoff, shouldRetry,

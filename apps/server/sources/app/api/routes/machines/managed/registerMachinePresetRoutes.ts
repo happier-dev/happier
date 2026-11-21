@@ -1,12 +1,14 @@
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1, type MachinePresetHttpActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetAcquireRoutingInputV1Schema, ManagedMachinePresetAcquireRoutingResultV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema, ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MACHINE_PRESET_OWED_RECIPIENT_CENSUS_PATH_V1, MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1,
+    ManagedMachinePresetOwedRecipientCensusesV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { z } from "zod/mini";
 
 import type { Fastify } from "../../../types";
 import { readTeamOperationAuthenticationFromRequest, type TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import {
     createMachinePreset, getMachinePreset, listMachinePresets, updateMachinePreset,
-    archiveMachinePreset, readMachinePresetRecipientCensus, restoreMachinePreset,
+    archiveMachinePreset, readMachinePresetRecipientCensus, readOwedMachinePresetRecipientCensuses, restoreMachinePreset,
 } from "@/app/machines/managed/machinePresetService";
 
 import { resolveMachinePresetAcquireRouting } from '@/app/machines/managed/machinePresetAcquireRouting';
@@ -60,7 +62,14 @@ export function registerMachinePresetRoutes(app: Fastify): void {
         return await reply.send(await resolveMachinePresetAcquireRouting({ accountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body }));
     });
-    app.post('/v1/machines/presets/recipient-census', {
+    app.get(MACHINE_PRESET_OWED_RECIPIENT_CENSUS_PATH_V1, {
+        preHandler: app.authenticate,
+        schema: { response: { 200: ManagedMachinePresetOwedRecipientCensusesV1Schema } },
+    }, async (request, reply) => await reply.send(await readOwedMachinePresetRecipientCensuses({
+        accountId: request.userId,
+        authentication: readTeamOperationAuthenticationFromRequest(request),
+    })));
+    app.post(MACHINE_PRESET_RECIPIENT_CENSUS_PATH_V1, {
         preHandler: app.authenticate,
         attachValidation: true,
         schema: {

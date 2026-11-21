@@ -180,6 +180,7 @@ async function restoreTestAccount(options: {
     credentials?: AuthCredentials;
     accountMode?: 'plain' | 'e2ee';
     draftsEnabled?: boolean;
+    serverIdentityId?: string;
     followingEnabled?: boolean;
     onRequest?: (path: string) => void;
     runtimeRequest?: (path: string, init?: RequestInit) => Response | undefined;
@@ -191,6 +192,7 @@ async function restoreTestAccount(options: {
     let bootstrapping = true;
     account = await restoreServerAccountForTest({
         serverUrl: 'http://localhost:53288',
+        serverIdentityId: options.serverIdentityId,
         accountId: ACCOUNT_ID,
         credentials: options.credentials ?? { token: ACCOUNT_TOKEN },
         request: (url, init) => options.physicalRequest?.(String(url), init) ?? sessionBoundary(url, init),
@@ -431,6 +433,81 @@ describe('sync AccountChange catch-up projection', () => {
             decryptEncryptionKey: key => newcomer.decryptEncryptionKey(key) });
         expect(await reader.open({ binding, label: { content: published.content,
             recipientEnvelope: newEnvelope?.envelope ?? null }, readPolicy: { kind: 'team-resource' } })).toBe('Saved before join');
+    });
+
+    it('opens a preset for a later Team member after one manager bootstrap census and no preset screen', async () => {
+        const { default: nacl } = await import('tweetnacl');
+        const { openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } =
+            await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const { MachinePresetActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+        const managerCredentials = { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(75), 'base64url') };
+        const manager = await createEncryptionFromAuthCredentials(managerCredentials);
+        const member = nacl.box.keyPair();
+        const censusRecipient = (accountId: string, key: Uint8Array, envelopeStatus: 'missing' | 'prepared') => ({
+            account: { kind: 'account' as const, accountId, name: null, firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available' as const, contentPublicKey: encodeBase64(key),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(key) },
+            envelopeStatus,
+        });
+        const author = censusRecipient(ACCOUNT_ID, manager.contentDataKey, 'missing');
+        const homeId = 'srv_owed_preset_fixture';
+        const id = 'existing-team-preset';
+        const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee', content: { v: 1, name: 'Saved before join', setup: { scripts: [{ body: 'echo ready' }] } },
+            recipientCensus: [author], randomBytes: nacl.randomBytes });
+        let recipients = [...sealed.recipients];
+        let revision = 0;
+        const openForMember = () => openManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
+            content: sealed.content, recipients, accountId: 'later-member', accountKey: member.secretKey });
+        expect(openForMember()).toBeNull();
+
+        const requests: string[] = [];
+        let labelCensuses = 0;
+        const owed = '/v1/machines/presets/recipient-census/owed';
+        const update = '/v1/machines/presets/update';
+        await restoreTestAccount({ credentials: managerCredentials, accountMode: 'e2ee', serverIdentityId: homeId,
+            physicalRequest: (url, init) => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption/currentness') {
+                    return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(managerCredentials)));
+                }
+                if (path === '/v2/teams/label-envelopes') {
+                    labelCensuses++;
+                    return Promise.resolve(jsonResponse({ teams: [] }));
+                }
+                if (!path.startsWith('/v1/machines/presets/')) return undefined;
+                requests.push(`${init?.method ?? 'GET'} ${path}`);
+                if (path === owed) return Promise.resolve(jsonResponse({ items: revision === 0 ? [{
+                    homeId, id, expectedRevision: revision, recipients,
+                    census: { kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [
+                        { ...author, envelopeStatus: 'prepared' },
+                        censusRecipient('later-member', member.publicKey, 'missing'),
+                    ] },
+                }] : [] }));
+                if (path !== update) return undefined;
+                const parsed = MachinePresetActionInputSchemasV1['machines.presets.update'].parse(JSON.parse(String(init?.body)));
+                expect(parsed).toMatchObject({ homeId, id, expectedRevision: revision });
+                expect(Object.keys(parsed.patch)).toEqual(['recipients']);
+                recipients = parsed.patch.recipients ?? [];
+                revision++;
+                return Promise.resolve(jsonResponse({ kind: 'saved', preset: { id, homeId, revision, content: sealed.content,
+                    contentEncryptionMode: 'e2ee', owner: { kind: 'team', teamId: 'preset-team' }, recipients } }));
+            },
+        });
+        const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness & {
+            teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+        };
+        await waitForHomeGovernance(() => expect(labelCensuses).toBe(1));
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(requests).toEqual([`GET ${owed}`, `POST ${update}`]);
+        expect(openForMember()).toMatchObject({ name: 'Saved before join' });
+        await runtime.resumeSync('socket-reconnect');
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(requests).toHaveLength(2);
+        changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
+            entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
+        await runtime.resumeSync('socket-reconnect');
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(requests).toEqual([`GET ${owed}`, `POST ${update}`, `GET ${owed}`]);
     });
 
     // A Saved Secret shared with a Team before someone joined owes that member an envelope only its
@@ -1857,7 +1934,13 @@ describe('sync AccountChange catch-up projection', () => {
             await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
             await runtime.teamLabelEnvelopeSync.awaitQueue();
             expect(labelReads).toBe(2);
-            await waitForHomeGovernance(() => expect(reads).toHaveLength(4));
+            // Let the first blocked-cursor recovery finish revalidating the mounted
+            // snapshots before counting requests from further replays of that cursor.
+            await waitForHomeGovernance(() => {
+                expect(reads.length).toBeGreaterThanOrEqual(4);
+                expect(getTeamsDirectorySnapshot(scope, teamDirectoryQueryKeyV1(input))).toMatchObject({ status: 'ready', stale: false });
+                expect(getHomeGovernanceSnapshot(scope)).toMatchObject({ status: 'ready', stale: false });
+            });
             const heldCursor = runtime.changesCursor;
             reads.length = 0;
             for (let wake = 0; wake < 10; wake++) await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });

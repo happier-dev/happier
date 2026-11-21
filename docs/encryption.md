@@ -1913,10 +1913,16 @@ The preset author allocates a fresh data key for each private-content write and
 wraps it for the author and eligible Team Accounts through the Saved Secret
 recipient-envelope owner. The controller's custodian Account must be a recipient;
 there is no Machine recipient. Its daemon already holds the custodian's Account
-material and opens that Account's envelope. A successful keyholder read uses the
-Saved Secret recipient census and rewrap owner to add or prune current Account
-envelopes. A joining member without an envelope sees unavailable content until
-that repair runs. Retained per-Machine snapshots use their own key, including
+material and opens that Account's envelope.
+The key-holding Team manager checks for owed preset envelopes at app startup
+and when the Account feed delivers a Team change, including changes missed
+while disconnected. Home checks the manager's current Team authority and
+returns only presets with missing or stale wraps. The manager's app uses the
+existing recipient-only update at the returned preset revision. Opening a
+preset as a key-holding manager can still repair current wraps after a
+recipient's key becomes available or prune former members' wraps. A joining
+member sees that their key is pending until a manager delivers it. Retained
+per-Machine snapshots use their own key, including
 after the source preset changes. When the custodian's native Inspect or another
 operation reports, the daemon rewraps that retained key using the same current
 recipient census. Home accepts the optional recipients only for the exact
