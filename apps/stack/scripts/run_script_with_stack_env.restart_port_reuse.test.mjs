@@ -564,6 +564,25 @@ async function createRestartPreflightFixture(t, scriptPath) {
   return { rootDir, stackName, runtimeStatePath, markerPath, incumbent };
 }
 
+test('dev restart cannot retire the build producer while another stack holds its lease', async t => {
+  const { rootDir, stackName, runtimeStatePath, markerPath, incumbent } = await createRestartPreflightFixture(t, 'dev.mjs');
+  const { sourceRuntimeProducerBuildLockPath } = await import('./build/build_source_runtime.mjs');
+  const { withWorkspaceBundleLock } = await import('../../../packages/cli-common/workspaceBundleLock.mjs');
+  const lockPath = sourceRuntimeProducerBuildLockPath(dirname(runtimeStatePath));
+  const input = {
+    rootDir, stackName, scriptPath: 'dev.mjs',
+    args: ['--restart', '--no-dev-targets', '--no-daemon', '--no-ui', '--no-browser'],
+    extraEnv: { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: stackName },
+  };
+  await withWorkspaceBundleLock(async () => {
+    await assert.rejects(stackEnvRunner.runStackScriptWithStackEnv(input), { code: 'EWORKSPACEBUNDLELOCKBUSY' });
+    await assert.rejects(readFile(markerPath), { code: 'ENOENT' });
+    assert.deepEqual(JSON.parse(await readFile(runtimeStatePath, 'utf8')), incumbent);
+  }, { lockPath, staleAfterMs: Infinity });
+  await stackEnvRunner.runStackScriptWithStackEnv(input);
+  assert.equal(await readFile(markerPath, 'utf8'), 'started');
+});
+
 for (const scriptPath of ['run.mjs', 'dev.mjs']) {
   test(`${scriptPath} restart refuses unavailable placement/sync before replacing incumbent state`, async t => {
     const { rootDir, stackName, runtimeStatePath, markerPath, incumbent } = await createRestartPreflightFixture(t, scriptPath);

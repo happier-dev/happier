@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
+import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 
 import { checkDaemonStatePingAware } from '../daemon.mjs';
 import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths.mjs';
@@ -59,6 +60,7 @@ import { spawnBackgroundStackRunner } from './background_runner.mjs';
 import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import { prepareSourceRuntimeReload, resolveSourceRuntimeReloadArguments } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { SOURCE_START_SUPERSEDED_MARKER, supersededError } from '../runtime/shared/pending_source_start.mjs';
+import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
 import { restoreSourceSelectionRollback, settleSourceSelectionRollback } from '../runtime/shared/source_selection_rollback.mjs';
 import { isBorrowedExpoConsumer, projectBorrowedExpoWebappEnv, resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
@@ -665,12 +667,24 @@ export async function cleanupFailedRestartAttempt({
   return { cleaned: false, reason: stopResult?.finalization?.reason ?? 'cleanup_incomplete' };
 }
 
+// Hold the producer's publication lease through retirement so admitting a
+// build cannot race the restart. Release it before the replacement starts.
+async function withDevRestartProducerLease({ rootDir, stackName, baseDir, env }, stop) {
+  const authority = resolveRuntimeBuildAuthority({ rootDir, consumerStackName: stackName, env,
+    createRepoIdentityIfMissing: false });
+  if (authority.producerStackName !== stackName) return await stop();
+  const { sourceRuntimeProducerBuildLockPath } = await import('../build/build_source_runtime.mjs');
+  return await withWorkspaceBundleLock(stop, { lockPath: sourceRuntimeProducerBuildLockPath(baseDir),
+    env, wait: false, staleAfterMs: Infinity });
+}
+
 export async function stopObservedStackForRestart({
   rootDir,
   stackName,
   baseDir,
   env,
   incumbentRuntimeState = null,
+  scriptPath,
   json = false,
   preserveDaemon = true,
 } = {}) {
@@ -703,25 +717,28 @@ export async function stopObservedStackForRestart({
   // Restart depends on terminal cleanup, not the standalone Stop command's
   // lock-acquisition deadline. Reuse the executor's file-change completion signal.
   const dependencies = { cleanupExecutorLockOptions: { timeoutMs: Number.POSITIVE_INFINITY } };
-  const stopped = await stopStackWithEnv(input, dependencies);
-  if (stopped.stopAuthorization?.authorized === true && stopped.finalization?.finalized !== true) {
-    const reusePreparedSource = env?.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
-    // A confirmed cleanup failure is not a late lifecycle projection. Retain
-    // incumbent custody and prepared source; only an explicit recovery retries it.
-    if (['session_cleanup_incomplete', 'remote_cleanup_incomplete', 'browser_cleanup_incomplete'].includes(stopped.finalization?.reason)) {
-      throw createStackRuntimeCleanupIncompleteError(stopped, { stackName, restart: reusePreparedSource });
+  const stop = async () => {
+    const stopped = await stopStackWithEnv(input, dependencies);
+    if (stopped.stopAuthorization?.authorized === true && stopped.finalization?.finalized !== true) {
+      const reusePreparedSource = env?.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1';
+      // A confirmed cleanup failure is not a late lifecycle projection. Retain
+      // incumbent custody and prepared source; only an explicit recovery retries it.
+      if (['session_cleanup_incomplete', 'remote_cleanup_incomplete', 'browser_cleanup_incomplete'].includes(stopped.finalization?.reason)) {
+        throw createStackRuntimeCleanupIncompleteError(stopped, { stackName, restart: reusePreparedSource });
+      }
+      // Shutdown projections can advance after Stop captures its snapshot. Continue
+      // that same incarnation; a successor's stop marker must remain fenced.
+      try {
+        const completion = await completeInterruptedStackStopBeforeStart(input, dependencies);
+        if (completion.finalization) return completion;
+      } catch (error) {
+        if (error?.code !== 'ESTACKRUNTIMECLEANUPINCOMPLETE') throw error;
+        throw createStackRuntimeCleanupIncompleteError(error.actions, { stackName, restart: reusePreparedSource });
+      }
     }
-    // Shutdown projections can advance after Stop captures its snapshot. Continue
-    // that same incarnation; a successor's stop marker must remain fenced.
-    try {
-      const completion = await completeInterruptedStackStopBeforeStart(input, dependencies);
-      if (completion.finalization) return completion;
-    } catch (error) {
-      if (error?.code !== 'ESTACKRUNTIMECLEANUPINCOMPLETE') throw error;
-      throw createStackRuntimeCleanupIncompleteError(error.actions, { stackName, restart: reusePreparedSource });
-    }
-  }
-  return stopped;
+    return stopped;
+  };
+  return scriptPath === 'dev.mjs' ? await withDevRestartProducerLease(input, stop) : await stop();
 }
 
 export function shouldPreserveDaemonForRestart({
@@ -842,14 +859,20 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
     extraEnv,
     reconcileDaemonRuntimeState: !isStartLikeJsonDryRun,
     beforeRuntimeReconcile: isStartLikeScript && !isStartLikeJsonDryRun
-      ? async ({ env }) => {
-          await completeInterruptedStackStopBeforeStart({
+      ? async ({ env, initialRuntimeState }) => {
+          const input = {
             rootDir,
             stackName,
             baseDir: resolveStackEnvPath(stackName, env).baseDir,
             env,
             json: args.includes('--json'),
-          });
+          };
+          const complete = () => completeInterruptedStackStopBeforeStart(input);
+          if (scriptPath === 'dev.mjs' && args.includes('--restart') && initialRuntimeState?.stopRequest) {
+            await withDevRestartProducerLease(input, complete);
+          } else {
+            await complete();
+          }
         }
       : null,
     fn: async ({ env, envPath, stackEnv, runtimeStatePath, runtimeState }) => {
@@ -1035,6 +1058,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
               baseDir,
               env,
               incumbentRuntimeState: runtimeState,
+              scriptPath,
               preserveDaemon: preserveDaemonForRestart,
             });
             preservedDaemonForRestart = preserveDaemonForRestart
@@ -1204,6 +1228,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
                   baseDir,
                   env,
                   incumbentRuntimeState: runtimeState,
+                  scriptPath,
                   preserveDaemon: preserveDaemonForRestart,
                 });
                 preservedDaemonForRestart = preservedDaemonForRestart || (preserveDaemonForRestart

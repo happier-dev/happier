@@ -162,8 +162,10 @@ closure is unchanged. Changed runtime dependencies and unfinished or failed
 dependency publications still require recovery through the dependency owner.
 
 `hstack stack dev <stack> --restart` prepares the current daemon source before
-replacing it through the daemon lifecycle owner. Ordinary startup and recovery
-continue to use the retained source generation.
+replacing it through the daemon lifecycle owner. A restart of the build
+authority refuses with a busy publication lease while a source-bundle build
+holds that lease. Retry after the build completes. Ordinary startup and
+recovery continue to use the retained source generation.
 
 In 0.3 development, full reloads, retained source-capture adoption and dev
 source-generation swaps refresh running named identity daemons after the default
