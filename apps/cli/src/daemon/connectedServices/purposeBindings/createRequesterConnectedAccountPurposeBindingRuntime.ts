@@ -102,5 +102,15 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
       readGroup: async (group, signal) => await qualifiedConnectedAccountApi.readGroup({ ...group, signal }),
     },
   });
-  return { store, established, qualifiedConnectedAccountApi, purposes };
+  const invokeConnectedAccountNativeModels: import('@/providers/modelManagement/connectedAccountModelObservation').InvokeConnectedAccountNativeModels =
+    async (request, signal) => await withHome(async () => {
+      const { createCliCapabilitiesService } = await import('@/rpc/handlers/capabilities');
+      const service = await createCliCapabilitiesService({ savedSecretOperationContext: operationContext,
+        createApiClient: async credentials => (await import('@/api/api')).ApiClient.create(credentials),
+        accountContext: { credentials, accountSettings: operationContext.readSnapshot()?.settings ?? null },
+        activatePurposeBindings: purposes.activatePurposeBindings, connectedAccountsOwner: purposes.owner,
+      });
+      return await service.invoke(request, { signal });
+    }, signal);
+  return { store, established, qualifiedConnectedAccountApi, purposes, invokeConnectedAccountNativeModels };
 }

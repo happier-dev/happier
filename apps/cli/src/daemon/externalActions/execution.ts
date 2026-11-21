@@ -797,7 +797,8 @@ resolveServerFeaturesSnapshot?: () =>
               && isCustodianMachineAdmission(account.operationContext.machineAdmission),
             resolveQualifiedConnectedAccountV4Support: () => params.resolveQualifiedConnectedAccountV4Support?.() ?? 'indeterminate',
           });
-          return { purposes: requesterPurposeRuntime.purposes, isCurrent };
+          return { purposes: requesterPurposeRuntime.purposes,
+            invokeConnectedAccountNativeModels: requesterPurposeRuntime.invokeConnectedAccountNativeModels, isCurrent };
         };
         const createProviderReadContext = async (actionContext: ActionExecutorContext,
           preparedRuntime?: NonNullable<Awaited<ReturnType<typeof readRequesterPurposeRuntime>>>): Promise<import('@/providers/modelManagement/runtimeServices').RuntimeProviderAccountModelProjectionContext | null> => {
@@ -809,6 +810,7 @@ resolveServerFeaturesSnapshot?: () =>
             getAccountSettingsSnapshot: account.operationContext.readSnapshot,
             resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
             resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+            invokeConnectedAccountNativeModels: runtime.invokeConnectedAccountNativeModels,
             savedSecretOperationContext: account.operationContext,
             managedRuntimeAccount: {
               readCredentials: async () => await isCurrent() ? account.operationContext.credentials : null,

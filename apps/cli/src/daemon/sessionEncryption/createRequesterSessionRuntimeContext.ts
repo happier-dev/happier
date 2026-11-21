@@ -161,7 +161,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     },
   });
   let releaseConnectedAccountObservation: (() => void) | undefined;
-  const { established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
+  const { established, qualifiedConnectedAccountApi, purposes, invokeConnectedAccountNativeModels } = createRequesterConnectedAccountPurposeBindingRuntime({
     serverId: bootstrap.attribution.serverId, operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,
     reloadController: pluginReloadController,
     getAccountEncryptionMode: async options => await withHome(() => api.getAccountEncryptionMode(options)),
@@ -257,6 +257,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     },
     activeServerDir, connectedServicesMaterializationBaseDir, qualifiedConnectedAccountApi,
     connectedAccountsOwner: purposes.owner,
+    invokeConnectedAccountNativeModels,
     createManagedProviderAccountAuthority,
     resolveCurrentRequestAuthBinding: purposes.resolveCurrentRequestAuthBinding,
     materializeRequestAuthBearer: purposes.materializeRequestAuthBearer,

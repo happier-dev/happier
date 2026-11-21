@@ -459,6 +459,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
         service: AgentProviderCatalogObservationService;
     }> | null;
     activatePurposeBindings?: CliProbeDependencies['activatePurposeBindings'];
+    connectedAccountsOwner?: CliProbeDependencies['connectedAccountsOwner'];
     isAgentRegistryCurrent?: () => boolean;
     resolveNativeCatalogTarget?: CliProbeDependencies['resolveNativeCatalogTarget'];
     hasSessionAgentTransition?: () => boolean;

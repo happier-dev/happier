@@ -67,6 +67,8 @@ import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
 import type { ProviderModelSettingsMutationIntent } from '@/providers/connections';
+import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { createTeamCredentialNativeProviderSourceFixture } from '@/providers/broker/teamCredentialNativeProviderSource.testkit';
 
 import {
@@ -618,7 +620,10 @@ describe('runtime provider model-management composition', () => {
       const base = createBrokerProviderRegistry();
       const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
         providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
-          definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
+          definition: ProviderContributionV1Schema.parse({ ...provider.definition,
+            compatibilityOverrides: [{ agentTargetKey: fixture.agentTargetKey, protocol: 'openai-responses', status: 'experimental',
+              reason: 'Explicit fixture compatibility review', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } }],
+            managedRuntime: { ...provider.definition.managedRuntime,
             connectedAccounts: [{ purpose: 'openai-upstream', service,
               endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
               catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
@@ -633,8 +638,9 @@ describe('runtime provider model-management composition', () => {
       let models = [{ id: 'observed-model', name: 'Observed model' }];
       let source = 'dynamic';
       let observations = 0;
+      let snapshot = fixture.snapshot;
       const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, featureGate: { isEnabled: () => true },
-        acquireRuntimeLease: async () => ({ ...fixture.lease, registry }), getAccountSettingsSnapshot: () => fixture.snapshot,
+        acquireRuntimeLease: async () => ({ ...fixture.lease, registry }), getAccountSettingsSnapshot: () => snapshot,
         resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
         // Only the installed source capability transport is replaced. The real
         // declared source, account selection, observer and adapter projection run.
@@ -655,10 +661,27 @@ describe('runtime provider model-management composition', () => {
       if (result.status !== 'success') throw new Error('Expected native account projection');
       expect(result.groups).toHaveLength(1);
       expect(result.groups[0]?.rows).toMatchObject([{ confidence: 'probe', descriptor: { id: 'observed-model' },
-        compatibility: { confirmed: true },
+        compatibility: { confirmed: false },
         application: { protocol: 'openai-responses' },
         ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'observed-model' } }]);
       expect(observations).toBe(1);
+      const group = result.groups[0]!;
+      const row = group.rows[0]!;
+      const confirmedSettings = setProviderExperimentalConfirmationV1(DEFAULT_PROVIDER_SETTINGS_V1, {
+        connectionId: group.connectionId,
+        catalogSourceKey: getProviderExperimentalConfirmationCatalogSourceKeyV1({ connectionId: group.connectionId,
+          connectedAccountTarget: group.connectedAccountTarget }),
+        agentTargetKey: fixture.agentTargetKey,
+        modelId: row.compatibility.result.status === 'experimental' && row.compatibility.result.confirmationScope.kind === 'connection'
+          ? null : row.descriptor.id,
+        compatibilityFingerprint: row.compatibility.compatibilityFingerprint, confirmedAt: 1,
+      });
+      snapshot = providerSnapshot(confirmedSettings);
+      expect(await services.projectModels(request)).toMatchObject({ status: 'success', groups: [{ rows: [{ compatibility: { confirmed: true } }] }] });
+      const readySnapshot = snapshot;
+      snapshot = { ...readySnapshot, providerConnectionsCatalog: undefined };
+      expect(await services.projectModels(request)).toMatchObject({ status: 'success', groups: [{ rows: [{ compatibility: { confirmed: false } }] }] });
+      snapshot = readySnapshot;
       const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
         callMachineAction: async input => input.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION
           ? services.projectModels(DaemonProviderModelProjectionRequestV1Schema.parse(input.request))

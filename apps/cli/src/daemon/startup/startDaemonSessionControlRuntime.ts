@@ -9473,6 +9473,7 @@ export async function startDaemonSessionControlRuntime(
               getAccountSettingsSnapshot: requester.readAccountSettingsSnapshot,
               resolveManagedPurposeBindingIntent: requester.resolveManagedPurposeBindingIntent!,
               resolveManagedPurposeBindingIntentSelection: requester.resolveManagedPurposeBindingIntentSelection,
+              invokeConnectedAccountNativeModels: requester.invokeConnectedAccountNativeModels,
               savedSecretOperationContext: requester.bootstrap.savedSecretOperationContext,
               signal: signal ?? new AbortController().signal, isCurrent,
               accountReadScope: { serverUrl: requester.bootstrap.serverHttpBaseUrl,

@@ -8,6 +8,7 @@ import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/con
 
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
+import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { resolveProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/providers/catalog/currentSelectionRecoveryV1';
@@ -518,8 +519,14 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       if (!await isAccountCurrent()) {
         return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }) };
       }
-      if (!foreignRequester && !sourceProjection && !request.teamCredentialResources) snapshot = await awaitWithinProviderOperation(observeSnapshot
-        ? observeSnapshot(operationLifetime.signal) : readAdmittedSnapshot(accountContext, operationLifetime.signal), operationLifetime);
+      if (!foreignRequester && !sourceProjection && !request.teamCredentialResources) {
+        // Selected native sources use Account preferences and purpose custody;
+        // they do not require a personal Provider connection catalog.
+        snapshot = request.connectedServices
+          ? (accountContext?.getAccountSettingsSnapshot ?? input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot)()
+          : await awaitWithinProviderOperation(observeSnapshot
+            ? observeSnapshot(operationLifetime.signal) : readAdmittedSnapshot(accountContext, operationLifetime.signal), operationLifetime);
+      }
     } catch (error) {
       if (error instanceof ProviderOperationAbandonedError && error.reason !== 'cancelled') {
         return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable', { machineId: request.machineId }) };
@@ -676,7 +683,10 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             request: { ...sourceRequest, connectedAccountTarget: source.target }, registry,
             ...(source.agentPurpose ? { agentPurpose: source.agentPurpose } : {}),
             ...(route && provider ? { provider, purpose: route.purpose } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
-            providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
+            providerSettings: snapshot?.providerConnectionsCatalog?.status === 'ready'
+              ? readProviderSettingsForCli(snapshot).settings
+              : snapshot ? composeProviderSettingsV1(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+                snapshot.settings.providerDefaultModelSelectionsByAgentTargetKeyV1) : DEFAULT_PROVIDER_SETTINGS_V1,
             resolveSelection, signal: operationLifetime.signal,
             ...(catalogCustodianMachineId ? { catalogCustodianMachineId, readModelProjection: input.readModelProjection } : {}),
             ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
