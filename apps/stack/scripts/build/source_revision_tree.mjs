@@ -19,6 +19,7 @@ import { cloneTree, extractRevision, isRevisionDependencyInput, prepareRevisionI
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
+import { pendingSourceSelectionAwaitsActivation } from '../runtime/shared/pending_source_start.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
@@ -749,16 +750,15 @@ console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify({ payload, timings }));`;
   return prepared;
 }
 
-/** Stack stop: release each component tree this Stack holds except the one its
- * selection names. A restart selects its new tree before it stops the incumbent,
- * so only the incumbent's tree goes; a plain stop keeps the selected tree, which
- * the next start launches. A Stack without trees is untouched. */
-export async function releaseStackSourceTrees({ stackBaseDir, components = ['server', 'daemon'], signal, preparing = false }) {
+/** Release finished component trees after Stop or a ready replacement. An
+ * in-flight selection keeps its trees until the replacement starts serving. */
+export async function releaseStackSourceTrees({ stackBaseDir, components = ['server', 'daemon'], signal, preparing = false, readyOwnerPid }) {
   const sourceRoot = join(resolve(stackBaseDir), 'source-runtime');
-  // An in-flight reload's finished tree is not selected yet. Its activation
-  // still needs it; the Stack's next stop releases the incumbent's tree.
-  // The preparing request is that in-flight reload itself (`preparing`).
-  if (!preparing && isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
+  if (!preparing) {
+    const pending = await readJson(join(sourceRoot, 'start.pending.json'));
+    if (pendingSourceSelectionAwaitsActivation(pending)) return [];
+    if (isPidAlive(pending?.pid) && (pending.activation !== true || pending.pid !== readyOwnerPid)) return [];
+  }
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const stacksRoot = dirname(resolve(stackBaseDir));
   if (!entries.some(entry => entry.isDirectory() && entry.name.startsWith('tree-'))) return [];

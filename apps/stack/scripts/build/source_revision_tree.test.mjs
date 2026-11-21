@@ -77,7 +77,12 @@ test('tree retirement honors selections and rollback from sibling stacks', { ski
     daemon: { entrypoint: join(rollback, 'main.mjs') },
   } }));
 
-  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir }), [stale]);
+  const pending = join(sourceRoot, 'start.pending.json');
+  await writeFile(pending, JSON.stringify({ phase: 'selected' }));
+  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir }), [], 'the scheduled activation still owns its trees');
+  await writeFile(pending, JSON.stringify({ pid: process.pid, activation: true }));
+  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir }), [], 'a stop leaves the active preparation alone');
+  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir, readyOwnerPid: process.pid }), [stale]);
   assert.equal((await lstat(selected)).isDirectory(), true);
   assert.equal((await lstat(rollback)).isDirectory(), true);
 });
