@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
@@ -15,6 +16,7 @@ const serverId = 'srv_checkout_reachability';
 installHomeGovernanceBoundaries(home);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { CheckoutUnreachableState, useCheckoutReachability } = await import('./checkoutReachability');
+const { checkoutMachineScopeOfProject } = await import('./checkoutReachabilityModel');
 const { t } = await import('@/text');
 const { formatLastSeen } = await import('@/utils/sessions/sessionUtils');
 
@@ -88,6 +90,20 @@ describe('checkout reachability', () => {
             expect(hook.getCurrent().machineName).toBe(t('machine.thisMachineInSentence'));
             storage.getState().applyMachines([{ ...named, metadata: { ...named.metadata!, displayName: 'Build box' } }], true, { sourceServerId: serverId });
             await waitForHomeGovernance(() => expect(hook.getCurrent().machineName).toBe('Build box'));
+        } finally { await hook.unmount(); }
+    });
+    it('an attached workspace Project is offline when the controller it is reached via is offline (lab project-offline)', async () => {
+        // A managed ref has no Machine of its own; its checkout is read through the controller, so that is the Machine
+        // the page announces. The raw ref names no Machine and would never read as offline.
+        const controller = createMachineFixture({ id: 'controller', activeAt: Date.now() - 60 * 60 * 1000 });
+        storage.getState().applyMachines([{ ...controller, active: false,
+            metadata: { ...controller.metadata!, displayName: 'nl3' } }], true, { sourceServerId: serverId });
+        const ref = { v: 2, kind: 'managed', id: 'checkout', serverId, managedId: 'api-dev', rootPath: '/home/coder/api',
+            createdAtMs: 1, controller: { machineId: 'controller', installationId: 'installation' } } satisfies WorkspaceRefV1;
+        const hook = await renderHook(() => useCheckoutReachability(checkoutMachineScopeOfProject(ref)));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().unreachable).toBe(true));
+            expect(hook.getCurrent().machineName).toBe('nl3');
         } finally { await hook.unmount(); }
     });
 });

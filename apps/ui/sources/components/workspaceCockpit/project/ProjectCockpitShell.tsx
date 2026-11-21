@@ -29,6 +29,7 @@ import { useProjectSurfaceActions } from '@/components/projects/detail/useProjec
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
 import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
 import { CheckoutReachabilityLine, CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
+import { checkoutMachineScopeOfProject } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import type { ProjectMobileSurface, ProjectAttachedDashboardSelection, ProjectPageSelection } from './projectCockpitState';
 import { PluginProjectPageBody } from '@/components/projects/detail/PluginProjectPageBody';
 import { projectPageActionsKey } from '@/components/projects/shell/ProjectShellHeader';
@@ -58,7 +59,7 @@ type ProjectCockpitShellProps = Readonly<{
 export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) => props.selection?.kind === 'plugin' && normalizeProjectPage(props.surface)
     ? <PageActionsLendScope scopeKey={projectPageActionsKey(props.scopeId)}><PluginProjectPageBody selection={props.selection} /></PageActionsLendScope> : (
     <ProjectCredentialScope serverId={props.workspaceRef.serverId}>
-    <CheckoutReachabilityScope scope={props.workspaceRef}>
+    <CheckoutReachabilityScope scope={checkoutMachineScopeOfProject(props.workspaceRef)}>
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {/* Context, Memory, Deployments and Session defaults read the Project source, not the checkout. */}
             {props.surface === 'context' || props.surface === 'memory' || props.surface === 'deployments' || props.surface === 'defaults' ? null
@@ -77,7 +78,7 @@ const REACHABILITY_LINE_EDGES = { width: '100%', alignSelf: 'center',
 function ProjectReachabilityLine(props: Readonly<{ workspaceRef: WorkspaceRefV1 }>) {
     const column = useLayoutMaxWidthStyle();
     return <View style={[REACHABILITY_LINE_EDGES, column]}>
-        <CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" />
+        <CheckoutReachabilityLine scope={checkoutMachineScopeOfProject(props.workspaceRef)} testID="project-checkout-reachability" />
     </View>;
 }
 

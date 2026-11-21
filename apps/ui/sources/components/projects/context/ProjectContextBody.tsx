@@ -33,6 +33,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { CheckoutReachabilityLine } from '@/components/workspaces/reachability/checkoutReachability';
+import { checkoutMachineScopeOfProject } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { ProjectCapabilitiesSection } from './ProjectCapabilitiesSection';
 import { selectProjectMemoryEntry } from './projectMemoryEntry';
@@ -354,7 +355,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         })}
         meta={meta}
       />
-      <CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" />
+      <CheckoutReachabilityLine scope={checkoutMachineScopeOfProject(props.workspaceRef)} testID="project-checkout-reachability" />
       {refusal ? (
         <SurfaceFreshnessLine
           testID={`${testID}.${refusal}`}

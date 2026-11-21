@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 import { describeMachinePresenceSummary, type MachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
 
@@ -32,6 +34,16 @@ export type CheckoutReachability = Readonly<{
   /** A page above already says it; this surface only inherits. */
   announced: boolean;
 }>;
+
+/**
+ * The Machine a Project's checkout is read through: its own Machine, or, for an attached workspace, the controller
+ * it is reached via (a managed ref has no Machine of its own). The page announces this Machine, so the surfaces
+ * beneath, which read through the same scope, inherit its offline line.
+ */
+export function checkoutMachineScopeOfProject(ref: WorkspaceRefV1): CheckoutMachineScope {
+  const { serverId, machineId } = workspaceScopeFromProject(ref, ref.rootPath);
+  return { serverId, machineId };
+}
 
 const AnnouncedCheckoutMachine =
   React.createContext<CheckoutMachineScope | null>(null);
