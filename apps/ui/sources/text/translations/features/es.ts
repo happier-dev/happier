@@ -14988,7 +14988,7 @@ const sessionPageTranslations = { es: translated({
                 description: 'Elige si esta sesión te avisa y si habla por voz.',
             },
             permissions: {
-                description: 'Herramientas que permitiste desde otro dispositivo para esta sesión. Revoca las que ya no quieras.',
+                description: 'Lo que puede ejecutarse en esta sesión sin preguntarte. Cambia o quita lo que quieras aquí.',
             },
             automations: {
                 description: 'Trabajo que se ejecuta en esta sesión según un horario, un evento o al terminar un turno.',
@@ -15034,8 +15034,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { es: {
-        title: 'Concesiones de permisos remotos',
-        entryTitle: 'Concesiones de permisos remotos',
+        title: 'Permitido',
+        entryTitle: 'Permitido',
         entrySubtitle: 'Revisa y revoca las concesiones remotas de la sesión',
         loadingTitle: 'Cargando concesiones de permisos remotos',
         loadingReason: 'Comprobando las concesiones del propietario actual de la sesión.',
@@ -15046,7 +15046,7 @@ const sessionRemotePermissionGrantTranslations = { es: {
         ownerOnlyTitle: 'Solo el propietario de la sesión puede administrar las concesiones remotas',
         ownerOnlyReason: 'Los participantes compartidos pueden responder a solicitudes aptas, pero no pueden revisar ni revocar las concesiones del propietario de la sesión.',
         retry: 'Reintentar',
-        listTitle: 'Concesiones de la sesión',
+        listTitle: 'Permisos de herramientas del agente',
         grantActive: ({ actor }) => `Concesión activa de ${actor}`,
         grantRevoked: ({ actor }) => `Concesión revocada de ${actor}`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `Concesión ${grantId} · Origen ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15059,6 +15059,28 @@ const sessionRemotePermissionGrantTranslations = { es: {
         loadMore: 'Cargar más concesiones',
         loadingMore: 'Cargando más concesiones…',
         loadMoreFailedReason: 'No se pudieron cargar más concesiones. Inténtalo de nuevo.',
+        consent: {
+            actionsTitle: 'Acciones',
+            actionsDescription: 'Una acción de aquí se ejecuta o pregunta en esta sesión, diga lo que diga tu configuración. Predeterminado sigue tu configuración.',
+            anywhere: 'En cualquier lugar',
+            onTarget: ({ target }) => `En ${target}`,
+            addAction: 'Añadir una acción',
+            noActionsToAdd: 'Cada acción ya tiene su propia opción aquí.',
+            emptyTitle: 'Aún no hay acciones permitidas',
+            emptyReason: 'Elige Siempre cuando un agente pregunte, o añade una acción aquí.',
+            loadingTitle: 'Cargando acciones permitidas',
+            unavailableTitle: 'Acciones permitidas no disponibles',
+            unavailableReason: 'Happier no pudo leer las opciones de esta sesión, así que cada acción pregunta como siempre.',
+            saveFailed: 'No se pudo guardar el cambio. Inténtalo de nuevo.',
+            nextTime: 'La próxima vez en esta sesión',
+            askAgain: 'Preguntar de nuevo',
+            always: 'Siempre',
+            askAgainDescription: ({ agent }) => `${agent} volverá a preguntar la próxima vez.`,
+            alwaysDescription: ({ agent, action }) => `${agent} puede ejecutar ${action} en esta sesión sin preguntar. Cámbialo en Sesión › Permitido.`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} puede ejecutar ${action} en ${target} en esta sesión sin preguntar. Cámbialo en Sesión › Permitido.`,
+            approvedOnce: 'Aprobado una vez. No se pudo guardar para esta sesión; se te volverá a preguntar.',
+            agentFallback: 'El agente',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "es">;
 
 return { sessionRemotePermissionGrantTranslations };

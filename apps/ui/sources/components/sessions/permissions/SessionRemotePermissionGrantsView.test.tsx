@@ -137,9 +137,11 @@ describe('SessionRemotePermissionGrantsView', () => {
 
         await vi.waitFor(() => expect(sessionRpcWithServerScope).toHaveBeenCalledTimes(1));
         expect(screen.findByTestId('session-remote-permission-grants-unavailable')).toBeTruthy();
-        expect(screen.findByTestId('session-remote-permission-grants-unavailable-diagnostic-invalid_grant_projection')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('invalid_grant_projection');
         expect(screen.getTextContent()).not.toContain('filesystem.read');
+        // The section's line keeps the typed code behind its Details disclosure.
+        await screen.pressByTestIdAsync('session-remote-permission-grants-unavailable-details-toggle');
+        expect(screen.getTextContent()).toContain('invalid_grant_projection');
     });
 
     it('shows the typed empty state when the owner has no remote grants', async () => {

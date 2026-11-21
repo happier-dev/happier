@@ -15095,7 +15095,7 @@ const sessionPageTranslations = { de: translated({
                 description: 'Lege fest, ob diese Sitzung dich benachrichtigt und per Sprache spricht.',
             },
             permissions: {
-                description: 'Werkzeuge, die du von einem anderen Gerät für diese Sitzung erlaubt hast. Widerrufe, was du nicht mehr möchtest.',
+                description: 'Was in dieser Sitzung ohne Rückfrage laufen darf. Ändere oder entferne hier, was du willst.',
             },
             automations: {
                 description: 'Arbeit, die in dieser Sitzung nach Zeitplan, bei einem Ereignis oder nach einem Zug läuft.',
@@ -15141,8 +15141,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { de: {
-        title: 'Erteilte Remote-Berechtigungen',
-        entryTitle: 'Erteilte Remote-Berechtigungen',
+        title: 'Erlaubt',
+        entryTitle: 'Erlaubt',
         entrySubtitle: 'Session-bezogene Remote-Freigaben prüfen und widerrufen',
         loadingTitle: 'Erteilte Remote-Berechtigungen werden geladen',
         loadingReason: 'Die Freigaben der aktuellen Session-Besitzerin bzw. des -Besitzers werden geprüft.',
@@ -15153,7 +15153,7 @@ const sessionRemotePermissionGrantTranslations = { de: {
         ownerOnlyTitle: 'Nur die Session-Besitzerin bzw. der -Besitzer kann Remote-Freigaben verwalten',
         ownerOnlyReason: 'Geteilte Teilnehmende können auf passende Abfragen antworten, aber die Freigaben der Besitzerin bzw. des Besitzers weder prüfen noch widerrufen.',
         retry: 'Erneut versuchen',
-        listTitle: 'Session-Freigaben',
+        listTitle: 'Werkzeugberechtigungen des Agenten',
         grantActive: ({ actor }) => `Aktive Freigabe von ${actor}`,
         grantRevoked: ({ actor }) => `Widerrufene Freigabe von ${actor}`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `Freigabe ${grantId} · Quelle ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15166,6 +15166,28 @@ const sessionRemotePermissionGrantTranslations = { de: {
         loadMore: 'Mehr Freigaben laden',
         loadingMore: 'Weitere Freigaben werden geladen…',
         loadMoreFailedReason: 'Weitere Freigaben ließen sich nicht laden. Versuch es noch einmal.',
+        consent: {
+            actionsTitle: 'Aktionen',
+            actionsDescription: 'Eine Aktion hier läuft oder fragt in dieser Sitzung, unabhängig von deinen Einstellungen. Standard folgt deinen Einstellungen.',
+            anywhere: 'Überall',
+            onTarget: ({ target }) => `Auf ${target}`,
+            addAction: 'Aktion hinzufügen',
+            noActionsToAdd: 'Jede Aktion hat hier schon eine eigene Wahl.',
+            emptyTitle: 'Noch keine Aktionen erlaubt',
+            emptyReason: 'Wähle Immer, wenn ein Agent fragt, oder füge hier eine Aktion hinzu.',
+            loadingTitle: 'Erlaubte Aktionen werden geladen',
+            unavailableTitle: 'Erlaubte Aktionen nicht verfügbar',
+            unavailableReason: 'Happier konnte die Auswahl dieser Sitzung nicht lesen, daher fragt jede Aktion wie gewohnt.',
+            saveFailed: 'Die Änderung konnte nicht gespeichert werden. Versuche es erneut.',
+            nextTime: 'Nächstes Mal in dieser Sitzung',
+            askAgain: 'Erneut fragen',
+            always: 'Immer',
+            askAgainDescription: ({ agent }) => `${agent} fragt nächstes Mal wieder.`,
+            alwaysDescription: ({ agent, action }) => `${agent} kann ${action} in dieser Sitzung ohne Rückfrage ausführen. Ändern unter Sitzung › Erlaubt.`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} kann ${action} auf ${target} in dieser Sitzung ohne Rückfrage ausführen. Ändern unter Sitzung › Erlaubt.`,
+            approvedOnce: 'Einmal genehmigt. Für diese Sitzung konnte es nicht gespeichert werden; du wirst erneut gefragt.',
+            agentFallback: 'Der Agent',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "de">;
 
 return { sessionRemotePermissionGrantTranslations };

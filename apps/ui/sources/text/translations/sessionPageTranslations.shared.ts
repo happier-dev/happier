@@ -78,7 +78,7 @@ export const english = {
             description: 'Choose whether this session notifies you and speaks through voice.',
         },
         permissions: {
-            description: 'Tools you allowed from another device for this session. Revoke any you no longer want.',
+            description: 'What can run in this Session without asking you. Change or remove anything here.',
         },
         automations: {
             description: 'Work that runs in this session on a schedule, an event, or when a turn finishes.',

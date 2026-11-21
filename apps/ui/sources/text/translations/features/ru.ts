@@ -15116,7 +15116,7 @@ const sessionPageTranslations = { ru: translated({
                 description: 'Выберите, будет ли эта сессия уведомлять вас и говорить голосом.',
             },
             permissions: {
-                description: 'Инструменты, разрешённые для этой сессии с другого устройства. Отзовите ненужные.',
+                description: 'Что может выполняться в этой сессии без вопроса. Измените или удалите здесь что угодно.',
             },
             automations: {
                 description: 'Работа, которая выполняется в этой сессии по расписанию, по событию или после хода.',
@@ -15162,8 +15162,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { ru: {
-        title: 'Удалённые разрешения',
-        entryTitle: 'Удалённые разрешения',
+        title: 'Разрешено',
+        entryTitle: 'Разрешено',
         entrySubtitle: 'Проверяйте и отзывайте удалённые разрешения сеанса',
         loadingTitle: 'Загрузка удалённых разрешений',
         loadingReason: 'Проверяем разрешения текущего владельца сеанса.',
@@ -15174,7 +15174,7 @@ const sessionRemotePermissionGrantTranslations = { ru: {
         ownerOnlyTitle: 'Только владелец сеанса может управлять удалёнными разрешениями',
         ownerOnlyReason: 'Общие участники могут отвечать на подходящие запросы, но не могут проверять или отзывать разрешения владельца сеанса.',
         retry: 'Повторить',
-        listTitle: 'Разрешения сеанса',
+        listTitle: 'Разрешения инструментов агента',
         grantActive: ({ actor }) => `Активное разрешение от ${actor}`,
         grantRevoked: ({ actor }) => `Отозванное разрешение от ${actor}`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `Разрешение ${grantId} · Источник ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15187,6 +15187,28 @@ const sessionRemotePermissionGrantTranslations = { ru: {
         loadMore: 'Загрузить ещё разрешения',
         loadingMore: 'Загружаем ещё разрешения…',
         loadMoreFailedReason: 'Не удалось загрузить дополнительные разрешения. Повторите попытку.',
+        consent: {
+            actionsTitle: 'Действия',
+            actionsDescription: 'Действие здесь выполняется или спрашивает в этой сессии независимо от ваших настроек. «По умолчанию» следует настройкам.',
+            anywhere: 'Везде',
+            onTarget: ({ target }) => `На ${target}`,
+            addAction: 'Добавить действие',
+            noActionsToAdd: 'У каждого действия уже есть свой выбор здесь.',
+            emptyTitle: 'Пока нет разрешённых действий',
+            emptyReason: 'Выберите «Всегда», когда агент спросит, или добавьте действие здесь.',
+            loadingTitle: 'Загрузка разрешённых действий',
+            unavailableTitle: 'Разрешённые действия недоступны',
+            unavailableReason: 'Happier не смог прочитать выбор этой сессии, поэтому каждое действие спрашивает как обычно.',
+            saveFailed: 'Не удалось сохранить изменение. Попробуйте ещё раз.',
+            nextTime: 'В следующий раз в этой сессии',
+            askAgain: 'Спросить снова',
+            always: 'Всегда',
+            askAgainDescription: ({ agent }) => `${agent} спросит снова в следующий раз.`,
+            alwaysDescription: ({ agent, action }) => `${agent} может выполнять ${action} в этой сессии без вопроса. Изменить: Сессия › Разрешено.`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} может выполнять ${action} на ${target} в этой сессии без вопроса. Изменить: Сессия › Разрешено.`,
+            approvedOnce: 'Одобрено один раз. Не удалось сохранить для этой сессии; вас спросят снова.',
+            agentFallback: 'Агент',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "ru">;
 
 return { sessionRemotePermissionGrantTranslations };

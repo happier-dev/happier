@@ -14972,7 +14972,7 @@ const sessionPageTranslations = { 'zh-Hans': translated({
                 description: '选择此会话是否通知你以及是否通过语音播报。',
             },
             permissions: {
-                description: '你从其他设备为此会话允许的工具。撤销不再需要的授权。',
+                description: '在此会话中无需询问即可运行的内容。可在此更改或移除。',
             },
             automations: {
                 description: '按计划、事件或在回合结束时在此会话中运行的工作。',
@@ -15018,8 +15018,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { 'zh-Hans': {
-        title: '远程权限授予',
-        entryTitle: '远程权限授予',
+        title: '已允许',
+        entryTitle: '已允许',
         entrySubtitle: '查看和撤销会话范围的远程授予',
         loadingTitle: '正在加载远程权限授予',
         loadingReason: '正在检查当前会话所有者的授予。',
@@ -15030,7 +15030,7 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hans': {
         ownerOnlyTitle: '只有会话所有者可以管理远程授予',
         ownerOnlyReason: '共享参与者可以响应符合条件的提示，但不能查看或撤销会话所有者的授予。',
         retry: '重试',
-        listTitle: '会话授予',
+        listTitle: '智能体工具权限',
         grantActive: ({ actor }) => `来自 ${actor} 的有效授予`,
         grantRevoked: ({ actor }) => `来自 ${actor} 的已撤销授予`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `授予 ${grantId} · 来源 ${sourceRef} （${sourceRevisionOrEpoch}）`,
@@ -15043,6 +15043,28 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hans': {
         loadMore: '加载更多授予',
         loadingMore: '正在加载更多授予…',
         loadMoreFailedReason: '无法加载更多授予。请重试。',
+        consent: {
+            actionsTitle: '操作',
+            actionsDescription: '此处的操作在此会话中运行或询问，不受你的设置影响。“默认”遵循你的设置。',
+            anywhere: '任何位置',
+            onTarget: ({ target }) => `在 ${target} 上`,
+            addAction: '添加操作',
+            noActionsToAdd: '每个操作在这里都已有自己的选择。',
+            emptyTitle: '尚未允许任何操作',
+            emptyReason: '在智能体询问时选择“始终”，或在此添加操作。',
+            loadingTitle: '正在加载已允许的操作',
+            unavailableTitle: '已允许的操作不可用',
+            unavailableReason: 'Happier 无法读取此会话的选择，因此每个操作照常询问。',
+            saveFailed: '无法保存此更改。请重试。',
+            nextTime: '此会话中下次',
+            askAgain: '再次询问',
+            always: '始终',
+            askAgainDescription: ({ agent }) => `${agent} 下次会再次询问。`,
+            alwaysDescription: ({ agent, action }) => `${agent} 可以在此会话中无需询问运行 ${action}。可在 会话 › 已允许 中更改。`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} 可以在此会话中无需询问在 ${target} 上运行 ${action}。可在 会话 › 已允许 中更改。`,
+            approvedOnce: '已批准一次。无法为此会话保存；你下次仍会被询问。',
+            agentFallback: '智能体',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "zh-Hans">;
 
 return { sessionRemotePermissionGrantTranslations };

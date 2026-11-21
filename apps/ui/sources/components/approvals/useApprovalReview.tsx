@@ -31,7 +31,9 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ApprovalRequesterConfirmationSection, useApprovalRequesterViewer } from './ApprovalRequesterConfirmationSection';
 import { readApprovalOperationCredentialUses } from './approvalRequesterThreadState';
-import { isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
+import { describeApprovalAgent, isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
+import { ApprovalSessionConsentRow, useApprovalSessionConsentChoice } from './ApprovalSessionConsentChoice';
+import { readSessionApprovalConsentActionIdV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow } from './BrowserOpenOperationStatus';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from './ActionApprovalFieldsCard';
 import { ApprovalReviewFacts } from './ApprovalReviewFacts';
@@ -354,6 +356,20 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const audiencePresentation = audienceAddresses[0]
     ? audience.presentationsBySessionKey.get(sessionAddressKey(audienceAddresses[0])) : null;
   const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+  // "Next time in this Session": an agent's ask from a Session this viewer owns, for an Action a Session row can change.
+  const consentActionId = React.useMemo(() => parsed?.kind === 'built_in'
+    && (parsed.request.createdBy.surface === 'agent' || parsed.request.createdBy.surface === 'session_agent')
+    ? readSessionApprovalConsentActionIdV1(parsed.request) : null, [parsed]);
+  const consentAddress = React.useMemo(() => approvalServerId && sessionId && session?.access?.role === 'owner'
+    ? { serverId: approvalServerId, sessionId } : null, [approvalServerId, session?.access?.role, sessionId]);
+  const sessionConsentChoice = useApprovalSessionConsentChoice({
+    requestKey: props.artifactId,
+    actionId: consentActionId,
+    address: consentAddress,
+    // Seam for the "On {Machine}" rung: the stored request does not carry its admitted scope yet (the Session
+    // consent core lane adds it as `approvalScope`). Pass that field here once the schema has it.
+    scope: null,
+  });
   const machineId = readDisplayMachineIdForSession({
     sessionId: null,
     metadata: ownerMetadata,
@@ -459,6 +475,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
             computerChoice.chooseTarget();
             return;
           }
+          // The person's "Next time in this Session" is saved first; a failed save still approves this call once.
+          const consentSave = decision === 'approve' ? sessionConsentChoice.saveBeforeApprove() : null;
+          if (consentSave) await consentSave;
           const options = proposal && decision !== 'cancel' ? proposal.decisionOptions(decision, choice)
             : decision === 'approve' ? { ...computerChoice.decisionOptions, ...bindingChoice.decisionOptions } : undefined;
           if (!await decideActionApproval(decision, {
@@ -489,7 +508,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         setIsDeciding(false);
       }
     },
-    [approvalWithheld, bindingChoice, secretPrompt, computerChoice, decideActionApproval, parsed, proposal, props.artifactId, refreshArtifact, replayRoute, requestedServerId, sessionId, setRecordedDecision],
+    [approvalWithheld, bindingChoice, secretPrompt, computerChoice, decideActionApproval, parsed, proposal, props.artifactId, refreshArtifact, replayRoute, requestedServerId, sessionConsentChoice, sessionId, setRecordedDecision],
   );
 
   const requestTitle = useApprovalRequestTitle(
@@ -700,6 +719,12 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         accessibilityHint: approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable') : undefined,
         onPress: () => decide('reject') }} />
   ) : null;
+  // An Agent enable request answers "Always in <place>" through its own controller, so it offers no Session row.
+  const sessionConsent = !capabilityEnable && (decisionBar || sessionConsentChoice.saveFailed) ? (
+    <ApprovalSessionConsentRow choice={sessionConsentChoice} open={Boolean(decisionBar) && !consent && !checking}
+      agentLabel={describeApprovalAgent(parsed.request.createdBy.agentId)} actionTitle={actionValue}
+      disabled={isDeciding || approveDisabled} />
+  ) : null;
   const capabilityDecisions = capabilityEnable && parsed.kind === 'built_in' && artifact && sessionId ? (
     <ItemGroup surface="none">
       <CapabilityEnableDetailsDecisions artifact={artifact} approval={parsed.request} sessionId={sessionId}
@@ -838,6 +863,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     requestNotice,
     requestGroup: statusInHeader ? null : requestGroup, statusFollowsFacts, sections, decision, decisionBar, capabilityDecisions, compactViewport,
     workspaceSyncReview, requesterContext, requesterConfirmationSection, confidential,
+    /** "Next time in this Session", placed right above the decision by each host. */
+    sessionConsent,
     /** The parsed request this review reads, for a host that presents its facts in its own words. */
     request: parsed.request,
     /** Automatic-check progress and Run references belong to this existing request. */

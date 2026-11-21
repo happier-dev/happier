@@ -243,6 +243,37 @@ Approvals give you:
 - a record of what was requested
 - one shared model that works across app UI, CLI, tools, and other surfaces
 
+### Allow an Action for this Session (development)
+
+When an agent asks to run an Action in a Session you own, the approval shows
+**Next time in this Session** above Approve:
+
+- **Ask again** (the default): this approval covers this call only.
+- **Always**: the agent can run this Action in this Session without asking.
+- **On {Machine}**: the same, limited to the Machine or Environment the call
+  targets. It appears only when the request names one.
+
+Approve saves your choice and then approves the call. Reject saves nothing. If
+the choice can't be saved, the call is still approved once and the approval
+says you'll be asked again.
+
+Calls allowed this way run without a prompt, an Inbox item or an approval
+record; the transcript shows them as usual. Other Actions, other targets and
+other Sessions still ask. A Team or Group Ask, and an Ask set by the owner of
+the target resource, still win.
+
+Open **Session › Allowed** to see what this Session allows. Under **Actions**
+you can switch a row between Ask first and Allowed, set it back to Default to
+remove it, or **Add an Action** from your Action catalog. A change you make
+there is saved right away. The same page keeps the agent tool permissions you
+allowed from another device.
+
+The choices stay with the Session when you resume it, continue with another
+agent, or continue after a failed resume. A fork starts with none. Changes to
+approval rules themselves never offer Always: an agent that wants to change
+them asks every time. People you share the Session with can answer its
+approvals but can't add Session choices.
+
 ## Permission requests
 
 Permission requests are about **runtime tool access inside a session**.

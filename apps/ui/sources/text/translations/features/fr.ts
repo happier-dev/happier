@@ -15109,7 +15109,7 @@ const sessionPageTranslations = { fr: translated({
                 description: 'Choisis si cette session te notifie et parle par la voix.',
             },
             permissions: {
-                description: 'Outils que tu as autorisés depuis un autre appareil pour cette session. Révoque ceux dont tu ne veux plus.',
+                description: 'Ce qui peut s’exécuter dans cette session sans te demander. Modifie ou retire ce que tu veux ici.',
             },
             automations: {
                 description: 'Travail exécuté dans cette session selon un horaire, un événement ou à la fin d’un tour.',
@@ -15155,8 +15155,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { fr: {
-        title: 'Autorisations distantes',
-        entryTitle: 'Autorisations distantes',
+        title: 'Autorisé',
+        entryTitle: 'Autorisé',
         entrySubtitle: 'Vérifie et révoque les autorisations distantes limitées à la session',
         loadingTitle: 'Chargement des autorisations distantes',
         loadingReason: 'Vérification des autorisations du propriétaire actuel de la session.',
@@ -15167,7 +15167,7 @@ const sessionRemotePermissionGrantTranslations = { fr: {
         ownerOnlyTitle: 'Seul le propriétaire de la session peut gérer les autorisations distantes',
         ownerOnlyReason: 'Les participants partagés peuvent répondre aux demandes éligibles, mais ne peuvent pas vérifier ni révoquer les autorisations du propriétaire de la session.',
         retry: 'Réessayer',
-        listTitle: 'Autorisations de la session',
+        listTitle: 'Autorisations des outils de l’agent',
         grantActive: ({ actor }) => `Autorisation active de ${actor}`,
         grantRevoked: ({ actor }) => `Autorisation révoquée de ${actor}`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `Autorisation ${grantId} · Origine ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15180,6 +15180,28 @@ const sessionRemotePermissionGrantTranslations = { fr: {
         loadMore: 'Charger plus d’autorisations',
         loadingMore: 'Chargement d’autres autorisations…',
         loadMoreFailedReason: 'Impossible de charger d’autres autorisations. Réessaie.',
+        consent: {
+            actionsTitle: 'Actions',
+            actionsDescription: 'Une action ici s’exécute ou demande dans cette session, quels que soient tes réglages. Par défaut suit tes réglages.',
+            anywhere: 'Partout',
+            onTarget: ({ target }) => `Sur ${target}`,
+            addAction: 'Ajouter une action',
+            noActionsToAdd: 'Chaque action a déjà son propre choix ici.',
+            emptyTitle: 'Aucune action autorisée pour l’instant',
+            emptyReason: 'Choisis Toujours quand un agent demande, ou ajoute une action ici.',
+            loadingTitle: 'Chargement des actions autorisées',
+            unavailableTitle: 'Actions autorisées indisponibles',
+            unavailableReason: 'Happier n’a pas pu lire les choix de cette session, donc chaque action demande comme d’habitude.',
+            saveFailed: 'Impossible d’enregistrer ce changement. Réessaie.',
+            nextTime: 'La prochaine fois dans cette session',
+            askAgain: 'Redemander',
+            always: 'Toujours',
+            askAgainDescription: ({ agent }) => `${agent} redemandera la prochaine fois.`,
+            alwaysDescription: ({ agent, action }) => `${agent} peut exécuter ${action} dans cette session sans demander. Modifie-le dans Session › Autorisé.`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} peut exécuter ${action} sur ${target} dans cette session sans demander. Modifie-le dans Session › Autorisé.`,
+            approvedOnce: 'Approuvé une fois. Impossible de l’enregistrer pour cette session ; on te redemandera.',
+            agentFallback: 'L’agent',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "fr">;
 
 return { sessionRemotePermissionGrantTranslations };

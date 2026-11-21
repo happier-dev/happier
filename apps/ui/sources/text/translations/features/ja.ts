@@ -15033,7 +15033,7 @@ const sessionPageTranslations = { ja: translated({
                 description: 'このセッションから通知を受け取るか、音声で読み上げるかを選びます。',
             },
             permissions: {
-                description: '別のデバイスからこのセッションに許可したツール。不要になったものは取り消せます。',
+                description: 'このセッションで確認なしに実行できるもの。ここで変更や削除ができます。',
             },
             automations: {
                 description: 'スケジュール、イベント、またはターン終了時にこのセッションで実行される作業。',
@@ -15079,8 +15079,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { ja: {
-        title: 'リモート権限付与',
-        entryTitle: 'リモート権限付与',
+        title: '許可済み',
+        entryTitle: '許可済み',
         entrySubtitle: 'セッション範囲のリモート付与を確認・取り消し',
         loadingTitle: 'リモート権限付与を読み込み中',
         loadingReason: '現在のセッション所有者の付与を確認しています。',
@@ -15091,7 +15091,7 @@ const sessionRemotePermissionGrantTranslations = { ja: {
         ownerOnlyTitle: 'リモート付与を管理できるのはセッション所有者のみです',
         ownerOnlyReason: '共有参加者は対象のプロンプトに応答できますが、セッション所有者の付与を確認または取り消すことはできません。',
         retry: '再試行',
-        listTitle: 'セッションの付与',
+        listTitle: 'エージェントのツール権限',
         grantActive: ({ actor }) => `${actor} からの有効な付与`,
         grantRevoked: ({ actor }) => `${actor} からの取り消された付与`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `付与 ${grantId} ・ ソース ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15104,6 +15104,28 @@ const sessionRemotePermissionGrantTranslations = { ja: {
         loadMore: 'さらに付与を読み込む',
         loadingMore: 'さらに付与を読み込み中…',
         loadMoreFailedReason: '追加の付与を読み込めませんでした。もう一度試してください。',
+        consent: {
+            actionsTitle: 'アクション',
+            actionsDescription: 'ここにあるアクションは、設定に関係なくこのセッションで実行または確認されます。デフォルトは設定に従います。',
+            anywhere: 'どこでも',
+            onTarget: ({ target }) => `${target} で`,
+            addAction: 'アクションを追加',
+            noActionsToAdd: 'すべてのアクションにはすでにここで選択があります。',
+            emptyTitle: '許可されたアクションはまだありません',
+            emptyReason: 'エージェントが確認したときに「常に」を選ぶか、ここでアクションを追加してください。',
+            loadingTitle: '許可されたアクションを読み込み中',
+            unavailableTitle: '許可されたアクションを利用できません',
+            unavailableReason: 'Happier はこのセッションの選択を読み取れなかったため、各アクションは通常どおり確認します。',
+            saveFailed: '変更を保存できませんでした。もう一度お試しください。',
+            nextTime: 'このセッションで次回',
+            askAgain: '再度確認',
+            always: '常に',
+            askAgainDescription: ({ agent }) => `${agent} は次回も確認します。`,
+            alwaysDescription: ({ agent, action }) => `${agent} はこのセッションで確認なしに ${action} を実行できます。セッション › 許可済み で変更できます。`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} はこのセッションで確認なしに ${target} で ${action} を実行できます。セッション › 許可済み で変更できます。`,
+            approvedOnce: '今回のみ承認しました。このセッション用に保存できなかったため、次回も確認されます。',
+            agentFallback: 'エージェント',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "ja">;
 
 return { sessionRemotePermissionGrantTranslations };

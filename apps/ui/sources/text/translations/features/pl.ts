@@ -15116,7 +15116,7 @@ const sessionPageTranslations = { pl: translated({
                 description: 'Wybierz, czy ta sesja ma Cię powiadamiać i mówić głosem.',
             },
             permissions: {
-                description: 'Narzędzia dozwolone z innego urządzenia dla tej sesji. Odwołaj te, których już nie chcesz.',
+                description: 'Co może działać w tej sesji bez pytania. Zmień lub usuń tutaj, co chcesz.',
             },
             automations: {
                 description: 'Praca uruchamiana w tej sesji według harmonogramu, zdarzenia lub po zakończeniu tury.',
@@ -15162,8 +15162,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { pl: {
-        title: 'Zdalne uprawnienia',
-        entryTitle: 'Zdalne uprawnienia',
+        title: 'Dozwolone',
+        entryTitle: 'Dozwolone',
         entrySubtitle: 'Przeglądaj i cofaj zdalne uprawnienia sesji',
         loadingTitle: 'Wczytywanie zdalnych uprawnień',
         loadingReason: 'Sprawdzamy uprawnienia bieżącego właściciela sesji.',
@@ -15174,7 +15174,7 @@ const sessionRemotePermissionGrantTranslations = { pl: {
         ownerOnlyTitle: 'Tylko właściciel sesji może zarządzać zdalnymi uprawnieniami',
         ownerOnlyReason: 'Współdzieleni uczestnicy mogą odpowiadać na kwalifikujące się prośby, ale nie mogą przeglądać ani cofać uprawnień właściciela sesji.',
         retry: 'Spróbuj ponownie',
-        listTitle: 'Uprawnienia sesji',
+        listTitle: 'Uprawnienia narzędzi agenta',
         grantActive: ({ actor }) => `Aktywne uprawnienie od ${actor}`,
         grantRevoked: ({ actor }) => `Cofnięte uprawnienie od ${actor}`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `Uprawnienie ${grantId} · Źródło ${sourceRef} (${sourceRevisionOrEpoch})`,
@@ -15187,6 +15187,28 @@ const sessionRemotePermissionGrantTranslations = { pl: {
         loadMore: 'Wczytaj więcej uprawnień',
         loadingMore: 'Wczytywanie kolejnych uprawnień…',
         loadMoreFailedReason: 'Nie udało się wczytać kolejnych uprawnień. Spróbuj ponownie.',
+        consent: {
+            actionsTitle: 'Akcje',
+            actionsDescription: 'Akcja tutaj działa lub pyta w tej sesji niezależnie od ustawień. Domyślne podąża za ustawieniami.',
+            anywhere: 'Wszędzie',
+            onTarget: ({ target }) => `Na ${target}`,
+            addAction: 'Dodaj akcję',
+            noActionsToAdd: 'Każda akcja ma już tutaj własny wybór.',
+            emptyTitle: 'Brak dozwolonych akcji',
+            emptyReason: 'Wybierz Zawsze, gdy agent zapyta, albo dodaj akcję tutaj.',
+            loadingTitle: 'Wczytywanie dozwolonych akcji',
+            unavailableTitle: 'Dozwolone akcje są niedostępne',
+            unavailableReason: 'Happier nie mógł odczytać wyborów tej sesji, więc każda akcja pyta jak zwykle.',
+            saveFailed: 'Nie udało się zapisać zmiany. Spróbuj ponownie.',
+            nextTime: 'Następnym razem w tej sesji',
+            askAgain: 'Pytaj ponownie',
+            always: 'Zawsze',
+            askAgainDescription: ({ agent }) => `${agent} zapyta ponownie następnym razem.`,
+            alwaysDescription: ({ agent, action }) => `${agent} może uruchamiać ${action} w tej sesji bez pytania. Zmień to w Sesja › Dozwolone.`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} może uruchamiać ${action} na ${target} w tej sesji bez pytania. Zmień to w Sesja › Dozwolone.`,
+            approvedOnce: 'Zatwierdzono raz. Nie udało się zapisać dla tej sesji; zostaniesz zapytany ponownie.',
+            agentFallback: 'Agent',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "pl">;
 
 return { sessionRemotePermissionGrantTranslations };

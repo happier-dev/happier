@@ -12,6 +12,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
+import { SessionAllowedActionsSection } from './SessionAllowedActionsSection';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
@@ -234,20 +235,27 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
         void load(state.nextCursor, true);
     }, [load, state]);
 
+    const actionsAddress = React.useMemo(() => props.serverId
+        ? { serverId: props.serverId, sessionId: props.sessionId } : null, [props.serverId, props.sessionId]);
     const header = (
         <PageHeader
             title={t('sessionRemotePermissionGrants.title')}
             description={t('sessionPages.permissions.description')}
         />
     );
+    // The Session's own Action overrides lead; the native remote grants keep their own section and states.
+    const actions = actionsAddress ? <SessionAllowedActionsSection address={actionsAddress} /> : null;
+    const grantsTitle = t('sessionRemotePermissionGrants.listTitle');
 
     if (state.kind === 'loading') {
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 {header}
-                <ItemGroup surface="none">
+                {actions}
+                <ItemGroup title={grantsTitle}>
                     <SurfaceStateCard
                         testID="session-remote-permission-grants-loading"
+                        size="line"
                         kind="loading"
                         title={t('sessionRemotePermissionGrants.loadingTitle')}
                         reason={t('sessionRemotePermissionGrants.loadingReason')}
@@ -262,9 +270,11 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 {header}
-                <ItemGroup surface="none">
+                {actions}
+                <ItemGroup title={grantsTitle}>
                     <SurfaceStateCard
                         testID="session-remote-permission-grants-unavailable"
+                        size="line"
                         kind="unavailable"
                         title={t('sessionRemotePermissionGrants.unavailableTitle')}
                         reason={t('sessionRemotePermissionGrants.unavailableReason')}
@@ -281,13 +291,14 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 {header}
-                <ItemGroup surface="none">
+                {actions}
+                <ItemGroup title={grantsTitle}>
                     <SurfaceStateCard
                         testID="session-remote-permission-grants-empty"
+                        size="line"
                         kind="empty"
                         title={t('sessionRemotePermissionGrants.emptyTitle')}
                         reason={t('sessionRemotePermissionGrants.emptyReason')}
-                        action={{ label: t('sessionRemotePermissionGrants.retry'), onPress: () => load(null, false) }}
                         accessibilitySemantics="status"
                     />
                 </ItemGroup>
@@ -298,6 +309,7 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
     return (
         <ItemList style={{ paddingTop: 0 }}>
             {header}
+            {actions}
 
             {operationIssue ? (
                 <ItemGroup>
@@ -313,7 +325,7 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title={t('sessionRemotePermissionGrants.listTitle')}>
+            <ItemGroup title={grantsTitle}>
                 {state.grants.map((grant) => {
                     const revoked = grant.revokedAtMs != null;
                     const grantTestId = `session-remote-permission-grant-${grant.grantId}`;

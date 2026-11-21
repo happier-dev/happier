@@ -14972,7 +14972,7 @@ const sessionPageTranslations = { 'zh-Hant': translated({
                 description: '選擇此工作階段是否通知你，以及是否透過語音播報。',
             },
             permissions: {
-                description: '你從其他裝置為此工作階段允許的工具。撤銷不再需要的授權。',
+                description: '在此工作階段中無需詢問即可執行的內容。可在此變更或移除。',
             },
             automations: {
                 description: '依排程、事件或在回合結束時於此工作階段中執行的工作。',
@@ -15018,8 +15018,8 @@ const Domain_sessionRemotePermissionGrantTranslations = (() => {
 type SessionRemotePermissionGrantTranslations = Shared_sessionRemotePermissionGrantTranslations.SessionRemotePermissionGrantTranslations;
 
 const sessionRemotePermissionGrantTranslations = { 'zh-Hant': {
-        title: '遠端權限授予',
-        entryTitle: '遠端權限授予',
+        title: '已允許',
+        entryTitle: '已允許',
         entrySubtitle: '檢視及撤銷工作階段範圍的遠端授予',
         loadingTitle: '正在載入遠端權限授予',
         loadingReason: '正在檢查目前工作階段擁有者的授予。',
@@ -15030,7 +15030,7 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hant': {
         ownerOnlyTitle: '只有工作階段擁有者可以管理遠端授予',
         ownerOnlyReason: '共用參與者可回應符合條件的提示，但無法檢視或撤銷工作階段擁有者的授予。',
         retry: '重試',
-        listTitle: '工作階段授予',
+        listTitle: '代理工具權限',
         grantActive: ({ actor }) => `來自 ${actor} 的有效授予`,
         grantRevoked: ({ actor }) => `來自 ${actor} 的已撤銷授予`,
         grantDetail: ({ grantId, sourceRef, sourceRevisionOrEpoch }) => `授予 ${grantId} · 來源 ${sourceRef} （${sourceRevisionOrEpoch}）`,
@@ -15043,6 +15043,28 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hant': {
         loadMore: '載入更多授予',
         loadingMore: '正在載入更多授予…',
         loadMoreFailedReason: '無法載入更多授予。請重試。',
+        consent: {
+            actionsTitle: '動作',
+            actionsDescription: '此處的動作在此工作階段中執行或詢問，不受你的設定影響。「預設」遵循你的設定。',
+            anywhere: '任何位置',
+            onTarget: ({ target }) => `在 ${target} 上`,
+            addAction: '新增動作',
+            noActionsToAdd: '每個動作在這裡都已有自己的選擇。',
+            emptyTitle: '尚未允許任何動作',
+            emptyReason: '在代理詢問時選擇「永遠」，或在此新增動作。',
+            loadingTitle: '正在載入已允許的動作',
+            unavailableTitle: '已允許的動作無法使用',
+            unavailableReason: 'Happier 無法讀取此工作階段的選擇，因此每個動作照常詢問。',
+            saveFailed: '無法儲存此變更。請再試一次。',
+            nextTime: '此工作階段中下次',
+            askAgain: '再次詢問',
+            always: '永遠',
+            askAgainDescription: ({ agent }) => `${agent} 下次會再次詢問。`,
+            alwaysDescription: ({ agent, action }) => `${agent} 可以在此工作階段中無需詢問執行 ${action}。可在 工作階段 › 已允許 中變更。`,
+            onTargetDescription: ({ agent, action, target }) => `${agent} 可以在此工作階段中無需詢問在 ${target} 上執行 ${action}。可在 工作階段 › 已允許 中變更。`,
+            approvedOnce: '已核准一次。無法為此工作階段儲存；你下次仍會被詢問。',
+            agentFallback: '代理',
+        },
     } } as const satisfies Pick<Readonly<Record<string, SessionRemotePermissionGrantTranslations>>, "zh-Hant">;
 
 return { sessionRemotePermissionGrantTranslations };

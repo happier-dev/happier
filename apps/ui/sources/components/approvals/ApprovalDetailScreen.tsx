@@ -110,6 +110,7 @@ export const ApprovalDetailScreen = React.memo((props: ApprovalReviewInput) => {
       {review.sections}
       {/* A confidential entry is the decision itself: its credential form leads, like any decision. */}
       {review.confidential}
+      {review.sessionConsent}
       {review.decision}
       {review.statusFollowsFacts ? review.requestGroup : null}
       {review.workspaceSyncReview}

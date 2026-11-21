@@ -111,6 +111,8 @@ function ApprovalReviewModal(props: ApprovalReviewModalProps) {
             />
           </View>
         ) : null}
+        {/* "Next time in this Session" sits right above the decision in the card's footer. */}
+        {review.sessionConsent}
         {/* Without card chrome (an embedding host), the decision ends the body. */}
         {setChrome ? null : decision}
       </View>

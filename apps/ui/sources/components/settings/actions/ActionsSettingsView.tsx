@@ -12,7 +12,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { Text } from '@/components/ui/text/Text';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
@@ -37,6 +36,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { ApprovalProfilesSection } from './ApprovalProfilesSection';
 import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
+import { useActionSettingsAvailability } from './useActionSettingsAvailability';
 import { ApprovalProfilePageHeader } from './ApprovalProfilePageHeader';
 import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
 import { ACCOUNT_ACTION_SETTINGS_TARGET, approvalProfileSetsAction, useActionSettingsForTarget,
@@ -199,11 +199,6 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
     const profile = targetSettings.profile;
     const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
-    const voice = useSetting('voice') as Readonly<{ privacy?: { shareDeviceInventory?: boolean } }> | null;
-    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const memorySearchEnabled = useFeatureEnabled('memory.search');
-    const voiceEnabled = useFeatureEnabled('voice');
-    const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     // Contributed actions are machine-local daemon declarations. The shared controller may
     // initialize one verified online machine, but host actions remain account-wide.
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
@@ -233,13 +228,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
     ), [daemonMergedProjection.inputs, executionTarget]);
 
     const settings = targetSettings.settings;
-    const availability = React.useMemo(() => ({
-        executionRunsEnabled,
-        memorySearchEnabled,
-        voiceEnabled,
-        sessionHandoffEnabled,
-        voiceShareDeviceInventory: voice?.privacy?.shareDeviceInventory !== false,
-    }), [executionRunsEnabled, memorySearchEnabled, voice?.privacy?.shareDeviceInventory, voiceEnabled, sessionHandoffEnabled]);
+    const availability = useActionSettingsAvailability();
 
     const entries = React.useMemo(() => buildActionSettingsEntries({
         query: searchQuery,
