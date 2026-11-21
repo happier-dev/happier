@@ -24,7 +24,7 @@ export type PluginArtifactDaemonByteFetcher = (input: Readonly<{
     family: PluginArtifactDaemonFamily;
     digest: PluginUiArtifactDigestV1;
     signal?: AbortSignal;
-}>) => Promise<DaemonPluginUiArtifactBytesReadResponse>;
+}>) => Promise<DaemonPluginUiArtifactBytesReadResponse & Readonly<{ failureReason?: string }>>;
 
 function unavailableArtifactBytes(diagnostic: string): DaemonPluginUiArtifactBytesReadResponse {
     return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
@@ -37,13 +37,15 @@ function unavailableArtifactBytes(diagnostic: string): DaemonPluginUiArtifactByt
 /** The incumbent finite carrier owns route selection, encrypted chunks and cleanup. */
 export const fetchPluginArtifactBytesViaMachineTransfer: PluginArtifactDaemonByteFetcher = async (input) => {
     const unavailableTransfer = (failure: unknown) => {
+        const transferFailure = readPluginSurfaceTransferFailureCodes(failure);
+        const failureReason = transferFailure.outcomeCode ?? transferFailure.osCode;
         logPluginSurfaceDiagnostic({ pluginId: null, contributionId: null, surfaceId: null }, {
             artifactFailure: 'artifact_bytes_fetch_failed',
             artifactDigest: input.digest,
             artifactFamily: input.family,
-            transferFailure: readPluginSurfaceTransferFailureCodes(failure),
+            transferFailure,
         });
-        return unavailableArtifactBytes('artifact_bytes_fetch_failed');
+        return { ...unavailableArtifactBytes('artifact_bytes_fetch_failed'), ...(failureReason ? { failureReason } : {}) };
     };
     try {
         const payload = DaemonPluginUiArtifactBytesReadRequestSchema.parse({
@@ -156,9 +158,12 @@ export function createPluginArtifactDaemonSource(input: Readonly<{
                         switch (diagnostic) {
                             case 'artifact_bytes_rpc_unavailable':
                             case 'artifact_bytes_response_invalid':
-                            case 'artifact_bytes_fetch_failed':
                             case 'plugin_host_access_disclosure_mismatch':
                                 failure ??= new PluginArtifactSourceError(diagnostic);
+                                break;
+                            case 'artifact_bytes_fetch_failed':
+                                failure ??= new PluginArtifactSourceError(diagnostic, response.failureReason);
+                                break;
                         }
                     }
                     continue;

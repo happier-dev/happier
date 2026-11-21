@@ -76,8 +76,7 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
             secondaryAction={claimedSentence === null && offline ? machineRecovery?.chooseMachine : undefined}
             accessibilitySemantics={card.accessibilitySemantics}
             animationEnabled={props.animationEnabled}
-            // The full diagnostic set stays reachable for QA via the testID
-            // channel only — never in visible product copy (audit PLG-11).
+            // Details exposes the diagnostic codes separately from the recovery copy.
             diagnosticCode={diagnostics.length > 0
                 ? diagnostics.slice(0, 3).join('|')
                 : presentation.diagnosticCode}

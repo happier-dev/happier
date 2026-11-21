@@ -39,7 +39,8 @@ export function readPluginSurfaceTransferFailureCodes(failure: unknown): Readonl
             for (const key of ['errorCode', 'rpcErrorCode', 'code']) {
                 const code: unknown = Reflect.get(current, key);
                 // Codes are identifiers, not another channel for arbitrary transfer text.
-                if (typeof code !== 'string' || !/^[A-Za-z][A-Za-z0-9_.-]*$/.test(code)) continue;
+                if (typeof code !== 'string' || !/^[A-Za-z][A-Za-z0-9_.-]*$/.test(code)
+                    || redactBugReportSensitiveText(code) !== code) continue;
                 if (/^E[A-Z0-9_]+$/.test(code)) osCode ??= code;
                 else outcomeCode ??= code;
             }

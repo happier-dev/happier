@@ -34,7 +34,7 @@ function createCurrentArtifactReader() {
 }
 
 describe('PluginReactNativeUnavailable', () => {
-    it('carries a daemon byte-route refusal through acquisition and hosted copy into the real Retry action', async () => {
+    it('retains the daemon transfer reason through acquisition and offers Retry for the same refusal', async () => {
         const bytes = new TextEncoder().encode('view');
         const entry = 'hosted-web/view/index.html';
         const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes }]);
@@ -54,19 +54,30 @@ describe('PluginReactNativeUnavailable', () => {
             }),
             sources: [createPluginArtifactDaemonSource({
                 transport: { machineId: 'machine', serverId: 'home' }, family: 'hostedWeb',
-                fetchArtifactBytes: async () => ({ ok: false, code: 'artifact_unavailable', diagnostics: ['artifact_bytes_rpc_unavailable'] }),
+                fetchArtifactBytes: async () => ({
+                    ok: false, code: 'artifact_unavailable', diagnostics: ['artifact_bytes_fetch_failed'],
+                    failureReason: 'machine_carrier_transport_failed',
+                }),
             })],
         });
         if (result.kind !== 'unavailable') throw new Error('Expected unavailable route');
-        expect(result.code).toBe('artifact_bytes_rpc_unavailable');
+        expect(result).toMatchObject({
+            code: 'artifact_bytes_fetch_failed',
+            diagnostics: ['artifact_bytes_fetch_failed', 'machine_carrier_transport_failed'],
+        });
         const retry = vi.fn();
         const repair = vi.fn();
-        const screen = await renderScreen(<PluginHostedWebUnavailable
-            diagnosticCode={readPluginHostedWebUnavailableDiagnosticCode(result.code) ?? 'response_invalid'}
+        const screen = await renderScreen(<PluginReactNativeUnavailable
+            diagnostics={result.diagnostics}
             onRetry={retry} recoveryAction={{ label: 'route fallback', onPress: repair }}
         />);
-        expect(screen.getTextContent()).toContain(t('pluginRuntime.routeUnavailable'));
-        await act(async () => { screen.pressByTestId('plugin-hosted-web-unavailable-action'); });
+        expect(screen.getTextContent()).toContain(t('pluginRuntime.transportUnavailable'));
+        expect(screen.findByTestId(
+            'plugin-rn-ui-unavailable-diagnostic-artifact_bytes_fetch_failed|machine_carrier_transport_failed',
+        )).toBeTruthy();
+        await act(async () => { screen.pressByTestId('plugin-rn-ui-unavailable-details-toggle'); });
+        expect(screen.getTextContent()).toContain('artifact_bytes_fetch_failed|machine_carrier_transport_failed');
+        await act(async () => { screen.pressByTestId('plugin-rn-ui-unavailable-action'); });
         expect(retry).toHaveBeenCalledOnce();
         expect(repair).not.toHaveBeenCalled();
     });

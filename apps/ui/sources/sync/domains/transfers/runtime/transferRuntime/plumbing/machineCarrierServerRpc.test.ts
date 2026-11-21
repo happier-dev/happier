@@ -231,7 +231,8 @@ describe('prepared transfer Home RPC carrier', () => {
         { code: 'EADDRINUSE', outcomeCode: null, osCode: 'EADDRINUSE' },
         { code: 'machine_carrier_transport_failed', outcomeCode: 'machine_carrier_transport_failed', osCode: null },
         { code: '/private/transfer token=private-value', outcomeCode: null, osCode: null },
-    ])('retains only typed Artifact transfer failure codes at the diagnostic sink ($code)', async ({ code, outcomeCode, osCode }) => {
+        { code: `github_pat_${'a'.repeat(24)}`, outcomeCode: null, osCode: null },
+    ])('retains only typed Artifact transfer failure codes in the refusal and diagnostic sink ($code)', async ({ code, outcomeCode, osCode }) => {
         const { createPluginArtifactDaemonSource } = await import('@/sync/domains/plugins/availability/artifactDaemonSource');
         const { log } = await import('@/log');
         // The diagnostic sink and Home RPC are physical boundaries; all transfer/Artifact owners stay real.
@@ -244,7 +245,7 @@ describe('prepared transfer Home RPC carrier', () => {
         const source = createPluginArtifactDaemonSource({ family: 'reactNative', transport: { machineId, serverId } });
         await expect(source.fetch({ artifact: { pluginId: 'diagnostic.plugin', contributionId: 'panel', artifactId: 'panel',
             tier: 'reactNative', platform: 'web', digest, hostUiApiRange: '^1.0.0', releaseVersion: '1.0.0' } }))
-            .rejects.toMatchObject({ code: 'artifact_bytes_fetch_failed' });
+            .rejects.toMatchObject({ code: 'artifact_bytes_fetch_failed', reason: outcomeCode ?? osCode ?? undefined });
         const failures = sink.mock.calls.map(([message]) => message)
             .filter(message => message.includes('"artifactFailure":"artifact_bytes_fetch_failed"'));
         expect(failures).toHaveLength(1);

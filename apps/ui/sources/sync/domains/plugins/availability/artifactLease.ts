@@ -109,7 +109,7 @@ export type PluginArtifactSourceFailureCode =
     | 'response_invalid';
 
 export class PluginArtifactSourceError extends Error {
-    constructor(readonly code: PluginArtifactSourceFailureCode) {
+    constructor(readonly code: PluginArtifactSourceFailureCode, readonly reason?: string) {
         super(code);
         this.name = 'PluginArtifactSourceError';
     }
@@ -182,6 +182,7 @@ export type PluginSelectedArtifactLeaseAcquireResult =
             | 'artifact_source_unavailable'
             | 'artifact_lease_revoked'
             | PluginArtifactSourceFailureCode;
+        diagnostics?: readonly string[];
     }>;
 
 const SOURCE_ORDER = Object.freeze([
@@ -283,7 +284,7 @@ export type PluginArtifactVerifiedSourceResult =
         files: readonly PluginArtifactVerifiedSourceFile[];
     }>
     | Readonly<{ kind: 'notCurrent' }>
-    | Readonly<{ kind: 'unavailable'; integrityFailed: boolean; code?: PluginArtifactSourceFailureCode }>;
+    | Readonly<{ kind: 'unavailable'; integrityFailed: boolean; sourceFailure?: PluginArtifactSourceError }>;
 
 type InFlightArtifactMaterializationParticipant = Readonly<{
     artifact: PluginSelectedArtifactIdentity;
@@ -608,7 +609,7 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
 }>): Promise<PluginArtifactVerifiedSourceResult> {
     const isCurrent = () => !input.signal?.aborted && input.isCurrent();
     let sawIntegrityFailure = false;
-    let failureCode: PluginArtifactSourceFailureCode | undefined;
+    let sourceFailure: PluginArtifactSourceError | undefined;
     for (const source of input.sources) {
         if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
         let fetched: Awaited<ReturnType<PluginArtifactSourceCandidate['fetch']>>;
@@ -621,7 +622,7 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
                     : {}),
             }), input.signal);
         } catch (error) {
-            if (error instanceof PluginArtifactSourceError) failureCode ??= error.code;
+            if (error instanceof PluginArtifactSourceError) sourceFailure ??= error;
             fetched = null;
         }
         if (!isCurrent()) return Object.freeze({ kind: 'notCurrent' });
@@ -694,7 +695,7 @@ export async function materializeVerifiedPluginArtifactSource(input: Readonly<{
     return Object.freeze({
         kind: 'unavailable',
         integrityFailed: sawIntegrityFailure,
-        ...(failureCode ? { code: failureCode } : {}),
+        ...(sourceFailure ? { sourceFailure } : {}),
     });
 }
 
@@ -732,7 +733,7 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
         Set<PluginArtifactSourceCandidate>
     >();
     let sawIntegrityFailure = false;
-    let failureCode: PluginArtifactSourceFailureCode | undefined;
+    let sourceFailure: PluginArtifactSourceError | undefined;
 
     while (true) {
         let next: Readonly<{
@@ -760,7 +761,7 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
             return Object.freeze({
                 kind: 'unavailable',
                 integrityFailed: sawIntegrityFailure,
-                ...(failureCode ? { code: failureCode } : {}),
+                ...(sourceFailure ? { sourceFailure } : {}),
             });
         }
 
@@ -783,7 +784,7 @@ async function materializeInFlightVerifiedPluginArtifactSource(input: Readonly<{
         if (materialized.kind === 'available') return materialized;
         if (materialized.kind === 'unavailable') {
             sawIntegrityFailure ||= materialized.integrityFailed;
-            failureCode ??= materialized.code;
+            sourceFailure ??= materialized.sourceFailure;
         }
     }
 }
@@ -1011,11 +1012,14 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     }
     if (materializedSource.kind === 'unavailable') {
         stopObserving();
+        if (materializedSource.integrityFailed) {
+            return Object.freeze({ kind: 'unavailable', code: 'artifact_source_integrity_invalid' });
+        }
+        const failure = materializedSource.sourceFailure;
         return Object.freeze({
             kind: 'unavailable',
-            code: materializedSource.integrityFailed
-                ? 'artifact_source_integrity_invalid'
-                : materializedSource.code ?? 'artifact_source_unavailable',
+            code: failure?.code ?? 'artifact_source_unavailable',
+            ...(failure?.reason ? { diagnostics: Object.freeze([failure.code, failure.reason]) } : {}),
         });
     }
     // Revocation closures share this scope, so the bytes are held only through
