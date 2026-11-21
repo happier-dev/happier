@@ -80,7 +80,7 @@ it('receipts a native approval without applying it, then applies the exact offer
     } finally { events.dispose(); await fixture.dispose(); }
 });
 
-it('retains Allow once approval after the native tool and turn complete', async () => {
+it('retains Allow once only after the native ACK even when the turn completes first', async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'muse-allow-once-'));
     const recordingPath = join(scratch, 'recording.json');
     // Lifecycle begins with resume; reuse the existing create-handshake composition.
@@ -112,11 +112,19 @@ it('retains Allow once approval after the native tool and turn complete', async 
         expect(deriveActivitySummaryFromAgentState(fixture.host.getAgentStateSnapshot()).pendingPermissionRequestCount).toBe(1);
         const response = invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, { id, approved: true, decision: 'approved',
             nativeChoice: { requirementId: nativeChoices.requirementId, choiceId: 'allow_once' } });
-        await events.until('turn-complete');
+        await Promise.race([events.until('turn-complete'), response.then(result => {
+            throw new Error(`Allow settled before the native ACK: ${JSON.stringify(result)}`);
+        })]);
+        const beforeAck = await fixture.waitForAudit(audit => audit.decisionAckPending);
+        expect(beforeAck.decisionCount).toBe(1);
+        expect(fixture.host.getAgentStateSnapshot()?.requests?.[id]?.nativeChoices).toEqual(nativeChoices);
+        expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toBeUndefined();
         const cleanup = fixture.permissionHandler.cancelByPluginTurn('happier.agent.muse', 'allow-turn', 'turn completed');
         await writeFile(join(scratch, 'ack'), 'release');
         expect(await response).toBeUndefined();
         await cleanup;
+        const afterAck = await fixture.waitForAudit(audit => !audit.decisionAckPending);
+        expect(afterAck).toMatchObject({ decisionCount: 1, released: true });
         expect(deriveActivitySummaryFromAgentState(fixture.host.getAgentStateSnapshot()).pendingPermissionRequestCount).toBe(0);
         expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toMatchObject({ status: 'approved', decision: 'approved' });
         await fixture.closeSession();
@@ -672,7 +680,7 @@ it('keeps each remaining shell requirement answerable after a nonterminal native
             if (sourceIndex < 2) expect(events.canonicalEvents().some(event => event.kind === 'turn-complete')).toBe(false);
         }
         await events.until('turn-complete');
-        expect(await fixture.readAudit()).toMatchObject({ decisionCount: 3, released: true });
+        expect(await fixture.waitForAudit(audit => audit.released)).toMatchObject({ decisionCount: 3 });
         events.expectExactlyOneTerminalEvent({ turnId: 'staged-shell-turn' });
         await fixture.closeSession();
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
