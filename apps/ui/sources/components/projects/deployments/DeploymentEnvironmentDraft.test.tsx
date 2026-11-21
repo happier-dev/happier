@@ -109,6 +109,32 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it('waits for the Machine inventory in the stepped draft and offers Retry on an unavailable list', async () => {
+    const serverId = await homes.addHome({ name: 'Publish', serverUrl: 'https://draft-machine-inventory.test',
+      accountId: 'alice', serverIdentityId: `srv_${'d'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const status = (next: 'loading' | 'error') => storage.setState(state => ({
+      machineListByServerId: { ...state.machineListByServerId, [serverId]: null },
+      machineListStatusByServerId: { ...state.machineListStatusByServerId, [serverId]: next },
+    }));
+    try {
+      status('loading');
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null}
+        phone={false} actions={createDeploymentActions(account.accountLifetime)}
+        steps={{ onFrame: () => {}, onExit: () => {} }} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      expect(screen.findByTestId('project-deployments.draft.machinesLoading')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.machine')).toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.noMachine.create')).toBeNull();
+      await act(async () => status('error'));
+      expect(screen.findByTestId('project-deployments.draft.machinesUnavailable')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.noMachine.create')).toBeNull();
+      await act(async () => publishMachineInventoryForTest(account.accountLifetime.scope, []));
+      expect(screen.findByTestId('project-deployments.draft.noMachine.create')).not.toBeNull();
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('keeps the Environment draft while adding its first Machine and returns to that exact Machine', async () => {
     const serverId = await homes.addHome({ name: 'Publish', serverUrl: 'https://publish-first-machine.test', accountId: 'alice',
       serverIdentityId: `srv_${'a'.repeat(32)}`, currentAccount: true });

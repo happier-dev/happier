@@ -719,6 +719,11 @@ export const DeploymentEnvironmentDraft = React.memo(
                 onChange={setRetention}
               />
             );
+    const machineEmpty = machines.length === 0 && machineId === null ? (
+      <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
+        <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
+          subtitle={t('projects.deployments.noMachineBody')} onPress={() => setCreatingMachine(true)} disabled={!props.lifetime} />} />
+    ) : null;
     const whereGroup = <>
           <ItemGroup
             // Stepped, the host's step description asks the question; the group keeps the recommendation's reason.
@@ -737,16 +742,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                 maximumColumns={props.phone ? 1 : targetTileColumns(targetTiles.length)}
               />
             ) : null}
-            {machines.length === 0 && machineId === null ? (
-              <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
-                <Item
-                  testID="project-deployments.draft.noMachine.create"
-                  title={t('managedMachines.add.createPath')}
-                  subtitle={t('projects.deployments.noMachineBody')}
-                  onPress={() => setCreatingMachine(true)}
-                  disabled={!props.lifetime}
-                />} />
-            ) : (
+            {machineEmpty ?? (
               <SessionMachineField
                 testID="project-deployments.draft.machine"
                 serverId={props.lifetime?.scope.serverId ?? ''}
@@ -788,11 +784,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         </ItemGroup>
       </View>
     ) : null;
-    const machineCard = allMachines != null && machines.length === 0 && machineId === null ? (
-      <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
-        <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
-          subtitle={t('projects.deployments.noMachineBody')} onPress={() => setCreatingMachine(true)} disabled={!props.lifetime} />} />
-    ) : (
+    const machineCard = machineEmpty ?? (
       <View style={[styles.machineCard, { borderTopWidth: resolveThemeHairlineBorderStyle(theme.colors.border.subtle).borderWidth,
         borderTopColor: theme.colors.border.subtle }]}>
         {/* A bare section under the card's hairline (jdF-whereM), with no section spacer of its own. */}
