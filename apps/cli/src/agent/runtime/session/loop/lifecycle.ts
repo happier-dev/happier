@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { isForegroundTurnRuntimeTranscriptEvent, isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
@@ -1241,14 +1242,17 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   publishKeepAlive();
 
   let closeFailedSession = false;
-  const endSessionAfterProcessExit = async (cleanExit: boolean): Promise<void> => {
+  const endSessionAfterProcessExit = async (cleanExit: boolean,
+    lifecycleStateReason?: SessionLifecycleStateReason): Promise<void> => {
     try {
       if (cleanExit && params.session.hasOwnerMetadataAuthority()) {
         const stoppedAt = Date.now();
+        // One exit write; a reason named by the host's own Stop rides on it.
         await params.session.updateMetadataAsCurrentPublisher(metadata => ({
           ...metadata,
           lifecycleState: 'stopped',
           lifecycleStateSince: stoppedAt,
+          ...(lifecycleStateReason ? { lifecycleStateReason } : {}),
         }));
       }
     } finally {
@@ -1341,7 +1345,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           // Termination ends the runtime, never the Happy session's lifecycle intent:
           // the session becomes inactive and stays resumable. Archiving is a separate
           // user-intent action owned by the session archive service.
-          await endSessionAfterProcessExit(cleanProcessExit);
+          await endSessionAfterProcessExit(cleanProcessExit, event.kind === 'signal' ? event.lifecycleStateReason : undefined);
         } finally {
           await cleanupOnce();
         }

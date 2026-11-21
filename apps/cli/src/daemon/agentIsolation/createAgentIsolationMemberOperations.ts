@@ -3,6 +3,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isSocketRpcMachineAccessLossServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { logger } from '@/ui/logger';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';
 import type { AgentIsolationMemberRequester } from './provisioning';
@@ -222,10 +223,16 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
       /** Exact owned socket/material cleanup after launch authority withdrawal. */
       cleanupOwnedWork(): Promise<RetirementResult>;
     }>): Promise<RetirementResult> {
+      // The access-loss response carries no reason; name the unsettled step here (closed codes only).
+      const incomplete = (reason: string): RetirementResult => {
+        logger.warn('[DAEMON RUN] Member retirement incomplete', { reason });
+        return { kind: 'incomplete' };
+      };
       const { rpcContext } = input, target = captureTarget(rpcContext);
-      if (!target || !input.accountId || !rpcContext.transportRequestId) return { kind: 'incomplete' };
+      if (!target) return incomplete('target_unavailable');
+      if (!input.accountId || !rpcContext.transportRequestId) return incomplete('request_unidentified');
       const current = localCustody(target, rpcContext, input.isCurrentInstallation);
-      if (!current()) return { kind: 'incomplete' };
+      if (!current()) return incomplete('custody_not_current');
       let cleanup: Promise<RetirementResult> | undefined;
       const cleanupOwnedWork = () => cleanup ??= input.cleanupOwnedWork();
       try {
@@ -276,8 +283,9 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
             });
           },
         });
-        return outcome.ok && current() ? { kind: 'settled' } : { kind: 'incomplete' };
-      } catch { return { kind: 'incomplete' }; }
+        if (!outcome.ok) return incomplete(typeof outcome.errorCode === 'string' ? outcome.errorCode : 'operation_failed');
+        return current() ? { kind: 'settled' } : incomplete('custody_not_current');
+      } catch (error) { return incomplete(error instanceof Error ? error.name : 'unknown'); }
     },
   });
 }

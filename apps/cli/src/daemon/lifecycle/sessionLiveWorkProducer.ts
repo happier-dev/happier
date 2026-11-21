@@ -73,13 +73,14 @@ export function createSessionLiveWorkProducer(params: Readonly<{
             }
           } catch {
             // Missing live coverage stays unknown, except that a passive refresh after a
-            // structural change keeps this runner's own latest push: nothing it reported
-            // has changed, and a reader that lost its authority (a withdrawn requester)
-            // must still see the runner settle. Explicit confirmations stay fresh.
-            const pushed = retained.get(tracked) ?? previous;
-            if (pushed?.pushed && pushed.sessionId === sessionId && !invalidated.has(sessionId)) {
-              retained.set(tracked, pushed);
-              if (scope === 'changed') activity = pushed.activity;
+            // structural change keeps this runner's latest report, pushed or read: the
+            // runner pushes every change, so nothing it reported has changed, and a reader
+            // that lost its authority (a withdrawn requester) must still see the runner
+            // settle. A content-free change supersedes it; confirmations stay fresh.
+            const latest = retained.get(tracked) ?? previous;
+            if (latest && latest.sessionId === sessionId && !invalidated.has(sessionId)) {
+              retained.set(tracked, latest);
+              if (scope === 'changed') activity = latest.activity;
             }
           }
         }

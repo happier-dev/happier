@@ -707,7 +707,7 @@ export function createStopSession(params: Readonly<{
         if (session.hostedSession) {
           // The session host ends this Session; a signal to its pid would end every hosted Session.
           session.stopRequestedAtMs ??= Date.now();
-          if (!await observeStopPhase('signal_request', () => session.hostedSession!.end())) continue;
+          if (!await observeStopPhase('signal_request', () => session.hostedSession!.end(options?.lifecycleStateReason))) continue;
           stoppedAny = true;
           signaledPids.push(pid);
           continue;

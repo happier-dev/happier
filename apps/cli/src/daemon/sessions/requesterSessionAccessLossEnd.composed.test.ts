@@ -1,7 +1,4 @@
-import axios from 'axios';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { SessionMetadataTuplePatchV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
-import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -50,33 +47,24 @@ function fixture() {
   const tracked: TrackedSessionMap = new Map();
   const activity = new Map<string, SessionInputLiveWork>();
   const events: string[] = [];
-  // The Home HTTP transport is the persistence boundary; run the real Stop metadata writer.
+  // The reason each Session's own exit write carried (the session host process boundary).
   const recorded = new Map<string, unknown>();
-  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
-    data: String(url).includes('/v2/sessions/') ? { session: createSessionRecordFixture({
-      id: 'guest-session', encryptionMode: 'plain', metadataLayoutVersion: 0, metadataVersion: 1,
-      metadata: JSON.stringify({ path: '/repo', terminal: { mode: 'plain' }, lifecycleState: 'running' }),
-    }) } : { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }));
-  vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
-    const patch = SessionMetadataTuplePatchV1Schema.parse(body);
-    if (patch.mode === 'shared_editor') throw new Error('Expected owner metadata mutation');
-    const sharedEnvelope = patch.mode === 'owner_migration' ? patch.target.sharedMetadata : patch.sharedMetadata;
-    const shared = SessionSharedMetadataV1Schema.parse(JSON.parse(sharedEnvelope.ciphertext));
-    recorded.set('guest-session', shared.lifecycleStateReason);
-    const metadataVersion = patch.mode === 'owner_migration' ? patch.source.metadata.version : patch.sharedMetadata.expectedVersion;
-    const agentStateVersion = patch.mode === 'owner_migration' ? patch.source.agentState.version : patch.agentState.expectedVersion;
-    return { status: 200, data: { success: true, metadataLayoutVersion: 1,
-      sharedMetadata: { version: metadataVersion + 1 }, agentState: { version: agentStateVersion } } };
-  });
   const accessRestored = new Set<string>();
+  // Withdrawal retires the requester authority a daemon read of that runner needs.
+  const authorityWithdrawn = new Set<string>();
   const producer = createSessionLiveWorkProducer({
     readSessions: () => [...tracked.values()],
-    readActivity: async (session) =>
-      activity.get(session.happySessionId!) ?? {
+    readActivity: async (session) => {
+      if (authorityWithdrawn.has(session.requesterWorkAttributionV1?.accountId ?? '')) {
+        throw new Error('requester_session_not_current');
+      }
+      return activity.get(session.happySessionId!) ?? {
         session: 'unknown',
         input: 'unknown',
-      },
+      };
+    },
   });
+  let pushRevision = 0;
   let nextPid = 900;
   const host = (sessionId: string, accountId: string | null) => {
     const pid = nextPid++;
@@ -97,9 +85,11 @@ function fixture() {
           }
         : {}),
       hostedSession: {
-        // The session host process ends this Session and reports its exit.
-        end: async () => {
+        // The session host process ends this Session; its runner's single exit write
+        // carries the reason the host's Stop named, and it reports its exit.
+        end: async (lifecycleStateReason) => {
           events.push(`end:${sessionId}`);
+          if (lifecycleStateReason) recorded.set(sessionId, lifecycleStateReason);
           tracked.delete(session.trackingKey);
           producer.notifyChanged();
           observe();
@@ -119,9 +109,10 @@ function fixture() {
     readHostAttachmentState: async () => ({ status: 'absent' }),
     readTerminalAttachmentInfo: async () => null,
     waitForTrackedRunnersExit: async () => true,
-    retireAbsentTerminalControlServiceability: async ({ sessionId, stoppedAt, lifecycleStateReason }) =>
-      retireExactTerminalControlServiceability({ credentials: { token: 'fixture', encryption: null },
-        sessionId, stoppedAt, lifecycleStateReason, terminalMode: 'plain', expectedPlainRetirement: null }),
+    // As in the daemon: the withdrawn requester's metadata authority no longer resolves.
+    retireAbsentTerminalControlServiceability: async () => {
+      throw new PluginError({ code: 'requester_session_not_current' });
+    },
   });
   const endSessions = createRequesterSessionAccessLossEnd({
     serverId: 'home',
@@ -176,6 +167,11 @@ function fixture() {
   const startTurn = (sessionId: string) => {
     activity.set(sessionId, working);
   };
+  /** The runner's own live-work push (`/session-activity-changed`). */
+  const pushLiveWork = (session: TrackedSession, work: SessionInputLiveWork) => {
+    activity.set(session.happySessionId!, work);
+    producer.notifySessionChanged(session.happySessionId!, { runnerPid: session.pid, revision: ++pushRevision, activity: work });
+  };
   const running = () =>
     [...tracked.values()].map((session) => session.happySessionId);
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -186,6 +182,14 @@ function fixture() {
     census: () => call({ kind: 'requesters' }),
     finishTurn,
     startTurn,
+    pushLiveWork,
+    /** An ordinary Stop of that exact runner (no reason). */
+    stop: (session: TrackedSession) => stopSession(session.happySessionId!, { expectedTrackedRunner: { tracked: session } }),
+    /** An explicit confirmation (the owner's activity view or a natural-boundary read). */
+    confirmLiveWork: () => producer.read(),
+    /** An unattributed process-set change, such as a Browser engine's renderer starting or exiting. */
+    processSetChanged: () => producer.notifyChanged(),
+    authorityWithdrawn,
     running,
     events,
     accessRestored,
@@ -202,6 +206,16 @@ afterEach(() => {
 });
 
 describe('withdrawn guest Sessions end at their natural boundary', () => {
+  it('names the withdrawal only through the Session\'s own exit write; an ordinary Stop names none', async () => {
+    const f = (current = fixture());
+    const ordinary = f.host('ordinary-session', 'owner');
+    f.host('guest-session', 'guest');
+    await f.stop(ordinary);
+    expect(await f.withdraw('guest')).toEqual({ kind: 'settled' });
+    expect(f.events).toEqual(['end:ordinary-session', 'end:guest-session']);
+    expect([...f.recorded]).toEqual([['guest-session', 'machine_access_withdrawn']]);
+  });
+
   it('ends an idle guest Session at once and leaves the owner and other people running', async () => {
     const f = (current = fixture());
     f.host('owner-session', 'owner');
@@ -263,6 +277,34 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
     // The Home re-decides each census subject from its current role; the guest has none.
     expect(await f.withdraw('guest')).toEqual({ kind: 'settled' });
     expect(f.running()).toEqual(['owner-session']);
+  });
+
+  it('ends an idle Session whose live work was last confirmed by a read when its Browser engine changes the process set after withdrawal', async () => {
+    const f = (current = fixture());
+    const guest = f.host('guest-session', 'guest');
+    f.pushLiveWork(guest, idle);
+    await f.confirmLiveWork();
+    f.authorityWithdrawn.add('guest');
+    f.processSetChanged();
+    const outcome = f.withdraw('guest');
+    for (let i = 0; i < 5; i += 1) await f.flush();
+    expect(f.events).toEqual(['end:guest-session']);
+    expect(await outcome).toEqual({ kind: 'settled' });
+  });
+
+  it('still waits for a turn that was running at the last confirmation, then ends on the runner push', async () => {
+    const f = (current = fixture());
+    const guest = f.host('guest-session', 'guest');
+    f.pushLiveWork(guest, working);
+    await f.confirmLiveWork();
+    f.authorityWithdrawn.add('guest');
+    f.processSetChanged();
+    const outcome = f.withdraw('guest');
+    for (let i = 0; i < 5; i += 1) await f.flush();
+    expect(f.running()).toEqual(['guest-session']);
+    f.pushLiveWork(guest, idle);
+    expect(await outcome).toEqual({ kind: 'settled' });
+    expect(f.events).toEqual(['end:guest-session']);
   });
 
   it('reuses the pending end when the same loss is dispatched again mid-turn', async () => {

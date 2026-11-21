@@ -2,6 +2,7 @@
  * Daemon-specific types (not related to API/server communication)
  */
 
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -250,7 +251,7 @@ export interface TrackedSession {
    */
   hostedSession?: Readonly<{
     /** Ask the host to end this Session; false when the host does not run it (any more). */
-    end(): Promise<boolean>;
+    end(lifecycleStateReason?: SessionLifecycleStateReason): Promise<boolean>;
     /** Settles once this Session's end has been observed (exit custody settled). */
     observed: Promise<void>;
   }>;

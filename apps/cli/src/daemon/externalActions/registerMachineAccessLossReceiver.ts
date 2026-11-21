@@ -1,4 +1,5 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
+import { logger } from '@/ui/logger';
 import {
   MachineAccessLossCustodyRequestV1Schema,
   MachineAccessLossCustodyResponseV1Schema,
@@ -65,6 +66,11 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
 
     try {
       const stillCurrent = () => !context.signal.aborted && isCurrentInstallation();
+      // The Home records only `cleanup_incomplete`; name the unsettled phase here (closed codes only).
+      const incomplete = (phase: 'terminals' | 'selections' | 'currentness' | 'resources' | 'sessions' | 'members') => {
+        logger.warn('[DAEMON RUN] Machine access-loss cleanup incomplete', { phase });
+        return { kind: 'incomplete' as const };
+      };
       if ('kind' in request.data) {
         if (!options.readLiveWorkInventory) return { kind: 'incomplete' as const };
         // Capture the retained target before either read can yield. An admitted
@@ -111,8 +117,9 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
       ]);
       const terminal = MachineAccessLossCustodyResponseV1Schema.safeParse(terminalOutcome);
       const selections = MachineAccessLossCustodyResponseV1Schema.safeParse(selectionOutcome);
-      if (!terminal.success || terminal.data.kind !== 'settled' || !selections.success || selections.data.kind !== 'settled'
-        || !stillCurrent()) return { kind: 'incomplete' as const };
+      if (!terminal.success || terminal.data.kind !== 'settled') return incomplete('terminals');
+      if (!selections.success || selections.data.kind !== 'settled') return incomplete('selections');
+      if (!stillCurrent()) return incomplete('currentness');
       // Use retains Project/Session execution and its member identity. Only the
       // Machine terminal owner consumes this narrower withdrawal.
       if (request.data.remainingRole === 'use') return terminal.data;
@@ -125,13 +132,14 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
       // Sessions end before member retirement, which waits for their exit.
       const sessions = options.endRequesterSessions
         ? MachineAccessLossCustodyResponseV1Schema.safeParse(await options.endRequesterSessions(input)) : null;
-      if (sessions && (!sessions.success || sessions.data.kind !== 'settled')) return { kind: 'incomplete' as const };
+      if (sessions && (!sessions.success || sessions.data.kind !== 'settled')) return incomplete('sessions');
       const outcome = options.memberOperations
         ? await options.memberOperations.retire({ accountId: input.requesterAccountId,
           rpcContext: context, isCurrentInstallation, cleanupOwnedWork: async () => resources })
         : options.cleanupRequesterMachineResources ? resources : terminal.data;
       const parsed = MachineAccessLossCustodyResponseV1Schema.safeParse(outcome);
-      return { kind: parsed.success && parsed.data.kind === 'settled' && stillCurrent() ? 'settled' as const : 'incomplete' as const };
+      if (!parsed.success || parsed.data.kind !== 'settled') return incomplete(options.memberOperations ? 'members' : 'resources');
+      return stillCurrent() ? { kind: 'settled' as const } : incomplete('currentness');
     } catch (error) { return recordFailureCause(error, 'machine_access_loss.cleanup', { kind: 'incomplete' as const }); }
   });
 }

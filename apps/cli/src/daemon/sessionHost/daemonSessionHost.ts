@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { ChildProcess } from 'node:child_process';
 
 import { isPidPresent } from '@happier-dev/cli-common/process';
@@ -43,7 +44,7 @@ export type HostedSessionHandle = Readonly<{
    */
   ended: Promise<HostedSessionEnd>;
   /** Ask the host to end this Session; false when the host does not run it. */
-  end(): Promise<boolean>;
+  end(lifecycleStateReason?: SessionLifecycleStateReason): Promise<boolean>;
 }>;
 
 export type HostedSessionEnd = Readonly<{ exitCode: number | null; signal: NodeJS.Signals | null; hostLost: boolean; failureCause?: SessionHostCommandEnd['failureCause'] }>;
@@ -107,8 +108,9 @@ function createHostedSessionHandle(host: RunningHost, trackingKey: string, sessi
       const exit = host.exited ? await host.exited : null;
       return { exitCode: exit?.code ?? null, signal: exit?.signal ?? null, hostLost: true };
     }),
-    end: async () => {
-      const result = await endLocalSessionHostSession({ hostPid: host.pid, trackingKey });
+    end: async (lifecycleStateReason) => {
+      const result = await endLocalSessionHostSession({ hostPid: host.pid, trackingKey,
+        ...(lifecycleStateReason ? { lifecycleStateReason } : {}) });
       if (result.status === 'termination_requested') return true;
       logger.warn('[DAEMON STOP] Hosted Session end refused', { hostPid: host.pid, trackingKey, status: result.status });
       return false;

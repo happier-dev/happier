@@ -1,3 +1,4 @@
+import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { createHash, randomBytes } from 'node:crypto';
@@ -675,7 +676,7 @@ export type LocalSessionHostAdmission = Readonly<{
    */
   addSession(request: SessionHostAddRequest): Promise<SessionHostCommandEnd>;
   /** Ask one hosted Session to end, distinguishing absence from unavailable termination. */
-  endSession(trackingKey: string): LocalSessionHostEndResult;
+  endSession(trackingKey: string, lifecycleStateReason?: SessionLifecycleStateReason): LocalSessionHostEndResult;
   /** This running Session's end (same result as its add), or null when this host does not run it. */
   watchSession(trackingKey: string): Promise<SessionHostCommandEnd> | null;
   /**
@@ -746,7 +747,10 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
   }
   const trackingKey = (body as { trackingKey?: unknown } | null)?.trackingKey;
   if (request.url === HOST_END_PATH) {
-    reply(response, 200, typeof trackingKey === 'string' ? host.endSession(trackingKey) : { status: 'not_hosted' });
+    // Only this host's daemon reaches here; the reason it names rides on the Session's exit write.
+    const reason = SessionLifecycleStateReasonSchema.safeParse((body as { lifecycleStateReason?: unknown } | null)?.lifecycleStateReason);
+    reply(response, 200, typeof trackingKey === 'string'
+      ? host.endSession(trackingKey, reason.success ? reason.data : undefined) : { status: 'not_hosted' });
     return;
   }
   if (request.url === HOST_HANDOVER_PATH) {
@@ -965,8 +969,10 @@ export function holdLocalSessionHost(input: Readonly<{ hostPid: number; preloadR
 }
 
 /** Ask the session host to end one Session, retaining its refusal or transport outcome. */
-export async function endLocalSessionHostSession(input: Readonly<{ hostPid: number; trackingKey: string }>): Promise<LocalSessionHostEndResult> {
-  const result = await callLocalSessionHost(input.hostPid, HOST_END_PATH, { trackingKey: input.trackingKey });
+export async function endLocalSessionHostSession(input: Readonly<{ hostPid: number; trackingKey: string;
+  lifecycleStateReason?: SessionLifecycleStateReason }>): Promise<LocalSessionHostEndResult> {
+  const result = await callLocalSessionHost(input.hostPid, HOST_END_PATH, { trackingKey: input.trackingKey,
+    ...(input.lifecycleStateReason ? { lifecycleStateReason: input.lifecycleStateReason } : {}) });
   if (result?.errorCode === LOCAL_SESSION_PEER_REFUSED) return { status: 'peer_refused' };
   const status = result?.status;
   if (status === 'termination_requested' || status === 'not_hosted' || status === 'termination_unavailable') return { status };

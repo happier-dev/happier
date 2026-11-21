@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { EventEmitter } from 'node:events';
 
 import { logger } from '@/ui/logger';
@@ -22,7 +23,7 @@ export { SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpc
 export type SessionHost = Readonly<{
   /** Same contract as the daemon's add call: resolves with the Session's exit code when it ends. */
   addSession(request: SessionHostAddRequest): Promise<SessionHostCommandEnd>;
-  endSession(trackingKey: string): LocalSessionHostEndResult;
+  endSession(trackingKey: string, lifecycleStateReason?: SessionLifecycleStateReason): LocalSessionHostEndResult;
   /** This running Session's end, for a daemon that re-observes it after a restart. */
   watchSession(trackingKey: string): Promise<SessionHostCommandEnd> | null;
   /** Hand every Session to a newer host (see `LocalSessionHostAdmission.handOver`). */
@@ -111,10 +112,11 @@ export async function startSessionHost(params: Readonly<{
     });
     return session.ended;
   };
-  const endSession = (trackingKey: string): LocalSessionHostEndResult => {
+  const endSession = (trackingKey: string, lifecycleStateReason?: SessionLifecycleStateReason): LocalSessionHostEndResult => {
     const scope = sessions.get(trackingKey)?.scope;
     if (!scope) return { status: 'not_hosted' };
-    return { status: requestHostedSessionTermination(scope, { kind: 'signal', signal: 'SIGTERM' })
+    return { status: requestHostedSessionTermination(scope, { kind: 'signal', signal: 'SIGTERM',
+      ...(lifecycleStateReason ? { lifecycleStateReason } : {}) })
       ? 'termination_requested' : 'termination_unavailable' };
   };
   const watchSession = (trackingKey: string) => sessions.get(trackingKey)?.ended ?? null;

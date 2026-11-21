@@ -25,6 +25,8 @@ describe('host process-terminal metadata publication', () => {
     { event: { kind: 'killSession' }, stopped: true },
     { event: { kind: 'exit', code: 0 }, stopped: true },
     { event: { kind: 'signal', signal: 'SIGTERM' }, stopped: true },
+    // The host's own Stop names why; the runner's single exit write carries it.
+    { event: { kind: 'signal', signal: 'SIGTERM', lifecycleStateReason: 'machine_access_withdrawn' }, stopped: true },
     { event: { kind: 'uncaughtException', error: new Error('native crash') }, stopped: false },
     { event: { kind: 'exit', code: 1 }, stopped: false },
     // Codex's unexpected native exit currently arrives as providerEnded too.
@@ -39,6 +41,7 @@ describe('host process-terminal metadata publication', () => {
       const fixture = createMutableApiSessionClientFixture<Metadata>({ sessionId: 'session-1',
         metadata: { ...createMetadata(), lifecycleState: 'running', lifecycleStateSince: 1 } });
       let disposed = false;
+      let exitWrites = 0;
       const ended: { metadata: Metadata | null } = { metadata: null };
       let runtimeEvent: ((event: AgentSessionRuntimeEvent) => void) | undefined;
       // The Session fixture replaces Home transport/persistence. Native runtime,
@@ -47,6 +50,7 @@ describe('host process-terminal metadata publication', () => {
         hasOwnerMetadataAuthority: () => true,
         updateMetadataAsCurrentPublisher: async (update: Parameters<typeof fixture.updateMetadataAsCurrentPublisher>[0]) => {
           expect(disposed).toBe(true);
+          exitWrites += 1;
           fixture.updateMetadata(current => {
             const next = update(current!);
             const projected = createSessionOwnerMetadataV1({ metadata: next });
@@ -106,6 +110,8 @@ describe('host process-terminal metadata publication', () => {
         expect(ended.metadata?.lifecycleState).toBe(stopped ? 'stopped' : 'running');
         if (stopped) expect(ended.metadata?.lifecycleStateSince).toBeGreaterThanOrEqual(startedAt);
         else expect(ended.metadata?.lifecycleStateSince).toBe(1);
+        expect(ended.metadata?.lifecycleStateReason).toBe(event.kind === 'signal' ? event.lifecycleStateReason : undefined);
+        expect(exitWrites).toBe(stopped ? 1 : 0);
       } finally {
         if (!runSettled) termination?.requestTermination({ kind: 'killSession' });
         await run;

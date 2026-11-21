@@ -1,6 +1,9 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+
 export type RunnerTerminationReason =
   | Readonly<{ kind: 'exit'; code: number }>
-  | Readonly<{ kind: 'signal'; signal: NodeJS.Signals }>
+  /** A host's own Stop may name why; the runner's exit write carries it. */
+  | Readonly<{ kind: 'signal'; signal: NodeJS.Signals; lifecycleStateReason?: SessionLifecycleStateReason }>
   | Readonly<{ kind: 'killSession' }>
   | Readonly<{ kind: 'unhandledRejection'; reason?: unknown }>
   | Readonly<{ kind: 'uncaughtException'; error?: unknown }>;
