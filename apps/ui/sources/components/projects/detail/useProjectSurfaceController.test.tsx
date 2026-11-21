@@ -17,6 +17,7 @@ import { resolveCompactAppDestinations } from '@/components/appShell/destination
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useWorkspaceScmTabState } from '@/components/workspaces/scm/useWorkspaceScmTabState';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -187,6 +188,37 @@ describe('useProjectSurfaceController', () => {
         expect(hook.getCurrent().controller.page).toBe('changes');
         expect(hook.getCurrent().scm.activeGitSubTab).toBe('history');
         await hook.unmount();
+    });
+
+    it('keeps Code navigation in the accepted guest cache instead of another guest at the same path', async () => {
+        const { useProjectSurfaceController } = await import('./useProjectSurfaceController');
+        const { useRepositoryTreeBrowserState } = await import('@/hooks/workspaces/files/repositoryTreeBrowserState');
+        const { buildWorkspaceCacheKey, workspaceScopeFromProject } = await import('@/sync/domains/workspaces/workspaceScope');
+        const managed = (id: string): WorkspaceRefV1 => ({ v: 2, kind: 'managed', id,
+            serverId: workspaceRef.serverId, managedId: id,
+            controller: { machineId: 'machine-1', installationId: 'installation' },
+            rootPath: '/repo', createdAtMs: 1 });
+        const guest = managed('guest-code-a');
+        const other = managed('guest-code-b');
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [guest, other] });
+        route.pathname = `/projects/${guest.id}/code`;
+        const hook = await renderHook(() => ({
+            controller: useProjectSurfaceController({ scopeId: 'managed-code-cache', workspaceRef: guest, activeRootPath: '/repo' }),
+            guest: useRepositoryTreeBrowserState(buildWorkspaceCacheKey(workspaceScopeFromProject(guest, '/repo'))),
+            other: useRepositoryTreeBrowserState(buildWorkspaceCacheKey(workspaceScopeFromProject(other, '/repo'))),
+        }), { wrapper: Wrapper });
+        await act(async () => hook.getCurrent().guest.setLocation({ kind: 'folder', path: 'guest-before-route' }));
+        await act(async () => hook.getCurrent().other.setLocation({ kind: 'folder', path: 'other-retained' }));
+        await hook.unmount();
+        const remounted = await renderHook(() => ({
+            controller: useProjectSurfaceController({ scopeId: 'managed-code-cache', workspaceRef: guest, activeRootPath: '/repo' }),
+            guest: useRepositoryTreeBrowserState(buildWorkspaceCacheKey(workspaceScopeFromProject(guest, '/repo'))),
+            other: useRepositoryTreeBrowserState(buildWorkspaceCacheKey(workspaceScopeFromProject(other, '/repo'))),
+        }), { wrapper: Wrapper });
+        expect(remounted.getCurrent().guest.location).toEqual({ kind: 'folder', path: '' });
+        expect(remounted.getCurrent().other.location).toEqual({ kind: 'folder', path: 'other-retained' });
+        expect(remounted.getCurrent().controller.checkoutWorkspace).toMatchObject({ kind: 'managed', managedId: guest.id });
+        await remounted.unmount();
     });
 
     it('keeps the selected Scripts page when a retained Git companion folds away on phone', async () => {

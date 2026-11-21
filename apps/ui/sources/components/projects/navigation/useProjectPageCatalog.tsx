@@ -6,7 +6,7 @@ import { useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useCodeIntelligencePaneProducer } from '@/components/workspaces/files/intelligence/codeIntelligencePaneStore';
 import { resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -100,7 +100,8 @@ export function ProjectPageCatalogProvider(props: ProjectCatalogScope & Readonly
         formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }) }), [scoped.platform, deviceType]);
     const appInputs = useAppRightSidebarTabInputs(serverId);
     const codeIntelligenceAvailable = useCodeIntelligencePaneProducer(scopeId) !== null;
-    const terminalTabAvailable = checkout !== null && resolveProjectTerminalScope(scopeId, workspaceAddressFromRefV1(checkout)) !== null;
+    const checkoutAddress = checkout ? workspaceAddressFromRefV2(checkout) : null;
+    const terminalTabAvailable = checkoutAddress !== null && resolveProjectTerminalScope(scopeId, checkoutAddress) !== null;
     const mobileSurface = Array.isArray(routeParams.mobileSurface) ? routeParams.mobileSurface[0] : routeParams.mobileSurface;
     const route = React.useMemo(() => resolveProjectCockpitRouteFromPathname(pathname, null, mobileSurface), [pathname, mobileSurface]);
     const selection = React.useMemo((): ProjectPageSelection => props.selection ?? route?.selection ?? { kind: 'builtin', page: route?.page ?? 'overview' }, [props.selection, route]);

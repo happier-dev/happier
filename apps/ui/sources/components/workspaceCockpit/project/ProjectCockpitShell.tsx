@@ -13,7 +13,7 @@ import { ProjectGitSurface } from '@/components/projects/detail/surfaces/Project
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { ProjectRightPanelBrowserView } from '@/components/projects/detail/browser/ProjectRightPanelBrowserView';
 import { ProjectRightPanelServicesView } from '@/components/projects/detail/services/ProjectRightPanelServicesView';
-import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
+import { ProjectScriptsBody, resolveProjectScriptsWorkspace } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { ProjectContextBody } from '@/components/projects/context/ProjectContextBody';
 import { ProjectMemoryBody } from '@/components/projects/memory/ProjectMemoryBody';
 import { ProjectSessionDefaultsBody } from '@/components/projects/sessionDefaults/ProjectSessionDefaultsBody';
@@ -91,7 +91,7 @@ function ProjectCredentialScope(props: React.PropsWithChildren<Readonly<{ server
 
 const ProjectCockpitSurface = React.memo((props: ProjectCockpitShellProps) => {
     usePublishProjectUiContext(props.workspaceRef, props.activeWorktreeId);
-    const { navigateToSurface, navigateToPage, selectDashboard, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory } = useProjectSurfaceController({
+    const { navigateToSurface, navigateToPage, selectDashboard, checkoutWorkspace, workspaceScope, codeLocation, navigateCodeLocation, openCodeHistory } = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
@@ -105,12 +105,6 @@ const ProjectCockpitSurface = React.memo((props: ProjectCockpitShellProps) => {
         isFocused: props.isFocused,
         surface: props.surface,
     });
-
-    const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
-        serverId: props.workspaceRef.serverId,
-        machineId: props.workspaceRef.machineId,
-        rootPath: props.activeRootPath,
-    }), [props.activeRootPath, props.workspaceRef.machineId, props.workspaceRef.serverId]);
 
     const navigateToBrowse = React.useCallback(() => {
         navigateToSurface('browse');
@@ -142,8 +136,8 @@ const ProjectCockpitSurface = React.memo((props: ProjectCockpitShellProps) => {
         {/* Changes, once opened, stays built too, as the side pane's Git tab does: hidden, its Review keeps its rows
             (and the large-repository model behind them) without reading, so a return draws the same list. */}
         <RetainedPanelSurface isActive={isChangesSurface(props.surface)}>
-            <ProjectChangesScreen scopeId={props.scopeId} workspaceRef={props.workspaceRef}
-                activeRootPath={props.activeRootPath} onSelectRootPath={props.onSelectRootPath} actions={actions} />
+            <ProjectChangesScreen scopeId={props.scopeId} workspaceScope={workspaceScope}
+                onSelectRootPath={props.onSelectRootPath} actions={actions} />
         </RetainedPanelSurface>
         {props.surface === 'code' || isChangesSurface(props.surface) ? null : <ProjectCockpitPage {...props} workspaceScope={workspaceScope}
             checkoutWorkspace={checkoutWorkspace} navigateToSurface={navigateToSurface} navigateToPage={navigateToPage}
@@ -172,8 +166,7 @@ const isChangesSurface = (surface: ProjectMobileSurface) => surface === 'changes
 
 function ProjectChangesScreen(props: Readonly<{
     scopeId: string;
-    workspaceRef: WorkspaceRefV1;
-    activeRootPath: string;
+    workspaceScope: WorkspaceScopeBase;
     onSelectRootPath: (path: string) => void;
     actions: ReturnType<typeof useProjectSurfaceActions>;
 }>) {
@@ -184,9 +177,7 @@ function ProjectChangesScreen(props: Readonly<{
             <React.Suspense fallback={<PaneLoadingFallback />}>
                 <ProjectGitSurface
                     scopeId={props.scopeId}
-                    serverId={props.workspaceRef.serverId}
-                    machineId={props.workspaceRef.machineId}
-                    rootPath={props.activeRootPath}
+                    {...props.workspaceScope}
                     onOpenFile={openFileInDetails}
                     onOpenFilePinned={openFileInDetailsPinned}
                     onOpenReviewAllChanges={openReviewAllChanges}
@@ -223,7 +214,7 @@ function ProjectCockpitPage(props: ProjectCockpitShellProps & Pick<ProjectSurfac
                     <ProjectTerminalSurface
                         scopeId={props.scopeId}
                         workspaceRefId={props.workspaceRef.id}
-                        machineId={props.workspaceRef.machineId}
+                        machineId={workspaceScope.machineId}
                         rootPath={props.activeRootPath}
                         serverId={props.workspaceRef.serverId}
                         workspace={checkoutWorkspace}
@@ -257,7 +248,8 @@ function ProjectCockpitPage(props: ProjectCockpitShellProps & Pick<ProjectSurfac
 
     const openServices = () => navigateToSurface('services');
     if (props.surface === 'scripts') {
-        return checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} testID="project-scripts-screen" onOpenServices={openServices} outputScopeId={props.scopeId} />
+        const scriptsWorkspace = checkoutWorkspace ? resolveProjectScriptsWorkspace(checkoutWorkspace) : null;
+        return scriptsWorkspace ? <ProjectScriptsBody workspace={scriptsWorkspace} testID="project-scripts-screen" onOpenServices={openServices} outputScopeId={props.scopeId} />
             : <SurfaceStateCard testID="project-scripts-unavailable" kind="unavailable" title={t('common.unavailable')} />;
     }
 

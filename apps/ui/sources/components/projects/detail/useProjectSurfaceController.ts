@@ -48,8 +48,7 @@ export function useProjectSurfaceController(params: Readonly<{
     const workspaceRefs = useWorkspaceRefs();
     const checkoutWorkspace = React.useMemo(() => {
         const checkout = resolveProjectCheckoutWorkspaceRef(workspaceRefs, params.workspaceRef, params.activeRootPath);
-        const address = checkout ? workspaceAddressFromRefV2(checkout) : null;
-        return address && !('kind' in address) ? address : null;
+        return checkout ? workspaceAddressFromRefV2(checkout) : null;
     }, [params.activeRootPath, params.workspaceRef, workspaceRefs]);
     const workspaceScope = React.useMemo(() => workspaceScopeFromProject(params.workspaceRef, params.activeRootPath),
         [params.workspaceRef, params.activeRootPath]);

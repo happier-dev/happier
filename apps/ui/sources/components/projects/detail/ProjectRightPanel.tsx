@@ -48,7 +48,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { ProjectRightPanelBrowserView } from './browser/ProjectRightPanelBrowserView';
 import { ProjectRightPanelServicesView } from './services/ProjectRightPanelServicesView';
-import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
+import { ProjectScriptsBody, resolveProjectScriptsWorkspace } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { ProjectWidgetsPane } from './ProjectOverviewWidgets';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ProjectFilesPaneSurface } from './surfaces/ProjectBrowseFilesSurface';
@@ -448,6 +448,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
         availableTabIds, rightTabSelection, activeTab, activeInstanceKey,
         activePaneLaunch, pluginBinding, setActiveTab, checkoutWorkspace,
     } = props.model;
+    const scriptsWorkspace = checkoutWorkspace ? resolveProjectScriptsWorkspace(checkoutWorkspace) : null;
     const {
         openFileInDetails,
         openFileInDetailsPinned,
@@ -547,7 +548,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                     {availableTabIds.has('scripts') ? (
                         <RetainedPanelSurface isActive={activeTab === 'scripts'} testID="project-rightpanel-surface-scripts">
                             <React.Suspense fallback={<PaneLoadingFallback />}>
-                                {checkoutWorkspace ? <ProjectScriptsBody workspace={checkoutWorkspace} presentation="rail" testID="project-rightpanel-scripts" outputScopeId={props.scopeId} />
+                                {scriptsWorkspace ? <ProjectScriptsBody workspace={scriptsWorkspace} presentation="rail" testID="project-rightpanel-scripts" outputScopeId={props.scopeId} />
                                     : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} testID="project-rightpanel-scripts-unavailable" />}
                             </React.Suspense>
                         </RetainedPanelSurface>
@@ -564,7 +565,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                         <RetainedPanelSurface isActive={activeTab === 'terminal'} testID="project-rightpanel-surface-terminal">
                             <React.Suspense fallback={<PaneLoadingFallback />}>
                                 <ProjectTerminalSurface scopeId={props.scopeId} workspaceRefId={props.workspaceRef.id}
-                                    serverId={props.workspaceRef.serverId} machineId={props.workspaceRef.machineId}
+                                    serverId={props.workspaceRef.serverId} machineId={workspaceScope.machineId}
                                     rootPath={props.activeRootPath} workspace={checkoutWorkspace} presentation="right" />
                             </React.Suspense>
                         </RetainedPanelSurface>

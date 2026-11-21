@@ -27,6 +27,8 @@ import { useScopedPluginUiProjection } from '@/components/plugins/projection/use
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import type { RepoWorktreeSelectionResolution } from '@/components/workspaces/scm/worktrees/resolveRepoWorktreeSelection';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -295,15 +297,12 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const terminalCheckout = React.useMemo(() => workspaceRef
         ? resolveProjectCheckoutWorkspaceRef(workspaceRefs, workspaceRef, resolvedActiveRootPath) : null,
     [resolvedActiveRootPath, workspaceRef, workspaceRefs]);
-    const terminalWorkspace = React.useMemo(() => terminalCheckout ? {
-        serverId: terminalCheckout.serverId, machineId: terminalCheckout.machineId,
-        workspaceId: terminalCheckout.id, rootPath: terminalCheckout.rootPath,
-    } : null, [terminalCheckout]);
+    const terminalWorkspace = React.useMemo(() => terminalCheckout ? workspaceAddressFromRefV2(terminalCheckout) : null, [terminalCheckout]);
     const projectBottomPaneAdapter = React.useMemo(() => ({
         destinationIds: ['terminal'],
         defaultDestinationId: 'terminal',
         render: () => workspaceRef ? <ProjectTerminalSurface scopeId={scopeId} workspaceRefId={workspaceRef.id}
-            serverId={workspaceRef.serverId} machineId={workspaceRef.machineId} rootPath={resolvedActiveRootPath}
+            serverId={workspaceRef.serverId} machineId={terminalWorkspace ? resolveWorkspaceSyncExecutionMachineIdV1(terminalWorkspace) : ''} rootPath={resolvedActiveRootPath}
             workspace={terminalWorkspace} presentation="bottom" /> : null,
     }), [resolvedActiveRootPath, scopeId, terminalWorkspace, workspaceRef]);
     const wrapProjectScopeContent = React.useCallback((content: React.ReactNode) => (

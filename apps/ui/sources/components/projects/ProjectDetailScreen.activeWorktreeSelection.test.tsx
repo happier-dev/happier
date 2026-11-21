@@ -185,6 +185,39 @@ function rootPath(screen: Awaited<ReturnType<typeof mount>>) {
 }
 
 describe('ProjectDetailScreen active worktree selection', () => {
+    it('keeps the accepted managed checkout available to the bottom terminal owner', async () => {
+        const { ProjectPagePaneScopeHost } = await import('./detail/PluginProjectPageBody');
+        const { resolveProjectTerminalScope } = await import('./detail/projectTerminalScope');
+        workspaceRef = { v: 2, kind: 'managed', id: 'wr_1', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: 'machine-1', installationId: 'installation' },
+            rootPath: '/repo', projectKey: 'project-alpha', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspaceRef] });
+        const screen = await renderScreen(<runtime.Wrapper><ProjectDetailScreen workspaceRefId="wr_1"
+            serverId={runtime.serverId} page="context" /></runtime.Wrapper>);
+        const paneHost = screen.findByType(ProjectPagePaneScopeHost);
+        const terminal = paneHost.props.bottomPaneBuiltinAdapter.render();
+        expect(resolveProjectTerminalScope(buildProjectPaneScopeId('wr_1', runtime.serverId), terminal.props.workspace))
+            .toMatchObject({ machineId: 'machine-1', workspace: { kind: 'managed', managedId: 'guest' } });
+    });
+
+    it('reads the managed checkout branch instead of a same-path controller summary in Project context', async () => {
+        const { useProjectContext } = await import('./useProjectContext');
+        const { workspaceScopeFromProject } = await import('@/sync/domains/workspaces/workspaceScope');
+        workspaceRef = { v: 2, kind: 'managed', id: 'wr_1', serverId: runtime.serverId,
+            managedId: 'guest', controller: { machineId: 'machine-1', installationId: 'installation' },
+            rootPath: '/repo', projectKey: 'project-alpha', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [workspaceRef] });
+        storage.getState().updateWorkspaceScmSnapshot(workspaceScopeFromProject(workspaceRef, '/repo'), {
+            ...snapshot, branch: { ...snapshot.branch, head: 'guest-branch' },
+        });
+        let branch: string | undefined;
+        function ContextProbe() {
+            branch = useProjectContext({ serverId: runtime.serverId, projectRef: workspaceRef, activeCheckout: workspaceRef }).target?.branch;
+            return null;
+        }
+        await renderScreen(<runtime.Wrapper><ContextProbe /></runtime.Wrapper>);
+        expect(branch).toBe('guest-branch');
+    });
     it('names the selected Machine identically in the Project header and Checkouts when hosts repeat', async () => {
         const { ProjectBuiltinWidgetBody } = await import('./widgets/ProjectBuiltinWidgetBody');
         const { ProjectShellHeader } = await import('./shell/ProjectShellHeader');
