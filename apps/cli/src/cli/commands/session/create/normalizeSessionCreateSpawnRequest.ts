@@ -61,7 +61,7 @@ export type SessionCreateSpawnRequestNormalizerDeps = Readonly<{
 
 export type NormalizedSessionCreateSpawnRequest = Readonly<{
   input: SessionSpawnNewActionAuthoringInputV2;
-  agentId: string;
+  agentId?: string;
 }>;
 
 function nonEmptyString(value: unknown): string | null {
@@ -184,7 +184,7 @@ async function resolveAgentTarget(
   request: SessionCreateSpawnRequest,
   deps: SessionCreateSpawnRequestNormalizerDeps,
 ): Promise<Readonly<{
-  agentId: string;
+  agentId?: string;
   agentTarget: SessionSpawnNewInputV2['agentTarget'];
   backendTargetKey: string;
 }>> {
@@ -210,6 +210,12 @@ async function resolveAgentTarget(
     ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(definitions), requestedTarget.identity)
     : selectedAgentId;
   const agent = definitions.find((candidate) => candidate.id === resolvedAgentId);
+  const requestedTargetKey = buildBackendTargetKeyV2(requestedTarget);
+  if (!agent?.identity && requestedTarget.kind === 'agent' && request.backendTargetKey === requestedTargetKey) {
+    // An exact identity needs no local alias lookup. The selected Machine
+    // supplies its declaration when the authored request is prepared.
+    return { agentTarget: requestedTarget, backendTargetKey: requestedTargetKey };
+  }
   if (!agent?.identity) {
     const unavailable = isCatalog
       ? [
@@ -362,5 +368,5 @@ export async function normalizeSessionCreateSpawnRequest(
   if (!parsed.success) {
     invalidSessionCreateArgument('the requested Session creation fields are invalid.');
   }
-  return { input: parsed.data, agentId: resolvedAgent.agentId };
+  return { input: parsed.data, ...(resolvedAgent.agentId ? { agentId: resolvedAgent.agentId } : {}) };
 }

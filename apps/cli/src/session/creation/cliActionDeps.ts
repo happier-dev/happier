@@ -57,7 +57,6 @@ import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCus
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { buildPluginSessionInputAttachmentDraftsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import type { buildSessionSpawnInitialInputAdmissionForLocalIdV1, requiresMachineAdmissionForSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
-import type { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import type { dispatchRequesterSessionSpawnNewRpc, readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
 import type { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
@@ -79,14 +78,14 @@ import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connected
 import { agentSupportsSpawnConnectedServicesDefaults, ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
 import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
 import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
-
+import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
 
 type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight' | 'prepareSessionSpawnNewInput'>
   & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
 
 export function createCliSpawnActionDeps(
   params: CliActionDepsParams,
-  { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList, workflowTriggers }: Readonly<{
+  { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readMachineAgentProjection, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList, workflowTriggers }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isSameActionHomeId: (serverId: string) => boolean;
     machineReferenceServerUrl: string;
@@ -101,6 +100,7 @@ export function createCliSpawnActionDeps(
   }>) => Promise<SessionFollowSourceKeyPreparationResultV1>;
     projectHomeId: string;
     readAccountRoleOverrides: () => AccountRoleOverridesReadV1 | Readonly<{ status: 'unavailable'; reason: string }>;
+    readMachineAgentProjection: ReadMachineAgentProjection;
     readRecord: (value: unknown) => Record<string, unknown>;
     readRoleSources: RoleSourceReader;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
@@ -299,7 +299,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
   return {
     prepareSessionSpawnNewInput: createPrepareSessionSpawnInput(params, {
       serverId: projectHomeId, serverHttpBaseUrl: machineReferenceServerUrl,
-    }, { spawnConnectedServicesList }),
+    }, { spawnConnectedServicesList, readMachineAgentProjection }),
     sessionSpawnNewDirectoryApprovalPreflight: async ({ input, context, signal }) => {
       if (!params.credentials) {
         return {
@@ -737,11 +737,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         };
       }
 
-      const { resolveSessionCreationAgentTarget } = await import("@/session/creation/resolveSessionCreationAgentTarget");
-      const { readAdmittedAgentCatalogSnapshotForRequest } = await import('@/agent/catalog/snapshot');
-      let resolvedAgentTarget: ReturnType<typeof resolveSessionCreationAgentTarget>;
+      let resolvedAgentTarget: Awaited<ReturnType<typeof readSessionCreationAgentTarget>>;
       try {
-        resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget, await readAdmittedAgentCatalogSnapshotForRequest());
+        resolvedAgentTarget = await readSessionCreationAgentTarget({ agentTarget, executionTarget, context: context ?? {},
+          localMachineId: params.sessionSpawnDirectTargetTransport?.machineId ?? params.machineActionDirectTargetTransport?.machineId,
+          readMachineAgentProjection,
+        });
       } catch (error) {
         const { projectAccountPluginCensusLaunchError } = await import('@/plugins/projection/registry/builtIn/enablement');
         const launchError = projectAccountPluginCensusLaunchError(error);

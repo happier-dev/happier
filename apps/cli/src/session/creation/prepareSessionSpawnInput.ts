@@ -9,7 +9,7 @@ import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/execut
 import { resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, type SessionSpawnNewActionAuthoringInputV2,
   projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -23,7 +23,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
-import { resolveSessionCreationAgentTarget } from './resolveSessionCreationAgentTarget';
+import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
 import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -38,12 +38,13 @@ export async function resolveSessionSpawnConnectedServices(
   input: Pick<SessionSpawnNewActionAuthoringInputV2, 'connectedServicesAuthIntent'>,
   agentId: string,
   listInventory: NonNullable<ActionExecutorDeps['spawnConnectedServicesList']>,
+  supportedServiceIds: readonly string[] = resolveCatalogAgentConnectedAccountServiceIds(agentId),
 ) {
   const intent = input.connectedServicesAuthIntent;
   if (!intent) return null;
   return resolveConnectedServicesLaunchAuthWithInventory({
     intent,
-    supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(agentId),
+    supportedServiceIds,
     listInventory: () => listInventory({ agentId, includeUnavailable: false, includeDefaults: false }),
   });
 }
@@ -53,6 +54,7 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
   serverId: string; serverHttpBaseUrl: string;
 }>, inventory: Readonly<{
   spawnConnectedServicesList: NonNullable<ActionExecutorDeps['spawnConnectedServicesList']>;
+  readMachineAgentProjection?: ReadMachineAgentProjection;
 }>): NonNullable<ActionExecutorDeps['prepareSessionSpawnNewInput']> {
   return async (rawInput, context) => {
     const input = SessionSpawnNewActionInputV2Schema.parse(rawInput);
@@ -80,9 +82,9 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
         subject.kind === 'account' ? [] : [subject.teamId]))],
       policyDefaults: getOrganizationPolicySessionDefaults(configuration.organizationPolicy),
     }, loader);
-    const catalog = readAgentCatalogSnapshot();
-    const defaultAgent = catalog.agentDefinitionsById.get(DEFAULT_AGENT_ID);
-    const nativeAgent = defaultAgent?.identity ? listAgentExecutionTargetsV1(defaultAgent.identity)[0] : undefined;
+    const defaultIdentity = input.agentTarget ? undefined
+      : getResolvedContributionRegistry().agentDefinitionsById.get(DEFAULT_AGENT_ID)?.identity;
+    const nativeAgent = defaultIdentity ? listAgentExecutionTargetsV1(defaultIdentity)[0] : undefined;
     const agentFallback = input.agentTarget ?? nativeAgent;
     if (!agentFallback) return unavailable('agent_contribution_unavailable');
     const authoredPlacement = input.sessionPlacement && input.sessionPlacement.kind !== 'managed'
@@ -96,7 +98,38 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       },
     });
     const agentTarget = selected.agentTarget.value ?? agentFallback;
-    const resolvedAgent = resolveSessionCreationAgentTarget(agentTarget, catalog);
+    let executionTarget = input.executionTarget;
+    let managedPresetAcquisition: ManagedAcquireInputV1 | undefined;
+    let managedPresetControllerAccess: ManagedControllerAccessV1 | undefined;
+    if (selected.placement.value?.kind === 'machine') executionTarget = selected.placement.value.target;
+    else if (selected.placement.value?.kind === 'preset') {
+      const placement = selected.placement.value;
+      // Preset acquisition still requires the original requester's private custody.
+      // Public defaults reads alone never lend the custodian's bearer to this write.
+      const presetCustody = resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
+        authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
+      const bound = await prepareOriginalAccountManagedPresetAcquire({ input: { selection: {
+        kind: 'preset', homeId: placement.homeId, id: placement.presetId } },
+        requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: presetCustody.credentials,
+        serverHttpBaseUrl: requesterServerHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
+      if (!bound || bound.kind === 'refused') return unavailable(bound?.code ?? 'controller_unavailable');
+      if (!bound.input.controller) return unavailable('controller_unavailable');
+      managedPresetAcquisition = bound.input;
+      managedPresetControllerAccess = bound.controllerAccess;
+      executionTarget = { serverId: placement.homeId, machineId: bound.input.controller.machineId };
+    }
+    if (!executionTarget) {
+      const settings = await readSettings();
+      const machineId = params.explicitMachineId ?? params.sessionSpawnDirectTargetTransport?.machineId
+        ?? resolveMachineIdForServerFromSettings(settings, params.serverId ?? configuration.activeServerId,
+          readAccountIdFromToken(custody.credentials.token)) ?? settings.machineId;
+      if (!machineId) return unavailable('machine_target_unavailable');
+      executionTarget = { serverId: home.serverId, machineId };
+    }
+    const resolvedAgent = await readSessionCreationAgentTarget({ agentTarget, executionTarget, context,
+      localMachineId: params.sessionSpawnDirectTargetTransport?.machineId ?? params.machineActionDirectTargetTransport?.machineId,
+      readMachineAgentProjection: inventory.readMachineAgentProjection,
+    });
     if (!resolvedAgent) return unavailable('agent_contribution_unavailable');
     const memberSnapshot = retained || !canReadPrivateSessionDefaults(custody.credentials, context) ? null
       : custody.operation ? custody.operation.readSnapshot()
@@ -131,36 +164,8 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
     } : input.configuration;
     const connectedServices = connectedServicesAuthIntent
       ? await resolveSessionSpawnConnectedServices({ connectedServicesAuthIntent }, resolvedAgent.agentId,
-        args => inventory.spawnConnectedServicesList(args, context))
+        args => inventory.spawnConnectedServicesList(args, context), resolvedAgent.connectedAccountServiceIds)
       : null;
-    let executionTarget = input.executionTarget;
-    let managedPresetAcquisition: ManagedAcquireInputV1 | undefined;
-    let managedPresetControllerAccess: ManagedControllerAccessV1 | undefined;
-    if (selected.placement.value?.kind === 'machine') executionTarget = selected.placement.value.target;
-    else if (selected.placement.value?.kind === 'preset') {
-      const placement = selected.placement.value;
-      // Preset acquisition still requires the original requester's private custody.
-      // Public defaults reads alone never lend the custodian's bearer to this write.
-      const presetCustody = resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
-        authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
-      const bound = await prepareOriginalAccountManagedPresetAcquire({ input: { selection: {
-        kind: 'preset', homeId: placement.homeId, id: placement.presetId } },
-        requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: presetCustody.credentials,
-        serverHttpBaseUrl: requesterServerHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
-      if (!bound || bound.kind === 'refused') return unavailable(bound?.code ?? 'controller_unavailable');
-      if (!bound.input.controller) return unavailable('controller_unavailable');
-      managedPresetAcquisition = bound.input;
-      managedPresetControllerAccess = bound.controllerAccess;
-      executionTarget = { serverId: placement.homeId, machineId: bound.input.controller.machineId };
-    }
-    if (!executionTarget) {
-      const settings = await readSettings();
-      const machineId = params.explicitMachineId ?? params.sessionSpawnDirectTargetTransport?.machineId
-        ?? resolveMachineIdForServerFromSettings(settings, params.serverId ?? configuration.activeServerId,
-          readAccountIdFromToken(custody.credentials.token)) ?? settings.machineId;
-      if (!machineId) return unavailable('machine_target_unavailable');
-      executionTarget = { serverId: home.serverId, machineId };
-    }
     const exactInput = admitSessionSpawnNewActionInputV2({ ...authoredInput, executionTarget, agentTarget,
       ...(selected.placement.source === 'explicit' && input.sessionPlacement
         ? { sessionPlacement: input.sessionPlacement }

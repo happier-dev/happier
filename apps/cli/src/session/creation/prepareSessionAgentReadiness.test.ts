@@ -4,6 +4,25 @@ import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machi
 
 import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 
+it.each([true, false])('requires the contributed Agent executable before Session birth (installed: %s)', async installed => {
+  const agentId = 'qa.w15-media/native-media';
+  const result = await prepareSessionAgentReadiness({ machineId: 'plugin-machine', serverId: 'home', agentId,
+    invoke: async action => {
+      if (!installed && action === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action) {
+        return { ok: true, result: { ok: false, errorCode: 'install_unavailable', error: 'No installer is available' } };
+      }
+      if (action !== SESSION_AGENT_READINESS_CHILDREN_V1.inventory.action) throw new Error('Unexpected acquisition');
+      return { ok: true, result: { items: [{ agentId, title: 'Native media', installed, version: null, latestVersion: null,
+        update: { supported: false, command: null },
+        signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true },
+        install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+      }] } };
+    },
+  });
+  if (installed) expect(result).toBeNull();
+  else expect(result).toEqual({ result: { type: 'error', code: 'agent_cli_not_ready', agentId, retryable: false } });
+});
+
 it.each(['inventory', 'acquire', 'status'] as const)(
   'preserves the %s Action failure before Session birth', async phase => {
     const failure: ActionExecuteFailure = { ok: false, errorCode: 'machine_target_not_current',

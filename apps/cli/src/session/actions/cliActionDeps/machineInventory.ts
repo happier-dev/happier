@@ -31,9 +31,20 @@ export function createCliMachineInventoryActionDeps(
     inventoryDeps: ReturnType<typeof createCliActionInventoryDeps>;
   }>,
 ): Pick<ActionExecutorDeps, 'machineAgentSignInStart' | 'machineAgentSignInStatus' | 'machineAgentSignInCancel' | 'machineAgentSignInRestart' | 'workflowEventsList'> & {
+  machinePluginProjectionRead(args: Parameters<NonNullable<ActionExecutorDeps['machinePluginProjectionRead']>>[0] & { selection?: 'agents' },
+    context: ActionExecutorContext): ReturnType<NonNullable<ActionExecutorDeps['machinePluginProjectionRead']>>;
   machinesAgentsList(args: Parameters<MachinesAgentsList>[0], context: ActionExecutorContext,
     catalog?: AcpCatalogSnapshotV1, providerIsolation?: MachineInventoryProviderIsolationObserver): ReturnType<MachinesAgentsList>;
 } {
+  const readProjection = async (target: Readonly<{ machineId: string; serverId?: string; selection?: 'agents' }>,
+    transport: Pick<Parameters<CliMachineActionCall>[0], 'context' | 'effectActionId' | 'signal'>) => {
+    const { machineId, serverId, selection } = target;
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(await callMachineAction({
+      machineId, serverId, method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+      request: { machineId, ...(selection ? { selection } : {}) }, ...transport,
+    }));
+    return response.success ? response.data.projection : null;
+  };
   const signInOperations = (target: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal;
     context: ActionExecutorContext; effectActionId: string }>): Parameters<typeof restartMachineAgentSignIn>[1] => {
     const { machineId, serverId, signal, context, effectActionId } = target;
@@ -56,6 +67,16 @@ export function createCliMachineInventoryActionDeps(
     };
   };
   return {
+    // The exact Machine's admitted projection (full read: no named selection carries the Provider family).
+    machinePluginProjectionRead: async (args, context) => {
+      const signal = args.signal ?? context.signal;
+      try {
+        return await readProjection(args, { context, signal });
+      } catch {
+        signal?.throwIfAborted();
+        return null;
+      }
+    },
     machinesAgentsList: async (args, context, catalog, providerIsolation) => {
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== args.machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -77,20 +98,16 @@ export function createCliMachineInventoryActionDeps(
               method: RPC_METHODS.CAPABILITIES_DETECT, request, ...protectedRequest, ...(context.signal ? { signal: context.signal } : {}) });
             return projectMachineAgentsDetectResponse({ agents: [], definitions, response });
           }
-          const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(await callMachineAction({
-            machineId: args.machineId,
-            serverId: args.serverId,
-            method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-            request: { machineId: args.machineId, selection: 'agents' },
+          const roster = await readProjection({ machineId: args.machineId, serverId: args.serverId, selection: 'agents' }, {
             ...protectedRequest,
             ...(context.signal ? { signal: context.signal } : {}),
-          }));
-          if (!roster.success) throw new MachineAgentInventoryUnavailableError(args.agentId ?? 'unknown');
+          });
+          if (!roster) throw new MachineAgentInventoryUnavailableError(args.agentId ?? 'unknown');
           if (providerIsolation) {
-            const requirements = readProjectedAgentDeclarationV1(roster.data.projection, providerIsolation.agentTargetKey)?.providerRequirements;
+            const requirements = readProjectedAgentDeclarationV1(roster, providerIsolation.agentTargetKey)?.providerRequirements;
             if (requirements) providerIsolation.reportSuppression(requirements.authIsolation.suppressConnectedServiceIds);
           }
-          const agents = buildMachineAgentInventoryDescriptors(roster.data.projection)
+          const agents = buildMachineAgentInventoryDescriptors(roster)
             .filter(({ agentId }) => !args.agentId || args.agentId === agentId);
           const binding = context.externalActionExecutionAuthorization?.binding;
           // A foreign root admits Machine facts, not this executor's Account catalog.

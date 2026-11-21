@@ -952,8 +952,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     if (!family.workflowTriggers) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
     return family.workflowTriggers.list(input, context);
   });
-  const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList: inventoryDeps.spawnConnectedServicesList, workflowTriggers });
   const machineInventoryDeps = createCliMachineInventoryActionDeps(params, { callMachineAction, inventoryDeps });
+  const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList: inventoryDeps.spawnConnectedServicesList, workflowTriggers,
+    readMachineAgentProjection: (target, context) => machineInventoryDeps.machinePluginProjectionRead({ ...target, selection: 'agents' }, context),
+  });
   const artifactsDeps = createCliArtifactsActionDeps(params, { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore,
     readWidgetTitles: (...args) => widgetDeps.readWidgetTitles(...args), widgetAccountScope: () => widgetDeps.widgetAccountScope?.() ?? null,
     isWidgetScopeCurrent: () => widgetDeps.isWidgetScopeCurrent() });

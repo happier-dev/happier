@@ -322,11 +322,13 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     });
   });
 
-  it('still rejects a qualified Agent key that no catalog Agent owns', async () => {
-    await expect(normalizeSessionCreateSpawnRequest({
-      directory: '/repo/project',
-      backendTargetKey: 'agent:missing.acme.review/review-bot',
-    }, createDeps())).rejects.toThrow(/--backend does not identify an executable Agent/);
+  it('preserves a qualified Agent target for the receiving Machine when absent locally', async () => {
+    const { spawnRequest } = parseSessionCreateSpawnOptions(['create', '--path', '/repo/project',
+      '--machine-id', 'plugin-machine', '--agent', 'agent:qa.w15-media/native-media']);
+    await expect(normalizeSessionCreateSpawnRequest(spawnRequest, createDeps())).resolves.toMatchObject({
+      input: { executionTarget: { machineId: 'plugin-machine' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'qa.w15-media', localId: 'native-media' } } },
+    });
   });
 
   it('preserves the catalog refusal when the selected Agent is unavailable', async () => {

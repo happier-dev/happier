@@ -15,9 +15,48 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 // HTTP is the boundary. Preparation, context loading, custody and precedence stay real.
 afterEach(() => vi.restoreAllMocks());
+
+it.each([true, false])('uses the receiving Machine catalog to prepare a contributed Agent (listed: %s)', async listed => {
+  const credentials = { token: 'requester-token', encryption: null, credentialProvenance: 'stored_session' as const };
+  const home = { serverId: 'home', serverHttpBaseUrl: 'https://home.test' };
+  const executionTarget = { serverId: 'home', machineId: 'plugin-machine' };
+  const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'qa.w15-media', localId: 'native-media' } };
+  const agentId = 'qa.w15-media/native-media';
+  const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+    protocolVersion: 1,
+    projection: { v: 2, generation: 1, familiesById: {},
+      agentsById: listed ? { [agentId]: { id: agentId, identity: agentTarget.identity, connectedAccounts: [{
+        purpose: 'login', service: { pluginId: 'qa.w15-media', localId: 'media-service' }, materializationKinds: ['environment'],
+      }] } } : {} },
+  });
+  const readMachine = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue(response);
+  const input = { executionTarget, agentTarget, directory: { kind: 'path' as const, path: '/repo' },
+    connectedServicesAuthIntent: { kind: 'native' as const } };
+  vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { homeDefaults: null } });
+  const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home.serverHttpBaseUrl,
+    isCurrent: async () => true, snapshot: { settings: accountSettingsParse({}), settingsVersion: 0,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
+      scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) } });
+  const deps = createCliActionDeps({ credentials, token: credentials.token, mode: 'plain',
+    sessionId: '', ctx: null, serverId: home.serverId, serverHttpBaseUrl: home.serverHttpBaseUrl,
+    serverIdentityId: home.serverId, savedSecretOperationContext: operation });
+  const prepared = deps.prepareSessionSpawnNewInput!(input, { surface: 'cli', authority: 'present_user' });
+  if (listed) await expect(prepared).resolves.toMatchObject({ input: { executionTarget, agentTarget,
+    connectedServices: { v: 2, bindingsByServiceId: { 'qa.w15-media/media-service': { source: 'native' } } } } });
+  else await expect(prepared).rejects.toMatchObject({ message: 'target_unavailable',
+    details: { reason: 'agent_contribution_unavailable' } });
+  expect(readMachine).toHaveBeenCalledWith(expect.objectContaining({
+    machineId: executionTarget.machineId, method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+    request: { machineId: executionTarget.machineId, selection: 'agents' },
+  }));
+});
 
 it('keeps the captured Account snapshot outside requester wire defaults and signed input', async () => {
   const credentials = { token: 'requester-token', encryption: null, credentialProvenance: 'stored_session' as const };
