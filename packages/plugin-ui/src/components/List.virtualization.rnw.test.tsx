@@ -164,6 +164,18 @@ function enterText(input: HTMLInputElement, value: string, isComposing = false):
   input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing }));
 }
 
+// A real keydown bubbles from the focused element, preserving its composed path.
+async function pressSlashFrom(target: HTMLElement | null | undefined): Promise<KeyboardEvent> {
+  if (!target) throw new Error('Expected a focusable slash shortcut fixture.');
+  const event = new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true });
+  await act(async () => {
+    target.focus();
+    expect(document.activeElement).toBe(target);
+    target.dispatchEvent(event);
+  });
+  return event;
+}
+
 describe('virtualized List data ownership', () => {
   it('keeps null and empty selection facts structurally distinct', () => {
     flatListCapture.extraData.length = 0;
@@ -271,10 +283,8 @@ describe('virtualized List data ownership', () => {
     expect(input?.selectionEnd).toBe(4);
 
     const row = mount.container.querySelector<HTMLElement>('[role="option"]');
-    await act(async () => {
-      row?.focus();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
-    });
+    const slash = await pressSlashFrom(row);
+    expect(slash.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(input);
 
     await act(async () => {
@@ -308,20 +318,17 @@ describe('virtualized List data ownership', () => {
     );
     const rows = mount.container.querySelectorAll<HTMLElement>('[role="option"]');
 
-    await act(async () => {
-      rows[0]?.focus();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
-    });
-
-    expect(document.activeElement).toBe(
-      mount.container.querySelector<HTMLInputElement>('[data-testid="search-alpha"]'),
-    );
+    for (const [index, id] of [[0, 'alpha'], [1, 'beta'], [0, 'alpha']] as const) {
+      const slash = await pressSlashFrom(rows[index]);
+      expect(slash.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(
+        mount.container.querySelector<HTMLInputElement>(`[data-testid="search-${id}"]`),
+      );
+    }
 
     const outside = mount.container.querySelector<HTMLButtonElement>('[data-testid="outside-list"]');
-    await act(async () => {
-      outside?.focus();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }));
-    });
+    const outsideSlash = await pressSlashFrom(outside);
+    expect(outsideSlash.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(outside);
     mount.unmount();
   });
