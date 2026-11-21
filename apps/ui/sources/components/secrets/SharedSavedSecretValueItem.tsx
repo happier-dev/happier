@@ -14,6 +14,7 @@ import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 /** A fixed shape: the mask never hints at the value's length. */
@@ -131,7 +132,13 @@ export const SharedSavedSecretValueItem = React.memo(
       : !readable
         ? { node: t('secretsSettings.valueUnavailable'), testID: `${props.testID}-unavailable` }
         : state.status === 'refused'
-          ? { node: t('secretsSettings.valueRefused'), testID: `${props.testID}-refused` }
+          ? {
+              // The Home already answers a deleted and a withdrawn secret with the same resource_not_found;
+              // a code-only record carries no prose, so only the presenter's closed classes (permission,
+              // changed) name themselves and everything else stays generic.
+              node: resolveActionExecutionErrorMessage({ code: state.reason }, t('secretsSettings.valueRefused')),
+              testID: `${props.testID}-refused`,
+            }
           : {
               node: (
                 <SecretValueText

@@ -1064,6 +1064,28 @@ describe('Saved Secret reveal leaf on the Saved Secrets page', () => {
         expect(screen.findByTestId(`saved-secret:${ref}:value-copy`)).toBeNull();
         expect(writeClipboard).not.toHaveBeenCalled();
     });
+
+    // A withdrawn recipient and a deleted secret both answer 404 resource_not_found at the Home's
+    // disclosure admission; 403 forbidden concerns only the caller's own credential or device.
+    it.each([
+        { status: 403, error: 'forbidden', sentence: 'errors.permissionDenied' },
+        { status: 404, error: 'resource_not_found', sentence: 'secretsSettings.valueRefused' },
+        { status: 500, error: 'replica_7_withdrew_member', sentence: 'secretsSettings.valueRefused' },
+    ])('names a refused reveal by its closed class only ($error)', async ({ status, error, sentence }) => {
+        const { screen, scope, entries } = await mount(false);
+        harness.answer(scope.serverId, activityPath, { status, body: { error } });
+        harness.answer(scope.serverId, historyPath, { body: { items: [], nextCursor: null } });
+        const ref = entries[0]!.ref;
+        confirm.mockResolvedValue(true);
+        await openSecretPage(ref);
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-reveal`);
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${ref}:value-refused`)).not.toBeNull());
+        const text = screen.getTextContent();
+        expect(text).toContain(sentence);
+        expect(text).not.toContain(sentence === 'errors.permissionDenied' ? 'secretsSettings.valueRefused' : 'errors.permissionDenied');
+        expect(text).not.toContain('test-secret');
+        if (error !== 'forbidden') expect(text).not.toContain(error);
+    });
 });
 
 /** Opens a secret's own page the way the Credentials rail and the Secrets list do: through the route. */
