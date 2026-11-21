@@ -35,6 +35,7 @@ const { WorkspaceRouteEntry } = await import('./createWorkspaceRouteEntry');
 const { WorkspaceShellWillHostRoutesContext } = await import('./WorkspaceRouteHostingContext');
 const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
 const { storage } = await import('@/sync/domains/state/storage');
+const { saveSessionListWarmCacheEntries } = await import('@/sync/domains/state/warmCachePersistence');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
 const { sync } = await import('@/sync/sync');
 const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -122,6 +123,64 @@ it('admits the first Account workspace after real cold Sync restore reaches data
         expect(storage.getState().settingsVersion).toBe(0);
         expect(requests).toContain('/v1/account/profile');
         expect(requests).toContain('/v2/account/settings');
+    } finally {
+        settings.resolve();
+        await screen.unmount();
+        await (await restoration).dispose();
+    }
+});
+
+it('admits Home with the exact Account’s retained Session rows while Settings refresh is pending', async () => {
+    const accountId = 'warm-shell-restore';
+    const serverId = 'srv_warm_shell_restore';
+    const cachedSessionId = 'warm-home-session';
+    const settingsStarted = createDeferred<void>();
+    const settings = createDeferred<void>();
+    saveSessionListWarmCacheEntries(serverId, accountId, {
+        [cachedSessionId]: {
+            sessionId: cachedSessionId, name: 'Retained Home Session', path: '/repo',
+            metadataVersion: 1, agentStateVersion: 0, updatedAt: 2, createdAt: 1,
+            active: false, activeAt: 2, archivedAt: null,
+        },
+    });
+    const restoration = restoreServerAccountForTest({
+        serverUrl: 'https://warm-shell-restore.example.test', serverIdentityId: serverId, accountId,
+        request: async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v2/account/settings') {
+                settingsStarted.resolve();
+                await settings.promise;
+                return Response.json({ content: null, version: 0 });
+            }
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
+            return createEmptyAccountBootstrapHttpResponse(path, init);
+        },
+    });
+    await settingsStarted.promise;
+    const { credentials } = await restoration;
+    function WorkspaceRead() {
+        const active = useOptionalWorkspaceNavigation(value => value?.active === true);
+        const retained = storage(state => state.sessionListRowsByServerId[serverId]?.[cachedSessionId]?.metadata?.name);
+        return React.createElement('HomeSessionRow', { active, name: retained });
+    }
+    const screen = await renderScreen(<AuthProvider initialCredentials={credentials}>
+        <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider><WorkspaceRead /></WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>
+    </AuthProvider>);
+    try {
+        expect(storage.getState().isDataReady).toBe(false);
+        expect(storage.getState().sessionListRowsByServerId[serverId]?.[cachedSessionId]?.metadata?.name)
+            .toBe('Retained Home Session');
+        await vi.waitFor(() => expect(screen.root.findByType('HomeSessionRow').props).toMatchObject({
+            active: true, name: 'Retained Home Session',
+        }));
+        await act(async () => { settings.resolve(); });
+        await vi.waitFor(() => {
+            expect(storage.getState().isDataReady).toBe(true);
+            expect(screen.root.findByType('HomeSessionRow').props.active).toBe(true);
+        });
     } finally {
         settings.resolve();
         await screen.unmount();

@@ -12,6 +12,7 @@ import {
 
 export function useWorkspaceState(input: Readonly<{
     initialTab: WorkspaceTab;
+    restoreRetainedHome?: boolean;
     windowId?: string;
     /** Native records need a discoverable local layout even before the first explicit intent. */
     persistInitial?: boolean;
@@ -36,7 +37,7 @@ export function useWorkspaceState(input: Readonly<{
         : null;
     const persistedLayout = usePersistentUiStateValue(workspaceLayoutsState, input.persistLayout === false ? null : scopeKey);
     const readLayout = () => parseWorkspaceLayout(persistedLayout);
-    const canRestore = isDataReady && scopeKey !== null;
+    const canRestore = (isDataReady || input.restoreRetainedHome === true) && scopeKey !== null;
     const currentScopeRef = React.useRef(scopeKey);
     currentScopeRef.current = scopeKey;
     const fallbackState = React.useMemo(() => createWorkspaceState(input.initialTab), [input.initialTab]);
