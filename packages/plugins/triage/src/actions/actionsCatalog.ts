@@ -31,7 +31,7 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
 
 /**
- * The two action-catalog Actions: the mounted editor's daemon path to the one
+ * The two portable Account Actions for the mounted editor's
  * `triage.actions` CAS owner.
  *
  * Neither is a second authority. `settings/actions.ts` still mints the action

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
   AgentActionButton,
@@ -34,6 +35,7 @@ import type { TriageAgentEntryV1 } from '../detail/storyRail.js';
 import { useTriageEntrySessionStartChoices } from './useEntrySessionStart.js';
 import { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, type TriageTaskDraftV1 } from '../../actions/tasksProtocol.js';
 import { TriageMountedUiResultV1Schema } from '../../actions/mountedUiProtocol.js';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 
 /**
  * The Triage common header's action controls (`core/SESSIONS.md` §1,
@@ -75,7 +77,9 @@ export type TriageEntryActionRequestV1 = Readonly<{
  * then — and a press that silently does nothing is the failure `core/CORPUS.md`
  * §4.2 names for Refresh.
  */
-export type TriageEntryActionRefusalV1 = Readonly<{ kind: 'missing' | 'unavailable' }>;
+export type TriageEntryActionRefusalV1 =
+  | Readonly<{ kind: 'missing' }>
+  | Readonly<{ kind: 'unavailable'; failure?: PluginError }>;
 
 export type TriageReviewPreparationV1 = 'ready' | 'pending' | 'unsupported';
 
@@ -623,11 +627,17 @@ export function TriageEntryActionControls(
           label="That action is no longer available for this entry."
         />
       ) : (
-        <Status
-          tone="warning"
-          labelKey="plugins.triage.surface.actions.startUnavailable"
-          label="Happier cannot reach your account right now, so this action cannot start. Try again in a moment."
-        />
+        <Stack gap="small">
+          <Status
+            tone="warning"
+            labelKey="plugins.triage.surface.actions.startUnavailable"
+            label="Happier cannot reach your account right now, so this action cannot start. Try again in a moment."
+          />
+          {refusal.failure === undefined ? null : (
+            <ActionFailureDetails code={refusal.failure.code} details={refusal.failure.data}
+              requestId={readPluginErrorRequestIdV1(refusal.failure)} showReason={false} />
+          )}
+        </Stack>
       )}
       {blockedInRow ? preparationReason : null}
       {/* Why the source's write cannot run, said quietly beside the disabled control's row, never a dead button. The

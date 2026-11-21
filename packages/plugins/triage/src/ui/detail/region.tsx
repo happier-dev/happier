@@ -426,7 +426,10 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         [workflowSubject],
       );
       // Said beside the control that was pressed, never swallowed.
-      if (executable.status !== 'resolved') return { kind: executable.status };
+      if (executable.status === 'missing') return { kind: 'missing' as const };
+      if (executable.status === 'unavailable') {
+        return { kind: 'unavailable' as const, failure: executable.failure };
+      }
       // The person's launch for this press (the split's Start now / Add instructions…) over the record's own delivery.
       const action = request.launchMode === undefined ? executable.action
         : applyTriageActionLaunchModeV1(executable.action, request.launchMode);

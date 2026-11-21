@@ -34,7 +34,7 @@ describe('an open action draft revision', () => {
     it('requires an explicit reapply after the authoritative catalog moves', () => {
         expect(isTriageActionDraftRevisionStaleV1('4', '4')).toBe(false);
         expect(isTriageActionDraftRevisionStaleV1('4', '5')).toBe(true);
-        expect(isTriageActionDraftRevisionStaleV1('4', null)).toBe(true);
+        expect(isTriageActionDraftRevisionStaleV1('4', null)).toBe(false);
     });
 });
 

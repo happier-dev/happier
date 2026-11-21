@@ -60,12 +60,12 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
                 : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input: actionInput,
                     context: { ...params.context, externalActionTarget: pinnedTarget }, signal: params.signal });
             if (receiver && typeof receiver === 'object') {
-                throw new PluginError({ code: receiver.errorCode, message: receiver.error, data: receiver.details });
+                throw new PluginError({ code: receiver.errorCode, message: receiver.error, details: receiver.details });
             }
             const target = pinnedTarget ?? (receiver ? { kind: 'machine' as const, machineId: receiver } : undefined);
             if (!target) {
                 const failure = actionTargetUnavailable('own_reachable_machine_absent');
-                throw new PluginError({ code: failure.errorCode, message: failure.error, data: failure.details });
+                throw new PluginError({ code: failure.errorCode, message: failure.error, details: failure.details });
             }
             // A declaration supplier can show an Account read without hosting its
             // executable. Bind a different receiver by Action identity, not by the

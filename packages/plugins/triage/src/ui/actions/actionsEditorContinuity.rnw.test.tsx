@@ -35,7 +35,7 @@ async function mountEditor() {
   const pending = new Promise<void>((resolve) => { release = resolve; });
   const controls = createPluginUiActionControlTestHost(async ({ input }) => {
     await pending;
-    if (settlement === 'fail') return { ok: false, errorCode: 'unavailable', error: 'Account transport unavailable' };
+    if (settlement === 'fail') return { ok: false, errorCode: 'target_unavailable', error: 'Account transport unavailable' };
     return { ok: true, result: await administerTriageAction(TriageAdministerActionInputV1Schema.parse(input), deps) };
   });
   let fixture!: PluginUiTestkit;
@@ -246,5 +246,12 @@ describe('action editor draft settlement', () => {
     expect(nameField()?.value).toBe('  Newer unsaved name  ');
     expect((await editor.read()).actions.find((action) => action.actionId === 'ask')?.label).toBe('Ask');
     expect(hostControls.get(editor.fixture)?.presentation('Save')?.disabled).toBe(true);
+    const staleNotice = await editor.fixture.queryByText('Actions changed while this draft was open. Reload or reapply it before saving.');
+    expect(staleNotice !== undefined).toBe(outcome === 'conflict');
+    if (outcome === 'fail') {
+      await press(editor.fixture, 'Retry');
+      expect(nameField()?.value).toBe('  Newer unsaved name  ');
+      expect(hostControls.get(editor.fixture)?.presentation('Save')?.disabled).toBe(false);
+    }
   });
 });

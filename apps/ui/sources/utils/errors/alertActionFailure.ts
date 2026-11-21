@@ -1,13 +1,13 @@
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { ActionRefusalDiagnosticV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 export type ActionFailureContext = Readonly<Record<string, string | number | boolean | null>>;
 
 /**
- * The only fields of a failure's details that may reach the screen: closed reason vocabulary. A field
- * outside this list, a nested structure and any value that is not a code or a flag (producer prose,
- * paths, tokens, approval payloads) stay out of Technical details.
+ * Technical details admit safe reference fields and the protocol's closed refusal reason.
+ * Arbitrary producer prose, paths, tokens and nested payloads stay private.
  */
 const SAFE_FAILURE_DETAIL_KEYS = ['reason', 'reasonCode', 'status', 'retryable', 'busySource', 'errorCode', 'kind'] as const;
 const SAFE_FAILURE_CODE = /^[a-z][a-z0-9_]*$/;
@@ -22,6 +22,8 @@ export function readSafeFailureDetails(details: unknown): ActionFailureContext {
         if (typeof value === 'boolean' || (typeof value === 'string'
             && (SAFE_FAILURE_CODE.test(value) || SAFE_RPC_FAILURE_CODES.has(value)))) safe[key] = value;
     }
+    const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(record.diagnostic);
+    if (diagnostic.success) safe.reason = diagnostic.data.reason;
     return safe;
 }
 

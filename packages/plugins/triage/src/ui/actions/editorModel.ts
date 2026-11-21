@@ -33,12 +33,12 @@ export const TRIAGE_EDITOR_TARGET_KINDS_V1 = TRIAGE_ACTION_TARGET_KINDS_V1
   .filter(isTriageActionTargetOfferableV1);
 export type TriageEditorTargetKindV1 = (typeof TRIAGE_EDITOR_TARGET_KINDS_V1)[number];
 
-/** A whole-record draft may only be saved against the catalog it was opened from. */
+/** Only an authoritative revision can establish that the draft's catalog changed. */
 export function isTriageActionDraftRevisionStaleV1(
   baseRevision: string,
   currentRevision: string | null,
 ): boolean {
-  return currentRevision === null || currentRevision !== baseRevision;
+  return currentRevision !== null && currentRevision !== baseRevision;
 }
 
 export type TriagePromptInvocationEditorOptionV1 = Readonly<{

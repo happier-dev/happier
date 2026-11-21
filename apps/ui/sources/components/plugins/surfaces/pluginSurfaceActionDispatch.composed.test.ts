@@ -2619,6 +2619,55 @@ describe('Board task controls through the contributed Action front door', () => 
 });
 
 describe('Account Action placement through the executable dispatcher', () => {
+    it('reads and persists the Triage Action catalog in a browser Account with zero Machines', async () => {
+        const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { readTriageActionsForSurface, administerTriageAction } =
+            await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+        const { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1: readId, TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1: saveId,
+            TriageAdministerActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
+        const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+        const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const lifetime = clientAccountLifetime();
+        const previous = getStorage().getState();
+        const normalized = ingestPluginManifestV2(PLUGIN_MANIFEST);
+        if (!normalized.ok) throw new Error('Triage manifest must ingest');
+        const kv = createTestkitAccountKv();
+        const catalog = kv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+        const execute = (localId: string, input: unknown, executeLocal: () => unknown) => {
+            const declaration = normalized.manifest.contributes.actions.find(action => action.id === localId);
+            if (declaration?.execution.target !== 'account') throw new Error('Expected a portable Triage catalog');
+            return executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope,
+                action: { pluginId: PLUGIN_MANIFEST.id, localId }, execution: declaration.execution, input,
+                context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId,
+                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+                signal: new AbortController().signal, executeLocal,
+            });
+        };
+        const read = () => execute(readId, { v: 1 }, () => readTriageActionsForSurface({ v: 1 }, { catalog }));
+        const draft = TriageAdministerActionInputV1Schema.parse({ v: 1, kind: 'create', expectedRevision: 'absent',
+            label: 'Disposable review', enabled: true, appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
+        });
+        accountBrowserRelay.enabled = true;
+        try {
+            await publishMachineInventoryForTest(lifetime.scope, []);
+            await expect(read()).resolves.toMatchObject({ availability: 'absent', revision: 'absent' });
+            await expect(execute(saveId, draft, () => administerTriageAction(draft, {
+                catalog, mintActionId: () => 'disposable-review',
+            }))).resolves.toMatchObject({ status: 'applied' });
+            await expect(read()).resolves.toMatchObject({ availability: 'parsed', actions: expect.arrayContaining([
+                expect.objectContaining({ label: 'Disposable review' }),
+            ]) });
+        } finally {
+            accountBrowserRelay.enabled = false;
+            lifetime.retire();
+            getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+                machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it('opens native Review proposals across the strict plugin result boundary', async () => {
         const comment = ReviewCommentV1Schema.parse({
             v: 1, id: 'proposal-1', accountId: 'account-1', projectId: undefined,
@@ -3181,8 +3230,15 @@ describe('Account Action placement through the executable dispatcher', () => {
                     ...(state === 'explicit' || state === 'explicit-offline' || state === 'guest-explicit-read'
                         ? { externalActionTarget: { kind: 'machine' as const, machineId: state === 'explicit' ? 'usable' : 'fixture' } } : {}) },
                 signal: new AbortController().signal, executeLocal: () => { throw new Error('No local fallback on browser'); } });
-            if (state === 'none') await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });
-            else if (state === 'explicit-offline') await expect(result).rejects.toMatchObject({ code: 'machine_unreachable' });
+            if (state === 'none') {
+                const { readSafeFailureDetails } = await import('@/utils/errors/alertActionFailure');
+                const refusal = await Promise.resolve(result).catch((error: unknown) => error);
+                if (!(refusal instanceof PluginError)) throw new Error('Expected an Account placement refusal');
+                expect(refusal).toMatchObject({ code: 'target_unavailable' });
+                expect(readSafeFailureDetails(refusal.details)).toEqual({
+                    reason: 'plugin_action_declaration_absent',
+                });
+            } else if (state === 'explicit-offline') await expect(result).rejects.toMatchObject({ code: 'machine_unreachable' });
             else if (state === 'guest-explicit-read' || state === 'guest-write') await expect(result).rejects.toMatchObject({ code: artifactFailure.errorCode });
             else await expect(result).resolves.toEqual({ selected: 'usable' });
             expect(effects).toBe(state === 'none' || state === 'explicit-offline' || state === 'guest-explicit-read' || state === 'guest-write' ? 0 : 1);

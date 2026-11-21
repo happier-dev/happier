@@ -96,6 +96,9 @@ export type TriageAccountActionDeclarations = {
 } & typeof INTERNAL_TASK_ACTIONS_V1 & typeof REVIEW_ACTIONS_V1;
 export type TriageAccountActions = NonNullable<DefinePluginInput<TriageAccountActionDeclarations>['actions']>;
 
+// The catalog uses the invoking UI's Account storage, including in a browser with no Machine.
+const TRIAGE_ACTION_CATALOG_EXECUTION_V1 = { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true } as const;
+
 /** Account registrations shared by the full declaration and portable activation. */
 export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1]: {
@@ -557,7 +560,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageReadActionsActionInputV1Schema,
         resultSchema: TriageReadActionsActionResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: TRIAGE_ACTION_CATALOG_EXECUTION_V1,
         run: createTriageReadActionsActionHandler(),
       },
 [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
@@ -577,7 +580,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageAdministerActionInputV1Schema,
         resultSchema: TriageAdministerActionResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: TRIAGE_ACTION_CATALOG_EXECUTION_V1,
         run: createTriageAdministerActionActionHandler(),
       }
 } as const;

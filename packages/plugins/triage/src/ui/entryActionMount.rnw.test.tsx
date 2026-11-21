@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { Button } from '@happier-dev/plugin-ui';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createPluginUiActionControlTestHost, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
@@ -292,6 +293,7 @@ function createHarness(options: Readonly<{
     linkedSessions?: readonly Readonly<{ sessionId: string; displayTitle: string; updatedAtMs: number }>[];
     /** The durable detail read answers `unavailable`, so the detail never becomes ready. */
     detailUnavailable?: boolean;
+    readCatalogFailure?: () => PluginError | undefined;
     comparisonRead?: () => Promise<unknown>;
     comparisonOpen?: () => Promise<unknown>;
     sessionBoundary?: Pick<TriageEntrySessionDepsV1, 'execute' | 'prepareReviewWorkspace'>;
@@ -433,6 +435,8 @@ function createHarness(options: Readonly<{
         // the shipped seed. A seed is never exposed merely because this read
         // failed; `null` remains available to tests that need that outage.
         if (action === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 && actions !== null) {
+            const failure = options.readCatalogFailure?.();
+            if (failure !== undefined) throw failure;
             return { v: 1, availability: 'parsed', actions, revision: 'revision-1' };
         }
         if (action === TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
@@ -1791,6 +1795,36 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.startRequests).toHaveLength(1);
         expect(harness.startRequests[0]?.workspaceMode).toBe('repository');
     });
+
+    it.each(['Review', 'Add instructions…'] as const)('shows the Account catalog refusal after pressing %s', async (gesture) => {
+        const requestId = '8ebb31cb-d5b7-4054-973b-9f494892f368';
+        let refusal: PluginError | undefined;
+        const harness = createHarness({ formalReviewReady: true, readCatalogFailure: () => refusal });
+        harness.setActions([{
+            actionId: 'formal-review', label: 'Formal review', enabled: true, appliesTo: ['pullRequest'],
+            profileId: 'profile-1', workspaceMode: 'pull_request',
+            target: gesture === 'Review'
+                ? { kind: 'reviewStart', promptInvocationId: 'review-prompt' }
+                : { kind: 'agent', promptInvocationId: 'review-prompt', delivery: 'send' },
+        }]);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+        refusal = new PluginError({ code: 'target_unavailable', details: { requestId } });
+        if (gesture === 'Review') {
+            await pressAction(shell, 'Formal review');
+        } else {
+            await pressAction(shell, 'Formal review options');
+            await pressMenuItem(shell, gesture);
+        }
+        await expect(shell.getByText('Happier cannot reach your account right now, so this action cannot start. Try again in a moment.'))
+            .resolves.toBeDefined();
+        await pressAction(shell, 'Details');
+        await expect(shell.getByText('target_unavailable')).resolves.toBeDefined();
+        await expect(shell.getByText(requestId)).resolves.toBeDefined();
+        expect(newSessionSeeds).toEqual([]);
+        expect(harness.startRequests).toEqual([]);
+        expect(harness.reviewEngineListRequests).toEqual([]);
+    }, 60_000);
 
     it('starts a resolved formal review directly and carries its admitted selected-PR preparation into the review chooser', async () => {
         const harness = createHarness({ formalReviewReady: true });

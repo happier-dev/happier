@@ -53,6 +53,11 @@ export type TriageActionsNoticeV1 = Readonly<{
   message: string;
 }>;
 
+type TriageActionResolutionV1 =
+  | Readonly<{ status: 'resolved'; action: TriageActionV1 }>
+  | Readonly<{ status: 'missing' }>
+  | Readonly<{ status: 'unavailable'; failure?: PluginError }>;
+
 export type TriageMountedActionsV1 = Readonly<{
   /** The authoritative catalog, or an empty unreadable projection until it answers. */
   read: TriageActionsReadV1;
@@ -86,10 +91,7 @@ export type TriageMountedActionsV1 = Readonly<{
   resolveForExecution(
     actionId: string,
     workflowSubjects: readonly TriageSourceWorkflowSubjectV1[],
-  ): Promise<
-    | Readonly<{ status: 'resolved'; action: TriageActionV1 }>
-    | Readonly<{ status: 'missing' | 'unavailable' }>
-  >;
+  ): Promise<TriageActionResolutionV1>;
   /**
    * Run one explicit create/update/delete/reorder.
    *
@@ -132,7 +134,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
     () => durable.actions
       ? createDirectTriageActionsTransport(durable.actions, hostApi, contributed)
       : createActionTriageActionsTransport(hostApi),
-    // The daemon reads contributions itself; a changed set still re-reads through either transport.
+    // The Account Action reads contributions itself; a changed set still re-reads through either transport.
     [durable.actions, hostApi, contributed],
   );
   const [read, setRead] = useState<TriageActionsReadV1>(TRIAGE_UNREAD_ACTIONS_V1);
@@ -184,10 +186,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
   const resolveForExecution = useCallback(async (
     actionId: string,
     workflowSubjects: readonly TriageSourceWorkflowSubjectV1[],
-  ): Promise<
-    | Readonly<{ status: 'resolved'; action: TriageActionV1 }>
-    | Readonly<{ status: 'missing' | 'unavailable' }>
-  > => {
+  ): Promise<TriageActionResolutionV1> => {
     if (readiness.pending || readiness.ready === false) return { status: 'unavailable' };
     const controller = new AbortController();
     try {
@@ -225,7 +224,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
       setLoaded(false);
       setUnavailableReason(text('plugins.triage.surface.actions.unavailable', UNAVAILABLE_REASON));
       await presentTriageMountedUiActionFailure(hostApi, error, text);
-      return { status: 'unavailable' };
+      return { status: 'unavailable', ...(isPluginError(error) ? { failure: error } : {}) };
     }
   }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 

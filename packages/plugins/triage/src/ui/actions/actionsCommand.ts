@@ -31,7 +31,7 @@ import type { TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.
  * directly drives `actions/actionsCatalog.ts` over its own Account KV
  * scope, so the configured actions stay readable and editable with no daemon
  * reachable — a configured action is Account state, not provider data. A mount
- * that cannot invokes the same two published Actions through a daemon. The module owns no state and makes no decision:
+ * that cannot invokes the same two published Account Actions. The module owns no state and makes no decision:
  * `settings/actions.ts` still mints the action id, validates every bound and
  * closed vocabulary, decides the conflict verdict and refuses a reorder that is
  * not an exact permutation. This is transport plus the one conversion a caller
@@ -66,13 +66,13 @@ export type TriageActionsTransportV1 = Readonly<{
 
 /**
  * The direct transport: this mount's own Account KV catalog, handed to the
- * same projection the daemon handler calls. It restates no bound, no CAS rule
+ * same projection the Account Action handler calls. It restates no bound, no CAS rule
  * and no id-minting decision.
  */
 export function createDirectTriageActionsTransport(
   catalog: TriageCatalogStoreV1,
   host: Pick<PluginUiHostApi, 'admitAction'>,
-  /** What plugins contribute in this mount's admitted snapshot; the daemon transport reads its own. */
+  /** What plugins contribute in this mount's admitted snapshot; the Account Action reads its own. */
   contributed: TriageActionsDepsV1['contributed'] = [],
 ): TriageActionsTransportV1 {
   return Object.freeze({
@@ -94,7 +94,7 @@ export function createDirectTriageActionsTransport(
   });
 }
 
-/** The daemon transport: the same owner, reached through the published Actions. */
+/** The same catalog owner, reached through the published Account Actions. */
 export function createActionTriageActionsTransport(
   host: TriageActionsHostV1,
 ): TriageActionsTransportV1 {
