@@ -1,5 +1,7 @@
 import fastify from 'fastify';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
@@ -768,6 +770,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   machineRole?: 'use' | 'manage';
   ownHttpResponse?: Readonly<{ status: number; body: string }>;
   localDaemonExecution?: ActionExecuteResult;
+  existingReviewSession?: boolean;
   retireOwnAction?: boolean;
   retireAccountSecurity?: boolean;
   retireSessionAccess?: boolean;
@@ -809,6 +812,10 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     options.onRequestPath?.(request.url);
     options.onRequestAuthorization?.(request.headers.authorization);
     const respond = (value: unknown) => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
+    if (options.existingReviewSession && request.url?.startsWith('/v2/sessions/existing-session')) {
+      return respond({ session: { ...createSessionNotificationContextFixture('existing-session'), active: true,
+        encryptionMode: 'plain', metadata: JSON.stringify(createTestMetadata({ machineId: 'alice-machine' })) } });
+    }
     if (request.url === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
       return respond(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
     }
@@ -1512,6 +1519,62 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         expect(sentAuthorizations.length).toBeGreaterThan(0);
         expect(sentAuthorizations.every(value => value === `Bearer ${credentials.token}`)).toBe(true);
       } finally { Object.assign(configuration, originalConfiguration); }
+    });
+  });
+
+  it.each([
+    { actionId: 'review.start', attached: false, mode: 'plain' },
+    { actionId: 'review.start', attached: false, mode: 'e2ee' },
+    { actionId: 'review.start', attached: true, mode: 'plain' },
+    { actionId: 'review.walkthrough', attached: false, mode: 'plain' },
+    { actionId: 'review.explain_findings', attached: false, mode: 'plain' },
+    { actionId: 'review.new_round', attached: false, mode: 'plain' },
+  ] as const)('admits original Project Review $actionId through Home ($mode, attached=$attached)', async ({ actionId, attached, mode }) => {
+    await withTempDir('happier-own-review-requester-', async taskDir => {
+      const previousServersDir = configuration.serversDir;
+      configuration.serversDir = join(taskDir, 'servers');
+      try {
+        const events: string[] = [];
+        const target = await home(mode, events, { custodianAccountId: 'bob', originalOwnAction: actionId,
+          existingReviewSession: attached,
+          localDaemon: true, localDaemonExecution: { ok: false, errorCode: 'project_requester_credentials_unavailable',
+            details: { executionRunStart: { runCreation: 'noRunCreated' } } } });
+        const serverDir = join(configuration.serversDir, 'home');
+        await mkdir(serverDir, { recursive: true });
+        await writeFile(join(serverDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid,
+          httpPort: Number(new URL(target.url).port), startedAt: Date.now(), startedWithCliVersion: 'test',
+          machineId: 'alice-machine', accountId: 'bob', controlToken: 'test-daemon-control' }));
+        const executor = createCliActionExecutorFromCredentials({
+          credentials: { token: token(), encryption: mode === 'plain' ? null
+            : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' },
+          externalActionClient: true, serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+          machineId: 'alice-machine',
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+        });
+        const scope = attached ? { sessionId: 'existing-session' } : { target: { kind: 'detached' } };
+        // Captured from the loaded Project refusal; only its private scratch path changes.
+        const start = { ...scope, cwd: taskDir, reviewers: [{ kind: 'engine', engineId: 'claude' }],
+          instructions: 'Read-only QA: inspect total.cjs. total(2, 3) must be 5. Report concrete findings; do not edit files.',
+          scope: 'repository', changeType: 'uncommitted', base: { kind: 'none' }, engines: {},
+          permissionMode: 'read_only', then: 'report', notifyParentOnCompletion: false,
+          reviewCommentAuthorIntent: 'open', childSelection: 'agentDefault' };
+        const input = getActionSpec(actionId).inputSchema.parse(actionId === 'review.start' ? start
+          : actionId === 'review.walkthrough' ? { ...scope, runId: 'review-run', comparisonId: 'comparison' }
+            : actionId === 'review.explain_findings' ? { ...scope, runId: 'review-run', cwd: taskDir,
+              resultId: 'result', expectedRevision: 1, findingIds: [{ runId: 'review-run', findingId: 'finding' }] }
+              : { ...scope, runId: 'review-run', fresh: true });
+        const result = await executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1' });
+        if (attached) {
+          expect(result).toMatchObject({ errorCode: 'project_requester_credentials_unavailable' });
+          expect(events).toEqual(['local-daemon']);
+          return;
+        }
+        expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
+        const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+        expect(received.envelope.v).toBe(mode === 'e2ee' ? 2 : 1);
+        expect(received.executionAuthorization?.binding).toMatchObject({ actionId, accountId: 'bob', custodianAccountId: 'bob' });
+        expect(events).toEqual(['home-authorized', 'dispatch']);
+      } finally { configuration.serversDir = previousServersDir; }
     });
   });
 
