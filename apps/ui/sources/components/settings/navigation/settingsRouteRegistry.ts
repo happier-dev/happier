@@ -1,6 +1,9 @@
+import * as React from 'react';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 
 import type { TranslationKeyNoParams } from '@/text';
+
+import { SettingsBreadcrumbHeaderTitle } from './SettingsBreadcrumbHeaderTitle';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -11,14 +14,29 @@ export type SettingsStackScreenDefinition = Readonly<{
     options: NativeStackNavigationOptions;
 }>;
 
-function getSettingsBreadcrumbTitle(
+export type SettingsBreadcrumb = Readonly<{
+    title: string;
+    /** Route to open when the crumb is pressed; absent for the current screen and for routes that need params. */
+    href?: string;
+}>;
+
+function getSettingsBreadcrumbHref(routeName: string, scope: SettingsStackScope): string | undefined {
+    if (routeName.includes('[')) return undefined;
+    const base = scope === 'prompts' ? '/settings/prompts' : '/settings';
+    const path = routeName === 'index' ? '' : routeName.replace(/\/index$/, '');
+    return path ? `${base}/${path}` : base;
+}
+
+export function getSettingsBreadcrumbs(
     t: Translate,
     name: string,
     definitions: readonly SettingsRouteChromeDefinition[],
     scope: SettingsStackScope,
-): string {
-    const titleKeys: TranslationKeyNoParams[] = ['settings.title'];
-    if (scope === 'prompts') titleKeys.push('settings.prompts');
+): readonly SettingsBreadcrumb[] {
+    const crumbs: { titleKey: TranslationKeyNoParams; href?: string }[] = [
+        { titleKey: 'settings.title', href: '/settings' },
+    ];
+    if (scope === 'prompts') crumbs.push({ titleKey: 'settings.prompts', href: '/settings/prompts' });
     const segments = name.split('/');
 
     for (let index = 0; index < segments.length; index += 1) {
@@ -29,11 +47,16 @@ function getSettingsBreadcrumbTitle(
                 ? routePrefix
                 : `${routePrefix}/index`;
         const titleKey = definitions.find((definition) => definition.name === routeName)?.titleKey;
-        if (titleKey) titleKeys.push(titleKey);
+        if (titleKey) crumbs.push({ titleKey, href: getSettingsBreadcrumbHref(routeName, scope) });
     }
 
-    const titles = titleKeys.map(t).filter((title, index, allTitles) => index === 0 || title !== allTitles[index - 1]);
-    return titles.join(' < ');
+    const titled = crumbs.map((crumb) => ({ title: t(crumb.titleKey), href: crumb.href }));
+    // A parent that shares its title with the next level collapses into one crumb.
+    const deduped = titled.filter((crumb, index) => index === 0 || crumb.title !== titled[index - 1]!.title);
+    // The last crumb is the current screen: show it, but never as a link.
+    return deduped.map((crumb, index) => (
+        index === deduped.length - 1 ? { title: crumb.title } : crumb
+    ));
 }
 
 type SettingsRouteChromeDefinition = Readonly<{
@@ -145,7 +168,8 @@ export function getSettingsStackScreenDefinitions(
             headerBackTitle: t(definition.headerBackTitleKey ?? 'common.back'),
         };
         if (definition.titleKey) {
-            options.headerTitle = getSettingsBreadcrumbTitle(t, definition.name, definitions, scope);
+            const breadcrumbs = getSettingsBreadcrumbs(t, definition.name, definitions, scope);
+            options.headerTitle = ({ tintColor }) => React.createElement(SettingsBreadcrumbHeaderTitle, { breadcrumbs, tintColor });
         }
         return {
             name: definition.name,
