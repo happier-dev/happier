@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSessionProviderUsageGauge } from '@/components/sessions/usage/useSessionProviderUsage';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
 import {
   WidgetFrame,
   type WidgetFrameStyle,
@@ -21,8 +22,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 /**
  * The Usage section (lab crows B): the provider quota the composer's instrument shows for this Session
  * (one gauge owner, `useSessionProviderUsageGauge`), and how full the context is (the Session usage owner).
- * The quota row is absent without a quota snapshot (a plain Account, no connected service); a Session with
- * neither fact has no Usage section.
+ * The quota row is absent only when there is no quota to read (a plain Account, no connected service): a failed
+ * first read says the quota is unavailable, and a failed refresh keeps the last good value with its as-of. A
+ * Session with neither fact has no Usage section. Recovery is the owner's (the next matching update or reopening).
  */
 export function UsageGlance(
   props: Readonly<{
@@ -37,13 +39,13 @@ export function UsageGlance(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const gauge = useSessionProviderUsageGauge({
+  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf } = useSessionProviderUsageGauge({
     session: props.session,
     serverId: props.serverId ?? props.session.serverId ?? '',
   });
   const usage = useSessionContextUsageFacts(props.session, props.serverId);
   const contextPercent = usage?.contextPercent ?? null;
-  if (!gauge && contextPercent === null) return null;
+  if (!gauge && !quotaReadFailed && contextPercent === null) return null;
   const glyph = (name: React.ComponentProps<typeof Icon>['name']) => (
     <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
   );
@@ -56,6 +58,10 @@ export function UsageGlance(
       mark="speedometer"
       title={t('sessionCompanion.sections.usage')}
       menu={props.menu}
+      {...(quotaRefreshFailedAsOf !== null ? {
+        meta: <SurfaceAsOfLabel at={quotaRefreshFailedAsOf} testID={`${props.testID}.asOf`} />,
+        footer: { kind: 'refreshFailed' as const, reason: t('connectedServices.errors.quotaRefreshFailed') },
+      } : {})}
       body={{
         kind: 'content',
         children: (
@@ -81,6 +87,15 @@ export function UsageGlance(
                           ? stylesheet.critical
                           : stylesheet.warning,
                     })}
+              />
+            ) : quotaReadFailed ? (
+              <Item
+                testID={`${props.testID}.quota`}
+                density="compact"
+                mode="info"
+                icon={glyph('speedometer')}
+                title={readSessionAgentLabel(props.session) ?? t('sessionCompanion.sections.usage')}
+                detail={t('common.unavailable')}
               />
             ) : null}
             {contextPercent !== null ? (

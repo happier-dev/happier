@@ -77,7 +77,7 @@ describe('useSessionProviderUsageGauge', () => {
     const session = connectedCodexSession();
     const serverId = getActiveServerSnapshot().serverId;
     const hook = await renderHook(
-      () => useSessionProviderUsageGauge({ session, serverId }),
+      () => useSessionProviderUsageGauge({ session, serverId }).gauge,
       { wrapper: Wrapper },
     );
     await flushHookEffects({ cycles: 12, turns: 12 });
@@ -100,7 +100,7 @@ describe('useSessionProviderUsageGauge', () => {
     };
     const serverId = getActiveServerSnapshot().serverId;
     const hook = await renderHook(
-      () => useSessionProviderUsageGauge({ session: legacySession, serverId }),
+      () => useSessionProviderUsageGauge({ session: legacySession, serverId }).gauge,
       { wrapper: Wrapper },
     );
     await flushHookEffects({ cycles: 12, turns: 12 });
@@ -118,7 +118,7 @@ describe('useSessionProviderUsageGauge', () => {
     const session = connectedCodexSession();
     const serverId = getActiveServerSnapshot().serverId;
     const hook = await renderHook(
-      () => useSessionProviderUsageGauge({ session, serverId }),
+      () => useSessionProviderUsageGauge({ session, serverId }).gauge,
       { wrapper: Wrapper },
     );
     await flushHookEffects({ cycles: 12, turns: 12 });
@@ -136,7 +136,7 @@ describe('useSessionProviderUsageGauge', () => {
       connectedAccounts: [{ purpose: 'model_upstream', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } }] } as const;
     const hook = await renderHook(() => ({
       composer: useSessionProviderUsage(composerInput).gauge,
-      companion: useSessionProviderUsageGauge({ session, serverId }),
+      companion: useSessionProviderUsageGauge({ session, serverId }).gauge,
     }), { wrapper: Wrapper });
     await flushHookEffects({ cycles: 12, turns: 12 });
     expect(hook.getCurrent().companion).toMatchObject({ serviceId: 'openai-codex', remainingPct: 60 });

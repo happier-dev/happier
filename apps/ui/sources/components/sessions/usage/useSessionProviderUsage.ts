@@ -369,9 +369,17 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
     && (quotaProfileRef
       ? quotaProfileKey !== null && quotaSnapshots.errorsByKey[quotaProfileKey] != null
       : accountUsageRecordIds.some(id => accountUsageStateByRecordId[id] === 'failed'));
+  // The gauge keeps the last good value after a failed read; this is when that value was read.
+  const quotaRefreshFailedAsOf = gauge === null ? null
+    : quotaProfileRef
+      ? quotaProfileKey !== null && quotaSnapshots.errorsByKey[quotaProfileKey] != null
+        ? gaugeQuotaSnapshot?.fetchedAt ?? null : null
+      : accountUsageSnapshot && accountUsageStateByRecordId[accountUsageSnapshot.recordId] === 'error_last_known_good'
+        ? accountUsageSnapshot.fetchedAtMs : null;
   return {
     gauge,
     quotaReadFailed,
+    quotaRefreshFailedAsOf,
     /** The released scalar profile identity, its snapshot-store key, and its override-aware snapshot. */
     quotaProfileIdentity,
     quotaProfileKey,
@@ -387,6 +395,9 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
 
 export type SessionProviderUsage = ReturnType<typeof useSessionProviderUsage>;
 
+/** The gauge with its read outcome: a failed first read is never the same as no quota. */
+export type SessionProviderUsageGaugeRead = Pick<SessionProviderUsage, 'gauge' | 'quotaReadFailed' | 'quotaRefreshFailedAsOf'>;
+
 /**
  * The Session's provider usage gauge for surfaces outside its composer (the
  * Session Companion). It resolves the composer's Agent and model through the
@@ -398,7 +409,7 @@ export function useSessionProviderUsageGauge(
     session: Session;
     serverId: string;
   }>,
-): ConnectedServiceQuotaGaugeViewModel | null {
+): SessionProviderUsageGaugeRead {
   const { session, serverId } = input;
   const ownerMetadata = readSessionOwnerMetadataView(session);
   const composerSubject = React.useMemo(() => {
@@ -422,10 +433,11 @@ export function useSessionProviderUsageGauge(
     readSessionModelSelectionForComposer(ownerMetadata, session.composerOptionsInput)?.ref.modelId ??
     composerOptionsInput?.modelSelectionIntentV1?.selection?.modelId ??
     composerSubject.modelMode;
-  return useSessionProviderUsage({
+  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf } = useSessionProviderUsage({
     session,
     serverId,
     agentId: composerSubject.agentId,
     activeModelId,
-  }).gauge;
+  });
+  return { gauge, quotaReadFailed, quotaRefreshFailedAsOf };
 }
