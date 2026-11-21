@@ -85,10 +85,14 @@ export function MachineServiceWatchMenu(props: Readonly<{
       }}
       footer={(
         <View style={styles.footer}>
-          {presentation && failure ? <SurfaceStateCard testID="machine-services-watch-outcome" kind="error" size="line"
-            title={presentation.reason} reason={outcome ?? undefined} diagnosticCode={failure.errorCode}
-            diagnosticDetail={presentation.technicalDetails.filter(detail => detail.key !== 'code')
-              .map(detail => `${detail.label}: ${detail.value}`).join('\n')} /> :
+          {presentation && failure ? (
+            <View style={styles.note}>
+              <SurfaceStateCard testID="machine-services-watch-outcome" kind="error" size="line"
+                title={presentation.reason} reason={outcome ?? undefined} diagnosticCode={failure.errorCode}
+                diagnosticDetail={presentation.technicalDetails.filter(detail => detail.key !== 'code')
+                  .map(detail => `${detail.label}: ${detail.value}`).join('\n')} />
+            </View>
+          ) :
             <Text variant="meta" style={[styles.note, { color: outcome ? theme.colors.state.warning.textForeground : theme.colors.text.secondary }]}
               testID={outcome ? 'machine-services-watch-outcome' : undefined}>
               {outcome ?? t('machineServices.watch.note')}

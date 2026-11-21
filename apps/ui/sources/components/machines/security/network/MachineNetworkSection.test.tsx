@@ -130,6 +130,20 @@ async function render(
 }
 
 describe('Machine → Network page', () => {
+  it('offers the native recovery when SSH cannot be observed after firewall drift', async () => {
+    const remedy = 'Bring the live firewall table and its saved rules back into agreement, then inspect Network again.';
+    const facts: MachineNetworkFacts = { posture: null, selections: [], observation: MachineReachabilityObservationV1Schema.parse({
+      ...observation,
+      management: { ...observation.management, publicSsh: 'unknown' },
+      nativeFirewall: { status: 'unavailable', requiredFact: 'firewallTransition', remedy },
+    }) };
+    const read = { kind: 'settled' } as const;
+    const screen = await render({ ...model(read, true), ...presentMachineNetwork({ facts, read, reachable: true }) }, true);
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-native-unavailable' })?.props.reason)
+      .toBe(remedy);
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-close-public-ssh' })).toBeFalsy();
+  });
+
   it.each([false, true])('shows the protected Caddy recovery in failed Network review with an apply plan=%s', async applying => {
     const remedy = 'Restore native container inventory before reviewing Network again.';
     const failure = { ok: false as const, ...ActionOperationFailureV1Schema.parse({

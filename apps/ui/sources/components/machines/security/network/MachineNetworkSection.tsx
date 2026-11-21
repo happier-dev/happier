@@ -318,6 +318,20 @@ function NetworkFreshness(
       </ItemGroup>
     );
   }
+  const firewall = network.facts.observation?.nativeFirewall;
+  if (firewall?.status === 'unavailable' && firewall.remedy) {
+    return (
+      <ItemGroup surface="none">
+        <SurfaceFreshnessLine
+          testID="machine-network-native-unavailable"
+          tone="warning"
+          reason={firewall.remedy}
+          busy={network.refreshing}
+          action={network.state !== 'needsManage' && props.online === true ? props.failureAction : undefined}
+        />
+      </ItemGroup>
+    );
+  }
   return null;
 }
 

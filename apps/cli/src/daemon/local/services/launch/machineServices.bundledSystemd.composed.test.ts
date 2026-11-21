@@ -75,9 +75,13 @@ describe('bundled systemd Machine services', () => {
                     read: () => ({ enabled: true, status: { kind: 'applying', phase: 'runtime_replacement' }, workspaceRoots: [] }),
                     prepareLaunch: async () => { throw new Error('A native Machine service cannot prepare Agent material'); },
                 } } });
+            // The daemon sees systemctl, but no Docker executable on its PATH.
+            vi.stubEnv('PATH', root);
             const discovery = MachineServicesDiscoveryResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.discovery',
-                input: { ...target, adapter: { pluginId: 'happier.machine.services', localId: 'systemd' } }, context }));
-            expect(discovery).toMatchObject({ kind: 'snapshot', failures: [], candidates: [
+                input: target, context }));
+            expect(discovery).toMatchObject({ kind: 'snapshot', failures: [
+                { adapter: { pluginId: 'happier.machine.services', localId: 'compose' }, code: 'compose_docker_tool_unavailable' },
+            ], candidates: [
                 { adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'user/worker.service', observation: { phase: 'running' } },
                 { nativeResourceId: 'system/system-worker.service' },
             ] });

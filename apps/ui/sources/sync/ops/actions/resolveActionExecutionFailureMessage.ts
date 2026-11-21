@@ -195,6 +195,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');
     if (code === 'resource_in_use') return t('secrets.catalog.inUseTitle');
     if (code === 'role_policy_unenforceable') return t('errors.rolePolicyUnenforceable');
+    if (code === 'compose_docker_tool_unavailable') return t('errors.machineComposeDockerToolUnavailable');
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');

@@ -1128,7 +1128,9 @@ describe('MachineServicesTab rendered production wiring', () => {
         const candidate = (name: string, unit: string) => ({ candidateId: `candidate-${name}`, revision: `revision-${name}`, name,
             adapter, nativeResourceId: unit, observation: { phase: 'running', readiness: 'not_reported', endpoint: null } });
         const watches: unknown[] = [];
-        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: [],
+        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: initiallyEmpty ? [
+            { adapter: { pluginId: 'happier.machine.services', localId: 'compose' }, code: 'compose_docker_tool_unavailable' },
+        ] : [],
             candidates: [candidate('fail2ban', 'fail2ban.service'), candidate('redis', 'redis.service'),
                 candidate('unpicked', 'unpicked.service'), candidate('postgres', 'postgresql.service')] }));
         answerAction('machines.services.watch', envelope => {
@@ -1142,8 +1144,9 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(discoveryReads()).toHaveLength(0);
         await screen.pressByTestIdAsync('machine-services-watch');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-watch-candidate:candidate-fail2ban')).not.toBeNull());
-        // What is already watched stays visible but can't be picked again.
-        if (!initiallyEmpty) expect(screen.getTextContent()).toContain(t('machineServices.watch.alreadyWatched'));
+        // A missing optional discovery tool leaves the listed systemd services selectable.
+        if (initiallyEmpty) expect(screen.getTextContent()).toContain(t('errors.machineComposeDockerToolUnavailable'));
+        else expect(screen.getTextContent()).toContain(t('machineServices.watch.alreadyWatched'));
         // Nothing picked yet: the confirm reads "Watch", never a zero count.
         expect(screen.getTextContent()).not.toContain(t('machineServices.watch.confirm', { count: 0 }));
         expect(screen.getTextContent()).toContain(t('machineServices.watch.confirmNone'));

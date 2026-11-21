@@ -7928,6 +7928,7 @@ localTailscale: {
     machineManagedCliUnavailable: "このマシンに Happier をインストールまたは更新してから、ドメインの追加をもう一度試してください。",
     machineNativeProtocolInvalid: "このマシンの権限を昇格したヘルパーから、有効な応答が返されませんでした。管理対象の Happier CLI を更新または修復してから、もう一度お試しください。",
     machineNativeCheckUnavailable: "ネイティブの前提条件を確認できませんでした。このマシンのセットアップ診断を確認し、利用できない前提条件を解決してから、もう一度お試しください。",
+    machineComposeDockerToolUnavailable: "Compose サービスを一覧表示するには、このマシンに Docker をインストールし、Happier デーモンの PATH から実行できるようにしてください。",
     machineNativeCheckUnsupported: "このマシンではネイティブの前提条件がサポートされていません。セットアップ診断を確認し、対応する構成を選んでから、もう一度お試しください。",
     machineNativeEffectFailed: "権限を昇格したネイティブ操作に失敗しました。このマシンのセットアップ診断を確認し、報告された問題を解決してから、もう一度お試しください。",
     permissionDeniedReadOnlyMode: "読み取り専用モードにより拒否されました（書き込み操作は拒否されます）。",

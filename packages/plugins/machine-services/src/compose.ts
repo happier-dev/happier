@@ -206,7 +206,13 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
                 instance: { adapter, nativeResourceId: JSON.stringify([engineId, project]) },
                 name: project, observation: observation(members),
             })), failures: [] };
-        } catch (error) { return failure(error, options); }
+        } catch (error) {
+            const result = failure(error, options);
+            if (result.code === 'plugin_exec_system_tool_unavailable') {
+                return { kind: 'unavailable', code: 'compose_docker_tool_unavailable' };
+            }
+            return result;
+        }
     },
     async inspect(instance, options, context) {
         if (!context) return unknown;
