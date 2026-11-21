@@ -4069,6 +4069,7 @@ function SessionViewLoaded({
             // A connected login is named by its service; native or runtime-limit usage belongs to
             // the composer's own provider, whatever service keys it.
             providerDisplayName: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
+                && gaugeSource.sourceKind !== 'native_runtime_evidence'
                 && connectedServiceQuotaProfileRef
                 && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
                 ? resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId)
