@@ -57,7 +57,7 @@ import { sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/librar
 import { RegistrySourcesRecordV1Schema } from '@happier-dev/protocol/registries';
 import { prepareConnectedAccountCatalogMutationInContext, readConnectedAccountCatalogInContext } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { renderHook, renderScreen, standardCleanup, createDeferred, waitForTestEvent } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup, createDeferred, waitForTestEvent, flushHookEffects } from '@/dev/testkit';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { AccountSettingsV2UpdateRequestSchema, AccountSettingsV2HistoryListResponseSchema,
     AccountSettingsV2HistoryDetailResponseSchema, AccountSettingsV2HistoryMutationRequestSchema,
@@ -625,6 +625,53 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.writes).toEqual([]);
     });
 
+    it.each(['account_mode_mismatch', 'recipient_mode_unsupported'])('presents a personal create mode refusal through the mounted editor (%s)', async code => {
+        const account = await openAccount();
+        account.setEffect(() => Response.json({ error: code }, { status: 409 }));
+        const screen = await renderScreen(React.createElement(PrivateSavedSecretCreateHarness, { scope: account.scope, onCreated: vi.fn() }));
+        screen.changeTextByTestId('saved-secret-create-name', 'Synthetic key');
+        screen.changeTextByTestId('saved-secret-create-value', 'synthetic');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('secrets.catalog.status.recipient_mode_unsupported'));
+    });
+
+    it.each(['account_mode_mismatch', 'recipient_mode_unsupported'])('keeps the closed create refusal in standalone and bulk results (%s)', async code => {
+        const account = await openAccount();
+        account.setEffect(() => Response.json({ error: code }, { status: 409 }));
+        const { createSavedSecretResourcesWithCatalogMutationInContext } = await import('./savedSecretResourceOperations');
+        const standalone = await createSavedSecretResource({ scope: account.scope, name: 'Synthetic', kind: 'token', value: 'synthetic',
+            accountGrants: [], teamGrants: [], groupGrants: [] });
+        expect(standalone).toMatchObject({ ok: false, failure: { code } });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        try {
+            const bulk = await createSavedSecretResourcesWithCatalogMutationInContext(context, {
+                scope: account.scope, referenceScope: 'resources', resources: [{ id: 'synthetic-create', name: 'Synthetic', kind: 'token',
+                    encryptedValue: { _isSecretValue: true, value: 'synthetic' }, createdAt: 1, updatedAt: 1 }],
+            });
+            expect(bulk).toMatchObject({ ok: false, failure: { code } });
+        } finally { context.dispose(); }
+    });
+
+    it('keeps the closed create refusal through the full transaction', async () => {
+        const account = await openAccount();
+        const draft = { id: 'refused-create', name: 'Synthetic', kind: 'token' as const,
+            encryptedValue: { _isSecretValue: true as const, value: 'synthetic' }, createdAt: 1, updatedAt: 1 };
+        const record = ProfileRecordV1Schema.parse({ v: 1, id: 'refused-profile', enabled: true, promptStack: [],
+            definition: { kind: 'legacy', profile: { id: 'refused-profile', name: 'Profile', environmentVariables: [], createdAt: 1, updatedAt: 1 } },
+            secretBindings: {} });
+        account.rows.push({ id: record.id, revision: 2, content: { t: 'plain', v: record } });
+        account.setEffect(() => Response.json({ error: 'account_mode_mismatch' }, { status: 409 }));
+        const { createSavedSecretResourcesWithCatalogMutation } = await import('./savedSecretResourceOperations');
+        const result = await createSavedSecretResourcesWithCatalogMutation({ scope: account.scope, referenceScope: 'full', resources: [draft],
+            mutateCatalogs: ({ rawSettings, catalogs, resourceRefs }) => ({ settings: rawSettings,
+                catalogs: { ...catalogs, profileRecords: catalogs.profileRecords.map(current => ({ ...current,
+                    secretBindings: { TOKEN: resourceRefs.get(draft.id)! } })) } }) });
+        expect(account.writes.map(write => write.path)).toEqual([SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']]);
+        expect(result).toMatchObject({ ok: false, failure: { code: 'account_mode_mismatch' } });
+        expect(account.resources.size).toBe(0);
+    });
+
     it.each(['plain', 'e2ee'] as const)('bulk vault links prepare external resources in one Home transaction: %s', async mode => {
         const account = await openAccount(mode);
         const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
@@ -874,6 +921,72 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(reads).toBe(1);
         expect(account.writes).toEqual([]);
         await hook.unmount();
+    });
+
+    // These public UI ports are the Action boundary; native list selection remains real below Socket transport.
+    it.each(['link', 'export'] as const)('presents vault repair and typed outer refusals in the %s surface', async surface => {
+        const account = await openAccount();
+        const row = account.materialRow('presented-secret', 'plain', sealSavedSecretResourceStoredContentV1({
+            resourceId: 'presented-secret', mode: 'plain', content: { v: 1, name: 'Synthetic key', kind: 'token', value: 'synthetic' },
+        }), 3);
+        const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        replacePluginAccountAvailabilityProjection({ scope: account.scope, snapshot: {
+            availabilityCursor: 1, intentReads: [], snapshots: [], materializations: [{
+                serverIdentityId: account.scope.serverId, machineId: 'vault-machine', materializationId: 'presented-vault',
+                pluginId: 'happier.secret-source.onepassword', version: '0.0.0', sourceClass: 'localPath', portableRelease: false,
+                uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+                declaredManifest: PluginManifestV2LoadSchema.parse({ schemaVersion: 2, id: 'happier.secret-source.onepassword', version: '0.0.0', displayName: 'Vault',
+                    engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: { secretSources: [
+                        { id: 'onepassword', title: 'Test vault', capabilities: { list: true, store: true } },
+                    ] } }),
+            }],
+        } });
+        if (!vaultSocket) throw new Error('Expected Socket boundary');
+        vaultRpc = async event => event === SOCKET_RPC_EVENTS.CALL ? { ok: true, result: { ok: true, fields: [{
+            account: 'vault-account', reference: 'synthetic-reference', vault: { id: 'vault', name: 'Private' },
+            item: { id: 'item', title: 'Synthetic' }, field: { id: 'password', title: 'Password', kind: 'password' },
+        }] } } : { v: 1, ok: true, admittedSessionIds: [] };
+        configureVaultRpc(vaultSocket);
+        let repair = true;
+        const failed = async () => ({ kind: 'failed' as const, failure: { kind: 'unknown' as const, retryable: false,
+            code: repair ? 'authentication_required' : 'forbidden',
+            details: repair ? { repair: 'unlock', message: 'private-vault-diagnostic' } : { message: 'private-vault-diagnostic' },
+        } });
+        const { useSavedSecretSources } = await import('@/components/secrets/vault/useSavedSecretSources');
+        const sourceHook = await renderHook(() => useSavedSecretSources(account.scope, true));
+        const source = sourceHook.getCurrent()[0];
+        if (!source) throw new Error('Expected installed vault source');
+        let screen: Awaited<ReturnType<typeof renderScreen>>;
+        if (surface === 'link') {
+            screen = await renderScreen(React.createElement(SavedSecretCreateEditor, { scope: account.scope,
+                sharedAvailable: false, onCreatePersonal: async () => null, onLinkVault: failed,
+                approvalPending: false, requestApproval: vi.fn(), onCancel: vi.fn(), onCreated: vi.fn() }));
+            await screen.pressByTestIdAsync('saved-secret-create-origin:happier.secret-source.onepassword/onepassword');
+            await screen.pressByTestIdAsync('saved-secret-create-vault-mode:existing');
+        } else {
+            const { Modal } = await import('@/modal');
+            const { presentSavedSecretVaultExportSheet } = await import('@/components/secrets/vault/SavedSecretVaultExportSheet');
+            const show = vi.spyOn(Modal, 'show');
+            presentSavedSecretVaultExportSheet({ scope: account.scope, source, candidates: [row.entry], initialRef: row.entry.ref,
+                exportResources: failed, requestApproval: vi.fn(), onSettled: vi.fn() });
+            const modal = show.mock.calls.at(-1)?.[0];
+            if (!modal) throw new Error('Expected export modal');
+            screen = await renderScreen(React.createElement(modal.component, { ...modal.props, onClose: vi.fn() }));
+            show.mockRestore();
+        }
+        const prefix = surface === 'link' ? 'saved-secret-create-vault' : 'saved-secret-export-vault';
+        screen.changeTextByTestId(`${prefix}-account`, 'vault-account');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync(`${prefix}-show`);
+        const submit = surface === 'link' ? 'saved-secret-create-submit' : 'saved-secret-export:confirm';
+        await vi.waitFor(() => expect(screen.findByTestId(submit)?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(submit);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('secretsSettings.vaultUnlock'));
+        repair = false;
+        await screen.pressByTestIdAsync(submit);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.permissionDenied'));
+        expect(screen.getTextContent()).not.toContain('private-vault-diagnostic');
+        await sourceHook.unmount();
     });
 
     it.each(['Store-in', 'export'] as const)('composed vault choice carries the selected Machine into %s', async operation => {
@@ -1175,7 +1288,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.resources.size).toBe(1);
     });
 
-    it.each(['with-revisions', 'without-revisions'] as const)('compound catalog save creates every draft credential in one transaction despite unrelated Settings drift (%s)', async receiptShape => {
+    it.each(['with-revisions', 'without-revisions', 'mode-refusal'] as const)('compound catalog save creates every draft credential in one transaction despite unrelated Settings drift (%s)', async receiptShape => {
         const account = await openAccount('plain', { home: `-compound-${receiptShape}`, raw: { userNote: 'initial' } });
         expect(getMcpServerCatalogSnapshot(account.scope).revision).not.toBe(11);
         const destination = '/v1/account/entity-rows/mcp';
@@ -1198,6 +1311,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         account.setEffect((path, body) => {
             if (path !== SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']) throw new Error('Expected one composite transaction');
             const input = SharedSavedSecretPromoteInputV1Schema.parse(body);
+            if (receiptShape === 'mode-refusal') return Response.json({ error: 'account_mode_mismatch' }, { status: 409 });
             if (input.expectedSettingsVersion !== undefined && input.expectedSettingsVersion !== account.settingsVersion) {
                 return Response.json({ error: 'settings_conflict' }, { status: 409 });
             }
@@ -1221,6 +1335,12 @@ describe('Saved Secret operations through their real Account and Action owners',
                 account.settingsVersion += 1;
                 return { catalogs: { mcp: remapMcpServerCatalogSavedSecretReferencesV1(candidate, Object.fromEntries(resourceRefs)) } };
             } });
+        if (receiptShape === 'mode-refusal') {
+            expect(account.writes).toHaveLength(1);
+            expect(result).toMatchObject({ ok: false, failure: { code: 'account_mode_mismatch' } });
+            expect(account.resources.size).toBe(0);
+            return;
+        }
         expect(result).toMatchObject({ ok: true });
         expect(account.writes.map(write => write.path)).toEqual([SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']]);
         const input = SharedSavedSecretPromoteInputV1Schema.parse(account.writes[0]?.body);

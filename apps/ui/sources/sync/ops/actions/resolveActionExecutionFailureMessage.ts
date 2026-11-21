@@ -91,7 +91,8 @@ export function describeMachineNativeFailureCode(code: unknown, details?: unknow
     }
 }
 
-type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string }>;
+type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string; closedCodesOnly?: boolean;
+    serviceCommand?: Readonly<{ service: string; machine: string }> }>;
 
 /** The Machine itself did not answer: its daemon is offline or its socket is gone. */
 export function isMachineUnreachableFailureCode(code: unknown): boolean {
@@ -118,6 +119,11 @@ export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
 function readFailureMessage(value: unknown, options?: FailurePresentationOptions): string | null {
     const record = asRecord(value);
     if (!record) return null;
+    if (options?.closedCodesOnly) return readFailureFallbackMessage({
+        errorCode: record.errorCode ?? record.code ?? record.rpcErrorCode,
+        details: record.details,
+        failureCause: record.failureCause,
+    }, options);
     if (record.type === 'error') {
         const spawn = readSessionSpawnNewFailure(record);
         return spawn ? resolveSessionSpawnNewResultFailureMessage(spawn) : null;
@@ -160,6 +166,19 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (cause && !('kind' in cause) && cause.errorCode !== null && cause.errorCode !== code) {
         const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
         if (causeMessage) return causeMessage;
+    }
+    if (options?.serviceCommand) {
+        const { service, machine } = options.serviceCommand;
+        switch (code) {
+            case 'service_admission_unavailable':
+            case 'service_operation_unavailable':
+            case 'service_selection_invalid':
+            case 'compose_service_unavailable':
+            case 'unsupported_action': return t('machineServices.command.reason.unavailable', { service, machine });
+            case 'secret_redaction_unavailable':
+            case 'secret_redaction_redeploy_required': return t('machineServices.command.reason.redeploy', { service });
+            case 'action_account_scope_changed': return t('machineServices.command.reason.account');
+        }
     }
     if (isMachineUnreachableFailureCode(code)) {
         return t('errors.daemonUnavailableBody');
@@ -232,6 +251,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
     if (sessionInputLabel) return t(sessionInputLabel);
     if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
+    if (code === 'account_mode_mismatch' || code === 'recipient_mode_unsupported') return t('secrets.catalog.status.recipient_mode_unsupported');
     if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
@@ -242,6 +262,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         const availability = MachineAvailabilityDiagnosticV1Schema.safeParse(details?.diagnostic ?? details).data;
         if (availability?.reason === 'machine_offline') return t('errors.machineNotAnswering');
     }
+    if (options?.closedCodesOnly) return null;
     // An error text that only repeats its code ("target_unavailable") is not a sentence: the caller's fallback speaks.
     const error = typeof record.error === 'string' ? record.error.trim() : '';
     if (error.length > 0 && error !== code) return error;
@@ -292,7 +313,7 @@ export function resolveActionExecutionFailureMessage(
 
 
 /** The existing combined reason/recovery copy, with the disclosure's safe reference fields. */
-export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, fallbackMessage = t('common.requestFailed')): PluginUiActionFailurePresentationV1 {
+export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, fallbackMessage = t('common.requestFailed'), options?: FailurePresentationOptions): PluginUiActionFailurePresentationV1 {
     const technicalDetails = [
         { key: 'code', label: t('workflows.run.technical.failureCode'), value: failure.errorCode },
         ...(failure.requestId ? [{ key: 'requestId', label: t('browserDiagnostics.host.devtools.fields.requestId'), value: failure.requestId }] : []),
@@ -305,7 +326,7 @@ export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, 
             ...(failure.failureCause.httpStatus != null ? [{ key: 'httpStatus', label: t('approvals.failureTechnicalLabels.httpStatus'), value: String(failure.failureCause.httpStatus) }] : []),
         ] : []),
     ];
-    return { reason: resolveActionExecutionFailureMessage(failure, fallbackMessage) ?? fallbackMessage,
+    return { reason: resolveActionExecutionFailureMessage(failure, fallbackMessage, options) ?? fallbackMessage,
         // The presenter currently owns one combined message; never infer a second instruction from code.
         nextStep: null, technicalDetails };
 }

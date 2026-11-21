@@ -98,7 +98,8 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
         expect(result).toEqual({ protocolVersion: 1, exposure });
         expect(creates).toHaveLength(1);
     });
-    it.each(['status', 'create', 'revoke', 'copy'] as const)('preserves typed disabled policy through the real RPC error envelope for %s', async operation => {
+    // SEC-BATCH-1120E Part B, SV-C17 narrows noncreate disclosures while preserving create policy refusals.
+    it.each(['status', 'create', 'revoke', 'copy'] as const)('keeps disabled policy detail on create and a generic refusal on other controls (%s)', async operation => {
         const refusal = { isAxiosError: true, response: { status: 403,
             data: { error: 'public_preview_denied', reasonCode: 'public_preview_disabled' } } };
         const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
@@ -112,21 +113,49 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                 previewId: binding.previewId, mode: 'secret_link', ttlMs: 60_000 })
                 : operation === 'revoke' ? routes.revokeExposure(binding) : routes.copyUrl(binding));
         await expect(rpc.handleRequest({ method: 'machine:public-status', params: {} })).resolves.toMatchObject({
-            errorCode: 'public_preview_disabled', error: 'public_preview_disabled',
+            errorCode: operation === 'create' ? 'public_preview_disabled' : RPC_ERROR_CODES.FORBIDDEN,
+            error: operation === 'create' ? 'public_preview_disabled' : 'public_preview_denied',
         });
     });
 
+    // SEC-BATCH-1120E Part B, SV-C17: only these control failure causes may reach the requester.
     it.each([
-        { data: { error: 'public_preview_denied', reasonCode: 'session_not_authorized' }, code: 'session_not_authorized' },
-        { data: { error: 'public_preview_denied', reasonCode: 'machine_not_authorized' }, code: RPC_ERROR_CODES.FORBIDDEN },
-    ])('preserves status authorization refusal as a coded failure: $code', async ({ data, code }) => {
+        { status: 404, data: { error: 'public_preview_not_found', reasonCode: 'exposure_not_found' } },
+        { status: 403, data: { error: 'public_preview_denied', reasonCode: 'audit_sink_unavailable' } },
+        { status: 503, data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } },
+    ])('preserves the approved public control cause through RPC: $data.reasonCode ($status)', async ({ status, data }) => {
         const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
-            async post() { throw { isAxiosError: true, response: { status: 403, data } }; },
-            async delete() { return { data: {} }; },
+            async post() { throw { isAxiosError: true, response: { status, data } }; },
+            async delete() { throw { isAxiosError: true, response: { status, data } }; },
         } });
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
-        rpc.registerHandler('public-status', async () => routes.getStatus({ machineId: 'machine_1' }));
-        await expect(rpc.handleRequest({ method: 'machine:public-status', params: {} })).resolves.toMatchObject({ errorCode: code });
+        const binding = { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' };
+        rpc.registerHandler('public-control', async () => status === 404 ? routes.revokeExposure(binding) : routes.getStatus(binding));
+        await expect(rpc.handleRequest({ method: 'machine:public-control', params: {} })).resolves.toMatchObject({
+            errorCode: data.reasonCode, error: data.reasonCode,
+        });
+    });
+
+    it.each(['session_not_authorized', 'preview_binding_mismatch', 'exposure_binding_mismatch', 'machine_not_authorized'] as const)(
+        'does not disclose %s to a public control requester', async reasonCode => {
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
+            async post() { throw { isAxiosError: true, response: { status: 403,
+                data: { error: 'public_preview_denied', reasonCode } } }; },
+            async delete() { throw { isAxiosError: true, response: { status: 403,
+                data: { error: 'public_preview_denied', reasonCode } } }; },
+        } });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+        const binding = { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', exposureId: 'public_preview_1' };
+        rpc.registerHandler('public-status', async () => routes.getStatus(binding));
+        rpc.registerHandler('public-create', async () => routes.createExposure({ ...binding, mode: 'secret_link', ttlMs: 60_000 }));
+        rpc.registerHandler('public-revoke', async () => routes.revokeExposure(binding));
+        for (const method of ['public-status', 'public-create', 'public-revoke']) {
+            const response = await rpc.handleRequest({ method: `machine:${method}`, params: {} });
+            expect(response).toMatchObject({
+                errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'public_preview_denied',
+            });
+            expect(JSON.stringify(response)).not.toContain(reasonCode);
+        }
     });
 
     it('does not mislabel an untyped missing endpoint as feature disabled', async () => {

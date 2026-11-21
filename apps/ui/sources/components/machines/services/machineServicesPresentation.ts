@@ -15,8 +15,8 @@ export function machineServiceReadFreshness(input: Readonly<{
   if (input.online === false) return { reason: input.offlineReason, retryable: false };
   if (!input.error) return null;
   return {
-    reason: resolveActionExecutionErrorMessage(input.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true }),
-    retryable: !describeActionExecutionPrerequisite(input.error.code),
+    reason: resolveActionExecutionErrorMessage(input.error, t('machineDetailPage.security.staleFailed'), { safeToRetry: true, closedCodesOnly: true }),
+    retryable: input.error.retryable !== false && !describeActionExecutionPrerequisite(input.error.code),
   };
 }
 
@@ -427,5 +427,5 @@ export function machineServiceLogReadFailureReason(error: unknown, machine: stri
   if (isMachineUnreachableFailureCode(record?.code ?? record?.errorCode)) {
     return t('machineServices.logs.error.machineNotAnswering', { machine });
   }
-  return resolveActionExecutionErrorMessage(error, '', { safeToRetry: true }) || undefined;
+  return resolveActionExecutionErrorMessage(error, '', { safeToRetry: true, closedCodesOnly: true }) || undefined;
 }

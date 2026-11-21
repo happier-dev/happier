@@ -8,6 +8,8 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { machineServiceWatchChoices } from './machineServicesPresentation';
@@ -50,9 +52,13 @@ export function MachineServiceWatchMenu(props: Readonly<{
   const { watch } = watcher;
   const confirm = () => fireAndForget(watch(chosen).then((done) => { if (done) onOpenChange(false); }),
     { tag: 'MachineServices.watch' });
-  const empty = watcher.discovery.kind === 'listed' ? t('machineServices.watch.none', { machine: props.machineName })
-    : watcher.discovery.kind === 'unavailable' ? t('machineServices.watch.unavailable', { machine: props.machineName })
-      : t('machineServices.watch.reading', { machine: props.machineName });
+  const discoveryFailure = watcher.discovery.kind === 'unavailable' ? watcher.discovery.failure
+    : watcher.discovery.kind === 'listed' && watcher.discovery.failures[0]
+      ? { ok: false as const, errorCode: watcher.discovery.failures[0].code } : null;
+  const failure = watcher.outcome?.kind === 'failed' ? watcher.outcome.failure : discoveryFailure;
+  const presentation = failure ? presentActionExecutionFailure(failure, undefined, { closedCodesOnly: true }) : null;
+  const empty = discoveryFailure ? presentActionExecutionFailure(discoveryFailure, undefined, { closedCodesOnly: true }).reason : watcher.discovery.kind === 'listed' ? t('machineServices.watch.none', { machine: props.machineName })
+    : t('machineServices.watch.reading', { machine: props.machineName });
   const outcome = watcher.outcome?.kind === 'failed' ? t('machineServices.watch.failed', { count: watcher.outcome.count })
     : watcher.outcome?.kind === 'approval' ? t('machineServices.watch.approval') : null;
   return (
@@ -79,10 +85,14 @@ export function MachineServiceWatchMenu(props: Readonly<{
       }}
       footer={(
         <View style={styles.footer}>
-          <Text variant="meta" style={[styles.note, { color: outcome ? theme.colors.state.warning.textForeground : theme.colors.text.secondary }]}
-            testID={outcome ? 'machine-services-watch-outcome' : undefined}>
-            {outcome ?? t('machineServices.watch.note')}
-          </Text>
+          {presentation && failure ? <SurfaceStateCard testID="machine-services-watch-outcome" kind="error" size="line"
+            title={presentation.reason} reason={outcome ?? undefined} diagnosticCode={failure.errorCode}
+            diagnosticDetail={presentation.technicalDetails.filter(detail => detail.key !== 'code')
+              .map(detail => `${detail.label}: ${detail.value}`).join('\n')} /> :
+            <Text variant="meta" style={[styles.note, { color: outcome ? theme.colors.state.warning.textForeground : theme.colors.text.secondary }]}
+              testID={outcome ? 'machine-services-watch-outcome' : undefined}>
+              {outcome ?? t('machineServices.watch.note')}
+            </Text>}
           <RoundButton
             testID="machine-services-watch-confirm"
             size="small"

@@ -3480,7 +3480,7 @@ const artifactsBrowserTranslations = { de: {
             accountTitle: 'Der Artefaktspeicher ist voll',
             documentTitle: 'Zu groß zum Speichern',
             accountBody: ({ used, limit }) => `${used} von ${limit} belegt, Versionen eingeschlossen. Lösche oder exportiere Artefakte, die du nicht mehr brauchst, um neue zu speichern.`,
-            documentBody: ({ size, limit }) => `Das wären ${size}; jedes Artefakt fasst bis zu ${limit}. Deine Änderungen sind noch da.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Das wären ${size}; jedes Artefakt fasst bis zu ${limit}.${editsPreserved === false ? '' : ' Deine Änderungen sind noch da.'}`,
         },
         conflict: {
             title: 'Während der Bearbeitung geändert',

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { ArtifactHtmlPreview } from '@/sync/domains/artifacts/artifactTypes';
+import { HappyError } from '@/utils/errors/errors';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -88,6 +89,21 @@ describe('ArtifactHtmlBody', () => {
         expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
         expect(screen.findByTestId('artifact:htmlPreviewFailed')).not.toBeNull();
         await screen.unmount();
+    });
+
+    it('presents the authenticated read cause while keeping frame failures distinct', async () => {
+        setPlatform('web');
+        const screen = await renderScreen(<ArtifactHtmlBody {...props} readPreview={async () => {
+            throw new HappyError('Foreign diagnostic prose', false, { code: 'artifact_access_forbidden' });
+        }} />);
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
+        expect(screen.getTextContent()).not.toContain('Foreign diagnostic prose');
+        await screen.update(<ArtifactHtmlBody {...props} readPreview={async () => preview} />);
+        const frame = await loadPreviewGuest(screen);
+        await act(async () => { frame.props.onError(); });
+        expect(screen.getTextContent()).toContain('artifacts.browser.loadFailedBody');
+        expect(screen.getTextContent()).not.toContain('errors.permissionDenied');
     });
 
     it('cancels obsolete previews when content, version or selection changes and ignores late results', async () => {

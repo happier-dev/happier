@@ -6,6 +6,22 @@ import { t } from '@/text';
 
 import type { ArtifactQuota } from './artifactActionsClient';
 
+/** The existing budget explanation, shared by Artifact notices and owner-only Session Delete failures. */
+export function describeArtifactQuota(
+  quota: ArtifactQuota,
+  options?: Readonly<{ editsPreserved?: boolean }>,
+): Readonly<{ title: string; description: string }> {
+  const used = formatHappierDataBytes(quota.usedBytes, { kind: 'storage' });
+  const limit = formatHappierDataBytes(quota.limitBytes, { kind: 'storage' });
+  return quota.budget === 'document'
+    ? { title: t('artifacts.browser.quota.documentTitle'),
+      description: t('artifacts.browser.quota.documentBody', { size: used, limit,
+        ...(options?.editsPreserved === undefined ? {} : { editsPreserved: options.editsPreserved }) }) }
+    : { title: t('artifacts.browser.quota.accountTitle'),
+      description: t('artifacts.browser.quota.accountBody', { used, limit }) };
+}
+
+
 /**
  * `quota_exceeded`, said once above the content it blocks (lab A8 / A8p): which budget, the size and
  * the cap, and how to recover. The browser shows the full Account budget; the editor shows the refusal.
@@ -18,29 +34,14 @@ export function ArtifactQuotaNotice(
     placement?: 'page-section' | 'inline';
   }>,
 ): React.ReactElement {
-  const used = formatHappierDataBytes(props.quota.usedBytes, {
-    kind: 'storage',
-  });
-  const limit = formatHappierDataBytes(props.quota.limitBytes, {
-    kind: 'storage',
-  });
-  const document = props.quota.budget === 'document';
+  const description = describeArtifactQuota(props.quota);
   return (
     <AttentionBanner
       testID={props.testID}
       tone="warning"
       placement={props.placement}
       announce="alert"
-      title={
-        document
-          ? t('artifacts.browser.quota.documentTitle')
-          : t('artifacts.browser.quota.accountTitle')
-      }
-      description={
-        document
-          ? t('artifacts.browser.quota.documentBody', { size: used, limit })
-          : t('artifacts.browser.quota.accountBody', { used, limit })
-      }
+      {...description}
     />
   );
 }

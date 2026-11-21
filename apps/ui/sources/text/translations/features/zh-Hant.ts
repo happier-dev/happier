@@ -3371,7 +3371,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             accountTitle: '成品儲存空間已滿',
             documentTitle: '太大，無法儲存',
             accountBody: ({ used, limit }) => `已用 ${used} / ${limit}（含版本）。刪除或匯出不再需要的成品即可儲存新的成品。`,
-            documentBody: ({ size, limit }) => `將達到 ${size}；每個成品最多 ${limit}。你的編輯仍然保留。`,
+            documentBody: ({ size, limit, editsPreserved }) => `將達到 ${size}；每個成品最多 ${limit}。${editsPreserved === false ? '' : '你的編輯仍然保留。'}`,
         },
         conflict: {
             title: '編輯時已被變更',

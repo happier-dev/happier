@@ -29,7 +29,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { describeActionExecutionPrerequisite, presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { MachineServicesReadError } from './useMachineServices';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
@@ -114,7 +114,7 @@ export function MachineServicePage(
               testID="machine-service-error"
               kind="error"
               title={t('machineServices.error.title')}
-              reason={resolveActionExecutionErrorMessage(props.listError, t('common.requestFailed'), { safeToRetry: true })}
+              reason={resolveActionExecutionErrorMessage(props.listError, t('common.requestFailed'), { safeToRetry: true, closedCodesOnly: true })}
               diagnosticCode={props.listError?.code}
               action={describeActionExecutionPrerequisite(props.listError?.code) ? undefined
                 : { label: t('common.retry'), onPress: props.onRetry }}
@@ -318,7 +318,10 @@ function MachineServicePresent(props: Readonly<{
           kind={serviceActions.outcome.kind === 'unwatched' ? 'success' : 'error'}
           title={serviceActions.outcome.kind === 'unwatched' ? t('machineServices.actions.unwatched')
             : serviceActions.outcome.kind === 'conflict' ? t('machineServices.actions.unwatchConflict')
-              : t('machineServices.actions.unwatchFailed')}
+                : presentActionExecutionFailure(serviceActions.outcome.failure ?? { ok: false, errorCode: serviceActions.outcome.code }, undefined, { closedCodesOnly: true }).reason}
+          diagnosticDetail={serviceActions.outcome.kind === 'failed'
+                ? presentActionExecutionFailure(serviceActions.outcome.failure ?? { ok: false, errorCode: serviceActions.outcome.code }, undefined, { closedCodesOnly: true })
+              .technicalDetails.filter(detail => detail.key !== 'code').map(detail => `${detail.label}: ${detail.value}`).join('\n') : undefined}
           diagnosticCode={serviceActions.outcome.kind === 'failed'
             ? serviceActions.outcome.failure?.failureCause?.errorCode ?? serviceActions.outcome.code : undefined}
         /> : null}

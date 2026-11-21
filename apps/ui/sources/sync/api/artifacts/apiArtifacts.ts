@@ -319,8 +319,7 @@ export async function fetchArtifactBlob(credentials: AuthCredentials, artifactId
         headers: { Authorization: `Bearer ${credentials.token}` }, ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     throwIfAborted(opts.signal);
-    if (!response.ok) throw new HappyError('Artifact file is unavailable', false,
-        { status: response.status, code: 'artifact_content_unavailable' });
+    if (!response.ok) throw await artifactHttpReadError(response, 'Artifact file is unavailable', 'artifact_content_unavailable');
     const parsed = ArtifactBlobReadResponseV1Schema.safeParse(await response.json());
     throwIfAborted(opts.signal);
     if (!parsed.success || parsed.data.blobId !== blobId) throw new HappyError('Artifact file is unavailable', false,

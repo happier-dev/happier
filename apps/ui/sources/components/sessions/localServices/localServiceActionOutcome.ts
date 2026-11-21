@@ -156,7 +156,8 @@ export function describeLocalServiceActionFailure(input: Readonly<{
     return {
         title: copy.title,
         ...(recovery ? { recovery } : {}),
-        body: copy.body,
+        body: presentActionExecutionFailure({ ok: false, errorCode: input.reasonCode ?? 'action_failed',
+            ...(input.failureCause ? { failureCause: input.failureCause } : {}) }, copy.body).reason,
         details: [
             ...(input.serviceName && failure?.cause === 'port_in_use' && failure.port !== undefined
                 ? [resolveReasonCopy({ kind: 'localServiceAction', reasonCode: input.reasonCode, establishmentFailure: failure }).body] : []),

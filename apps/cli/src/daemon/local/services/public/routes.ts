@@ -13,6 +13,7 @@ import type {
 import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema, LocalServicePublicPreviewCreateFailureV1Schema, type LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -31,11 +32,24 @@ export class LocalServicePublicPreviewCreateRefusal extends RpcError {
 function throwPublicPreviewHttpFailure(error: unknown, createRequest = false): never {
     if (axios.isAxiosError<unknown>(error)) {
         const status = error.response?.status;
-        if (status === 403 || status === 503) {
+        if (status === 404) {
+            const ended = z.strictObject({
+                error: z.literal('public_preview_not_found'),
+                reasonCode: z.literal('exposure_not_found'),
+            }).safeParse(error.response?.data);
+            if (ended.success) throw new RpcError(ended.data.reasonCode, ended.data.reasonCode);
+        }
+        if (status === 403 || status === 503 || status === 404) {
             const refusal = LocalServicePublicPreviewCreateFailureV1Schema.safeParse(error.response?.data);
             if (refusal.success) {
-                if (createRequest) throw new LocalServicePublicPreviewCreateRefusal(refusal.data.reasonCode, status);
-                throw new RpcError(refusal.data.reasonCode, refusal.data.reasonCode);
+                const reasonCode = refusal.data.reasonCode;
+                // SV-C17: a guest must not learn another Session's or preview's binding.
+                if (reasonCode === 'session_not_authorized' || reasonCode === 'preview_binding_mismatch') {
+                    throw new RpcError('public_preview_denied', RPC_ERROR_CODES.FORBIDDEN);
+                }
+                if (createRequest && status !== 404) throw new LocalServicePublicPreviewCreateRefusal(reasonCode, status);
+                if (reasonCode === 'audit_sink_unavailable') throw new RpcError(reasonCode, reasonCode);
+                throw new RpcError('public_preview_denied', RPC_ERROR_CODES.FORBIDDEN);
             }
         }
         if (status === 401 || status === 403) throw new RpcError('public_preview_denied', RPC_ERROR_CODES.FORBIDDEN);

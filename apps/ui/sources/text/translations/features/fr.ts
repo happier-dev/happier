@@ -3485,7 +3485,7 @@ const artifactsBrowserTranslations = { fr: {
             accountTitle: 'Le stockage des artefacts est plein',
             documentTitle: 'Trop volumineux pour être enregistré',
             accountBody: ({ used, limit }) => `${used} utilisés sur ${limit}, versions comprises. Supprime ou exporte les artefacts inutiles pour en enregistrer de nouveaux.`,
-            documentBody: ({ size, limit }) => `Il ferait ${size} ; chaque artefact peut contenir jusqu’à ${limit}. Tes modifications sont conservées.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Il ferait ${size} ; chaque artefact peut contenir jusqu’à ${limit}.${editsPreserved === false ? '' : ' Tes modifications sont conservées.'}`,
         },
         conflict: {
             title: 'Modifié pendant ton édition',

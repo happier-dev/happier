@@ -16,11 +16,10 @@ export function MachineServiceControlOutcomeNotice(props: Readonly<{
     const title = controlOutcomeCopy(outcome, props.service, props.machine);
     if (outcome.kind === 'unavailable' || outcome.kind === 'failed') return <SurfaceStateCard
         testID={props.testID} kind={outcome.kind === 'unavailable' ? 'unavailable' : 'error'} size="line"
-        title={outcome.failure && outcome.failure.error !== outcome.errorCode
-            ? presentActionExecutionFailure({ ...outcome.failure, message: outcome.failure.error }).reason : title}
+        title={presentActionExecutionFailure(outcome.failure ?? { ok: false, errorCode: outcome.errorCode }, title, { closedCodesOnly: true }).reason}
         reason={outcome.kind === 'unavailable' ? t('machineServices.control.unavailableRemedy') : undefined}
         diagnosticCode={outcome.errorCode}
-        diagnosticDetail={outcome.failure ? presentActionExecutionFailure(outcome.failure).technicalDetails
+        diagnosticDetail={outcome.failure ? presentActionExecutionFailure(outcome.failure, undefined, { closedCodesOnly: true }).technicalDetails
             .filter(line => line.key !== 'code').map(line => line.label + ': ' + line.value).join('\n') : undefined} />;
     return <Text variant="meta" testID={props.testID}
         style={[props.style, outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.textForeground }]}>{title}</Text>;

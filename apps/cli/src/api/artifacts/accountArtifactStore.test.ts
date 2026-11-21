@@ -24,6 +24,7 @@ import { readDeploymentAuthorizationFailure } from '@/deployments/deploymentAuth
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor, type ArtifactRequestAuthorizationHeaders } from './accountArtifactStore';
@@ -3171,6 +3172,32 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
       ? { revisions: [{ bodyVersion: 1, body: row.body, createdAt: 1, sizeBytes: 10 }], retentionCount: 10 } : row }));
     await expect(store.read('artifact')).rejects.toMatchObject({ code: 'artifact_encryption_material_unavailable' });
     await expect(store.revisions.list({ artifactId: 'artifact' })).rejects.toMatchObject({ code: 'artifact_encryption_material_unavailable' });
+  });
+
+  it.each(['document', 'account'] as const)('retains the %s quota refusal through the owning create Action', async budget => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const quota = { error: 'quota_exceeded', budget, limitBytes: 100, usedBytes: 120 };
+    mockPost.mockResolvedValue({ status: 413, data: quota });
+    const executor = createActionExecutor({ artifactAction: createCliArtifactActions({ store,
+      beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null }) });
+    await expect(executor.execute('artifact.create', { header: { title: 'Note' }, body: 'content' },
+      { surface: 'cli', authority: 'present_user', bypassApprovals: true, actionCaller: { kind: 'host' } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'quota_exceeded', error: 'quota_exceeded',
+        details: { budget, limitBytes: 100, usedBytes: 120 } });
+    await expect(store.create({ header: { title: 'Note' }, body: 'content' })
+      .catch((error: unknown) => normalizeActionExecutorThrownError(error)))
+      .resolves.toMatchObject({ errorCode: 'quota_exceeded', error: 'quota_exceeded',
+        details: { budget, limitBytes: 100, usedBytes: 120 } });
+  });
+
+  it('does not promote malformed quota details into a typed create refusal', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockResolvedValueOnce({ status: 413, data: {
+      error: 'quota_exceeded', budget: 'foreign', limitBytes: 100, usedBytes: 120,
+    } });
+    await expect(store.create({ header: {}, body: 'content' })).rejects.toMatchObject({ code: 'create_failed' });
   });
 
   it('preserves typed quota details on writes and exposes the configured Account storage usage', async () => {

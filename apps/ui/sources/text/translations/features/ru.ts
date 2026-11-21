@@ -3471,7 +3471,7 @@ const artifactsBrowserTranslations = { ru: {
             accountTitle: 'Хранилище артефактов заполнено',
             documentTitle: 'Слишком большой для сохранения',
             accountBody: ({ used, limit }) => `Использовано ${used} из ${limit} с учётом версий. Удалите или экспортируйте ненужные артефакты, чтобы сохранять новые.`,
-            documentBody: ({ size, limit }) => `Получится ${size}; в одном артефакте помещается до ${limit}. Ваши правки сохранены.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Получится ${size}; в одном артефакте помещается до ${limit}.${editsPreserved === false ? '' : ' Ваши правки сохранены.'}`,
         },
         conflict: {
             title: 'Изменено во время редактирования',

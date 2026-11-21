@@ -3479,7 +3479,7 @@ const artifactsBrowserTranslations = { pl: {
             accountTitle: 'Miejsce na artefakty jest pełne',
             documentTitle: 'Za duży, aby zapisać',
             accountBody: ({ used, limit }) => `Użyto ${used} z ${limit}, wliczając wersje. Usuń lub wyeksportuj niepotrzebne artefakty, aby zapisywać nowe.`,
-            documentBody: ({ size, limit }) => `Miałby ${size}; każdy artefakt mieści do ${limit}. Twoje zmiany wciąż tu są.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Miałby ${size}; każdy artefakt mieści do ${limit}.${editsPreserved === false ? '' : ' Twoje zmiany wciąż tu są.'}`,
         },
         conflict: {
             title: 'Zmieniono podczas edycji',

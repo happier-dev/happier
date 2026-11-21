@@ -3362,7 +3362,7 @@ const artifactsBrowserTranslations = { es: {
             accountTitle: 'El almacenamiento de artefactos está lleno',
             documentTitle: 'Demasiado grande para guardar',
             accountBody: ({ used, limit }) => `${used} de ${limit} usados, versiones incluidas. Elimina o exporta los artefactos que ya no necesites para guardar otros nuevos.`,
-            documentBody: ({ size, limit }) => `Ocuparía ${size}; cada artefacto admite hasta ${limit}. Tus cambios siguen aquí.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Ocuparía ${size}; cada artefacto admite hasta ${limit}.${editsPreserved === false ? '' : ' Tus cambios siguen aquí.'}`,
         },
         conflict: {
             title: 'Cambió mientras editabas',

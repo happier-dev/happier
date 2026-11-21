@@ -70,7 +70,7 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 const result = await createSavedSecretResource({ scope, name: args.name, kind: source?.kind === 'passkey' ? 'other' : args.kind ?? 'apiKey',
                     ...(source ? { source } : { value: args.value }), signal: context.signal,
                     accountGrants: [], teamGrants: [], groupGrants: [], executeAdmittedMutation });
-                if (!result.ok) refusal(result.reason);
+                if (!result.ok) refusal(result.failure?.code ?? result.reason, result.failure?.context);
                 const ref = parseSavedSecretRefV1(result.resourceRef);
                 if (ref.kind !== 'shared_resource') refusal('invalid_resource_reference');
                 return { secretId: ref.resourceId, secretRef: result.resourceRef };

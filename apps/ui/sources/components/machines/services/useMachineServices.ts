@@ -6,6 +6,8 @@ export { useMachineServiceFirstLogRead, type MachineServiceFirstLogRead } from '
 export type MachineServicesReadError = Readonly<{
   code: string;
   message: string;
+  retryable?: boolean;
+  details?: unknown;
 }>;
 export type MachineServicesListState = Readonly<{
   /** The last answer that listed rows; kept while a later read is pending or fails. */

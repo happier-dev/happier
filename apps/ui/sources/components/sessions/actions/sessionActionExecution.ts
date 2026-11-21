@@ -9,6 +9,9 @@ import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessi
 import { announceBotMarkerAccepted } from '@/components/sessions/bots/botMarkerFeedback';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { readArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
+import { describeArtifactQuota } from '@/components/artifacts/ArtifactQuotaNotice';
+import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 
 import * as React from 'react';
 import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
@@ -129,7 +132,12 @@ function readSessionLifecycleActionOutcome(
 ): SessionActionOperationResult {
     if (!outcome.ok) {
         const details = outcome.details;
-        const message = outcome.errorCode === 'session_archive_timeout' ? undefined
+        // Delete's existing capability is owner-only. Keep Account budget disclosure on this
+        // lifecycle result rather than exposing it through the general Action failure presenter.
+        const quota = isProjectCheckoutRemovalActionIdV1(actionId) ? readArtifactActionFailure(outcome).quota : undefined;
+        const description = quota ? describeArtifactQuota(quota, { editsPreserved: false }) : undefined;
+        const message = description ? `${description.title}\n\n${description.description}`
+            : outcome.errorCode === 'session_archive_timeout' ? undefined
             : details && typeof details === 'object' && 'error' in details && typeof details.error === 'string'
                 ? details.error : outcome.error;
         return { success: false, message, code: outcome.errorCode,

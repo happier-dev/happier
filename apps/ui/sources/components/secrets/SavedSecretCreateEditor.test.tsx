@@ -466,6 +466,21 @@ describe('SavedSecretCreateEditor', () => {
         expect(screen.findByTestId('saved-secret-create-value')).toBeTruthy();
     });
 
+    it.each(['account_mode_mismatch', 'recipient_mode_unsupported'])('presents the refused create mode (%s)', async code => {
+        home!.respondToMutations(() => Response.json({ error: code }, { status: 409 }));
+        const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
+        const screen = await renderScreen(
+            <SavedSecretCreateEditor scope={scopeA} approvalPending={false}
+                requestApproval={vi.fn()} onCancel={vi.fn()} onCreated={vi.fn(async () => {})} />,
+        );
+        screen.changeTextByTestId('saved-secret-create-name', 'New key');
+        screen.changeTextByTestId('saved-secret-create-value', 'synthetic-value');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        expect(createWrites()).toHaveLength(1);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('secrets.catalog.status.recipient_mode_unsupported'));
+    });
+
     it('keeps entered material available for retry after a typed failure', async () => {
         home!.respondToMutations(() => Response.json({ error: 'temporarily_unavailable' }, { status: 503 }));
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');

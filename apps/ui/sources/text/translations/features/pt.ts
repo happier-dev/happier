@@ -3461,7 +3461,7 @@ const artifactsBrowserTranslations = { pt: {
             accountTitle: 'O armazenamento de artefatos está cheio',
             documentTitle: 'Grande demais para salvar',
             accountBody: ({ used, limit }) => `${used} de ${limit} usados, incluindo versões. Exclua ou exporte artefatos de que não precisa mais para salvar novos.`,
-            documentBody: ({ size, limit }) => `Ficaria com ${size}; cada artefato comporta até ${limit}. Suas edições continuam aqui.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Ficaria com ${size}; cada artefato comporta até ${limit}.${editsPreserved === false ? '' : ' Suas edições continuam aqui.'}`,
         },
         conflict: {
             title: 'Alterado enquanto você editava',

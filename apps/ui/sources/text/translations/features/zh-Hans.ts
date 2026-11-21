@@ -3370,7 +3370,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             accountTitle: '工件存储已满',
             documentTitle: '太大，无法保存',
             accountBody: ({ used, limit }) => `已用 ${used} / ${limit}（含版本）。删除或导出不再需要的工件即可保存新的工件。`,
-            documentBody: ({ size, limit }) => `将达到 ${size}；每个工件最多 ${limit}。你的编辑仍然保留。`,
+            documentBody: ({ size, limit, editsPreserved }) => `将达到 ${size}；每个工件最多 ${limit}。${editsPreserved === false ? '' : '你的编辑仍然保留。'}`,
         },
         conflict: {
             title: '编辑时已被更改',

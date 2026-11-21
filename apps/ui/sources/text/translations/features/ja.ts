@@ -3425,7 +3425,7 @@ const artifactsBrowserTranslations = { ja: {
             accountTitle: 'アーティファクトの保存容量がいっぱいです',
             documentTitle: '大きすぎて保存できません',
             accountBody: ({ used, limit }) => `バージョンを含めて ${limit} 中 ${used} を使用しています。新しく保存するには、不要なアーティファクトを削除またはエクスポートしてください。`,
-            documentBody: ({ size, limit }) => `${size} になります。1 つのアーティファクトは最大 ${limit} までです。編集内容はそのまま残っています。`,
+            documentBody: ({ size, limit, editsPreserved }) => `${size} になります。1 つのアーティファクトは最大 ${limit} までです。${editsPreserved === false ? '' : '編集内容はそのまま残っています。'}`,
         },
         conflict: {
             title: '編集中に変更されました',

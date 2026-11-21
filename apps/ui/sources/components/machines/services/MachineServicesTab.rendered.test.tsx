@@ -196,6 +196,17 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
     } finally { await hook.unmount(); }
 });
 
+it('SV-C15 carries the Resource refusal metadata through the Services list hook', async () => {
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+    resource.fail('credential_scope_denied');
+    const { useMachineServicesList } = await import('./useMachineServicesList');
+    const hook = await renderHook(() => useMachineServicesList({ serverId, machineId, active: true }));
+    try {
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().error).not.toBeNull(); });
+        expect(hook.getCurrent().error).toMatchObject({ code: 'credential_scope_denied', retryable: false, details: { layer: 'transport', phase: 'invocation' } });
+    } finally { await hook.unmount(); }
+});
+
 it('retains settled Services during credential resolution, publishes changes once and retires another Account\'s rows', async () => {
     const row = service('Continuity');
     const stableRow = service('Unchanged');
@@ -430,7 +441,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         answerActionExecution('machines.services.control', envelope => {
             controls.push(envelope.input);
             issuedRequestId = envelope.requestId;
-            return { ok: false, errorCode: 'service_operation_unavailable', error: 'Select a reachable service host', requestId: envelope.requestId, effectAttempted: false, details: { reason: 'service_operation_unavailable' } };
+            return { ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed', requestId: envelope.requestId, effectAttempted: false, details: { reason: 'service_operation_unavailable' } };
         });
         machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
@@ -445,10 +456,10 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(controls).toEqual([{ serverId, machineId,
             serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }]));
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-details-toggle'), screen.getTextContent()).not.toBeNull());
-        expect(screen.getTextContent()).toContain('Select a reachable service host');
+        expect(screen.getTextContent()).toContain(t('errors.machineNativeEffectFailed'));
         expect(screen.getTextContent()).not.toContain(t('machineServices.control.failed', { service: row.name }));
         await screen.pressByTestIdAsync('machine-service-control-outcome-details-toggle');
-        expect(screen.getTextContent()).toContain('service_operation_unavailable');
+        expect(screen.getTextContent()).toContain('native_effect_failed');
         expect(issuedRequestId).toBeTruthy();
         expect(screen.getTextContent()).toContain(issuedRequestId!);
         expect(controls).toHaveLength(1);
@@ -1060,6 +1071,54 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-service-restart')).toBeNull();
         expect(screen.findHostByTestId('machine-service-more')).toBeNull();
         expect(screen.findHostByTestId('machine-service-open')).toBeNull();
+    });
+
+    it.each(['action', 'census'] as const)('SV-C09 keeps the discovery refusal visible (%s)', async kind => {
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+        if (kind === 'action') answerActionExecution('machines.services.discovery', () => ({ ok: false,
+            errorCode: 'native_check_unavailable', error: 'foreign diagnostic prose' }));
+        else answerAction('machines.services.discovery', () => ({ kind: 'snapshot', candidates: [], failures: [
+            { adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, code: 'native_check_unavailable' }] }));
+        const { screen } = await mount();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-empty')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-services-watch');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('errors.machineNativeCheckUnavailable')));
+        expect(screen.getTextContent()).not.toContain(t('machineServices.watch.none', { machine: machineName }));
+        expect(screen.getTextContent()).not.toContain('foreign diagnostic prose');
+    });
+
+    it('SV-C10 keeps the first watch failure beside the failed count', async () => {
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+        answerAction('machines.services.discovery', () => ({ kind: 'snapshot', failures: [], candidates: [{
+            candidateId: 'candidate-web', revision: 'revision-web', name: 'web',
+            adapter: { pluginId: 'happier.machine.services', localId: 'systemd' }, nativeResourceId: 'web.service',
+            observation: { phase: 'running', readiness: 'not_reported', endpoint: null } }] }));
+        answerActionExecution('machines.services.watch', () => ({ ok: false,
+            errorCode: 'native_effect_failed', error: 'foreign diagnostic prose', requestId: 'watch-request' }));
+        const { screen } = await mount();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-empty')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-services-watch');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-watch-candidate:candidate-web')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-services-watch-candidate:candidate-web');
+        await screen.pressByTestIdAsync('machine-services-watch-confirm');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('errors.machineNativeEffectFailed')));
+        expect(screen.getTextContent()).toContain(t('machineServices.watch.failed', { count: 1 }));
+        expect(screen.getTextContent()).not.toContain('foreign diagnostic prose');
+    });
+
+    it('SV-C16 explains a typed unwatch failure', async () => {
+        const row = service('Web');
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        answerActionExecution('machines.services.unwatch', () => ({ ok: false,
+            errorCode: 'native_effect_failed', error: 'foreign diagnostic prose' }));
+        machineTransport.rpc.mockImplementation(async () => ({ kind: 'service', service: row }));
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-unwatch')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-unwatch');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('errors.machineNativeEffectFailed')));
+        expect(screen.getTextContent()).not.toContain('foreign diagnostic prose');
     });
 
     it.each([false, true])('watches the services the person picks from what the Machine discovers, once each (initially empty: %s)', async (initiallyEmpty) => {

@@ -13,6 +13,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { ArtifactsBrowser } from './ArtifactsBrowserScreen';
 import { ModalProvider } from '@/modal';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }));
 // Only platform/rendering boundaries are replaced. Storage and the real ModalProvider stay
@@ -195,6 +196,23 @@ it('removes an empty folder directly through its safe Action', async () => {
     await vi.waitFor(() => expect(state.read().folders).toEqual([]));
     expect(state.boundary.requests).toHaveLength(1);
     expect(state.screen.findAll(node => node.props.accessibilityRole === 'dialog')).toEqual([]);
+});
+
+it('presents the revision conflict returned by a folder drop through the shared refusal owner', async () => {
+    const state = await setup('all', [
+        { id: 'original', name: 'Original', parentId: null },
+        { id: 'destination', name: 'Destination', parentId: null },
+    ]);
+    state.setOutcome('conflict');
+    const { renderHook } = await import('@/dev/testkit');
+    const runtime = await renderHook(() => useEntityDragDropRuntime());
+    const target = runtime.getCurrent().getDestinations('folder:original').find(row => row.label === 'Destination');
+    expect(target?.admission.status).toBe('allowed');
+    let outcome: Awaited<ReturnType<ReturnType<typeof useEntityDragDropRuntime>['perform']>> = null;
+    await act(async () => { outcome = await runtime.getCurrent().perform('folder:original', target!.targetId, target!.destination); });
+    expect(outcome).toMatchObject({ status: 'refused', reason: { code: 'revision-conflict', message: 'approvals.conflictFailure' } });
+    expect(state.read().folders[0]?.parentId).toBeNull();
+    await runtime.unmount();
 });
 
 it.each(['all', 'prompt'] as const)('inserts New folder into the shared tree (%s)', async kind => {
@@ -381,6 +399,7 @@ describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', ki
         await state.screen.pressByTestIdAsync('folders:edit:save');
         await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:refused')).toBeTruthy());
         expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('  Keep   my draft  ');
+        expect(state.screen.getTextContent()).toContain(outcome === 'conflict' ? 'approvals.conflictFailure' : 'artifacts.browser.folders.refusedOther');
         expect(state.read().folders).toEqual([]);
         state.setOutcome('updated');
         await state.screen.pressByTestIdAsync('folders:edit:save');

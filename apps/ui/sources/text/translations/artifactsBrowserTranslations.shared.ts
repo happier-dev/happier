@@ -92,7 +92,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         accountTitle: string;
         documentTitle: string;
         accountBody: (params: Readonly<{ used: string; limit: string }>) => string;
-        documentBody: (params: Readonly<{ size: string; limit: string }>) => string;
+        documentBody: (params: Readonly<{ size: string; limit: string; editsPreserved?: boolean }>) => string;
     }>;
     /** A save refused because a newer version was saved meanwhile (`version_mismatch`). */
     conflict: Readonly<{ title: string; body: string }>;
@@ -299,7 +299,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             accountTitle: 'Artifact storage is full',
             documentTitle: 'Too large to save',
             accountBody: ({ used, limit }) => `${used} of ${limit} used, versions included. Delete or export artifacts you no longer need to save new ones.`,
-            documentBody: ({ size, limit }) => `This would be ${size}; each artifact can hold up to ${limit}. Your edits are still here.`,
+            documentBody: ({ size, limit, editsPreserved }) => `This would be ${size}; each artifact can hold up to ${limit}.${editsPreserved === false ? '' : ' Your edits are still here.'}`,
         },
         conflict: {
             title: 'Changed while you edited',

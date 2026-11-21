@@ -3467,7 +3467,7 @@ const artifactsBrowserTranslations = { ca: {
             accountTitle: 'L’emmagatzematge d’artefactes és ple',
             documentTitle: 'Massa gran per desar',
             accountBody: ({ used, limit }) => `${used} de ${limit} usats, versions incloses. Suprimeix o exporta els artefactes que ja no necessitis per desar-ne de nous.`,
-            documentBody: ({ size, limit }) => `Ocuparia ${size}; cada artefacte admet fins a ${limit}. Els teus canvis encara hi són.`,
+            documentBody: ({ size, limit, editsPreserved }) => `Ocuparia ${size}; cada artefacte admet fins a ${limit}.${editsPreserved === false ? '' : ' Els teus canvis encara hi són.'}`,
         },
         conflict: {
             title: 'Ha canviat mentre editaves',

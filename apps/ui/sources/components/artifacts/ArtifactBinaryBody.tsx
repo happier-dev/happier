@@ -18,6 +18,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { formatFilePageBytes } from '@/components/workspaces/files/file/FilePageStates';
 import type { PdfPageInfo } from '@/components/ui/media/pdf/PdfViewerStates';
@@ -28,7 +29,8 @@ import { usePublishArtifactBodyActions, type ArtifactBodyActions } from './artif
 const PDF_PAGE_ASPECT = 11 / 8.5;
 
 type Preview = Readonly<{ key: string }> & (
-    | Readonly<{ phase: 'loading' | 'failed' }>
+    | Readonly<{ phase: 'loading' }>
+    | Readonly<{ phase: 'failed'; failure: unknown }>
     | Readonly<{ phase: 'ready'; bytes: Uint8Array; signal: AbortSignal }>
 );
 
@@ -87,8 +89,8 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             const bytes = props.initialBytes ?? await props.readBytes(props.artifactId, reference, controller.signal);
             controller.signal.throwIfAborted();
             setPreview({ key, phase: 'ready', bytes, signal: controller.signal });
-        })().catch(() => {
-            if (!controller.signal.aborted) setPreview({ key, phase: 'failed' });
+        })().catch(failure => {
+            if (!controller.signal.aborted) setPreview({ key, phase: 'failed', failure });
         });
         return () => {
             controller.abort();
@@ -163,7 +165,9 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         )
             : previewable && preview.key === key && (preview.phase === 'failed' || filePreview.status === 'error') ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"
                 title={t('artifacts.error')}
-                reason={filePreview.error === t('files.imagePreviewTooLarge') ? filePreview.error : t('artifacts.browser.loadFailedBody')}
+                reason={preview.phase === 'failed'
+                    ? resolveActionExecutionErrorMessage(preview.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })
+                    : filePreview.error === t('files.imagePreviewTooLarge') ? filePreview.error : t('artifacts.browser.loadFailedBody')}
                 detail={filePreview.error ?? undefined}
                 action={{ label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} />
             : !previewable ? <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}

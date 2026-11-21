@@ -31,7 +31,7 @@ export function useMachineServicesList(input: Readonly<ListReference['input'] & 
         readAt,
         pending: input.active && (resolving || lifetime !== null && (!resource || resource.pending !== 'idle'
             || resource.value === undefined && resource.error === undefined)),
-        error: resource?.error ? { code: resource.error.code ?? 'action_failed', message: resource.error.message } : null,
+        error: resource?.error ? { ...resource.error, code: resource.error.code ?? 'action_failed' } : null,
         refresh: resource?.refresh ?? (() => Promise.resolve()),
     };
 }

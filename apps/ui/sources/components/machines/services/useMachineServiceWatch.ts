@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { MachineServiceWatchMutationResultV1Schema, MachineServicesDiscoveryResultV1Schema, type MachineServiceDiscoveryCandidateV1 } from '@happier-dev/protocol/actions/specs/machine/services';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MachineServiceWatchMutationResultV1Schema, MachineServicesDiscoveryResultV1Schema, type MachineServiceDiscoveryCandidateV1, type MachineServicesDiscoveryResultV1 } from '@happier-dev/protocol/actions/specs/machine/services';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -13,9 +13,11 @@ const settle = (promise: Promise<ActionExecuteResult>, phase: string) => promise
 }));
 
 export type MachineServiceDiscovery =
-  | Readonly<{ kind: 'idle' | 'reading' | 'unavailable' }>
-  | Readonly<{ kind: 'listed'; candidates: readonly MachineServiceDiscoveryCandidateV1[] }>;
-export type MachineServiceWatchOutcome = Readonly<{ kind: 'approval' }> | Readonly<{ kind: 'failed'; count: number }>;
+  | Readonly<{ kind: 'idle' | 'reading' }>
+  | Readonly<{ kind: 'unavailable'; failure: ActionExecuteFailure }>
+  | Readonly<{ kind: 'listed'; candidates: readonly MachineServiceDiscoveryCandidateV1[];
+      failures: Extract<MachineServicesDiscoveryResultV1, { kind: 'snapshot' }>['failures'] }>;
+export type MachineServiceWatchOutcome = Readonly<{ kind: 'approval' }> | Readonly<{ kind: 'failed'; count: number; failure: ActionExecuteFailure }>;
 
 /**
  * Watch a service (lab `services/watch`): `machines.services.discovery` runs only when the person opens the picker,
@@ -36,7 +38,10 @@ export function useMachineServiceWatch(input: Readonly<{ serverId: string; machi
       .then((result) => {
         const parsed = result.ok ? MachineServicesDiscoveryResultV1Schema.safeParse(result.result) : null;
         setDiscovery(parsed?.success && parsed.data.kind === 'snapshot'
-          ? { kind: 'listed', candidates: parsed.data.candidates } : { kind: 'unavailable' });
+          ? { kind: 'listed', candidates: parsed.data.candidates, failures: parsed.data.failures }
+          : { kind: 'unavailable', failure: !result.ok ? result : { ok: false,
+              errorCode: parsed?.success && parsed.data.kind === 'unavailable' ? parsed.data.reason : 'action_invalid_output',
+              error: parsed?.success && parsed.data.kind === 'unavailable' ? parsed.data.reason : 'action_invalid_output' } });
       });
   }, [lifetime, input.serverId, input.machineId]);
   const watch = React.useCallback(async (choices: readonly MachineServiceWatchChoice[]): Promise<boolean> => {
@@ -44,6 +49,7 @@ export function useMachineServiceWatch(input: Readonly<{ serverId: string; machi
     setPending(true);
     setOutcome(null);
     let failed = 0;
+    let firstFailure: ActionExecuteFailure | undefined;
     let approval = false;
     for (const choice of choices) {
       const result = await settle(execute('machines.services.watch', {
@@ -54,9 +60,14 @@ export function useMachineServiceWatch(input: Readonly<{ serverId: string; machi
       if (parsed?.success && (parsed.data.kind === 'applied' || parsed.data.kind === 'unchanged')) continue;
       if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) { approval = true; continue; }
       failed++;
+      firstFailure ??= !result.ok ? result : { ok: false,
+        errorCode: parsed?.success && parsed.data.kind === 'unavailable' ? parsed.data.reason
+          : parsed?.success && parsed.data.kind === 'conflict' ? 'revision_conflict' : 'action_invalid_output',
+        error: parsed?.success && parsed.data.kind === 'unavailable' ? parsed.data.reason
+          : parsed?.success && parsed.data.kind === 'conflict' ? 'revision_conflict' : 'action_invalid_output' };
     }
     setPending(false);
-    setOutcome(failed > 0 ? { kind: 'failed', count: failed } : approval ? { kind: 'approval' } : null);
+    setOutcome(firstFailure ? { kind: 'failed', count: failed, failure: firstFailure } : approval ? { kind: 'approval' } : null);
     return failed === 0 && !approval;
   }, [pending, lifetime, input.serverId, input.machineId]);
   return { discovery, discover, watch, pending, outcome };

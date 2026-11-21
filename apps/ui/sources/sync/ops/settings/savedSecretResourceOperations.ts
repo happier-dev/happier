@@ -466,8 +466,10 @@ export async function prepareSavedSecretResourceCreateInContext(
 
 type SavedSecretResourceCreationResult<TSuccess> =
     | TSuccess
-    | Readonly<{ ok: false; reason: Exclude<Extract<SavedSecretResourceOperationResult, { ok: false }>['reason'], 'outcome_unknown'> }>
-    | Readonly<{ ok: false; reason: 'outcome_unknown'; verifyOutcome?: () => Promise<SavedSecretResourceCreationResult<TSuccess>> }>;
+    | Readonly<{ ok: false; reason: Exclude<Extract<SavedSecretResourceOperationResult, { ok: false }>['reason'], 'outcome_unknown'>;
+        failure?: Extract<SavedSecretResourceOperationResult, { ok: false }>['failure'] }>
+    | Readonly<{ ok: false; reason: 'outcome_unknown'; failure?: Extract<SavedSecretResourceOperationResult, { ok: false }>['failure'];
+        verifyOutcome?: () => Promise<SavedSecretResourceCreationResult<TSuccess>> }>;
 
 export type SavedSecretCatalogResourceCreationResult = SavedSecretResourceCreationResult<Readonly<{
     ok: true; resourceRefs: ReadonlyMap<string, string>; resourceFingerprints: ReadonlyMap<string, string>;
@@ -755,7 +757,7 @@ export async function createSavedSecretResourcesWithCatalogMutation(
         } finally { context.dispose(); }
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceOperationError(error);
     }
 }
 
@@ -787,7 +789,7 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                 const outcome = await execute({ scope: params.scope, actionId: 'secrets.shared.promote', input,
                     parse: value => SharedSavedSecretPromoteOutputV1Schema.parse(value) });
                 context.assertResultCurrent('write');
-                if (outcome.kind !== 'succeeded') return { ok: false, reason: operationFailureReason(outcome.failure.kind) };
+                if (outcome.kind !== 'succeeded') return projectSavedSecretResourceOperationFailure(outcome.failure);
                 if (outcome.value.resourceId !== first!.input.resourceId) return { ok: false, reason: 'outcome_unknown' };
                 const resourceRefs = new Map(params.resources.map(resource => [resource.id,
                     formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resource.id })]));
@@ -898,6 +900,7 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                 context.assertCurrent();
                 const success = { ok: true as const, resourceRefs, resourceFingerprints };
                 let verifyOutcome: (() => Promise<SavedSecretFullReferenceResourceCreationResult>) | undefined;
+                let refused: HomeDomainFailure<string> | undefined;
                 const mutation = await syncSettings({ credentials: context.credentials, encryption,
                     settingsSecretsKey: settingsKeys?.writeKey ?? null, settingsSecretsReadKeys: settingsKeys?.readKeys ?? [],
                     settingsScope: params.scope, requestContext: { scope: params.scope, endpointUrl: context.endpointUrl, request: context.request },
@@ -944,11 +947,17 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                                 publishAcknowledgedSavedSecretReferenceCatalogsInContext(context, { catalogs: nextCatalogs, accountMode, receipt: outcome.value, mutation: input });
                                 return { status: 'applied', settingsVersion: outcome.value.settingsVersion };
                             }
+                            refused = outcome.failure;
                             if (outcome.failure.kind === 'conflict') return { status: 'conflict' };
                             if (outcome.failure.kind === 'outcome_unknown') return { status: 'outcomeUnknown' };
-                            return { status: 'rejected', error: new Error(`saved_secret_catalog_creation_${outcome.failure.kind}`) };
+                            return { status: 'rejected', error: new HappyError('Saved Secret creation declined', outcome.failure.retryable, {
+                                ...(outcome.failure.code ? { code: outcome.failure.code } : {}),
+                                details: { ...readSafeFailureDetails(outcome.failure.details), kind: outcome.failure.kind },
+                                ...(outcome.failure.httpStatus === undefined ? {} : { status: outcome.failure.httpStatus }),
+                            }) };
                         },
                     } });
+                if (refused && refused.kind !== 'outcome_unknown') return projectSavedSecretResourceOperationFailure(refused);
                 if (mutation?.status === 'invalid') requireOneShotAccountSettingsMutationApplied(mutation);
                 if (mutation?.status === 'applied') return { ...success, settingsVersion: mutation.settingsVersion };
                 return mutation?.status === 'conflict' ? { ok: false, reason: 'changed' }
@@ -1012,11 +1021,11 @@ export async function createSavedSecretResourcesWithCatalogMutationInContext(
                 publishAcknowledgedSavedSecretReferenceCatalogsInContext(context, { catalogs: candidate.catalogs, accountMode, receipt: outcome.value, mutation: input });
                 return success;
             }
-            return { ok: false, reason: operationFailureReason(outcome.failure.kind) };
+            return projectSavedSecretResourceOperationFailure(outcome.failure);
         });
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceOperationError(error);
     } finally {
         for (const resource of prepared) resource.dispose();
     }
@@ -1126,7 +1135,8 @@ export async function createSavedSecretResource(params: Readonly<{
         // transport failures remain retryable from the preserved draft.
         if (isTeamActionApprovalPendingError(error)) throw error;
         if (error instanceof Error && 'code' in error && error.code === 'recipient_mode_unsupported') {
-            return { ok: false, reason: 'recipient_mode_unsupported' };
+            return { ...projectSavedSecretResourceOperationFailure(homeDomainFailureFromActionFailure({ errorCode: error.code })),
+                reason: 'recipient_mode_unsupported' };
         }
         return projectSavedSecretResourceOperationError(error);
     }

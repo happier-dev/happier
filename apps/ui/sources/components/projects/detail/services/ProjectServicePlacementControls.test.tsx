@@ -137,6 +137,7 @@ async function setup(options: Readonly<{
   beforeRender?: (serverId: string) => void | Promise<void>;
   artifactBodyReads?: string[];
   onMove?: (input: unknown) => void;
+  moveReply?: unknown;
   setupReview?: Readonly<{ reviewedEffect: unknown; reviewedEffectDigest: string }>;
 }>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
@@ -167,7 +168,7 @@ async function setup(options: Readonly<{
     accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.service.relocate', tokenEpoch: 0,
     requesterInvocation: 'none', execute: input => {
       options.onMove!(input);
-      return { status: 'refused', reasonCode: 'native_boundary_observed' };
+      return options.moveReply ?? { status: 'refused', reasonCode: 'native_boundary_observed' };
     },
   }) : null;
   fixture = await createPlainArtifactHomeFixture(
@@ -551,6 +552,32 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       await h.screen.pressByTestIdAsync('placement.move.confirm');
       await vi.waitFor(() => expect(moves).toHaveLength(1));
       expect(moves[0]).toMatchObject({ setupReview });
+    } finally { await h.screen.unmount(); }
+  });
+  it('SV-C08 presents a relocation refusal through the local service owner', async () => {
+    const h = await setup({ running: true, onMove: () => {}, moveReply: { status: 'refused', reasonCode: 'native_check_unavailable' } });
+    try {
+      await h.choose('hz-build-1');
+      await vi.waitFor(() => expect(h.screen.getTextContent()).toContain('errors.machineNativeCheckUnavailable'));
+      expect(h.screen.getTextContent()).not.toContain('projectServices.moveRefused');
+    } finally { await h.screen.unmount(); }
+  });
+  it('SV-C08 presents a thrown typed relocation failure without foreign prose in Details', async () => {
+    const addressed = createFrontDoorRuntimeActionExecutor();
+    const failure = Object.assign(new Error('foreign relocation diagnostic prose'), { code: 'native_check_unavailable',
+      failureCause: { phase: 'relocation.prepare', errorClass: 'Error', errorCode: 'native_check_unavailable', httpStatus: null } });
+    // The addressed Action is the boundary; placement observation and failure presentation remain real.
+    const execute: ReturnType<typeof createFrontDoorRuntimeActionExecutor> = Object.assign(async (...args: Parameters<typeof addressed>) => {
+      if (args[0].actionId === 'projects.service.relocate') throw failure;
+      return addressed(...args);
+    }, { actionExecute: addressed.actionExecute });
+    const h = await setup({ running: true, currentAccount: true, sharedObservation: true, serviceRuntime: execute });
+    try {
+      await h.choose('hz-build-1');
+      await vi.waitFor(() => expect(h.screen.getTextContent()).toContain('errors.machineNativeCheckUnavailable'));
+      await h.screen.pressByTestIdAsync('placement.move.refused.details');
+      expect(h.screen.getTextContent()).toContain('native_check_unavailable');
+      expect(h.screen.getTextContent()).not.toContain('foreign relocation diagnostic prose');
     } finally { await h.screen.unmount(); }
   });
   it('does not add a shared confirmation after the authored Move review under default host policy', async () => {

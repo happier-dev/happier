@@ -5,9 +5,11 @@ import type { ArtifactHtmlPreview } from '@/sync/domains/artifacts/artifactTypes
 import { HtmlDocumentFrame } from '@/components/ui/surfaces/framed/HtmlDocumentFrame';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 type Preview = Readonly<{ key: string; body: ArtifactBodyV1 | null | undefined }> & (
-    | Readonly<{ phase: 'loading' | 'failed' }>
+    | Readonly<{ phase: 'loading' }>
+    | Readonly<{ phase: 'failed'; failure?: unknown }>
     | (Readonly<{ phase: 'ready' }> & ArtifactHtmlPreview)
 );
 
@@ -33,8 +35,8 @@ export function ArtifactHtmlBody(props: Readonly<{
         void (props.preview ? Promise.resolve(props.preview) : props.readPreview(props.artifactId, controller.signal)).then(value => {
             if (controller.signal.aborted) return;
             setPreview({ key, body, phase: 'ready', bundle: value.bundle });
-        }).catch(() => {
-            if (!controller.signal.aborted) setPreview({ key, body, phase: 'failed' });
+        }).catch(failure => {
+            if (!controller.signal.aborted) setPreview({ key, body, phase: 'failed', failure });
         });
         return () => controller.abort();
     }, [key, props.artifactId, props.body, props.readPreview, props.preview, attempt]);
@@ -48,7 +50,8 @@ export function ArtifactHtmlBody(props: Readonly<{
             testID="artifact:htmlPreviewFailed"
             kind="error"
             title={t('artifacts.error')}
-            reason={t('artifacts.browser.loadFailedBody')}
+            reason={resolveActionExecutionErrorMessage(current?.phase === 'failed' ? current.failure : undefined,
+                t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
             action={{ label: t('common.retry'), testID: 'artifact:htmlPreviewRetry', onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }}
             accessibilitySemantics="alert"
         />}

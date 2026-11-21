@@ -16,9 +16,9 @@ type VaultInvocation = ReturnType<typeof SavedSecretVaultInvocationV1Schema.pars
 type ExportInput = ReturnType<typeof PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.export']['parse']>;
 type ExportOutput = ReturnType<typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.export']['parse']>;
 
-function refuseSavedSecretVaultOperation(code: string, repair?: PluginSecretSourceFailureV1['repair']): never {
+function refuseSavedSecretVaultOperation(code: string, repair?: PluginSecretSourceFailureV1['repair'], details?: unknown): never {
     throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
-        ...(repair ? { details: { repair } } : {}) });
+        ...(details !== undefined ? { details } : repair ? { details: { repair } } : {}) });
 }
 
 /** The private native boundary shares the invoking Action's Account and lifetime. */
@@ -84,7 +84,8 @@ export async function linkSavedSecretVaultItemsInContext(account: LazyActionAcco
         scope: { serverId: account.serverId, accountId: account.accountId }, referenceScope: 'resources', resources,
         ...(executeAdmittedMutation ? { executeAdmittedMutation } : {}),
     });
-    if (!result.ok) refuseSavedSecretVaultOperation(result.reason === 'changed' ? 'revision_conflict' : result.reason);
+    if (!result.ok) refuseSavedSecretVaultOperation(result.failure?.code ?? (result.reason === 'changed' ? 'revision_conflict' : result.reason),
+        undefined, result.failure?.context);
     return { secrets: resources.map(resource => ({ secretId: resource.id, secretRef: result.resourceRefs.get(resource.id)! })) };
 }
 

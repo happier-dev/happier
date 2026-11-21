@@ -169,10 +169,7 @@ function SavedSecretVaultExportSheet(
       else
         setPhase({
           kind: 'editing',
-          notice:
-            outcome.failure.kind === 'outcome_unknown'
-              ? t('secretsSettings.exportUnknown', { provider })
-              : t('secretsSettings.exportFailed'),
+          notice: savedSecretVaultRepairCopy(provider, outcome.failure, t('secretsSettings.exportFailed')),
         });
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -181,7 +178,7 @@ function SavedSecretVaultExportSheet(
         setPhase({ kind: 'approval' });
         return;
       }
-      setPhase({ kind: 'editing', notice: t('secretsSettings.exportFailed') });
+      setPhase({ kind: 'editing', notice: savedSecretVaultRepairCopy(provider, cause, t('secretsSettings.exportFailed')) });
     }
   }, [choice.vault, props, provider, selected, target]);
 

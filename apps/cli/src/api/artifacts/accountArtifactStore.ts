@@ -1434,8 +1434,7 @@ export function createAccountArtifactStore(params: Readonly<{
         headers: { ...requestHeaders, ...(content.blob?.content ? { 'Content-Type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 } : {}) },
         ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
       const refusal = readWriteFailure(response);
-      if (refusal) throw Object.assign(new Error(refusal.error), { code: refusal.errorCode,
-        ...('details' in refusal ? { details: refusal.details } : {}) });
+      if (refusal) throw createActionExecuteFailureError(refusal);
       const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(response.data?.error);
       if ((response.status < 200 || response.status >= 300) && sourceError.success)
         throw Object.assign(new Error(sourceError.data), { code: sourceError.data });

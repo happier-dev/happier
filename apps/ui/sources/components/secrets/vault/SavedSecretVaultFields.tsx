@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { resolveHappierChoiceControl } from '@happier-dev/plugin-ui/presentation';
-import type { PluginSecretSourceFieldV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { PluginSecretSourceFailureV1Schema, type PluginSecretSourceFieldV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -20,6 +20,7 @@ import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import type { MachineAdministrationCandidateV1 } from '@/sync/domains/machines/administration/targetSelection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SavedSecretSourceOption } from '@/sync/api/account/savedSecretCatalogPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -172,15 +173,23 @@ export type SavedSecretVaultChoice = ReturnType<
 /** What a vault read's failure asks of the person, in the source's own name. */
 export function savedSecretVaultRepairCopy(
   provider: string,
-  repair: SavedSecretVaultPickerState['repair'] | undefined,
+  repairOrFailure: unknown,
+  fallback?: string,
 ): string {
+  const details = repairOrFailure !== null && typeof repairOrFailure === 'object' && 'details' in repairOrFailure
+    ? repairOrFailure.details : undefined;
+  const parsed = PluginSecretSourceFailureV1Schema.shape.repair.safeParse(
+    details !== null && typeof details === 'object' && 'repair' in details ? details.repair : repairOrFailure,
+  );
+  const repair = parsed.success ? parsed.data : undefined;
   if (repair === 'install')
     return t('secretsSettings.vaultInstall', { provider });
   if (repair === 'unlock')
     return t('secretsSettings.vaultUnlock', { provider });
   if (repair === 'configure')
     return t('secretsSettings.vaultConfigure', { provider });
-  return t('secretsSettings.vaultFailed', { provider });
+  return fallback === undefined ? t('secretsSettings.vaultFailed', { provider })
+    : resolveActionExecutionErrorMessage(repairOrFailure, fallback);
 }
 
 /**

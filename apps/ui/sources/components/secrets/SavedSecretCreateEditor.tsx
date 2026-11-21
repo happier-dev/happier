@@ -10,6 +10,7 @@ import {
     SavedSecretVaultFields,
     SavedSecretVaultItemsField,
     useSavedSecretVaultChoice,
+    savedSecretVaultRepairCopy,
     type SavedSecretVaultItemSelection,
 } from './vault/SavedSecretVaultFields';
 import { useSavedSecretSources } from './vault/useSavedSecretSources';
@@ -202,18 +203,16 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 const first = outcome.value.secrets[0]?.secretRef;
                 if (first) { await finishCreated(first, scopeKey, 'personal'); return; }
             } else {
-                setFailure(outcome.failure.kind === 'outcome_unknown'
-                    ? t('secrets.catalog.outcomeUnknown')
-                    : resolveActionExecutionErrorMessage(outcome.failure, t('secretsSettings.vaultLinkFailed')));
+                setFailure(savedSecretVaultRepairCopy(linkedSource?.title ?? '', outcome.failure, t('secretsSettings.vaultLinkFailed')));
             }
         } catch (cause) {
             if (currentScopeKey.current !== scopeKey) return;
             if (isTeamActionApprovalPendingError(cause)) { props.requestApproval(cause.registration); return; }
-            setFailure(resolveActionExecutionErrorMessage(cause, t('secretsSettings.vaultLinkFailed')));
+            setFailure(savedSecretVaultRepairCopy(linkedSource?.title ?? '', cause, t('secretsSettings.vaultLinkFailed')));
         }
         operationInFlight.current = false;
         setSubmitting(false);
-    }, [finishCreated, itemSelection, props.onLinkVault, props.requestApproval, scopeKey, vaultChoice.target]);
+    }, [finishCreated, itemSelection, linkedSource?.title, props.onLinkVault, props.requestApproval, scopeKey, vaultChoice.target]);
 
     const submitShared = React.useCallback(async (trimmedName: string) => {
         const scope = props.scope;

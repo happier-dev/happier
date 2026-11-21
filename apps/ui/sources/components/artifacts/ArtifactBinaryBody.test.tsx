@@ -117,6 +117,15 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
+    it('presents the authenticated binary read cause without replacing it with a renderer failure', async () => {
+        const source = binarySource('denied-preview', 'application/pdf');
+        source.request.mockImplementation(async () => Response.json({ error: 'artifact_access_forbidden' }, { status: 403 }));
+        const screen = await renderScreen(<ArtifactBinaryBody artifactId="denied-preview" name="Report.pdf" {...source} />);
+        await vi.waitFor(() => expect(screen.findByTestId('artifact:previewFailed')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
+        expect(screen.findByTestId('artifact:viewerBody')).toBeNull();
+        await screen.unmount();
+    });
     it('keeps PDF type and size visible and adds the page count reported by the viewer without another read', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });

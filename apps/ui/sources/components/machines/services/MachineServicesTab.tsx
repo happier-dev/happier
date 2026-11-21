@@ -33,7 +33,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { t } from '@/text';
-import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { describeActionExecutionPrerequisite, presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
   compareMachineServices,
@@ -459,7 +459,7 @@ function environmentLead(rows: readonly MachineServiceRowV1[]): React.ReactNode 
 type ListState =
   | Readonly<{ kind: 'offline' }>
   | Readonly<{ kind: 'unavailable'; reason: ManagedServiceUnavailableReasonV1 }>
-  | Readonly<{ kind: 'error'; code: string }>;
+  | (Readonly<{ kind: 'error' }> & NonNullable<MachineServicesListState['error']>);
 
 /** A state replaces the table only when there are no rows to keep showing. */
 function readListState(
@@ -473,7 +473,7 @@ function readListState(
   if (list.error)
     return online === false
       ? { kind: 'offline' }
-      : { kind: 'error', code: list.error.code };
+      : { kind: 'error', ...list.error };
   return null;
 }
 
@@ -516,14 +516,16 @@ function StateCard(
       />
     );
   }
+  const failure = presentActionExecutionFailure({ ok: false, errorCode: state.code, details: state.details }, undefined, { closedCodesOnly: true });
   return (
     <SurfaceStateCard
       testID="machine-services-error"
       kind="error"
       title={t('machineServices.error.title')}
-      reason={resolveActionExecutionErrorMessage(state, t('common.requestFailed'), { safeToRetry: true })}
+      reason={failure.reason}
+      diagnosticDetail={failure.technicalDetails.filter(detail => detail.key !== 'code').map(detail => `${detail.label}: ${detail.value}`).join('\n')}
       diagnosticCode={state.code}
-      action={describeActionExecutionPrerequisite(state.code) ? undefined : retry}
+      action={state.retryable === false || describeActionExecutionPrerequisite(state.code) ? undefined : retry}
     />
   );
 }

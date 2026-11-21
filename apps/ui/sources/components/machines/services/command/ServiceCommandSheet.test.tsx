@@ -267,3 +267,22 @@ it('never reads a dispatched command with no exit as finished', async () => {
     await screen.unmount();
   }
 });
+
+ it.each(['native_effect_failed', 'action_failed', 'service_operation_unavailable'])('SV-C11 shows only the typed exec failure (%s) through the Action presenter', async errorCode => {
+  answerExec(() => ({}));
+  homes.answer(serverId, actionPath, { select: body => {
+    const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+    return { body: { v: 1, actionId, requestId: envelope.requestId,
+    execution: { ok: false, errorCode, error: 'foreign diagnostic prose',
+      ...(errorCode !== 'action_failed' ? { failureCause: { phase: 'native.exec', errorClass: 'Error', errorCode: 'native_effect_failed', httpStatus: null } } : {}) } } }; } });
+  const screen = await render();
+  try {
+    screen.changeTextByTestId('service-command.input', 'status');
+    await vi.waitFor(() => expect(screen.findHostByTestId('service-command.run')!.props.accessibilityState?.disabled).toBe(false));
+    await screen.pressByTestIdAsync('service-command.run');
+    await vi.waitFor(() => expect(screen.findHostByTestId('service-command.failed')).not.toBeNull());
+    expect(screen.getTextContent()).toContain(errorCode !== 'action_failed' ? t('errors.machineNativeEffectFailed')
+      : t('machineServices.command.reason.other', { service: 'web' }));
+    expect(screen.getTextContent()).not.toContain('foreign diagnostic prose');
+  } finally { await screen.unmount(); }
+});

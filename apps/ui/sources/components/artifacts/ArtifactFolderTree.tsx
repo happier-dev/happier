@@ -97,6 +97,8 @@ const AGE_COLUMN_PX = 56;
 const MENU_COLUMN_PX = 32;
 
 function refusalMessage(code: string): string {
+  if (code === 'revision-conflict')
+    return t('approvals.conflictFailure');
   if (code === 'catalog-unavailable')
     return t('artifacts.browser.folders.refusedUnavailable');
   if (
@@ -468,7 +470,7 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
         }
         return {
           status: 'refused',
-          reason: { code, message: pending.success ? t('connect.waitingForApproval') : t('artifacts.browser.folders.saveFailed') },
+          reason: { code, message: pending.success ? t('connect.waitingForApproval') : refusalMessage(code) },
         };
       }
     },
@@ -760,7 +762,7 @@ function FolderInlineEditor(props: Readonly<{
       if (pending.success) setApproval(pending.data);
       else {
         const code = failure instanceof HappyError ? failure.code : undefined;
-        setError(code === 'catalog-unavailable' ? refusalMessage(code) : t('artifacts.browser.folders.saveFailed'));
+        setError(refusalMessage(code ?? 'folder-write-failed'));
         setErrorCode(code ?? 'folder-write-failed');
       }
     } finally {

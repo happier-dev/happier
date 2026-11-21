@@ -6,6 +6,7 @@ import {
 import { tokenizeShellWords } from '@happier-dev/protocol/tools/shellWords';
 import type { WorkflowMachineCommandOutputV1 } from '@happier-dev/protocol/workflows/commandOutputV1';
 
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useScopedActionRun } from '@/components/machines/security/useScopedActionRun';
 import {
@@ -36,7 +37,7 @@ export type ServiceCommandState =
   | ServiceCommandFinished
   /** The command was dispatched but its exit never came back: it may have run, so it never reads as done. */
   | Readonly<{ kind: 'unknown' }>
-  | Readonly<{ kind: 'failed'; code: string }>;
+  | Readonly<{ kind: 'failed'; code: string; failure?: ActionExecuteFailure }>;
 
 const defaultExecute = createFrontDoorActionExecute();
 
@@ -108,7 +109,7 @@ export function useServiceCommand(
         setState(
           result.errorCode === 'action_outcome_unknown'
             ? { kind: 'unknown' }
-            : { kind: 'failed', code: result.errorCode },
+            : { kind: 'failed', code: result.errorCode, failure: result },
         );
         return;
       }

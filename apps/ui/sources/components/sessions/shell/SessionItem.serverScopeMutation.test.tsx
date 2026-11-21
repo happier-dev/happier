@@ -15,6 +15,7 @@ import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttp
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { HappyError } from '@/utils/errors/errors';
 import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
@@ -292,6 +293,48 @@ describe('SessionItem server-scoped mutations', () => {
         expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
         expect(mutationRequests).toEqual([]);
         expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(['document', 'account'] as const)('ART-CREATE-QUOTA explains the %s budget with ordered size and limit in the lifecycle alert message and retains the Session after native Delete fails', async budget => {
+        const SessionItem = await importSessionItem();
+        const sessionId = `sess_quota_${budget}`;
+        const serverIdentityId = 'srv_row_delete_quota';
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://server-native-delete.test', serverIdentityId, accountId: 'row-account',
+            machineId: 'machine-row', actionId: 'session.delete', tokenEpoch: 0,
+            execute: () => null,
+            failure: () => ({ errorCode: 'quota_exceeded', error: 'quota_exceeded',
+                details: { budget, limitBytes: 1024, usedBytes: 2048 } }),
+        });
+        await renderScreen(<SessionItem
+            session={createSessionFixture({ id: sessionId, active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
+            serverId="server_native_delete" selected={false} compact={false}
+        />, { nativeDelete: { serverIdentityId, boundary } });
+        // The current row's native menu fixture cannot expose Delete. Exercise the real shared
+        // owner and HTTP boundary; header, row and Info display this exact HappyError.message.
+        const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+        const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
+        const session = storage.getState().sessions[sessionId]!;
+        const target = createSessionActionTarget({ session, serverId: account!.home.id, isConnected: false });
+        expect(target.canDelete).toBe(true);
+        const failure = await executeSessionAction({ actionId: SESSION_ACTION_DELETE_ID, target,
+            context: { confirmed: true } }).then(() => null, error => error);
+        expect(failure).toBeInstanceOf(HappyError);
+        expect(failure.code).toBe('quota_exceeded');
+        expect(failure.message).toContain(budget === 'document' ? 'Too large to save' : 'Artifact storage is full');
+        expect(failure.message).toContain(budget === 'document' ? 'each artifact can hold up to' : 'versions included');
+        expect(failure.message).toContain(budget === 'document'
+            ? 'This would be 2.05 KB; each artifact can hold up to 1.02 KB.'
+            : '2.05 KB of 1.02 KB used');
+        expect(failure.message).not.toContain('Your edits are still here');
+        if (budget === 'document') {
+            const { describeArtifactQuota } = await import('@/components/artifacts/ArtifactQuotaNotice');
+            expect(describeArtifactQuota({ budget, limitBytes: 1024, usedBytes: 2048 }).description)
+                .toContain('Your edits are still here');
+        }
+        expect(storage.getState().sessions[sessionId]).toBeDefined();
+        expect(mutationRequests).toEqual([]);
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
     });
 
     it('surfaces a Home delete conflict after confirmation', async () => {

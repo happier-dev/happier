@@ -41,3 +41,17 @@ describe('Service Move Action result custody', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 });
+
+it('SV-C08 retains the typed relocation cause for the existing local service presenter', async () => {
+  const failureCause = { phase: 'relocation.prepare', errorClass: 'Error', errorCode: 'native_check_unavailable', httpStatus: null };
+  const result = await executeServiceRelocationAction({ execute: async () => ({ ok: false,
+    errorCode: 'action_failed', error: 'foreign diagnostic prose', failureCause }), request,
+    context: { surface: 'ui', serverId: 'home-1' },
+    admission: { expectedAccountId: 'account-1', onApprovalPending: () => {} } });
+  const { readLocalServiceActionOutcome, describeLocalServiceActionFailure } = await import('@/components/sessions/localServices/localServiceActionOutcome');
+  const outcome = readLocalServiceActionOutcome(result);
+  expect(outcome).toMatchObject({ kind: 'failed', failureCause });
+  if (outcome.kind !== 'failed') throw new Error('Expected relocation failure');
+  const { t } = await import('@/text');
+  expect(describeLocalServiceActionFailure(outcome).body).toBe(t('errors.machineNativeCheckUnavailable'));
+});

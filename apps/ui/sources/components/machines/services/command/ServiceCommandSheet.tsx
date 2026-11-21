@@ -23,6 +23,7 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -267,6 +268,9 @@ function ServiceCommandResult(
     );
   }
   if (state.kind === 'failed') {
+    const failure = presentActionExecutionFailure(state.failure ?? { ok: false, errorCode: state.code },
+      t('machineServices.command.reason.other', { service: props.serviceName }),
+      { closedCodesOnly: true, serviceCommand: { service: props.serviceName, machine: props.machineName } });
     return (
       <SurfaceStateCard
         testID="service-command.failed"
@@ -274,7 +278,9 @@ function ServiceCommandResult(
         size="line"
         diagnosticCode={state.code}
         title={t('machineServices.command.failedTitle', { service: props.serviceName })}
-        reason={failureReason(state.code, props.serviceName, props.machineName)}
+        reason={failure.reason}
+        diagnosticDetail={failure.technicalDetails.filter(detail => detail.key !== 'code')
+          .map(detail => `${detail.label}: ${detail.value}`).join('\n')}
       />
     );
   }
@@ -372,29 +378,6 @@ function CommandOutput(
 const NO_RANGES: readonly never[] = [];
 const NO_SERVICES: readonly string[] = Object.freeze([]);
 const noRanges = () => NO_RANGES;
-
-/** The owner's refusal in words; the code stays in Details. */
-function failureReason(code: string, service: string, machine: string): string {
-  switch (code) {
-    case 'service_admission_unavailable':
-    case 'service_operation_unavailable':
-    // The chosen member stopped running or left the watch after the page read it.
-    case 'service_selection_invalid':
-    case 'compose_service_unavailable':
-    case 'unsupported_action':
-      return t('machineServices.command.reason.unavailable', {
-        service,
-        machine,
-      });
-    case 'secret_redaction_unavailable':
-    case 'secret_redaction_redeploy_required':
-      return t('machineServices.command.reason.redeploy', { service });
-    case 'action_account_scope_changed':
-      return t('machineServices.command.reason.account');
-    default:
-      return t('machineServices.command.reason.other', { service });
-  }
-}
 
 const styles = StyleSheet.create((theme) => ({
   // Card chrome pads only its header and footer, so the body insets its own sheet to the title's edge (lab `services/exec`).
