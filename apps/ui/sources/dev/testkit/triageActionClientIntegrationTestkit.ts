@@ -1,8 +1,5 @@
 import { vi } from 'vitest';
-import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-
 import {
-    isQualifiedConnectedAccountProfileActiveV4,
     sameQualifiedConnectedAccountGroupRef,
     type QualifiedConnectedAccountGroupRef,
 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -11,7 +8,6 @@ import type { NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/p
 import { connectUiPersonActionClient } from './actionClientIntegrationTestkit';
 import type { SourceDeclaredAccountPluginFixture } from './harness/portableAccountPlugin';
 import { installNativeRuntimeFetchBoundaryForTest } from './harness/nativeRuntimeFetch';
-import { waitForTestEvent } from './hooks/waitForTestEvent';
 
 /** A native UI Account runtime with real Triage activation and services at physical loader/HTTP boundaries. */
 export async function connectUiTriageActionClient(
@@ -42,15 +38,6 @@ export async function connectUiTriageActionClient(
                 if (profile.id !== account.accountId) return null;
                 return profile.connectedAccountGroupsV4.find(({ ref }) =>
                     sameQualifiedConnectedAccountGroupRef(ref, group))?.activeConnectedAccountId ?? null;
-            },
-            async waitForConnectedAccountProfile(ref: QualifiedConnectedAccountRef): Promise<void> {
-                await waitForTestEvent(storage.subscribe, () => {
-                    account.assertCurrent();
-                    const profile = storage.getState().profile;
-                    return profile.id === account.accountId && profile.connectedAccountsV4.some(connected =>
-                        sameQualifiedConnectedAccountRef(connected.ref, ref)
-                        && isQualifiedConnectedAccountProfileActiveV4(connected, Date.now()));
-                }, ready => ready);
             },
             async observeMachineTransport() {
                 const [{ apiSocket }, scopedTransport] = await Promise.all([

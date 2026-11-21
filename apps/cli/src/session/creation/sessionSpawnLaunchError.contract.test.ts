@@ -10,7 +10,7 @@ import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessi
 import { buildSessionCreationTerminalSpawnErrorResult } from '@/daemon/sessions/onHappySessionWebhook';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
-import { buildConnectedServiceCredentialRefreshSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import { buildConnectedServiceCredentialRefreshSpawnErrorResult, buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { ApiMachineClient } from '@/api/apiMachine';
@@ -250,6 +250,24 @@ describe('Session launch cause transport', () => {
         currentnessFailure: { reason: 'timeout', retryable: true } } });
     } finally { await app.close(); }
   });
+  it('preserves the declared GitHub CLI refusal alongside its generic authentication cause', () => {
+    const code = 'github_cli_team_brokered_unavailable';
+    const failureCause = { code: 'credential_unavailable', phase: 'authentication',
+      failureReason: 'authentication_required', retryable: false } as const;
+    const failure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'claude',
+      error: new PluginError({ code, retryable: false,
+        details: { failureCause, privateCredential: 'must-not-cross-control-transport' } }),
+    });
+    if (!failure) throw new Error('Expected declared Connected Account refusal');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const projected = SessionSpawnNewActionResultV1Schema.parse(projectSessionSpawnNewActionResultV1(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    })));
+    expect(projected).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { code, failureCause } });
+    expect(JSON.stringify({ response, projected })).not.toContain('must-not-cross-control-transport');
+  });
+
   it('retains a transient lease cause through strict transport without disclosing attached secrets', () => {
     const secret = 'sk-private-refresh-reason';
     const failure = buildConnectedServiceCredentialRefreshSpawnErrorResult({ agentId: 'claude', error: {

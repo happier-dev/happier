@@ -563,6 +563,9 @@ resolveServerFeaturesSnapshot?: () =>
               && await http.isCurrent() && !context?.signal?.aborted,
           };
         }
+        // Deferred approval resumes the Session's original signed ingress.
+        // The deciding client's context must not select the process credential scope.
+        const sessionActionOrigin = authorization?.binding.sessionActionOrigin ?? context?.sessionActionOrigin;
         return requester && apiMachineForSessions ? {
           ...requesterAccountOperationContext(apiMachineForSessions, requester, role, context?.signal),
           ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission,
@@ -573,7 +576,7 @@ resolveServerFeaturesSnapshot?: () =>
           ...(context?.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: context.workspaceSyncSourceExecution } : {}),
           ...(context?.callerInputConstraints ? { callerInputConstraints: context.callerInputConstraints } : {}),
           ...(context?.authority ? { callerAuthority: context.authority } : {}),
-          ...(context?.sessionActionOrigin ? { sessionActionOrigin: context.sessionActionOrigin } : {}),
+          ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
           ...(context ? { localActionContext: {
             ...context,
             executionRunTargetMachineId: context.executionRunTargetMachineId ?? undefined,

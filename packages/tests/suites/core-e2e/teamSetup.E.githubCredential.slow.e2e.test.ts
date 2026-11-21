@@ -8,22 +8,18 @@ import { connectUiActionClient, connectUiPersonActionClient, prepareAuthenticati
   installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests,
   installPersonTransientConfirmationBoundary,
   type BundledPluginUiAppArtifactInventory, type PluginHostBundledUiDeclaration } from '@happier-tests/ui-action-client';
-import tweetnacl from 'tweetnacl';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isRecord, readHappierActionToolResultCandidates } from '@happier-dev/protocol/actions/happierActionToolResult';
 import { ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountCredentialMutationV4';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ConnectedServiceBindingSelectionV2 } from '@happier-dev/protocol/connect/connectedServiceBindings';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
+import { TeamMembershipV1Schema } from '@happier-dev/protocol/teams/membership';
 import { TeamCredentialSourceCandidateListOutputV1Schema } from '@happier-dev/protocol/teams/credentials/sourceCandidatesV1';
-import { TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceSummaryV1Schema,
-  teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
-import { sealSavedSecretResourceRecipientEnvelopeV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceSummaryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 import { startGithubCliBoundary } from '../../src/testkit/githubCliBoundary';
 import type { EnvOverrides } from '../../src/testkit/env';
@@ -39,6 +35,7 @@ import { TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1, TriageSourceAdministrationActi
 import { TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 } from '../../../plugins/triage/src/actions/tasksProtocol';
 import { PLUGIN_MANIFEST as TRIAGE_MANIFEST } from '../../../plugins/triage/src/manifest';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../../plugins/triage/src/accountExecution';
+import { PLUGIN_MANIFEST as GITHUB_MANIFEST } from '../../../plugins/scm-github/src/manifest';
 import { encodeGithubTriageConfiguration } from '../../../plugins/scm-github/src/triage/configuration';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../../plugins/scm-github/src/observations/githubProviderContracts';
 import { GITHUB_ISSUE_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from '../../../plugins/scm-github/src/triage/__fixtures__/githubResponses';
@@ -46,8 +43,8 @@ import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
-import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '../../../../apps/cli/src/mcp/runtime/sessionMcpLocalClient';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { consumeDeferredCliApprovalResult } from '../../../../apps/cli/src/session/actions/approvals/deferredResult';
 
 const run = createRunDirs({ runLabel: 'core' });
 const service = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
@@ -122,6 +119,7 @@ describe('Team setup E: GitHub credential process admission', () => {
     title: 'Before', state: 'open', state_reason: null as string | null };
   let isolated: Awaited<ReturnType<typeof isolatedNativeEnvironment>>;
   const attestationPath = join(directory, 'native-attestations.jsonl');
+  const nativeAgentLogPath = join(directory, 'native-agent.jsonl');
 
   beforeAll(async () => {
     restoreTaskConfirmation = installPersonTransientConfirmationBoundary();
@@ -130,6 +128,12 @@ describe('Team setup E: GitHub credential process admission', () => {
     await prepareAuthenticationInventory(packaged, { manifest: TRIAGE_MANIFEST,
       target: TRIAGE_DATA_ACTION_EXECUTION_V1.account, projectPath: 'packages/plugins/triage',
       entryPath: 'packages/plugins/triage/src/accountRuntime.ts', packageName: '@happier-dev/plugins-triage' });
+    const githubAuthentication = GITHUB_MANIFEST.contributes.connectedAccountDescriptors
+      .find(descriptor => descriptor.id === service.localId)?.authentication.account;
+    if (!githubAuthentication) throw new Error('GitHub Account runtime declaration missing');
+    await prepareAuthenticationInventory(packaged, { manifest: GITHUB_MANIFEST, target: githubAuthentication,
+      projectPath: 'packages/plugins/scm-github', entryPath: 'packages/plugins/scm-github/src/accountRuntime.ts',
+      packageName: '@happier-dev/plugins-scm-github' });
     // The source-driven app substitutes only Metro's package/Expo asset IO;
     // the canonical compiler and Account registration consume real plugin bytes.
     const restoreArtifacts = installBundledPluginUiArtifactsForTests(packaged.artifacts as BundledPluginUiAppArtifactInventory);
@@ -168,6 +172,7 @@ describe('Team setup E: GitHub credential process admission', () => {
     await writeFile(provider, `import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
+process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG = ${JSON.stringify(nativeAgentLogPath)};
 if (process.argv.includes('--output-format')) {
   const token = process.env.GH_TOKEN || '';
   const redact = value => String(value || '').split(token || '\\u0000').join('[REDACTED]');
@@ -257,8 +262,8 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       terminal: { mode: 'plain' as const },
     };
   }
-  async function admit(selection?: LaunchSelection, scope: { account: Account; machine: Machine; ui: Ui } = {
-    account, machine, ui: ui!,
+  async function admit(selection?: LaunchSelection, scope: { account: Account; machine: Machine } = {
+    account, machine,
   }) {
     const before = await readFile(attestationPath, 'utf8').catch(() => '');
     const result = await scope.account.execute('session.spawn_new', spawnInput(selection, scope.machine));
@@ -266,12 +271,15 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     const created = SessionSpawnNewActionResultV1Schema.parse(result.result);
     expect(created.type).toBe('success');
     if (created.type !== 'success') throw new Error(`Bound GitHub Session unsettled (${created.type})`);
-    const sent = await scope.ui.execute('session.message.send', { sessionId: created.sessionId, message: 'Verify the admitted GitHub process.' },
-      { surface: 'ui', authority: 'present_user', serverId: scope.ui.serverId, actionCaller: { kind: 'host' }, defaultSessionId: created.sessionId });
-    expect(sent.ok).toBe(true);
+    const sent = await scope.account.execute('session.message.send', {
+      sessionId: created.sessionId, message: 'Verify the admitted GitHub process.', reply: 'none',
+    });
+    if (!sent.ok) throw new Error(`GitHub Agent turn refused (${sent.errorCode})`);
+    expect(['accepted', 'alreadyAccepted']).toContain(SessionMessageSendResultV1Schema.parse(sent.result).status);
+    await fixture!.assertSessionAgentOutput(scope.account, created.sessionId);
     let contents = '';
     await waitFor(async () => { contents = await readFile(attestationPath, 'utf8').catch(() => '');
-      return contents.length > before.length; }, { timeoutMs: 60_000 });
+      return contents.length > before.length; }, { timeoutMs: 60_000, context: 'native GitHub Agent process attestation' });
     const rows = contents.slice(before.length).trim().split('\n');
     const observed = JSON.parse(rows[0]!) as {
       sessionMcpContextFile?: string; tokenFingerprint: string | null;
@@ -289,11 +297,11 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     return transcript;
   }
 
-  async function assertSessionSetup(sessionMcpContextFile: string | undefined, token: string,
-    scope: { machine: Machine; ui: Ui } = { machine, ui: ui! }) {
+  async function assertSessionSetup(session: Awaited<ReturnType<typeof admit>>, token: string,
+    scope: { account: Account; machine: Machine; ui: Ui } = { account, machine, ui: ui! }) {
     const { machine, ui } = scope;
     const requestOffset = github!.entries().length;
-    if (!sessionMcpContextFile) throw new Error('Admitted provider did not receive Session Action transport custody');
+    if (!session.observed.sessionMcpContextFile) throw new Error('Admitted provider did not receive Session Action transport custody');
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
       serverId: ui!.serverId, actionCaller: { kind: 'host' as const } };
     const git = await native('git', ['init', '--quiet', machine.workspaceDir], isolated.env);
@@ -301,46 +309,59 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     await mkdir(join(machine.workspaceDir, '.happier'), { recursive: true });
     await writeFile(join(machine.workspaceDir, '.happier/project.json'), JSON.stringify({ version: 1,
       workspace: { setup: [{ kind: 'command',
-        command: 'gh auth status --hostname github.com && git ls-remote https://github.com/team-setup/fixture.git && printf TEAM_GH_SETUP_OK > github-setup-result',
+        command: [
+          '[ -n "$GH_TOKEN" ] || { printf MISSING_GH_TOKEN > github-setup-result; exit 71; }',
+          'gh auth status --hostname github.com || { printf GH_AUTH_FAILED > github-setup-result; exit 72; }',
+          'git ls-remote https://github.com/team-setup/fixture.git || { printf GIT_AUTH_FAILED > github-setup-result; exit 73; }',
+          'printf TEAM_GH_SETUP_OK > github-setup-result',
+        ].join('\n'),
       }] } }));
     const openedResult = await ui!.executeConfirmed('projects.open', { ...machine.target,
       source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' } }, context);
     if (!openedResult.ok) throw new Error(`GitHub setup Project open refused (${openedResult.errorCode})`);
     const opened = OpenProjectResultV1Schema.parse(openedResult.result);
     if (opened.kind !== 'opened') throw new Error(`GitHub setup Project not opened (${opened.kind})`);
-    const mcp = await connectSessionMcpClient(await readSessionMcpContextFromEnvironment({
-      HAPPIER_SESSION_MCP_CONTEXT_FILE: sessionMcpContextFile,
-    }));
-    try {
-      // The original Session's actual native Action executor supplies origin;
-      // there is no synthetic sessionActionOrigin or credential selection here.
-      const response = await mcp.client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'projects.prepare', input: { workspace: opened.workspace, phase: 'setup' },
-      } });
-      if (!Array.isArray(response.content) || response.content[0]?.type !== 'text') throw new Error('GitHub setup Action response missing');
-      expect(response.isError).not.toBe(true);
-      const accepted = ProjectCommandActionOutputV1Schema.parse(JSON.parse(response.content[0].text)).operation;
-      let snapshot: ActionOperationSnapshotV1 | undefined;
-      const observe = async () => {
-        const result = await ui!.execute('action.operations.get', { ...machine.target,
-          operationId: accepted.operationId }, context);
-        if (!result.ok) throw new Error(`GitHub setup observation refused (${result.errorCode})`);
-        const found = ActionOperationGetV1ResponseSchema.parse(result.result);
-        if (found.kind !== 'found') throw new Error('GitHub setup admitted operation not found');
-        snapshot = found.operation;
-      };
-      await waitFor(async () => { await observe(); return Boolean(snapshot!.setupReview); }, { timeoutMs: 60_000 });
-      const approved = await ui!.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
-        heldOperationId: accepted.operationId, expectedEffectDigest: snapshot!.setupReview!.reviewedEffectDigest,
-        consentScope: 'untilChanged' }, context);
-      expect(approved.ok).toBe(true);
-      await waitFor(async () => { await observe(); return ['succeeded', 'failed', 'cancelled'].includes(snapshot!.state); }, { timeoutMs: 60_000 });
-      expect(snapshot).toMatchObject({ state: 'succeeded' });
-      expect(JSON.stringify(snapshot)).not.toContain(token);
-      expect(await readFile(join(machine.workspaceDir, 'github-setup-result'), 'utf8')).toBe('TEAM_GH_SETUP_OK');
-      expect(github!.entries().slice(requestOffset).some(request => request.authorizationFingerprint
-        === fingerprint(`Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`))).toBe(true);
-    } finally { await mcp.close(); }
+    const nativeReceipt = await fixture!.executeSessionMcpAction(scope.account, {
+      sessionId: session.sessionId, logPath: nativeAgentLogPath,
+    }, 'projects.prepare', { workspace: opened.workspace, phase: 'setup' }, { waitForTerminal: false });
+    const response = await consumeDeferredCliApprovalResult(nativeReceipt, {
+      execute: scope.account.execute,
+      token: scope.account.credentials.token,
+      serverHttpBaseUrl: fixture!.actionServerApiUrl,
+      onApprovalRequested: (artifactId, signal) => ui.executeConfirmed('approval.request.decide',
+        { artifactId, decision: 'approve' }, { ...context, signal }),
+    });
+    if (!response.ok) throw new Error(`Native GitHub setup refused (${response.errorCode})`);
+    const accepted = ProjectCommandActionOutputV1Schema.parse(response.result).operation;
+    const observe = async (includeSetupReview: boolean) => {
+      const result = await ui.execute('action.operations.get', { ...machine.target,
+        operationId: accepted.operationId, waitForTerminal: true,
+        ...(includeSetupReview ? { includeSetupReview: true } : {}) }, context);
+      if (!result.ok) throw new Error(`GitHub setup observation refused (${result.errorCode})`);
+      const found = ActionOperationGetV1ResponseSchema.parse(result.result);
+      if (found.kind !== 'found') throw new Error('GitHub setup admitted operation not found');
+      return found.operation;
+    };
+    const held = await observe(true);
+    if (!held.setupReview) throw new Error(`Native GitHub setup did not hold for review (${held.state})`);
+    const approved = await ui.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
+      heldOperationId: accepted.operationId, expectedEffectDigest: held.setupReview.reviewedEffectDigest,
+      consentScope: 'untilChanged' }, context);
+    if (!approved.ok) throw new Error(`Native GitHub setup review refused (${approved.errorCode})`);
+    const snapshot = await observe(false);
+    const requests = github!.entries().slice(requestOffset);
+    const seenGitCredential = requests.some(request => request.authorizationFingerprint
+      === fingerprint(`Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`));
+    const setupMarker = await readFile(join(machine.workspaceDir, 'github-setup-result'), 'utf8').catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    });
+    expect(snapshot.state, JSON.stringify({ errorCode: snapshot.error?.errorCode, setupMarker,
+      requests: requests.length, seenGitCredential }))
+      .toBe('succeeded');
+    expect(JSON.stringify(snapshot)).not.toContain(token);
+    expect(setupMarker).toBe('TEAM_GH_SETUP_OK');
+    expect(seenGitCredential).toBe(true);
   }
 
   async function assertAssociatedTerminal(sessionId: string, token: string,
@@ -385,6 +406,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
   it('TS.E.githubCredential uses the saved Account CLI purpose on the next admission and leaves native isolated', async () => {
     await ui!.waitForPluginAccountAvailability();
     const selectCliAccount = async (ref: Awaited<ReturnType<typeof importToken>>) => {
+      await ui!.waitForConnectedAccountProfile(ref);
       const chosen = await ui!.executeConfirmed('connectedServices.purposes.default.set', {
         purpose: { consumer: { pluginId: service.pluginId, localId: 'gh' }, purpose: 'github.cli' },
         target: { kind: 'account', account: ref },
@@ -403,7 +425,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     expect(github!.entries().some(request => request.path.startsWith('/team-setup/fixture.git/info/refs')
       && request.authorizationFingerprint === fingerprint(`Basic ${Buffer.from(`x-access-token:${firstToken}`).toString('base64')}`))).toBe(true);
     await assertAssociatedTerminal(first.sessionId, firstToken);
-    await assertSessionSetup(first.observed.sessionMcpContextFile, firstToken);
+    await assertSessionSetup(first, firstToken);
     const secondAccount = await importToken(secondToken);
     await selectCliAccount(secondAccount);
     const second = await admit('account-default');
@@ -411,7 +433,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     // A new Session admission cannot replace an existing Session's associated
     // process selection. Both native gh and Git still use the first binding.
     await assertAssociatedTerminal(first.sessionId, firstToken);
-    const unbound = await admit();
+    const unbound = await admit({ source: 'native' });
     expect(unbound.observed.tokenFingerprint).toBeNull();
     expect(unbound.observed.gh.code).not.toBe(0);
     expect(await readdir(isolated.ghConfig)).toEqual([]);
@@ -470,7 +492,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     expect(github!.entries().slice(beforeRefusal).filter(request => request.method !== 'GET')).toEqual([]);
   }, 0);
 
-  it('TS.E.githubCredential and TH.J6 keep native custody refusals typed', async () => {
+  async function prepareTeamGithubCredential() {
     const token = `github_pat_TEST_ONLY_TEAM_${randomUUID()}`;
     const connected = await importToken(token);
     const ownerId = await fetchAccountId(fixture!.server.baseUrl, account.credentials.token);
@@ -485,8 +507,11 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     const member = await fixture!.createAccount('github-member');
     const memberId = await fetchAccountId(fixture!.server.baseUrl, member.credentials.token);
     const joined = await account.execute('teams.members.add', { v: 1, teamId, accountId: memberId,
-      role: 'member', historyAccess: 'all_existing' });
-    expect(joined.ok).toBe(true);
+      role: 'member', historyAccess: 'all_existing' }, { presentUserConfirmation: { actionId: 'teams.members.add' } });
+    if (!joined.ok) throw new Error(`GitHub Team admission refused (${joined.errorCode})`);
+    expect(TeamMembershipV1Schema.parse(joined.result)).toMatchObject({
+      teamId, accountId: memberId, role: 'member', status: 'active',
+    });
     const recipientMachine = await fixture!.enrollDaemon(member, { env: { ...isolated.env, NODE_OPTIONS: `${fixture!.sourceOptions} ${github!.env.NODE_OPTIONS}`,
       HAPPIER_CLAUDE_PATH: join(directory, 'claude-with-native-github.mjs') } });
     await fixture!.assertKnownGoodSessionControl(member, recipientMachine);
@@ -497,20 +522,11 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     expect(candidate).toBeDefined();
     if (!candidate) throw new Error('Imported GitHub account absent from source owner projection');
     const resourceId = randomUUID();
-    const labelKey = Uint8Array.from(randomBytes(32));
-    const displayName = sealPrivateLabelV1({ mode: 'e2ee', binding: teamCredentialDisplayNamePrivateLabelBindingV1(resourceId),
-      value: 'Team GitHub CLI fixture', dataKey: labelKey, randomBytes, recipients: [
-        { accountId: ownerId, envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-          recipientContentPublicKey: tweetnacl.box.keyPair.fromSecretKey(account.auth.accountMachineKey).publicKey, randomBytes }) },
-        { accountId: memberId, envelope: sealSavedSecretResourceRecipientEnvelopeV1({ resourceDataKey: labelKey,
-          recipientContentPublicKey: tweetnacl.box.keyPair.fromSecretKey(member.auth.accountMachineKey).publicKey, randomBytes }) },
-      ] });
-    const shared = await ui!.executeConfirmed('teams.credentials.create', { teamId, resourceId, displayName,
+    const shared = await account.execute('teams.credentials.create', { teamId, resourceId, displayName: 'Team GitHub CLI fixture',
       source: candidate.source, deliveryPolicy: { preferredAllowedModes: ['direct', 'brokered'] },
       sessionUsePolicy: 'personal_allowed', brokerPlacement: { kind: 'machine', machineId: machine.target.machineId },
       requestPolicy: null, allMembersAllowedRoutes: ['direct', 'brokered'], groupGrants: [], memberGrants: [], usageLimits: [],
-    }, { surface: 'ui', authority: 'present_user', serverId: ui!.serverId, actionCaller: { kind: 'host' } });
-    expect(shared.ok).toBe(true);
+    }, { presentUserConfirmation: { actionId: 'teams.credentials.create' } });
     if (!shared.ok) throw new Error(`GitHub Team share refused (${shared.errorCode})`);
     TeamCredentialResourceSummaryV1Schema.parse(shared.result);
     let selection: ConnectedServiceBindingSelectionV2 | undefined;
@@ -521,62 +537,58 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       const row = TeamCredentialResourceEntitledPageV1Schema.parse(listed.result).resources.find(resource => resource.id === resourceId);
       selection = row?.connectedServiceSelections.find(value => value.deliveryMode === 'direct');
       return row?.directMaterialState === 'current' && selection !== undefined;
-    }, { timeoutMs: 60_000 });
+    }, { timeoutMs: 60_000, failFast: true, context: 'direct Team GitHub material delivery' });
     if (!selection) throw new Error('Direct GitHub selection was not produced');
     await ui!.close();
     ui = undefined;
     const recipientUi = await connectUiActionClient({ serverUrl: fixture!.server.baseUrl, credentials: member.uiCredentials });
     extraUis.push(recipientUi);
     await waitFor(() => recipientUi.isAccountReady() && recipientUi.isMachineActive(recipientMachine.target.machineId), { timeoutMs: 60_000 });
-    const direct = await admit(selection, { account: member, machine: recipientMachine, ui: recipientUi });
+    const direct = await admit(selection, { account: member, machine: recipientMachine });
+    return { token, member, recipientMachine, recipientUi, direct, resourceId, sources, shared };
+  }
+
+  it('TH.J6 keeps child selection and native custody refusals typed', async () => {
+    const { member, direct } = await prepareTeamGithubCredential();
     if (!direct.observed.sessionMcpContextFile) throw new Error('Direct Team Session omitted its native Action context');
-    const custodyMcp = await connectSessionMcpClient(await readSessionMcpContextFromEnvironment({
-      HAPPIER_SESSION_MCP_CONTEXT_FILE: direct.observed.sessionMcpContextFile,
-    }));
-    try {
-      const child = { sessionId: direct.sessionId, intent: 'delegate',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        instructions: 'Confirm the explicit child selection reaches the Agent.',
-        permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
-        modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } };
-      const control = await custodyMcp.client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'execution.run.start', input: { ...child, childSelection: 'agentDefault' },
-      } });
-      expect(control.isError, JSON.stringify(control.content)).not.toBe(true);
-      const controlRun = readHappierActionToolResultCandidates(control).map(candidate =>
-        ExecutionRunStartResponseSchema.safeParse(candidate)).find(result => result.success)?.data;
-      if (!controlRun) throw new Error('Child control omitted its public Action result');
-      const readRunIds = async () => {
-        const listed = await member.execute('execution.run.list', { sessionId: direct.sessionId });
-        if (!listed.ok) throw new Error(`Child Run inventory refused: ${JSON.stringify(listed)}`);
-        return ExecutionRunListResponseSchema.parse(listed.result).runs.map(run => run.runId).sort();
-      };
-      const runsBeforeRefusal = await readRunIds();
-      expect(runsBeforeRefusal).toContain(controlRun.runId);
-      const refusal = await custodyMcp.client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'execution.run.start', input: child,
-      } });
-      expect(refusal.isError, JSON.stringify(refusal.content)).toBe(true);
-      const typedRefusal = readHappierActionToolResultCandidates(refusal).flatMap(candidate => {
-        if (!isRecord(candidate)) return [];
-        const parsed = ActionExecuteFailureSchema.safeParse({ ok: false, ...candidate });
-        return parsed.success ? [parsed.data] : [];
-      })[0];
-      expect(typedRefusal).toMatchObject({
-        errorCode: 'execution_run_child_choice_required', details: {
-          executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' },
-        },
-      });
-      expect(await readRunIds(), 'A custody refusal must create no child Run').toEqual(runsBeforeRefusal);
-    } finally { await custodyMcp.close(); }
+    const child = { sessionId: direct.sessionId, intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Confirm the explicit child selection reaches the Agent.',
+      permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' };
+    const nativeSession = { sessionId: direct.sessionId, logPath: nativeAgentLogPath };
+    const control = await fixture!.executeSessionMcpAction(member, nativeSession, 'execution.run.start',
+      { ...child, childSelection: 'agentDefault' });
+    if (!control.ok) throw new Error(`Native child control refused (${control.errorCode})`);
+    const controlRun = ExecutionRunStartResponseSchema.parse(control.result);
+    const readRunIds = async () => {
+      const listed = await member.execute('execution.run.list', { sessionId: direct.sessionId });
+      if (!listed.ok) throw new Error(`Child Run inventory refused: ${JSON.stringify(listed)}`);
+      return ExecutionRunListResponseSchema.parse(listed.result).runs.map(run => run.runId).sort();
+    };
+    const runsBeforeRefusal = await readRunIds();
+    expect(runsBeforeRefusal).toContain(controlRun.runId);
+    const refusal = await fixture!.executeSessionMcpAction(member, nativeSession, 'execution.run.start', { ...child,
+      modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } });
+    expect(refusal).toMatchObject({ ok: false,
+      errorCode: 'execution_run_child_choice_required', details: {
+        executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' },
+      },
+    });
+    expect(await readRunIds(), 'A custody refusal must create no child Run').toEqual(runsBeforeRefusal);
+  }, 0);
+
+  it('TS.E.githubCredential uses a direct Team credential and refuses broker-only native launch', async () => {
+    const { token, member, recipientMachine, recipientUi, direct, resourceId, sources, shared } =
+      await prepareTeamGithubCredential();
     await assertAssociatedTerminal(direct.sessionId, token, { machine: recipientMachine, ui: recipientUi });
-    await assertSessionSetup(direct.observed.sessionMcpContextFile, token, { machine: recipientMachine, ui: recipientUi });
     expect(direct.observed).toMatchObject({ tokenFingerprint: fingerprint(token), gh: { code: 0 }, git: { code: 0 } });
     const before = await readFile(attestationPath, 'utf8');
     const brokered = await member.execute('session.spawn_new', spawnInput({ source: 'team_resource', resourceId,
       deliveryMode: 'brokered' }, recipientMachine));
-    expect(brokered).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
-      launchError: { kind: 'launch_error', code: 'github_cli_team_brokered_unavailable' } } });
+    expect(brokered).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: {
+      type: 'error', code: 'spawn_failed',
+      launchError: { kind: 'launch_error', code: 'github_cli_team_brokered_unavailable' },
+    } });
     expect(await readFile(attestationPath, 'utf8')).toBe(before);
     expect(JSON.stringify([sources, shared, brokered, direct.metadata,
       await readTranscript(direct.sessionId, recipientUi)])).not.toContain(token);
@@ -586,6 +598,7 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
     })).toBeNull();
+    await assertSessionSetup(direct, token, { account: member, machine: recipientMachine, ui: recipientUi });
     for (const path of [recipientMachine.daemon.proc.stdoutPath, recipientMachine.daemon.proc.stderrPath,
       ...(recipientMachine.daemon.state.daemonLogPath ? [recipientMachine.daemon.state.daemonLogPath] : [])]) {
       expect(await readFile(path, 'utf8')).not.toContain(token);

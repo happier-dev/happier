@@ -88,7 +88,11 @@ export function projectSessionSpawnFailure(input: Readonly<{
     message: typeof input.errorMessage === 'string' && input.errorMessage.trim()
       ? input.errorMessage : 'Session launch failed' });
   const causeCode = detail.success ? detail.data.failureCause?.code : undefined;
-  const typedCauseCode = readTeamCredentialLaunchFailureCode(causeCode)
+  const hasSpecificCredentialRefusal = causeCode === 'credential_unavailable' && detail.success
+    && detail.data.code !== SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK
+    && detail.data.code !== SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED;
+  // A generic credential cause still accompanies the owner's more specific refusal.
+  const typedCauseCode = hasSpecificCredentialRefusal ? undefined : readTeamCredentialLaunchFailureCode(causeCode)
     ?? (readSessionStartupFailurePreview(causeCode) ? causeCode : undefined);
   const code = typedCauseCode ?? (detail.success ? detail.data.code : nativeCode ?? preparationCode ?? input.errorCode);
   const modelSelectionRequired = code === 'agent_startup_model_reconciliation_failed'
@@ -105,7 +109,7 @@ export function projectSessionSpawnFailure(input: Readonly<{
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,
-    launchError: detail.success ? { ...detail.data, code: typedCauseCode ?? detail.data.code,
+    launchError: detail.success ? { ...detail.data, code,
       ...(modelSelectionRequired ? { message: readSessionStartupFailurePreview(code, null, detail.data.failureCause)! } : {}) } : fallback.success ? fallback.data
       : { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message: 'Session launch failed' } };
 }

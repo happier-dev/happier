@@ -8,12 +8,14 @@ import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
+import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { getServerFeaturesSnapshot, refreshAuthenticatedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -275,6 +277,17 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
                 } finally { voiceSession.resetVoiceSessionStoreForTests(); }
             },
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
+            async waitForConnectedAccountProfile(ref: QualifiedConnectedAccountRef): Promise<void> {
+                const lifetime = captureActiveServerAccountScopeLifetime();
+                if (!lifetime) throw new Error('Person App Account scope unavailable');
+                await waitForTestEvent(storage.subscribe, () => {
+                    if (!lifetime.isCurrent()) throw new Error('Person App Account scope changed');
+                    const profile = storage.getState().profile;
+                    return profile.id === lifetime.scope.accountId && profile.connectedAccountsV4.some(connected =>
+                        sameQualifiedConnectedAccountRef(connected.ref, ref)
+                        && isQualifiedConnectedAccountProfileActiveV4(connected, Date.now()));
+                }, ready => ready);
+            },
             lendScopedSocketClient: () => apiSocket.lendScopedSocketClient({
                 serverUrl: params.serverUrl, reachabilityServerUrl: profileUrl, token: params.credentials.token,
             }),
