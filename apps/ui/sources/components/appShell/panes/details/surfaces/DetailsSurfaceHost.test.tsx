@@ -35,7 +35,7 @@ describe('DetailsSurfaceHost', () => {
 
         const renderCalls: string[] = [];
         const screen = await renderScreen(
-            <DetailsSurfaceHost
+            <DetailsSurfaceHost paneScopeId="session:session-1"
                 tab={tab}
                 scope={{ kind: 'session', sessionId: 'session-1' }}
                 region="details"
@@ -91,7 +91,7 @@ describe('DetailsSurfaceHost', () => {
         const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
 
         const screen = await renderScreen(
-            <DetailsSurfaceHost
+            <DetailsSurfaceHost paneScopeId="session:session-1"
                 tab={tab}
                 scope={{ kind: 'workspace', workspaceRefId: 'wr_1', serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' }}
                 region="details"
@@ -115,7 +115,7 @@ describe('DetailsSurfaceHost', () => {
     it('explains a policy-disabled details destination without exposing its code as primary copy', async () => {
         const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
         const screen = await renderScreen(
-            <DetailsSurfaceHost
+            <DetailsSurfaceHost paneScopeId="session:session-1"
                 tab={tab}
                 scope={{ kind: 'session', sessionId: 'session-1' }}
                 region="details"
@@ -146,7 +146,7 @@ describe('DetailsSurfaceHost', () => {
 
         try {
             const screen = await renderScreen(
-                <DetailsSurfaceHost
+                <DetailsSurfaceHost paneScopeId="session:session-1"
                     tab={tab}
                     scope={{ kind: 'session', sessionId: 'session-1' }}
                     region="details"
@@ -189,7 +189,7 @@ describe('DetailsSurfaceHost', () => {
             canRender: () => true,
             render: () => { renders += 1; return React.createElement('ResolvedSurface'); },
         }];
-        const element = () => <DetailsSurfaceHost tab={tab} scope={scope} region="details" renderers={renderers} />;
+        const element = () => <DetailsSurfaceHost paneScopeId="session:session-1" tab={tab} scope={scope} region="details" renderers={renderers} />;
         const screen = await renderScreen(element());
         const afterMount = renders;
         await act(async () => { screen.update(element()); });

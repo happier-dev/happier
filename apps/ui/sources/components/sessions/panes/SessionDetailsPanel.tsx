@@ -353,7 +353,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
     ) => {
         if (!session) return <DetailsSurfaceFallback status="pending" />;
         return (
-            <DetailsSurfaceHost
+            <DetailsSurfaceHost paneScopeId={props.scopeId}
                 tab={tab}
                 scope={detailsSurfaceScope}
                 region="details"
@@ -370,6 +370,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
         detailsSurfaceCallbacks,
         detailsSurfaceRenderers,
         detailsSurfaceScope,
+        props.scopeId,
         session,
     ]);
 

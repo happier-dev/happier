@@ -336,7 +336,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
 
     const renderTabContent = React.useCallback((tab: DetailsTabState) => {
         return (
-            <DetailsSurfaceHost
+            <DetailsSurfaceHost paneScopeId={props.scopeId}
                 tab={tab}
                 scope={detailsSurfaceScope}
                 region="details"
@@ -348,6 +348,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         detailsSurfaceCallbacks,
         detailsSurfaceRenderers,
         detailsSurfaceScope,
+        props.scopeId,
     ]);
 
     const renderOverlay = React.useCallback((overlay: NonNullable<typeof pane.scopeState>['details']['overlay']) => {

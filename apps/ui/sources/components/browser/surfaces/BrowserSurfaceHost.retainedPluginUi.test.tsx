@@ -25,6 +25,7 @@ import { clearBrowserRuntimeControlRegistryForTests } from '@/sync/domains/brows
 import { createBrowserViewState, openBrowserTarget } from '@/sync/domains/browser/store';
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
+import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
@@ -205,7 +206,47 @@ async function mountRetainedBrowserForPlugin(scopeId?: string, selectedSlot = fa
         dispose: () => { adapter.dispose(); host.dispose?.(); } };
 }
 
+function PhoneWorkspace(props: Readonly<{ shown: boolean; pane: { current?: AppPaneScopeApi } }>) {
+    props.pane.current = useAppPaneScope('session:phone-close');
+    return props.shown ? <BrowserScopedWorkspace scopeId="session:phone-close"
+        scope={{ kind: 'session', sessionId: 'session-1' }}
+        openScope="sessionMobile" platform="web"
+        collapseSingleTab keepAliveAboveRouter presentationSlotId="phone-slot" /> : null;
+}
+
 describe('retained Browser through the external plugin-UI Action API', () => {
+    it('retires the collapsed phone workspace page on Close after preserving route recomposition', async () => {
+        const pane: { current?: AppPaneScopeApi } = {};
+        const store = createRetainedPresentationSlotsStore();
+        const render = (shown: boolean) => <AppPaneProvider><RetainedPresentationSlotsProvider store={store}>
+            <PhoneWorkspace shown={shown} pane={pane} />
+        </RetainedPresentationSlotsProvider></AppPaneProvider>;
+        const screen = await renderScreen(render(true), { createNodeMock: () => ({
+            measureInWindow: (publish: (x: number, y: number, width: number, height: number) => void) => publish(0, 0, 640, 480),
+        }) });
+        const tab = createBrowserViewDetailsTab({ browserSessionId: 'phone-browser', viewId: 'phone-view',
+            target: { kind: 'localServicePreview', targetId: 'phone-preview', sessionId: 'session-1',
+                machineId: 'machine-1', display: { title: 'Preview' } } });
+        await act(async () => { pane.current!.openDetailsTab(tab, { intent: 'pinned' }); });
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findHostByTestId('browser-keepalive-placeholder-phone-slot'), 'onLayout');
+        });
+        await flushHookEffects();
+        const shell = screen.findByType(BrowserShell);
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        await screen.update(render(false));
+        await flushHookEffects();
+        expect(screen.findByType(BrowserShell)).toBe(shell);
+        await screen.update(render(true));
+        await flushHookEffects();
+        expect(screen.findByType(BrowserShell)).toBe(shell);
+        await act(async () => { shell.props.onCloseTab(); });
+        await flushHookEffects();
+        expect(pane.current!.scopeState?.details.tabs).toHaveLength(0);
+        expect(store.getPortalSnapshot()).toEqual([]);
+        expect(screen.root.findAllByType(BrowserShell)).toHaveLength(0);
+    });
+
     it('opens and closes launchpad error diagnostics after the Details workspace hands its Browser to the retained portal', async () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected admitted Account lifetime');

@@ -63,7 +63,7 @@ function DiscussionDetailsPane(props: Readonly<{ scopeId: string; serverId?: str
         pinTab: pane.pinDetailsTab, unpinTab: pane.unpinDetailsTab,
     }), [pane.openDetailsTab, pane.closeDetailsTab, pane.replaceDetailsTab, pane.pinDetailsTab, pane.unpinDetailsTab]);
     return <DetailsSplitWorkspace pane={pane} closeLastTab={pane.closeDetails}
-        renderTabContent={(tab, presentation) => <DetailsSurfaceHost tab={tab} active={presentation.active}
+        renderTabContent={(tab, presentation) => <DetailsSurfaceHost paneScopeId={props.scopeId} tab={tab} active={presentation.active}
             scope={DISCUSSION_DETAILS_SCOPE} region="details" renderers={renderers} callbacks={callbacks} />} />;
 }
 

@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { DetailsSurfaceTabLifetimeScope } from '../workspace/detailsTabLifetime';
 import type { DetailsTabState } from '../workspace/detailsWorkspaceTypes';
 import { DetailsSurfaceFallback } from './DetailsSurfaceFallback';
 import {
@@ -55,6 +56,7 @@ function DetailsSurfaceRendererContent(props: Readonly<{
  * page (a file's header and body) only changes with its tab, scope, renderers or callbacks.
  */
 export const DetailsSurfaceHost = React.memo(function DetailsSurfaceHost(props: Readonly<{
+    paneScopeId: string;
     tab: DetailsTabState;
     scope: DetailsSurfaceScopeV1;
     region: DetailsSurfaceRegionV1;
@@ -90,8 +92,10 @@ export const DetailsSurfaceHost = React.memo(function DetailsSurfaceHost(props: 
     }
 
     return (
-        <DetailsSurfaceRenderBoundary key={`${descriptor.surfaceId}:${renderer.id}`}>
-            <DetailsSurfaceRendererContent renderer={renderer} input={renderInput} />
-        </DetailsSurfaceRenderBoundary>
+        <DetailsSurfaceTabLifetimeScope scopeId={props.paneScopeId} tabKey={props.tab.key}>
+            <DetailsSurfaceRenderBoundary key={`${descriptor.surfaceId}:${renderer.id}`}>
+                <DetailsSurfaceRendererContent renderer={renderer} input={renderInput} />
+            </DetailsSurfaceRenderBoundary>
+        </DetailsSurfaceTabLifetimeScope>
     );
 });

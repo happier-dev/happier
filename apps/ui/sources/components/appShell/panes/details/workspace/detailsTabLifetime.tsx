@@ -34,6 +34,19 @@ export function DetailsTabLifetimeScope(props: React.PropsWithChildren<Readonly<
     return <DetailsTabLifetimeContext.Provider value={binding}>{props.children}</DetailsTabLifetimeContext.Provider>;
 }
 
+/** A surface always carries membership, including presenters without the workspace chrome.
+ * Controlled destinations retain their incumbent selected-slot membership. */
+export function DetailsSurfaceTabLifetimeScope(props: React.PropsWithChildren<Readonly<{
+    scopeId: string;
+    tabKey: string;
+}>>): React.ReactElement {
+    const incumbent = React.useContext(DetailsTabLifetimeContext);
+    const pane = React.useContext(AppPaneContext);
+    const binding = React.useMemo(() => incumbent ?? (pane ? { pane, scopeId: props.scopeId, tabKey: props.tabKey } : null),
+        [incumbent, pane, props.scopeId, props.tabKey]);
+    return <DetailsTabLifetimeContext.Provider value={binding}>{props.children}</DetailsTabLifetimeContext.Provider>;
+}
+
 function RetainedDetailsTab(props: React.PropsWithChildren<Readonly<{
     binding: DetailsTabBinding | null;
 }>>): React.ReactElement {

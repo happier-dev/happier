@@ -180,14 +180,14 @@ export function BrowserScopedWorkspace(props: Readonly<{
     ]);
 
     const renderTabContent = React.useCallback((tab: DetailsTabState) => (
-        <DetailsSurfaceHost
+        <DetailsSurfaceHost paneScopeId={props.scopeId}
             tab={tab}
             scope={props.scope}
             region="details"
             renderers={renderers}
             callbacks={callbacks}
         />
-    ), [callbacks, props.scope, renderers]);
+    ), [callbacks, props.scope, props.scopeId, renderers]);
 
     const renderEmptyState = React.useCallback(() => renderTabContent({
         ...createBrowserLaunchpadDetailsTab(),
