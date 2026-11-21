@@ -208,13 +208,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
         }
         pane.openDetailsTab(tab, options);
     }, [controlledDestination, pane.openDetailsTab, props.onOpenDestinationTab]);
-    const closeDetailsTab = React.useCallback((tabKey: string) => {
-        if (controlledDestination) {
-            requestClose();
-            return;
-        }
-        pane.closeDetailsTab(tabKey);
-    }, [controlledDestination, pane.closeDetailsTab, requestClose]);
+    const closeDetailsTab = pane.closeDetailsTab;
     const replaceDetailsTab = React.useCallback<typeof pane.replaceDetailsTab>((tabKey, tab, options) => {
         if (controlledDestination) {
             props.onOpenDestinationTab?.(tab);

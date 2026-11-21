@@ -110,6 +110,48 @@ async function renderers(overrides: Partial<Parameters<typeof import('./surfaces
 }
 
 describe('SessionDetailsPanel browser product mount', () => {
+    it.each(['local', 'remote'] as const)('retires a controlled %s Browser page on Close tab while preserving a switched-away page', async kind => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { BrowserShell } = await import('@/components/browser/BrowserShell');
+        const { createBrowserViewDetailsTab } = await import('@/components/browser/surfaces/browserSurfaceDetailsTabModel');
+        const { DetailsTabLifetimeScope } = await import('@/components/appShell/panes/details/workspace/detailsTabLifetime');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createRetainedPresentationSlotsStore, RetainedPresentationSlotsProvider } = await import('@/components/ui/presentation/retainedPresentationSlots');
+        const retained = createRetainedPresentationSlotsStore();
+        const browser = createBrowserViewDetailsTab({ scope: 'sessionDetails', target: kind === 'local' ? {
+            kind: 'localServicePreview', targetId: 'close-preview', sessionId: 's1', machineId: 'machine-1',
+            display: { title: 'Preview' },
+        } : {
+            kind: 'streamedBrowser', targetId: 'remote-browser', streamId: 'remote-stream',
+            daemonView: { browserSessionId: 'agent-browser', viewId: 'agent-page' },
+            display: { title: 'Remote page' },
+        } });
+        function Destination() {
+            const pane = useAppPaneScope('session:s1');
+            const tab = pane.scopeState?.details.tabs.find(tab => tab.key === browser.key);
+            // The controlled destination borrows the real workspace's tab lifetime, as PaneTabDestination does.
+            return tab ? <DetailsTabLifetimeScope scopeId="session:s1" tabKey={tab.key}>
+                <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1"
+                    destinationTab={tab} destinationActive={pane.scopeState?.details.activeTabKey === tab.key} presentation="screen" />
+            </DetailsTabLifetimeScope> : null;
+        }
+        const screen = await renderScreen(<runtime.Wrapper><RetainedPresentationSlotsProvider store={retained}>
+            <Destination />
+        </RetainedPresentationSlotsProvider></runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(browser, { intent: 'pinned' }));
+        await flushHookEffects();
+        const shell = screen.findByType(BrowserShell);
+        expect(retained.getPortalSnapshot()).toHaveLength(1);
+        await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('sibling.txt'), { intent: 'pinned' }));
+        await act(async () => runtime.pane.setActiveDetailsTab(browser.key));
+        expect(screen.findByType(BrowserShell)).toBe(shell);
+        await act(async () => shell.props.onCloseTab());
+        await flushHookEffects();
+        expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === browser.key)).toBeUndefined();
+        expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'file:sibling.txt')).toBeDefined();
+        expect(retained.getPortalSnapshot()).toHaveLength(0);
+        expect(screen.findAllByType(BrowserShell)).toHaveLength(0);
+    });
     it('mounts a populated Details destination without subscribing to unrendered peer diagnostics', async () => {
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
