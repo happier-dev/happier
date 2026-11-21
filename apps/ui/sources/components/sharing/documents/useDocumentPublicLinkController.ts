@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { readArtifactPublicNetworkPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
@@ -12,6 +12,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { HappyError } from '@/utils/errors/errors';
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
@@ -19,7 +20,7 @@ import { readArtifactPublicNetworkResource, type ArtifactPublicNetworkOpenedV1 }
 import { hasSamePublicLinkNetworkPolicy } from '../PublicLinkNetworkConfirmation';
 
 type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit' | 'artifact.get' | 'artifact.update';
-type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: boolean; loading: boolean; error: boolean }>;
+type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: boolean; loading: boolean; error: boolean; failure?: unknown }>;
 
 /** One document's local bearer custody. Publication authority stays with the Action/server owner. */
 export function useDocumentPublicLinkController(input: Readonly<{
@@ -70,7 +71,7 @@ export function useDocumentPublicLinkController(input: Readonly<{
         if (!isCurrent()) return null;
         if (!result.ok) {
             if (result.errorCode !== 'public_share_isolation_unavailable') {
-                throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), true, { code: result.errorCode });
+                throw createActionExecuteFailureError(result);
             }
             const issue = presentSessionAccessFailure(new SessionAccessApiError(result.errorCode));
             throw new HappyError(issue.message, issue.retryable, { code: issue.code });
@@ -80,7 +81,8 @@ export function useDocumentPublicLinkController(input: Readonly<{
             approval.requestApproval(createActionApprovalContinuation<unknown, PublicLinkAction>({
                 artifactId: pending.data.artifactId, actionId, scope, expectedInput: payload,
                 onSucceeded: async () => { if (isCurrent()) await refreshRef.current(); },
-                onFailed: () => { if (isCurrent()) setState(previous => ({ ...previous, loading: false, error: true })); },
+                onFailed: (code, failure) => { if (isCurrent()) setState(previous => ({ ...previous, loading: false, error: true,
+                    failure: failure ?? { ok: false, errorCode: code, error: code } })); },
             }));
             setState(previous => ({ ...previous, loading: false }));
             return null;
@@ -94,7 +96,7 @@ export function useDocumentPublicLinkController(input: Readonly<{
     const reload = React.useCallback(async () => {
         if (!enabled || !isCurrent()) return;
         const reading = ++revision.current;
-        setState(previous => ({ ...previous, loading: true, error: false }));
+        setState(previous => ({ ...previous, loading: true, error: false, failure: undefined }));
         try {
             const [value, content] = await Promise.all([
                 request('artifact.public_link.list', { artifactId, ...(audience === 'signed_in' ? { audience } : {}) }),
@@ -110,8 +112,8 @@ export function useDocumentPublicLinkController(input: Readonly<{
                 setNetworkPolicy(resource.policy);
             }
             apply(response.publicShares.find(row => row.subject.kind === 'artifact' && row.subject.id === artifactId) ?? null);
-        } catch {
-            if (isCurrent() && reading === revision.current) setState(previous => ({ ...previous, loading: false, error: true }));
+        } catch (failure) {
+            if (isCurrent() && reading === revision.current) setState(previous => ({ ...previous, loading: false, error: true, failure }));
         }
     }, [apply, artifactId, audience, enabled, isCurrent, request, visual, openNetworkResource]);
     refreshRef.current = reload;
@@ -158,7 +160,15 @@ export function useDocumentPublicLinkController(input: Readonly<{
         if (result === null || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
         return ArtifactActionOutputSchemasV1['artifact.public_link.audit'].parse(result);
     }, [artifactId, isCurrent, request]);
-    return { ...state, networkPolicy, scopeKey, configurationScope: scope, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
+    const presentFailure = React.useCallback((error: unknown) => {
+        const failure = parseActionExecuteFailure(error);
+        if (!failure) return presentSessionAccessFailure(error);
+        const presentation = presentActionExecutionFailure(failure, t('session.collaboration.pane.linkLoadFailed'));
+        return { code: failure.errorCode, message: presentation.reason, retryable: true,
+            diagnosticDetail: presentation.technicalDetails.filter(detail => detail.key !== 'code')
+                .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined };
+    }, []);
+    return { ...state, issue: state.error ? presentFailure(state.failure) : null, presentFailure, networkPolicy, scopeKey, configurationScope: scope, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
         readOnly: !canManage, pendingApproval: approval.approvalPending, reload, create, remove, listAccessLog,
         openPendingApproval: () => { if (approval.approvalId) router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`); } };
 }

@@ -1,7 +1,8 @@
-import type { ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { readArtifactPublicLinkHttpFailureV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ServerFetch } from '@/sync/http/client';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 /** Management and exposure admission use the same captured, authenticated transport. */
 export function createArtifactPublicLinkRequest(account: Readonly<{
@@ -21,12 +22,10 @@ export function createArtifactPublicLinkRequest(account: Readonly<{
             const payload: unknown = await response.json().catch(() => null);
             account.assertCurrent();
             signal?.throwIfAborted();
-            const error = payload && typeof payload === 'object' && !Array.isArray(payload) ? Reflect.get(payload, 'error') : null;
-            const unsupportedSignedRoute = path.startsWith('/v1/artifact-signed-in-links') && response.status === 404
-                && (typeof error !== 'string' || error === 'Not Found');
-            const code = unsupportedSignedRoute ? 'unsupported_action' : typeof error === 'string' ? error : 'public_share_request_failed';
-            const reason = payload && typeof payload === 'object' && !Array.isArray(payload) ? Reflect.get(payload, 'reason') : undefined;
-            throw Object.assign(new Error(code), { code, ...(typeof reason === 'string' ? { reason } : {}) });
+            // Only closed codes become the cause; the Home's own availability codes keep their retry copy.
+            const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+            const failure = transient ? { code: transient.code } : readArtifactPublicLinkHttpFailureV1({ path, status: response.status, payload });
+            throw Object.assign(new Error(failure.code), failure);
         }
         const result: unknown = await response.json();
         account.assertCurrent();

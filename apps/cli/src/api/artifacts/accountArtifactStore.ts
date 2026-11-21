@@ -35,7 +35,7 @@ import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, pre
 import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { createArtifactPublicLinkActionsV1, readArtifactPublicLinksV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { createArtifactPublicLinkActionsV1, readArtifactPublicLinkHttpFailureV1, readArtifactPublicLinksV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { createCliArtifactSignedInLinkJoinAction } from './artifactSignedInLinkJoin';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactPrivateRevisionMetadataV1Schema, ArtifactPrivateRevisionMetadataV1StoredSchema, ArtifactBlobReferenceV1Schema, ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { openResourceBinaryContent, sealResourceBinaryContent } from '@/api/encryption/resourceBinaryContent';
@@ -523,16 +523,13 @@ export function createAccountArtifactStore(params: Readonly<{
     const url = `${resolveServerHttpBaseUrl()}${request.path}`;
     const response = request.method === 'GET' ? await axios.get(url, config)
       : request.method === 'DELETE' ? await axios.delete(url, config) : await axios.post(url, request.body, config);
-    if (request.path.startsWith('/v1/artifact-signed-in-links')) {
-      request.signal?.throwIfAborted();
-      return requireAccessResponse(response);
-    }
     if (response.status < 200 || response.status >= 300) {
-      const payload: unknown = response.data;
-      const code = payload !== null && typeof payload === 'object'
-        && Reflect.get(payload, 'error') === 'public_share_isolation_unavailable'
-        ? 'public_share_isolation_unavailable' : 'public_share_request_failed';
-      throw Object.assign(new Error(code), { code });
+      request.signal?.throwIfAborted();
+      const failure = readArtifactPublicLinkHttpFailureV1({ path: request.path, status: response.status, payload: response.data });
+      // Each route family keeps its existing error class; only the closed code projection is shared.
+      throw request.path.startsWith('/v1/artifact-signed-in-links')
+        ? Object.assign(new HttpStatusError(response.status, failure.code), failure, { status: response.status })
+        : Object.assign(new Error(failure.code), failure);
     }
     request.signal?.throwIfAborted();
     return response.data;

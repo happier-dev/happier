@@ -68,11 +68,12 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
             stateLabel: publicLinkState,
             renderContent: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => audience === 'signed_in'
                 ? publicLink.error ? <SurfaceStateCard kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
+                    reason={publicLink.issue?.message} diagnosticCode={publicLink.issue?.code}
                     action={{ label: t('common.retry'), onPress: publicLink.reload }} />
                 : publicLink.pendingApproval ? <SurfaceStateCard kind="empty" title={t('approvals.title')}
                     action={{ label: t('common.open'), onPress: publicLink.openPendingApproval }} />
                 : <DocumentSignedInLinkSection value={publicLink.publication !== null} shareUrl={publicLink.shareUrl}
-                    scope={props.scope} idPrefix={context.idPrefix} disabled={!publicLink.loaded || publicLink.loading || publicLink.readOnly}
+                    scope={props.scope} idPrefix={context.idPrefix} presentFailure={publicLink.presentFailure} disabled={!publicLink.loaded || publicLink.loading || publicLink.readOnly}
                     onChange={async enabled => { if (enabled) await publicLink.create(); else await publicLink.remove(); }}
                     onReplace={async () => { await publicLink.create(); }} />
                 : <DocumentPublicLinkSection

@@ -12,16 +12,17 @@ export function DocumentSignedInLinkSection(props: Readonly<{
     value: boolean; onChange(value: boolean): void | Promise<void>; disabled?: boolean; shareUrl: string | null;
     scope: ServerAccountScope; idPrefix: string; onReplace?: () => Promise<void>;
     audience?: 'anonymous' | 'signed_in';
+    presentFailure?: (error: unknown) => Readonly<{ message: string }>;
 }>) {
     const [pending, setPending] = React.useState(false);
-    const [failed, setFailed] = React.useState(false);
+    const [failure, setFailure] = React.useState<Readonly<{ error: unknown }> | null>(null);
     const [copied, setCopied] = React.useState(false);
     const copy = useClipboardWrite(props.scope);
     const signedIn = props.audience !== 'anonymous';
     const perform = async (operation: () => void | Promise<void>, requiresEdit = true) => {
         if ((requiresEdit && props.disabled) || pending) return;
-        setPending(true); setFailed(false); setCopied(false);
-        try { await operation(); } catch { setFailed(true); }
+        setPending(true); setFailure(null); setCopied(false);
+        try { await operation(); } catch (error) { setFailure({ error }); }
         finally { setPending(false); }
     };
     return <View>
@@ -42,6 +43,6 @@ export function DocumentSignedInLinkSection(props: Readonly<{
         </> : props.value && props.onReplace ? <RoundButton size="small" display="secondary"
             title={t('session.sharing.regeneratePublicLink')} loading={pending} disabled={props.disabled || pending}
             onPress={() => { void perform(props.onReplace!); }} /> : null}
-        {failed ? <Text variant="meta" accessibilityLiveRegion="polite">{t('botTemplates.unavailable')}</Text> : null}
+        {failure ? <Text variant="meta" accessibilityLiveRegion="polite">{props.presentFailure?.(failure.error).message ?? t('botTemplates.unavailable')}</Text> : null}
     </View>;
 }

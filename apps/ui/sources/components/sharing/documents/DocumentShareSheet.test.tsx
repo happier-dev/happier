@@ -93,6 +93,8 @@ const host = vi.hoisted(() => ({
     publicShare: null as import('@happier-dev/protocol/sharing/storedContentPublicShareV1').StoredContentPublicShareV1 | null,
     publicRequests: [] as Array<Readonly<{ method: string; body?: unknown }>>,
     publicCreateError: null as string | null,
+    publicListError: null as string | null,
+    publicAuditError: null as string | null,
     networkAtPublicCreate: [] as unknown[],
     publicDeleteError: null as string | null,
     documentUpdates: [] as Array<Readonly<Record<string, unknown>>>,
@@ -228,6 +230,7 @@ async function serveHome(): Promise<void> {
             }
             if (request.path.startsWith('/v1/public-shares') || request.path.startsWith('/v1/artifact-signed-in-links')) {
                 host.publicRequests.push({ method: request.method, ...(request.body ? { body: request.body } : {}) });
+                if (request.path.endsWith('/access-log') && host.publicAuditError) return Response.json({ error: host.publicAuditError }, { status: 403 });
                 if (request.path.endsWith('/access-log')) return Response.json({ accessLog: [{ id: 'visit-1',
                     accessedAt: 1780000000000, ipAddress: '192.0.2.1', userAgent: 'Browser' }] });
                 if (request.method === 'POST') {
@@ -253,6 +256,7 @@ async function serveHome(): Promise<void> {
                     if (host.publicDeleteError) return Response.json({ error: host.publicDeleteError }, { status: 403 });
                     host.publicShare = null; return Response.json({ success: true });
                 }
+                if (host.publicListError) return Response.json({ error: host.publicListError }, { status: 403 });
                 return Response.json({ publicShares: host.publicShare ? [host.publicShare] : [] });
             }
             if (request.path.endsWith(`/blobs/${binaryBlobId()}`)) return host.blobUnavailable
@@ -466,6 +470,12 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
     await settle();
 }
 
+/** The closed diagnostic code a failure card carries behind its Details disclosure. */
+function diagnosticCodes(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): unknown[] {
+    return [...new Set(screen.findAll(node => node.props.testID === testID && typeof node.props.diagnosticCode === 'string')
+        .map(node => node.props.diagnosticCode))];
+}
+
 describe('DocumentShareSheet', () => {
     it('keeps default saves independent of sharing refusal and preserves None versus inheritance', async () => {
         const group = { kind: 'group' as const, teamId: 'payments', groupId: 'release' };
@@ -649,6 +659,8 @@ describe('DocumentShareSheet', () => {
         host.publicShare = null;
         host.publicRequests = [];
         host.publicCreateError = null;
+        host.publicListError = null;
+        host.publicAuditError = null;
         host.networkAtPublicCreate = [];
         host.publicDeleteError = null;
         modal.alert.mockClear();
@@ -1218,11 +1230,19 @@ describe('DocumentShareSheet', () => {
         expect(creates).toHaveLength(1);
         expect(creates[0]?.body).toEqual({ artifactId: 'wf-1', lookupId: expect.any(String) });
         expect(screen.getTextContent()).toContain('/share/artifact/');
+        host.publicDeleteError = 'artifact_access_forbidden';
         await act(async () => { await toggle().props.onValueChange(false); });
         await settle();
         expect(host.publicRequests.filter(request => request.method === 'DELETE')).toHaveLength(0);
         await answerNativeReview();
         expect(host.publicRequests.filter(request => request.method === 'DELETE')).toHaveLength(1);
+        await settle();
+        expect(screen.getTextContent().includes(t('errors.permissionDenied'))).toBe(true);
+        expect(host.publicShare).not.toBeNull();
+        host.publicDeleteError = null;
+        await act(async () => { await toggle().props.onValueChange(false); });
+        await answerNativeReview();
+        await settle();
         expect(host.publicShare).toBeNull();
     });
 
@@ -1388,6 +1408,38 @@ describe('DocumentShareSheet', () => {
         await settle();
         expect(screen.findByTestId('document-share-public-link')?.props.accessibilityLabel).toContain('On');
         expect(screen.findByTestId('document-share-public-link-controls')).toBeNull();
+    });
+
+    // The Home's public-share routes answer codes outside the Artifact access producer set; only the
+    // closed generic cause reaches the owner, never the Home's own string.
+    it('presents a refused public-link read through its closed cause only', async () => {
+        host.publicListError = 'public_share_forbidden';
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        await settle();
+        expect(diagnosticCodes(screen, 'session-public-link-retry')).toEqual(['public_share_request_failed']);
+        expect(screen.getTextContent()).toContain(t('session.collaboration.pane.linkLoadFailed'));
+        expect(screen.getTextContent()).not.toContain('public_share_forbidden');
+        host.publicListError = null;
+        await screen.pressByTestIdAsync('session-public-link-retry-action');
+        await settle();
+        expect(screen.findByTestId('session-public-link-retry')).toBeNull();
+    });
+
+    it('presents a refused access-log read through its closed cause while retaining the public link', async () => {
+        host.publicShare = { id: 'existing-share', subject: { kind: 'artifact', id: 'wf-1' },
+            expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false,
+            createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+        host.publicAuditError = 'public_share_unavailable';
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        await screen.pressByTestIdAsync('document-share-public-link-audit');
+        await settle();
+        expect(screen.getTextContent()).toContain(t('session.collaboration.pane.linkLoadFailed'));
+        expect(screen.getTextContent()).not.toContain('public_share_unavailable');
+        expect(host.publicShare?.id).toBe('existing-share');
     });
 
     it('keeps publication off and reports missing Home isolation without suggesting a blind retry', async () => {
@@ -1631,7 +1683,7 @@ describe('DocumentShareSheet', () => {
             expect(host.publicRequests.some(request => request.method === 'POST')).toBe(false);
             await act(async () => { decision.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
             await decision.screen.pressByTestIdAsync('public-link-network-confirm');
-            await expect(decision.decision).rejects.toMatchObject({ code: 'public_share_failed' });
+            await expect(decision.decision).rejects.toMatchObject({ code: 'public_share_request_failed' });
             expect(host.publicRequests.find(request => request.method === 'POST')?.body).toMatchObject({ networkOff: true });
             expect(host.documentUpdates).toEqual([]);
             expect(host.publicRequests.filter(request => request.method === 'POST')).toHaveLength(1);
@@ -1647,7 +1699,7 @@ describe('DocumentShareSheet', () => {
             try {
                 await act(async () => { retry.screen.findByTestId('session-public-link-network-off')!.props.onValueChange(true); });
                 await retry.screen.pressByTestIdAsync('public-link-network-confirm');
-                await expect(retry.decision).rejects.toMatchObject({ code: 'public_share_failed' });
+                await expect(retry.decision).rejects.toMatchObject({ code: 'public_share_request_failed' });
                 expect(host.documentUpdates).toEqual([]);
                 expect([...host.approvalArtifacts.values()]).toHaveLength(1);
                 // A failed original approval retains its outcome; another human press cannot reissue it.
@@ -1840,7 +1892,8 @@ describe('DocumentShareSheet', () => {
         await screen.pressByTestIdAsync('session-public-link-turn-off');
         await answerNativeReview();
         await settle();
-        expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull();
+        expect(diagnosticCodes(screen, 'session-public-link-mutation-error')).toEqual(['public_share_request_failed']);
+        expect(screen.getTextContent()).not.toContain('public_share_forbidden');
         expect(host.publicShare?.id).toBe('existing-share');
         expect(modal.alert).not.toHaveBeenCalled();
         host.publicDeleteError = null;

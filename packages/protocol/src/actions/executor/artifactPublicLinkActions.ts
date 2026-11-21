@@ -12,6 +12,8 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMaterialV1,
   StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema,
   StoredContentPublicSharesListResponseV1Schema } from '../../sharing/storedContentPublicShareV1.js';
+import { ArtifactAccessErrorCodeV1Schema, type ArtifactAccessErrorCodeV1 } from '../../artifacts/artifactAccessV1.js';
+import { AccountRecipientEnvelopeUnavailableReasonSchema, type AccountRecipientEnvelopeUnavailableReason } from '../../account/encryptionMode.js';
 
 export type ArtifactPublicLinkActionIdV1 = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit';
 /** Complete link issued by the keyholding host after approved creation; never an HTTP payload. */
@@ -22,6 +24,29 @@ export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 &
   htmlBundle?: ArtifactHtmlBundleV1;
 }>;
 export type ArtifactPublicLinkRequestV1 = Readonly<{ method: 'GET' | 'POST' | 'DELETE'; path: string; body?: unknown; signal?: AbortSignal }>;
+
+export type ArtifactPublicLinkHttpFailureV1 = Readonly<{
+  code: ArtifactAccessErrorCodeV1 | 'public_share_isolation_unavailable' | 'public_share_request_failed';
+  reason?: AccountRecipientEnvelopeUnavailableReason;
+}>;
+
+/**
+ * The one refusal projection for every host's public-link transport. Only the Artifact access
+ * producer's closed codes (and the Home isolation prerequisite) cross; any other answer becomes the
+ * route family's generic code, so server prose never reaches the person or their Agent.
+ */
+export function readArtifactPublicLinkHttpFailureV1(input: Readonly<{ path: string; status: number; payload: unknown }>): ArtifactPublicLinkHttpFailureV1 {
+  const body = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)
+    ? input.payload as Readonly<Record<string, unknown>> : {};
+  const known = ArtifactAccessErrorCodeV1Schema.safeParse(body.error);
+  if (known.success) {
+    const reason = AccountRecipientEnvelopeUnavailableReasonSchema.safeParse(body.reason);
+    return { code: known.data, ...(known.data === 'recipient_key_unavailable' && reason.success ? { reason: reason.data } : {}) };
+  }
+  if (body.error === 'public_share_isolation_unavailable') return { code: 'public_share_isolation_unavailable' };
+  if (!input.path.startsWith('/v1/artifact-signed-in-links')) return { code: 'public_share_request_failed' };
+  return { code: input.status === 404 || input.status === 405 ? 'artifact_access_unavailable' : 'artifact_access_failed' };
+}
 
 const signedInLinkOpenedArtifactSchema = lazyZodSchema(() => z.pick(ArtifactDocumentV1Schema, {
   artifactId: true, ownerAccountId: true, header: true, body: true, revision: true,

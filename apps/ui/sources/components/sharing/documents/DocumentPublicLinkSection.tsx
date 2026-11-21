@@ -32,21 +32,22 @@ export function DocumentPublicLinkSection(props: Readonly<{
             policies: link.networkPolicy && link.networkPolicy.network !== 'none' ? [link.networkPolicy] : [] })
         : t('session.collaboration.pane.linkNetworkUnknown');
     type AccessLog = Awaited<ReturnType<typeof link.listAccessLog>>['accessLog'];
-    const [audit, setAudit] = React.useState<Readonly<{ rows: AccessLog | null; loading: boolean; failed: boolean }>>({
+    const [audit, setAudit] = React.useState<Readonly<{ rows: AccessLog | null; loading: boolean; failure?: unknown; failed: boolean }>>({
         rows: null, loading: false, failed: false,
     });
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     const readAudit = async () => {
         if (audit.loading || link.readOnly) return;
-        setAudit(previous => ({ ...previous, loading: true, failed: false }));
+        setAudit(previous => ({ ...previous, loading: true, failed: false, failure: undefined }));
         try {
             const result = await link.listAccessLog();
             if (mounted.current) setAudit({ rows: result.accessLog, loading: false, failed: false });
-        } catch {
-            if (mounted.current) setAudit(previous => ({ ...previous, loading: false, failed: true }));
+        } catch (failure) {
+            if (mounted.current) setAudit(previous => ({ ...previous, loading: false, failed: true, failure }));
         }
     };
+    const auditIssue = audit.failed ? link.presentFailure(audit.failure) : null;
     return <View testID={`${idPrefix}document-share-public-link-controls`}>
         <SessionPublicLinkCard key={link.scopeKey} testID={`${idPrefix}document-share-public-link-card`}
             presentation="inline"
@@ -54,7 +55,8 @@ export function DocumentPublicLinkSection(props: Readonly<{
             publicShare={link.publication} shareUrl={link.shareUrl} serverUrl={null}
             description={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowDescription' : 'shareSheet.publicLink.description')}
             grantsLabel={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowGrants' : 'shareSheet.publicLink.grants')}
-            loading={link.loading} loaded={link.loaded} failed={link.error} readOnly={link.readOnly}
+            loading={link.loading} loaded={link.loaded} failed={link.error} readFailure={link.issue}
+            presentFailure={link.presentFailure} readOnly={link.readOnly}
             pendingApproval={link.pendingApproval} onRetry={link.reload} onOpenPendingApproval={link.openPendingApproval}
             networkPolicyLabel={networkPolicyLabel} networkConsequenceStatus={networkConsequenceStatus}
             onCreate={link.create} onDelete={link.remove}
@@ -63,6 +65,7 @@ export function DocumentPublicLinkSection(props: Readonly<{
                 onPress={() => { void readAudit(); }} />} />
         {link.publication && (audit.failed || audit.rows) ? <View style={styles.audit}>
             {audit.failed ? <SurfaceStateCard size="line" kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
+                reason={auditIssue?.message} diagnosticCode={auditIssue?.code}
                 action={{ label: t('common.retry'), onPress: readAudit }} /> : null}
             {audit.rows?.length === 0 ? <SurfaceStateCard size="line" kind="empty" title={t('shareSheet.publicLink.auditEmpty')} /> : null}
             {audit.rows?.map(row => <Text key={row.id} testID={`${idPrefix}document-share-public-link-visit:${row.id}`} style={styles.visit}>

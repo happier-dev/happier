@@ -182,6 +182,8 @@ export function SessionPublicLinkSection(props: Readonly<{
  * controller. `readOnly` withdraws every mutation while the authority behind it is not current,
  * without hiding a link that was already issued.
  */
+type PublicLinkCardFailure = ReturnType<typeof presentSessionAccessFailure> & Readonly<{ diagnosticDetail?: string }>;
+
 export function SessionPublicLinkCard(props: Readonly<{
     testID: string;
     presentation?: 'card' | 'inline';
@@ -200,6 +202,8 @@ export function SessionPublicLinkCard(props: Readonly<{
     loaded: boolean;
     /** The latest read failed; anything read before stays shown. */
     failed: boolean;
+    readFailure?: PublicLinkCardFailure | null;
+    presentFailure?: (error: unknown) => PublicLinkCardFailure;
     readOnly: boolean;
     pendingApproval: boolean;
     onRetry: () => void | Promise<void>;
@@ -220,7 +224,7 @@ export function SessionPublicLinkCard(props: Readonly<{
     const [networkOff, setNetworkOff] = React.useState(false);
     const [creating, setCreating] = React.useState(false);
     const [revoking, setRevoking] = React.useState(false);
-    const [mutationFailure, setMutationFailure] = React.useState<ReturnType<typeof presentSessionAccessFailure> | null>(null);
+    const [mutationFailure, setMutationFailure] = React.useState<PublicLinkCardFailure | null>(null);
     const copyFeedback = useHappierCopyFeedback();
     // One outward request at a time: a second create would mint a second link and orphan the
     // first, and a second DELETE would surface its 404 after the first succeeded. The refs refuse
@@ -258,7 +262,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             await props.onCreate(readOptions(expiry, uses, consent, networkOff));
             if (mounted.current) setConfiguring(false);
         } catch (error) {
-            if (mounted.current) setMutationFailure(presentSessionAccessFailure(error));
+            if (mounted.current) setMutationFailure((props.presentFailure ?? presentSessionAccessFailure)(error));
         } finally {
             inFlight.current = false;
             if (mounted.current) setCreating(false);
@@ -274,7 +278,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             await props.onDelete();
             if (mounted.current) { setShowQr(false); setConfiguring(false); }
         } catch (error) {
-            if (mounted.current) setMutationFailure(presentSessionAccessFailure(error));
+            if (mounted.current) setMutationFailure((props.presentFailure ?? presentSessionAccessFailure)(error));
         } finally {
             inFlight.current = false;
             if (mounted.current) setRevoking(false);
@@ -329,6 +333,9 @@ export function SessionPublicLinkCard(props: Readonly<{
                     size="line"
                     kind="error"
                     title={t('session.collaboration.pane.linkLoadFailed')}
+                    reason={props.readFailure?.message}
+                    diagnosticCode={props.readFailure?.code}
+                    diagnosticDetail={props.readFailure?.diagnosticDetail}
                     action={{ label: t('common.retry'), onPress: () => { setMutationFailure(null); void props.onRetry(); } }}
                 />
             ) : props.loading && !on && !props.loaded ? (
@@ -456,7 +463,7 @@ export function SessionPublicLinkCard(props: Readonly<{
 /** Only an unavailable link observes Home administration; other failures keep the same notice. */
 function PublicLinkFailureNotice(props: Readonly<{
     scope?: ServerAccountScope;
-    failure: ReturnType<typeof presentSessionAccessFailure>;
+    failure: PublicLinkCardFailure;
 }>): React.ReactElement {
     const router = useRouter();
     const { scope } = props;
@@ -468,6 +475,7 @@ function PublicLinkFailureNotice(props: Readonly<{
         kind="error"
         title={props.failure.message}
         diagnosticCode={props.failure.code}
+        diagnosticDetail={props.failure.diagnosticDetail}
         action={canConfigure && scope ? {
             testID: 'session-public-link-configure',
             label: t('session.collaboration.pane.configurePublicLinks'),
