@@ -311,6 +311,46 @@ describe('NewSessionFavoriteModelsDetail', () => {
         ]);
     });
 
+    // The pane names a favourite the way the Agent pane does: its saved Thinking after its name (PICKER-ACCEPT-1120).
+    it('titles each favourite with its saved Thinking, as the Agent pane does', async () => {
+        agentCoreById.claude = { dynamicProbe: 'static-only' };
+        preflightModelsByTargetKey['agent:claude'] = {
+            modelOptions: [
+                { value: 'claude-opus-4-6', label: 'Opus 4.6', description: 'Claude model.' },
+                { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Claude model.' },
+            ],
+            preflightModels: null,
+        };
+        const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
+        await renderScreen(<NewSessionFavoriteModelsDetail
+            favoriteModelSelections={[
+                favoriteModel('agent:claude', 'claude-opus-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
+                    backendLabel: 'Claude', modelLabel: 'Opus 4.6', reasoningEffort: 'high' }),
+                favoriteModel('agent:claude', 'claude-sonnet-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
+                    backendLabel: 'Claude', modelLabel: 'Sonnet 4.6' }),
+            ]}
+            resolvedBackendEntries={[createBuiltInEntry('claude', 'Claude')]}
+            selectedBackendTargetKey="agent:claude"
+            selectedModelId="claude-sonnet-4-6"
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            projectionCurrent
+            cwd="/repo"
+            settings={settings}
+            refreshProbe={{ phase: 'idle', onRefresh: vi.fn() }}
+            onSelectFavoriteModel={vi.fn()}
+            onToggleFavoriteModel={vi.fn()}
+            onRemoveFavoriteModelSelection={vi.fn()}
+        />);
+        expect(optionPickerOverlayProps.at(-1)?.options.map((option) => ({
+            label: option.label,
+            labelSuffix: option.labelSuffix,
+        }))).toEqual([
+            { label: 'Opus 4.6', labelSuffix: 'High' },
+            { label: 'Sonnet 4.6', labelSuffix: undefined },
+        ]);
+    });
+
     it('surfaces projection-wide Provider errors alongside per-connection failures', async () => {
         providerErrorsByTargetKey['agent:codex'] = createProviderErrorV1('provider_machine_unavailable', {
             machineId: 'machine-1',

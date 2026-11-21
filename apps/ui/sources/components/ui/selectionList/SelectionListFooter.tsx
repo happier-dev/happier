@@ -11,6 +11,7 @@ import { isHappierPageRowNarrow, useHappierMaterialColorResolver } from '@happie
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import type { SelectionListKeyboardHint } from './_types';
 import { selectionListTestId } from './_shared';
@@ -61,8 +62,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 /**
- * On a phone-width footer the Escape hint is left out: the hints would not fit one line, and the surface
- * already carries a visible way out (its Cancel or back control) that a keyboard hint only repeats.
+ * On a phone the Escape hint is left out: the surface already carries a visible way out (its Cancel or back
+ * control) that a keyboard hint only repeats. A narrow footer in a desktop popover keeps it, since there Esc
+ * is the way out the keys offer (PICKER-ACCEPT-1120); the hint row wraps if it must.
  */
 function isEscapeHint(hint: SelectionListKeyboardHint): boolean {
     return hint.label.trim().toLowerCase() === 'esc';
@@ -93,6 +95,7 @@ export type SelectionListFooterProps = Readonly<{
  * owned by the SelectionList orchestrator (Phase 1.9), not this primitive.
  */
 export function SelectionListFooter(props: SelectionListFooterProps): React.ReactElement | null {
+    const phone = useDeviceType() === 'phone';
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
@@ -153,7 +156,7 @@ export function SelectionListFooter(props: SelectionListFooterProps): React.Reac
                 testID={selectionListTestId(props.testID, 'hints-animator')}
                 style={[styles.animator, action !== null ? styles.animatorBesideAction : null, animatedStyle]}
             >
-                {(keyboardAvailable ? renderedHints : []).filter((hint) => !(narrow && isEscapeHint(hint))).map((hint) => (
+                {(keyboardAvailable ? renderedHints : []).filter((hint) => !(phone && isEscapeHint(hint))).map((hint) => (
                     <View
                         key={hint.id}
                         testID={selectionListTestId(props.testID, 'hint', hint.id)}

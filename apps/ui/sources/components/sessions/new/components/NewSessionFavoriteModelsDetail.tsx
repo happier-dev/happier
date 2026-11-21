@@ -13,7 +13,7 @@ import {
     type OptionPickerProbeState,
 } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
-import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import {
@@ -424,6 +424,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         ...selectableFavorites.map((model) => ({
             value: buildFavoriteOptionValue(model.modelSelection),
             label: model.modelLabel,
+            // The saved Thinking after the name, as the Agent pane titles a favourite ("Opus 5.5 High").
+            ...(model.reasoningEffort ? { labelSuffix: formatReasoningEffortTierLabel(model.reasoningEffort) } : {}),
             icon: renderFavoriteModelOptionIcon({
                 entry: props.entry,
                 machineId: props.selectedMachineId,
@@ -451,6 +453,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             return {
                 value: buildFavoriteOptionValue(favorite.selection),
                 label: modelLabel,
+                ...(favorite.reasoningEffort ? { labelSuffix: formatReasoningEffortTierLabel(favorite.reasoningEffort) } : {}),
                 icon: renderFavoriteModelOptionIcon({
                     entry: props.entry,
                     machineId: props.selectedMachineId,

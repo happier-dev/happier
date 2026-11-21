@@ -52,27 +52,4 @@ describe('SelectionListFooter', () => {
         expect(text).toContain('↑↓');
         expect(text).toContain('↵');
     });
-
-    it('leaves the Escape hint out of a phone-width footer so the hints keep one line', async () => {
-        const { act } = await import('react-test-renderer');
-        const { SelectionListFooter } = await import('../SelectionListFooter');
-        const screen = await renderScreen(
-            <SelectionListFooter
-                hints={[
-                    { id: 'move', label: '↑↓', description: 'move' },
-                    { id: 'close', label: 'esc', description: 'close' },
-                ]}
-                hardwareKeyboardAvailable
-                testID="footer"
-            />,
-        );
-        const measure = async (width: number) => act(async () => {
-            screen.findByTestId('footer')?.props.onLayout({ nativeEvent: { layout: { width } } });
-        });
-        await measure(640);
-        expect(screen.findByTestId('footer:hint:close')).not.toBeNull();
-        await measure(366);
-        expect(screen.findByTestId('footer:hint:close')).toBeNull();
-        expect(screen.findByTestId('footer:hint:move')).not.toBeNull();
-    });
 });
