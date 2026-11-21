@@ -1,5 +1,5 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -15,6 +15,9 @@ import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 describe('Claude native MCP witness → retained evidence → Coach remedy', () => {
     it.each(['native-connectors', 'deferred', 'missing', 'pending', 'hidden-task', 'queue-observed'] as const)(
         'admits only witnessed unused selected bindings (%s)', async shape => {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+            onTestFinished(() => vi.useRealTimers());
             const exec = createSdkExecFixture();
             const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
                 { exec: exec.service });
@@ -74,8 +77,9 @@ describe('Claude native MCP witness → retained evidence → Coach remedy', () 
                     queuedTurnCount: shape === 'queue-observed' ? 0 : null,
                     bindings: [{ bindingId: 'binding', catalogRevision: 40, toolCallCount: 0, schemaBytes: null }] }]);
                 expect(JSON.stringify(retained)).not.toContain('native_connector');
-                const now = Date.now();
-                const evaluation = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 0, endMs: now }, asOfMs: now,
+                // The period ends exclusively. Include evidence retained at the observation clock.
+                const asOfMs = Date.now();
+                const evaluation = evaluateUsageCoach({ queryKey: 'query', period: { startMs: 0, endMs: asOfMs + 1 }, asOfMs,
                     currentness: 'current', detail: detail.coach?.detail }, bundledUsageModelPriceCatalog);
                 expect(evaluation.evaluations.find(row => row.detectorId === 'mcp_overhead')?.status)
                     .toBe(complete ? 'finding' : 'insufficient_evidence');
