@@ -5,6 +5,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 const { View } = await import('react-native');
 import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
+import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -38,6 +39,37 @@ function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentRe
 }
 
 describe('Environment detail in a split pane', () => {
+    it('shows the Project Environments when its Services route replaces an open Environment', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const receipt = createDeploymentReceiptDetailV1();
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport: {
+            listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment,
+                title: 'Production', currentDeployment: { ...receipt.deployment, state: 'failed' } }], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: receipt }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        } });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const page = (params: { deploymentEnvironment?: string }) => <AccountNoticeInvestigationBoundary>
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <DestinationInstanceContext.Provider value={{ tabId: 'pane-a', ref: { kind: 'route', params } as never,
+                    pathname: '/deployments/source-app', focused: true, visible: true, isFocused: () => true, navigation }}>
+                    <Page controller={controller} />
+                </DestinationInstanceContext.Provider>
+            </AppShellColumnContext.Provider>
+        </AccountNoticeInvestigationBoundary>;
+        const screen = await renderScreen(page({ deploymentEnvironment: detail.environment.id }));
+        try {
+            expect(screen.findByTestId('project-deployments.rail')).toBeNull();
+            await screen.update(page({}));
+            expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}.state`)).not.toBeNull();
+        } finally {
+            await screen.unmount();
+            controller.retire();
+        }
+    });
+
     it('withholds the Environment count until the first collection response', async () => {
         const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
         const detail = createDeploymentEnvironmentDetailV1();

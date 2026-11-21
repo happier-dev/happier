@@ -506,13 +506,11 @@ const ProjectDeploymentsPage = React.memo(
             },
           }
         : null;
-    // The Machines index's rule (AllMachinesIndex `besideList`): on the Services door the shell column already lists
-    // these Environments while it shows, so the page stands alone beside it (lab `envOv`): no nested list and no hosting
-    // Project header; the Project is the Environment's meta link. Collapsed, on a phone or inside a Project, both stay.
-    const besideList = props.workspaceRef == null && shellColumnVisible && items.length > 0;
+    // An open Environment stands beside the Services column. A bare Project route keeps its own collection and title.
+    const hasDetail = environmentId !== null || selection.drafting === true || selection.defaults === true;
+    const besideList = props.workspaceRef == null && shellColumnVisible && items.length > 0 && hasDetail;
     const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
-      // Its own key: beside the list it is a sibling of LandOnFirstEnvironment, which keys on the same scope.
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`defaults:${props.serverId}:${props.accountId}:${props.sourceId}`}
         lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
         project={sourceRead.source ? { name: sourceRead.source.source.name, onOpen: openHostProject } : null}
@@ -606,13 +604,6 @@ const ProjectDeploymentsPage = React.memo(
     if (besideList) {
       return (
         <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
-          <LandOnFirstEnvironment
-            key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
-            split
-            selected={environmentId !== null || selection.drafting === true || selection.defaults === true}
-            firstId={items[0]?.environment.id ?? null}
-            onLand={(id) => setSelection({ environmentId: id, deploymentId: null })}
-          />
           {detail}
         </View>
       );
@@ -651,15 +642,15 @@ const ProjectDeploymentsPage = React.memo(
           }}
           list={(layout) => (
             <>
-              <LandOnFirstEnvironment
+              {props.workspaceRef != null ? <LandOnFirstEnvironment
                 key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
                 split={layout?.mode === 'split'}
-                selected={environmentId !== null || selection.drafting === true || selection.defaults === true}
+                selected={hasDetail}
                 firstId={items[0]?.environment.id ?? null}
                 onLand={(id) =>
                   setSelection({ environmentId: id, deploymentId: null })
                 }
-              />
+              /> : null}
               <DeploymentEnvironmentCollection
                 items={collection.snapshot.value?.items ?? null}
                 preparation={preparation}

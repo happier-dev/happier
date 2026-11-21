@@ -459,8 +459,7 @@ describe('Services column draws the one Environment row (UI refinements 2026-11-
     const end = screen.root.findAll((node) => node.props.testID === 'services-column:environment:env-shop-staging:end'
       && node.props.presentation === 'inline')[0]!;
     expect(end.props).toMatchObject({ tone: 'danger', presentation: 'inline' });
-    // A deployed Environment discloses what it runs (level 3, lab sideSvc); one never deployed has nothing beneath, and
-    // stays listed while its Project has something deployed (E1 ruling 16:29Z).
+    // A deployed Environment discloses what it runs (level 3, lab sideSvc). A saved draft stays listed without children.
     const row = (id: string) => screen.root.findAll((node) => node.props.testID === `services-column:environment:${id}`
       && 'disclosure' in node.props)[0]!;
     expect(row('env-shop-staging').props.disclosure).toMatchObject({ expanded: false });
@@ -505,21 +504,25 @@ describe('Services column Pinned (lab sideSvc "Pinned"; owner 2026-11-15 13:34Z)
   });
 });
 
-describe('Services column lists what runs (OWNER-UI-1115B E1)', () => {
-  it('leaves out Projects whose Environments were never deployed, keeping the one the route has open', async () => {
+describe('Services column lists Projects with Environments', () => {
+  it.each(['environment', 'project', 'all'] as const)('keeps Projects with saved Environments on the %s route', async (kind) => {
     const items = [
       environment('env-shop-staging', 'source-shop', 'Staging', 'storefront'),
       environment('env-shop-draft', 'source-shop', 'Draft', 'storefront', false),
-      environment('env-idle', 'source-idle', 'idle-app', 'idle-app', false),
-      environment('env-draft', 'source-draft', 'draft-app', 'draft-app', false),
+      environment('env-idle', 'source-idle', 'Staging', 'idle-app', false),
+      environment('env-draft', 'source-draft', 'Draft', 'draft-app', false),
     ];
     const controller = controllerFor(items);
-    const { screen } = await render(controller, { kind: 'environment', projectSourceId: 'source-draft', environmentId: 'env-draft' },
+    const selection = kind === 'environment'
+      ? { kind, projectSourceId: 'source-draft', environmentId: 'env-draft' } as const
+      : kind === 'project' ? { kind, projectSourceId: 'source-draft' } as const : { kind } as const;
+    const { screen } = await render(controller, selection,
       vi.fn(), 'services-column:project:source-shop');
     const ids = rowIds(screen);
     expect(ids).toContain('services-column:project:source-shop');
-    expect(ids).toContain('services-column:environment:env-draft');
-    expect(ids.some((id) => id.includes('env-idle') || id.includes('source-idle'))).toBe(false);
+    expect(ids).toContain('services-column:project:source-draft');
+    expect(ids).toContain('services-column:project:source-idle');
+    if (kind !== 'all') expect(ids).toContain('services-column:environment:env-draft');
     controller.retire();
   });
 });

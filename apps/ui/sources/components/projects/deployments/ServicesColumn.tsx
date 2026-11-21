@@ -203,16 +203,9 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   );
   const [query, setQuery] = React.useState('');
   const needle = query.trim().toLocaleLowerCase();
-  // The column lists Projects that have something deployed (OWNER-UI-1115B E1, ruling 16:29Z): a Project with at least
-  // one deployed Environment, whatever its state, keeps all its Environments; one with only drafts stays on All services
-  // (still shown while the route has one of its Environments open).
-  const routeEnvironmentId = selection?.kind === 'environment' ? selection.environmentId : null;
-  const listed = React.useMemo(() => {
-    const deployed = new Set(items.flatMap((item) => item.currentDeployment ? [item.environment.projectSourceId] : []));
-    const kept = props.space?.isVisible;
-    return rows.filter((row) => (deployed.has(row.projectSourceId) || row.environmentId === routeEnvironmentId)
-      && (kept === undefined || kept(row.environmentId)));
-  }, [items, rows, routeEnvironmentId, props.space?.isVisible]);
+  // A saved Environment puts its Project in this column before its first deployment.
+  const isVisible = props.space?.isVisible;
+  const listed = React.useMemo(() => isVisible ? rows.filter((row) => isVisible(row.environmentId)) : rows, [rows, isVisible]);
   const groups = React.useMemo(() => {
     const shown = needle
       ? listed.filter((row) =>
