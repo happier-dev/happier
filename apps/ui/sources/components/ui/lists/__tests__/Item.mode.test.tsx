@@ -456,37 +456,4 @@ describe('Item mode prop', () => {
         expect(hoverInSpy).toHaveBeenCalledTimes(1);
         expect(hoverOutSpy).toHaveBeenCalledTimes(1);
     });
-
-    it('keeps option semantics and activates once when the web Pressable releases Enter', async () => {
-        const onPress = vi.fn();
-        const { Item } = await import('../Item');
-        const screen = await renderScreen(
-            <Item
-                title="Shared model"
-                testID="model-option"
-                onPress={onPress}
-                accessibilityRole="button"
-                webRole="option"
-                accessibilityLabel="Gateway, Work, Shared model"
-                selected
-            />,
-        );
-
-        const row = findHostNodeByTestID(screen, 'model-option');
-        if (!row) throw new Error('Expected model option host node');
-        expect(row.props.role).toBe('option');
-        expect(row.props.accessibilityLabel).toBe('Gateway, Work, Shared model');
-        expect(row.props['aria-selected']).toBe(true);
-        expect(row.props.tabIndex).toBe(0);
-
-        const space = { key: ' ', preventDefault: vi.fn(), stopPropagation: vi.fn() };
-        await act(async () => row.props.onKeyDown(space));
-        expect(space.preventDefault).toHaveBeenCalledOnce();
-        expect(onPress).toHaveBeenCalledOnce();
-
-        const enter = { key: 'Enter', preventDefault: vi.fn(), stopPropagation: vi.fn() };
-        await act(async () => row.props.onKeyDown(enter));
-        await screen.pressByTestIdAsync('model-option');
-        expect(onPress).toHaveBeenCalledTimes(2);
-    });
 });

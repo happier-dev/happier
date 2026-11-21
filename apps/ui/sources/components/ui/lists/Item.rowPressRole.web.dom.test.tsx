@@ -60,4 +60,41 @@ describe('Item row press target on web', () => {
         expect(container.querySelector('[data-testid="row"]')!.getAttribute('aria-label')).toBe('ChatGPT, 3 accounts');
         expect(container.querySelector('[data-testid="row"]')!.getAttribute('role')).toBe('button');
     });
+
+    it.each([
+        { state: 'enabled', props: {}, activations: 1 },
+        { state: 'disabled', props: { disabled: true }, activations: 0 },
+        { state: 'loading', props: { loading: true }, activations: 0 },
+    ])('activates a focused $state option once per key only when actionable', async ({ props, activations }) => {
+        const onPress = vi.fn();
+        const container = await mount(
+            <Item
+                title="Shared model"
+                testID="model-option"
+                onPress={onPress}
+                accessibilityRole="button"
+                webRole="option"
+                accessibilityLabel="Gateway, Work, Shared model"
+                selected
+                {...props}
+            />,
+        );
+        const row = container.querySelector<HTMLElement>('[data-testid="model-option"]');
+        if (!row) throw new Error('Expected model option Pressable');
+        expect(row.getAttribute('role')).toBe('option');
+        expect(row.getAttribute('aria-label')).toBe('Gateway, Work, Shared model');
+        expect(row.getAttribute('aria-selected')).toBe('true');
+        expect(row.tabIndex).toBe(activations ? 0 : -1);
+        await act(async () => row.focus());
+        expect(document.activeElement).toBe(row);
+
+        for (const key of ['Enter', ' ']) {
+            onPress.mockClear();
+            await act(async () => {
+                row.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                row.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
+            });
+            expect(onPress, key === ' ' ? 'Space' : key).toHaveBeenCalledTimes(activations);
+        }
+    });
 });
