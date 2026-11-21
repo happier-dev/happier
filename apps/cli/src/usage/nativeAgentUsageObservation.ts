@@ -34,10 +34,11 @@ export function toNativeAgentUsageObservation(
 export function buildNativeAgentUsageAccountingMetadata(
     event: AgentUsageObservedPayloadV1 & Readonly<{ emittedAtMs: number }>,
 ): { usageAccounting: UsageAccountingMetadata } {
+    const { replayObservationId: _replayObservationId, ...accounting } = event.accounting ?? {};
     return { usageAccounting: {
         path: 'runtime',
         status: event.accounting?.historyComplete === false ? 'partial' : 'unknown',
         asOfMs: event.emittedAtMs,
-        ...event.accounting,
+        ...accounting,
     } };
 }

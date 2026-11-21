@@ -4669,6 +4669,16 @@ request stream. Existing rows without the witness retain chronological fallback.
 Duplicate ingestion preserves the stored fact and proof while retaining an
 earlier valid same-runtime position; it does not synthesize a later source clock.
 
+Claude's 0.3 native Session adapter declares its existing observation ID on
+records it can replay by UUID. The daemon sends that ID with the same scoped
+runtime identity before and after source resolution. Home uses the existing
+duplicate-write lookup and can read the former source-bound inference key.
+A replay can attach an admitted native source to the original event while
+preserving its measurements, attribution and source time. Older producers
+that omit the declaration use their existing keys. Matching Protocol,
+Claude runtime, daemon and Home sources load together for this development
+cut. The transient declaration requires no stored field or migration.
+
 The 0.3 foreground daemon claim returns optional, credential-free
 `sessionConnectedAccounts` through the same schema as native Session open. The
 foreground startup reader consumes the canonical claim-response schema rather

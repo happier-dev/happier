@@ -421,6 +421,7 @@ function toUsageEventCreateInput(
     accountId: string,
     request: UsageEventIngestRequest,
     attribution: SessionUsageAttribution = emptySessionUsageAttribution(),
+    idempotencyKey = buildUsageEventIdempotencyKey(accountId, request),
 ) {
     return {
         accountId,
@@ -435,7 +436,7 @@ function toUsageEventCreateInput(
         source: request.source,
         scope: request.scope,
         externalKey: request.externalKey ?? null,
-        idempotencyKey: buildUsageEventIdempotencyKey(accountId, request),
+        idempotencyKey,
         turnId: request.turnId ?? null,
         teamCredentialResourceId: attribution.resourceId,
         teamCredentialActorAccountId: attribution.actorAccountId,
@@ -474,6 +475,10 @@ function buildUsageEventIdempotencyKey(
     const rawKey = request.subject
         ? JSON.stringify([accountId, 'native', nativeSubjectKey(request.subject), request.source, request.externalKey])
         : JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
+    return hashUsageEventIdempotencyKey(rawKey);
+}
+
+function hashUsageEventIdempotencyKey(rawKey: string): string {
     const digest = createHash("sha256").update(rawKey).digest("hex");
     return `usage_event:v1:${digest}`;
 }
@@ -502,6 +507,7 @@ function readStoredNativeSubject(metadata: unknown): UsageNativeAccountingSubjec
 function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<string, unknown> | null {
     const metadata = { ...request.metadata };
     delete metadata.usageAttribution;
+    delete metadata.replayObservationId;
     if (request.attribution) metadata.usageAttribution = request.attribution;
     const subject = request.subject ?? readStoredNativeSubject(request.metadata);
     if (!subject) return Object.keys(metadata).length ? metadata : null;
@@ -528,19 +534,40 @@ function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<st
     };
 }
 
-async function retainEarliestRuntimeOrderInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest, attribution: SessionUsageAttribution): Promise<boolean> {
+async function reconcileRuntimeUsageReplayInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest, attribution: SessionUsageAttribution, replaySubject?: UsageNativeAccountingSubject): Promise<boolean> {
     const previousAccounting = readUsageAccountingMetadata(existing.metadata);
     const accounting = readUsageAccountingMetadata(request.metadata);
+    const metadata = existing.metadata;
+    if (replaySubject && previousAccounting?.path === 'runtime' && metadata && typeof metadata === 'object'
+        && !Array.isArray(metadata) && !readStoredNativeSubject(metadata)) {
+        // Enrich only identity evidence. The admitted measurements, attribution and source position are the original fact.
+        const changed = await tx.usageEvent.updateMany({
+            where: { id: existing.id, observedAt: existing.observedAt, metadata: { equals: metadata } },
+            data: { metadata: {
+                ...metadata,
+                accountingSubject: replaySubject,
+                captureOrigin: 'runtime',
+                usageAccounting: {
+                    ...previousAccounting,
+                    status: accounting?.status ?? previousAccounting.status,
+                    nativeSessionId: nativeSubjectKey(replaySubject),
+                    ...(accounting?.inferenceId ? { inferenceId: accounting.inferenceId } : {}),
+                },
+            } },
+        });
+        if (changed.count === 0) throw new TransactionReplayRequiredError('usage-runtime-order-changed');
+        emitUsageEventAfterTransaction(tx, existing.accountId, request);
+        return true;
+    }
     const previous = previousAccounting?.path === 'runtime' ? previousAccounting.runtimeEventOrder : undefined;
     const order = accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
     if (!previous || !order || previous.runtimeIncarnationId !== order.runtimeIncarnationId
         || order.sequence >= previous.sequence || request.observedAt > existing.observedAt.getTime()) return false;
     if ((['nativeSessionId', 'inferenceId', 'counterEpoch', 'inputIncludesCache', 'outputIncludesReasoning'] as const)
         .some(key => !isDeepStrictEqual(previousAccounting?.[key], accounting?.[key]))) return false;
-    const next = toUsageEventCreateInput(existing.accountId, request, attribution);
+    const next = toUsageEventCreateInput(existing.accountId, request, attribution, existing.idempotencyKey);
     if (Object.entries(next).some(([key, value]) => key !== 'observedAt' && key !== 'metadata'
         && !isDeepStrictEqual(Reflect.get(existing, key), value))) return false;
-    const metadata = existing.metadata;
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || !('usageAccounting' in metadata)) return false;
     const rawAccounting = metadata.usageAccounting;
     if (!rawAccounting || typeof rawAccounting !== 'object' || Array.isArray(rawAccounting)) return false;
@@ -773,16 +800,33 @@ export async function recordUsageEvent(
             });
         };
         if (request.externalKey) {
-            const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
-            const legacyIdempotencyKey = buildLegacyUsageEventIdempotencyKey(accountId, request);
+            const machineId = subject?.machineId ?? request.machineId;
+            const runtimeAccounting = !request.subject && request.metadata?.replayObservationId === request.externalKey
+                ? readUsageAccountingMetadata(request.metadata) : null;
+            const replay = request.sessionId && machineId && runtimeAccounting?.path === 'runtime'
+                && runtimeAccounting.nativeSessionId ? runtimeAccounting : null;
+            const idempotencyKey = replay
+                ? hashUsageEventIdempotencyKey(JSON.stringify([accountId, 'runtime', machineId, request.agentId,
+                    request.sessionId, replay.nativeSessionId, request.source, request.externalKey]))
+                : buildUsageEventIdempotencyKey(accountId, request);
             // Remove the raw-key candidate after all pre-hash UsageEvent rows have aged out.
-            const existing = await tx.usageEvent.findFirst({
-                where: {
-                    idempotencyKey: {
-                        in: [idempotencyKey, legacyIdempotencyKey].filter((key): key is string => key !== null),
-                    },
-                },
-            });
+            const legacyIdempotencyKey = replay ? null : buildLegacyUsageEventIdempotencyKey(accountId, request);
+            const where = { idempotencyKey: { in: [idempotencyKey, legacyIdempotencyKey]
+                .filter((key): key is string => key !== null) } };
+            // The former runtime producer used the bound inference as its write key.
+            const formerBoundKey = replay?.inferenceId && subject
+                ? buildUsageEventIdempotencyKey(accountId, { ...request, externalKey: replay.inferenceId })
+                : null;
+            let existing: UsageEvent | null;
+            if (formerBoundKey && subject) {
+                const matching = await tx.usageEvent.findMany({ where: { OR: [where, {
+                    idempotencyKey: formerBoundKey, agentId: request.agentId, machineId: subject.machineId,
+                    metadata: jsonPathEquals(['usageAccounting', 'nativeSessionId'], nativeSubjectKey(subject)),
+                }] } });
+                existing = matching.find(row => row.idempotencyKey === idempotencyKey) ?? matching[0] ?? null;
+            } else {
+                existing = await tx.usageEvent.findFirst({ where });
+            }
             if (existing) {
                 // A native reader can observe late settlement of the same inference.
                 // Its stable subject/key identifies one fact, not an append-only delta.
@@ -793,13 +837,14 @@ export async function recordUsageEvent(
                         await refreshCounters(existing);
                         emitUsageEventAfterTransaction(tx, accountId, request);
                     }
-                } else if (await retainEarliestRuntimeOrderInTx(tx, existing, request, attribution)) {
+                } else if (await reconcileRuntimeUsageReplayInTx(tx, existing, request, attribution,
+                    replay ? subject ?? undefined : undefined)) {
                     await refreshCounters(existing);
                 }
                 return { ok: true, event: { id: existing.id, createdAt: existing.createdAt } };
             }
 
-            const next = toUsageEventCreateInput(accountId, request, attribution);
+            const next = toUsageEventCreateInput(accountId, request, attribution, idempotencyKey);
             const created = await tx.usageEvent.upsert({
                 where: {
                     idempotencyKey: idempotencyKey ?? "",
@@ -807,7 +852,8 @@ export async function recordUsageEvent(
                 update: request.subject ? next : {},
                 create: next,
             });
-            if (!request.subject) await retainEarliestRuntimeOrderInTx(tx, created, request, attribution);
+            if (!request.subject) await reconcileRuntimeUsageReplayInTx(tx, created, request, attribution,
+                replay ? subject ?? undefined : undefined);
             await accessUsageEventExecutionRunIdInTx(tx, {
                 kind: "writeOnce",
                 eventId: created.id,

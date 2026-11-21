@@ -12,7 +12,7 @@ import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { projectNativeVendorPluginCatalog } from '@/session/catalogControls/nativeVendorPluginCatalog';
 import { projectNativeSkillCatalog } from '@/session/catalogControls/nativeSkillCatalog';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { nativeIdleCompactionOpenPreference, resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { AsyncLock } from '@/utils/lock';
@@ -2855,14 +2855,19 @@ export function createNativeAgentSessionOperations(
                     runtimeEventOrder: { runtimeIncarnationId, sequence: event.sequence },
                 };
                 const { nativeSessionId: _nativeSessionId, inferenceId: _inferenceId, ...counterSemantics } = fallbackAccounting;
+                const replayObservationId = event.accounting?.replayObservationId;
+                const replayAccounting = replayObservationId === event.observationId && fallbackAccounting.nativeSessionId
+                    ? { nativeSessionId: createHash('sha256').update(fallbackAccounting.nativeSessionId).digest('hex') }
+                    : null;
                 void Promise.resolve(usagePublisher.publish({
                     observedAt: event.emittedAtMs,
                     observation: toNativeAgentUsageObservation(event, usagePublisher.provider),
                     turnId: event.turnId ?? null,
-                    externalKey: accountingIdentity?.externalKey ?? event.observationId,
+                    externalKey: replayAccounting ? event.observationId : accountingIdentity?.externalKey ?? event.observationId,
                     ...(attribution ? { attribution } : {}),
                     ...(accountingIdentity?.nativeSessionKey && witness ? {
                         metadata: {
+                            ...(replayAccounting ? { replayObservationId } : {}),
                             accountingSubject: {
                                 kind: 'native', machineId: witness.authority.machineId, agent: witness.agent,
                                 sourceRootKey: accountingIdentity.sourceRootKey,
@@ -2873,9 +2878,15 @@ export function createNativeAgentSessionOperations(
                                 status: event.accounting?.historyComplete === false || !accountingIdentity.externalKey ? 'partial' : 'available',
                                 nativeSessionId: accountingIdentity.nativeSessionKey,
                                 ...(accountingIdentity.externalKey ? { inferenceId: accountingIdentity.externalKey } : {}),
+                                ...replayAccounting,
                             },
                         },
-                    } : { metadata: { usageAccounting: fallbackAccounting } }),
+                    } : {
+                        metadata: {
+                            ...(replayAccounting ? { replayObservationId } : {}),
+                            usageAccounting: { ...fallbackAccounting, ...replayAccounting },
+                        },
+                    }),
                 })).catch(() => {
                     logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
                 });

@@ -695,11 +695,13 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     (observation: ClaudeUsageObservation) => {
       if (disposed) return;
       const nativeSessionId = readClaudeProviderIdentityValue(observation.nativeSessionId);
+      const observationId = `claude-usage-${observation.nativeRecordId ?? randomUUID()}`;
       emit({
         kind: 'usage-observed',
-        observationId: `claude-usage-${observation.nativeRecordId ?? randomUUID()}`,
+        observationId,
         accounting: {
           ...(nativeSessionId ? { nativeSessionId } : {}),
+          ...(nativeSessionId && observation.nativeRecordId ? { replayObservationId: observationId } : {}),
           ...(observation.inferenceId ? { inferenceId: observation.inferenceId } : {}),
           inputIncludesCache: false,
           outputIncludesReasoning: false,

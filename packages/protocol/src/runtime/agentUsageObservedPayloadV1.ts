@@ -82,6 +82,8 @@ export const AgentUsageObservedPayloadV1Schema = lazyZodSchema(() => z.strictObj
     accounting: z.optional(z.strictObject({
       nativeSessionId: z.optional(ProviderIdSchema),
       inferenceId: z.optional(ProviderIdSchema),
+      /** Existing observation ID when the producer can replay the same native record. */
+      replayObservationId: z.optional(ProviderIdSchema),
       inputIncludesCache: z.optional(z.boolean()),
       outputIncludesReasoning: z.optional(z.boolean()),
       historyComplete: z.optional(z.boolean()),

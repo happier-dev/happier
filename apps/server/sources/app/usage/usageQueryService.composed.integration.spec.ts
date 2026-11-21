@@ -5,6 +5,9 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, buildConnectedServiceCredentialRecord
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildPublicProfileSnapshot } from '@happier-dev/protocol/account/publicProfileSnapshot';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -13,6 +16,8 @@ import { buildClaudeSdkResultUsageObservation } from '../../../../../packages/pl
 import { buildUsageEventIngestRequest } from '../../../../cli/src/usage/buildUsageEventIngestRequest';
 import { queryUsageAnalytics } from './usageQueryService';
 import { recordUsageEvent } from './usageWriteService';
+import { readUsageAccountingMetadata } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { deriveNativeUsageAccountingIdentity } from '../../../../cli/src/usage/collector/nativeUsageAccountingIdentity';
 import { withCodexNativeAttachFixture } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
 import { createNativeAgentSessionOperations } from '../../../../cli/src/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { withAgentDaemonMaterializedBootstrap } from '../../../../cli/src/daemon/connectedServices/materialize/agentDaemonBootstrap.testkit';
@@ -21,6 +26,8 @@ import { createSdkExecFixture, createEventsFixture, createPluginContextFixture,
 } from '../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import { createClaudeAgentSdkTurnOperations } from '../../../../../packages/plugins/claude/src/agent/runtime/remote/sdk/session';
 import { createClaudeNativeSessionRuntimeFromOperations } from '../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime';
+import { resolveClaudeJsonlSessionFile } from '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/files';
+import { readOrCreateDeviceLocalSecretStorage } from '../../../../cli/src/daemon/deviceLocalSecretStorage';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR, resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '../../../../cli/src/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { reconcileAgentSessionScopedEnvironment } from '../../../../cli/src/session/runtime/control/sessionControlEnvironment';
 
@@ -48,6 +55,7 @@ describe('native usage producer → ingest → query', () => {
             () => db.usageEvent.deleteMany(),
             () => db.usageReport.deleteMany(),
             () => db.session.deleteMany(),
+            () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
     });
@@ -254,6 +262,161 @@ describe('native usage producer → ingest → query', () => {
                     turnId: 'claude-host-turn', providerAttribution: 'known', providerSource: 'native' })]));
             } finally { unsubscribe(); await operations.resetOrDisposeRuntime('runtime_recovery'); }
         } });
+    });
+
+    it.each([
+        ['assistant', 'unbound-runtime-first'],
+        ['result', 'unbound-runtime-first'],
+        ['assistant', 'native-capture-first'],
+        ['assistant', 'former-bound-key'],
+        ['assistant', 'old-producer-without-declaration'],
+    ] as const)('reconciles Claude SDK %s replay for %s', async (type, scenario) => {
+        const account = await db.account.create({ data: { publicKey: `pk-claude-usage-replay-${type}-${scenario}` } });
+        const machine = await db.machine.create({ data: { id: `claude-usage-replay-${type}-${scenario}`,
+            accountId: account.id, metadata: 'ciphertext' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'claude-replay-source', encryptionMode: 'plain', metadata: '{}' } });
+        const directory = await mkdtemp(join(tmpdir(), 'happier-claude-usage-replay-'));
+        const nativeSessionId = 'claude-provider-session';
+        const modelId = 'claude-haiku-4-5';
+        const replayed = type === 'assistant' ? {
+            type, uuid: 'claude-record', session_id: nativeSessionId,
+            message: { id: 'claude-inference', role: 'assistant', model: modelId, content: [], usage: {
+                input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+            } },
+        } : {
+            type, subtype: 'success', uuid: 'claude-record', session_id: nativeSessionId,
+            total_cost_usd: 0.01, modelUsage: { [modelId]: { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
+        };
+        const subject = { kind: 'native', machineId: machine.id, agent: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const query = () => queryUsageAnalytics(account.id, UsageAnalyticsQueryRequestSchema.parse({}));
+        try {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            const witness = { storage, authority: { serverId: 'home', accountId: account.id, machineId: machine.id },
+                agent: subject.agent, sourceKey: 'configured-root' };
+            const exposeSource = async () => {
+                const projects = join(directory, 'projects', 'project');
+                await mkdir(projects, { recursive: true });
+                await writeFile(join(projects, `${nativeSessionId}.jsonl`), `${JSON.stringify(replayed)}
+`);
+            };
+            async function publishFromSdk(resume: boolean, oldProducer = false) {
+                const exec = createSdkExecFixture();
+                const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
+                    { exec: exec.service, sessionHooks: createSessionHooksFixture().service });
+                const provider = createClaudeAgentSdkTurnOperations({ ctx, directory, permissionMode: 'default',
+                    launchEnv: { CLAUDE_CONFIG_DIR: directory }, happierSessionId: session.id, initialModelId: modelId,
+                    ...(resume ? { initialProviderSessionId: nativeSessionId } : {}) });
+                const context = { signal: new AbortController().signal, session: { services: { activeInput: { bind: () => ({ dispose() {} }) },
+                    models: { bind: () => ({ dispose() {} }) } } } } as unknown as AgentSessionRuntimeContext;
+                const native = createClaudeNativeSessionRuntimeFromOperations(provider,
+                    { kind: 'create', sessionId: session.id, cwd: directory }, context);
+                const writes: Array<{ request: ReturnType<typeof UsageEventIngestRequestSchema.parse>; result: ReturnType<typeof recordUsageEvent> }> = [];
+                const operations = createNativeAgentSessionOperations(native, session.id, undefined, undefined, {
+                    provider: 'claude',
+                    async resolveAccountingWitness(remoteSessionId) {
+                        const localFile = await resolveClaudeJsonlSessionFile({ remoteSessionId, env: {},
+                            source: { kind: 'claudeConfig', configDir: directory } });
+                        if (!localFile) return undefined;
+                        return { ...witness, nativeSessionId: remoteSessionId };
+                    },
+                    publish(input) {
+                        const request = UsageEventIngestRequestSchema.parse(buildUsageEventIngestRequest({
+                            ...input, sessionId: session.id, machineId: machine.id,
+                        }));
+                        if (oldProducer && request.metadata) {
+                            // The previous host sent the source-keyed inference on a bound replay.
+                            const { replayObservationId: _declaration, ...metadata } = request.metadata;
+                            const accounting = readUsageAccountingMetadata(metadata)!;
+                            request.externalKey = (metadata.accountingSubject && accounting.inferenceId)
+                                ? accounting.inferenceId : request.externalKey;
+                            request.metadata = { ...metadata, usageAccounting: { ...accounting,
+                                nativeSessionId: nativeSessionId } };
+                        }
+                        writes.push({ request, result: recordUsageEvent(account.id, request) });
+                    },
+                }, undefined, undefined, { context, cwd: directory, connectedAccounts: [],
+                    capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+                    cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } });
+                const unsubscribe = operations.subscribeRuntimeEvents(() => undefined);
+                try {
+                    await operations.sendTurnPrompt('reply ready', { localId: resume ? 'resumed-input' : 'first-input',
+                        turnId: resume ? 'second-turn' : 'first-turn' });
+                    await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+                    await exec.emit(resume ? { ...replayed, isReplay: true } : replayed);
+                    await expect.poll(() => writes.length).toBe(1);
+                    const result = await writes[0]!.result;
+                    if (!result.ok) throw new Error('Usage observation was refused');
+                    return { ...writes[0]!.request, eventId: result.event.id };
+                } finally { unsubscribe(); await operations.resetOrDisposeRuntime('runtime_recovery'); }
+            }
+
+            const storedRows = () => db.usageEvent.findMany({ where: { accountId: account.id },
+                select: { id: true, metadata: true, totalTokens: true, observedAt: true, turnId: true } });
+            if (scenario === 'native-capture-first') {
+                const native = deriveNativeUsageAccountingIdentity({ ...witness, nativeSessionId, inferenceId: 'claude-inference' });
+                const first = await recordUsageEvent(account.id, UsageEventIngestRequestSchema.parse({
+                    subject: { ...subject, sourceRootKey: native.sourceRootKey, nativeSessionKey: native.nativeSessionKey },
+                    source: 'claude-assistant-usage', agentId: 'claude', observedAt: 100,
+                    externalKey: native.externalKey, scope: 'turn_delta', isCumulative: false, modelId,
+                    tokens: { input: 10, output: 2, reasoning: null, cacheRead: 0, cacheWrite: 0, total: 12 },
+                    cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' },
+                    accounting: { inferenceKey: native.externalKey, status: 'available' },
+                }));
+                expect(first.ok).toBe(true);
+                expect((await query()).totals.tokens.total).toBe(12);
+                await exposeSource();
+                const replay = await publishFromSdk(true);
+                expect(replay.metadata?.accountingSubject).toMatchObject(subject);
+                const result = await query();
+                expect(result.totals.tokens.total).toBe(12);
+                expect(result.contributions).toHaveLength(1);
+                return;
+            }
+            if (scenario === 'former-bound-key') {
+                await exposeSource();
+                const first = await publishFromSdk(true, true);
+                expect((await query()).totals.tokens.total).toBe(12);
+                const replay = await publishFromSdk(true);
+                expect(replay.externalKey).not.toBe(first.externalKey);
+                expect(replay.eventId).toBe(first.eventId);
+                expect(await storedRows()).toMatchObject([{ id: first.eventId, totalTokens: 12, metadata: { accountingSubject: subject } }]);
+                return;
+            }
+
+            const oldProducer = scenario === 'old-producer-without-declaration';
+            const first = await publishFromSdk(false, oldProducer);
+            expect(first.metadata).not.toHaveProperty('accountingSubject');
+            expect((await query()).totals.tokens.total).toBe(12);
+            const [original] = await storedRows();
+            await exposeSource();
+            const second = await publishFromSdk(true, oldProducer);
+            expect(second.metadata?.accountingSubject).toMatchObject(subject);
+            const result = await query();
+            if (oldProducer) {
+                // Old producers still send two different keys for these two observations.
+                expect(result.totals.tokens.total).toBe(24);
+                expect(await storedRows()).toHaveLength(2);
+                return;
+            }
+
+            expect(result.totals.tokens.total).toBe(12);
+            expect(second.externalKey).toBe(first.externalKey);
+            expect(second.eventId).toBe(first.eventId);
+            expect(await storedRows()).toEqual([{ ...original, metadata: expect.objectContaining({
+                accountingSubject: expect.objectContaining(subject),
+            }) }]);
+            expect((await storedRows())[0]?.metadata).not.toHaveProperty('replayObservationId');
+            if (type === 'result') return;
+
+            const other = await db.session.create({ data: { accountId: account.id, tag: 'other',
+                encryptionMode: 'plain', metadata: '{}' } });
+            const { eventId: _originalId, ...firstRequest } = first;
+            const isolated = await recordUsageEvent(account.id, { ...firstRequest, sessionId: other.id });
+            expect(isolated.ok).toBe(true);
+            const otherBefore = await db.usageEvent.findFirstOrThrow({ where: { sessionId: other.id } });
+            await publishFromSdk(true);
+            expect(await db.usageEvent.findFirstOrThrow({ where: { sessionId: other.id } })).toEqual(otherBefore);
+        } finally { await rm(directory, { recursive: true, force: true }); }
     });
 
     it.each([20, 100])('does not inflate a whole-call final (%i earlier tokens)', async earlierTokens => {
