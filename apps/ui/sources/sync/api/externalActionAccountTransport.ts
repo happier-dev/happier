@@ -1,4 +1,4 @@
-import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -9,13 +9,15 @@ import { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 }
 import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSchema, ExternalActionMachineBootstrapV1Schema,
     ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1, projectExternalActionHttpFailureV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
-    isExternalActionSubmittedUnknownHttpResponse, projectExternalActionManagedAdmissionV1,
+    isExternalActionSubmittedUnknownHttpResponse, projectExternalActionManagedAdmissionV1, projectExternalActionWorkflowPreparationTargetV1,
     type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1,
-    type ExternalActionRequestEnvelopeV2, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    type ExternalActionRequestEnvelopeV2, type ExternalActionWorkflowPreparationV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope, encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, isTelemetryCollectorKeyPinRequiredV1, ExternalActionRequesterInvocationV1Schema,
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2,
+    type ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
@@ -31,6 +33,7 @@ import { executeRequesterActionOperationV1, readRequesterOperationRequestV1 } fr
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
+import { prepareUiManagedWorkflowPlacement } from '@/sync/api/machines/managedPresetAcquireOrigin';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
 import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -170,6 +173,10 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     input: unknown;
     authority?: ActionRequiredAuthority;
     material?: Material;
+    workflowPlacement?: Readonly<{
+        workflowPreparation: ExternalActionWorkflowPreparationV1;
+        retainedRoot?: ExternalActionRetainedWorkflowRootV1;
+    }>;
     handoffAdmission?: ExternalActionRequestEnvelopeV2['handoffAdmission'];
     pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
     resourceContinuation?: Parameters<typeof sealExternalActionRequestV2>[0]['resourceContinuation'];
@@ -227,7 +234,8 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     let input: ReturnType<typeof projectNativeJsonValueForTransport>;
     try { input = projectNativeJsonValueForTransport(params.input); }
     catch { return failure('invalid_parameters'); }
-    const logsOperands = {
+    const operands = {
+        ...(params.workflowPlacement ? { workflowPreparation: params.workflowPlacement.workflowPreparation } : {}),
         ...(params.registryThemeContent ? { registryThemeContent: params.registryThemeContent } : {}),
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
@@ -239,13 +247,13 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         ? params.invocation?.sessionCreationDefaults?.managedPresetAcquisition : undefined;
     const sessionSpawnAdmission = spawnInput && (spawnInput.machineSetupPlanInput !== undefined || presetAcquisition)
         ? projectApiTokenSessionSpawnAdmissionV1(spawnInput, { managedPresetAcquisition: presetAcquisition }) : undefined;
-    const sealed = material
-        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: getRandomBytes, input, ...logsOperands,
+    const sealed = params.workflowPlacement?.retainedRoot?.envelope ?? (material
+        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: getRandomBytes, input, ...operands,
             ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) })
-        : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...logsOperands,
+        : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...operands,
             ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
-            ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });
+            ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) }));
     const envelope = { ...sealed, ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
         ...(telemetryRead && sealed.v === 2 ? { telemetryCollectorCodec: true as const } : {}) };
     let request: unknown = envelope;
@@ -297,18 +305,22 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             // Home admitted the guest's exact installed controller and key.
             // Guest Use does not require a separate grant on that controller.
             controllerPublicKey = decodeBase64(wake.installationPublicKey, 'base64url');
-            const disclosure = wake.requesterCredentialDisclosure;
-            if (disclosure) {
-                if (params.authority === 'account_automation') return failure('requester_account_material_unavailable');
-                const confirmed = await Modal.confirm(t('approvals.untitled'), [
-                    t('machineRequester.fullSignIn', { machine: wake.target.controller.machineId }),
-                    t('machineRequester.osVisibility', { owner: disclosure.displayName || disclosure.accountId,
-                        machine: wake.target.controller.machineId }),
-                ].join('\n\n'), { ...(params.signal ? { signal: params.signal } : {}) });
-                if (params.signal?.aborted) return failure('cancelled');
-                account.assertCurrent();
-                if (!confirmed) return failure('requester_credential_disclosure_declined');
+        }
+        const wakeDisclosure = wake?.requesterCredentialDisclosure;
+        const workflowDisclosure = params.workflowPlacement && foreignGuest ? custody?.custodian : undefined;
+        const disclosure = wakeDisclosure ?? workflowDisclosure;
+        if (disclosure) {
+            if (params.authority === 'account_automation' || workflowDisclosure && params.invocation?.authority === 'account_automation') {
+                return failure('requester_account_material_unavailable');
             }
+            const machine = wakeDisclosure && wake?.target.controller ? wake.target.controller.machineId : binding.target.machineId;
+            const confirmed = await Modal.confirm(t('approvals.untitled'), [
+                t('machineRequester.fullSignIn', { machine }),
+                t('machineRequester.osVisibility', { owner: disclosure.displayName || disclosure.accountId, machine }),
+            ].join('\n\n'), { ...(params.signal ? { signal: params.signal } : {}) });
+            if (params.signal?.aborted) return failure('cancelled');
+            account.assertCurrent();
+            if (!confirmed) return failure('requester_credential_disclosure_declined');
         }
         const managedControllerCodec = root.telemetryCollectorCodec === true || foreignGuest && isManagedControllerCodecActionV1(root);
         if (managedControllerCodec !== Boolean(codecMaterial)) return failure('admission_unavailable');
@@ -469,6 +481,40 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (params.actionId === 'session.agent.transition' && !params.invocation) return failure('admission_unavailable');
     if (params.invocation && (account.credentialAuthorityKind !== 'account'
         || !ExternalActionRequesterInvocationV1Schema.safeParse(params.invocation).success)) return failure('admission_unavailable');
+    const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
+    let workflowPlacement: Extract<Awaited<ReturnType<typeof prepareUiManagedWorkflowPlacement>>, { kind: 'bound' }> | undefined;
+    let workflowEncryption: Awaited<ReturnType<LazyActionAccountContext['resolveAccountEncryption']>> | undefined;
+    const project = params.machineTarget?.project;
+    if (params.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && project?.sessionPlacement?.kind === 'preset') {
+        const start = WorkflowRunStartRequestV1Schema.parse(params.input);
+        if (!start.managedCreation) {
+            if (!authentication || !account.serverIdentityId) return failure('admission_unavailable');
+            if (project.sessionPlacement.homeId !== account.serverIdentityId) return failure('server_target_mismatch');
+            workflowEncryption = await account.resolveAccountEncryption();
+            const { accountMode, encryption } = workflowEncryption;
+            if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
+            const prepared = await prepareUiManagedWorkflowPlacement({ account, start, project,
+                accountId: account.accountId, authentication, accountEncryptionMode: accountMode,
+                ...(encryption ? { material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() } } : {}),
+                ...(params.signal ? { signal: params.signal } : {}) });
+            if (!prepared) return failure('managed_response_invalid');
+            if (prepared.kind === 'refused') return failure(prepared.code);
+            const target = prepared.retainedRoot?.binding.target
+                ?? projectExternalActionWorkflowPreparationTargetV1(prepared.workflowPreparation);
+            if (target?.kind !== 'machine') return failure('managed_response_invalid');
+            workflowPlacement = prepared;
+            const requestId = prepared.retainedRoot?.binding.requestId ?? params.requestId;
+            const confirmation = params.invocation?.presentUserConfirmation;
+            const originalInvocation = params.invocation;
+            // The review names the authored Project. Bind that same review to
+            // the controller selected for this exact preset and Run.
+            const routedInvocation = originalInvocation && confirmation?.actionId === params.actionId
+                && confirmation.requestId === params.requestId && sameStrictJsonValue(confirmation.target, params.machineTarget)
+                ? { ...originalInvocation, presentUserConfirmation: { ...confirmation, requestId, target } } : originalInvocation;
+            params = { ...params, requestId, machineId: target.machineId, machineTarget: target,
+                ...(routedInvocation ? { invocation: routedInvocation } : {}) };
+        }
+    }
     const telemetryRead = params.machineTarget?.project ? undefined : projectDeploymentTelemetryReadAdmissionV1(params.actionId, params.input);
     const finite = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, params.actionId);
     const runtimeDemand = projectExternalActionMachineRuntimeDemandV1(params.actionId, params.input,
@@ -483,8 +529,8 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
             : projectSessionSpawnNewApiRequest(params.input).input
         : null;
     const preset = sessionInput?.sessionPlacement?.kind === 'preset' ? params.invocation?.sessionCreationDefaults : undefined;
-    const controller = preset?.managedPresetAcquisition?.controller;
-    const controllerAccess = preset?.managedPresetControllerAccess;
+    const controller = workflowPlacement?.workflowPreparation.acquisition.controller ?? preset?.managedPresetAcquisition?.controller;
+    const controllerAccess = workflowPlacement?.controllerAccess ?? preset?.managedPresetControllerAccess;
     const scopedController = controller && controllerAccess ? { controller, access: controllerAccess } : null;
     if (scopedController && scopedController.controller.machineId !== params.machineId) return failure('target_not_local');
     // Stream I/O on an admitted PTY carries no review; Home re-admits each own-Machine RPC.
@@ -506,14 +552,13 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         } : null;
     if (!custody && !telemetryRead) return failure('admission_unavailable');
     const foreignCustody = custody !== null && custody.custodian.accountId !== account.accountId;
-    const needsCustody = Boolean(telemetryRead) || foreignCustody || finite || runtimeDemand && custody?.managed
+    const needsCustody = Boolean(telemetryRead || workflowPlacement) || foreignCustody || finite || runtimeDemand && custody?.managed
         || reviewedInvocation || retainedResource;
     // Ordinary own targets retain their incumbent transport. Managed runtime
     // demand and finite placement need Home custody even for an own guest.
     if (params.foreignTargetOnly && !needsCustody) return null;
-    const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication || !account.serverIdentityId) return failure('admission_unavailable');
-    const { accountMode, encryption } = await account.resolveAccountEncryption();
+    const { accountMode, encryption } = workflowEncryption ?? await account.resolveAccountEncryption();
     if (custody && !scopedController && !foreignCustody && custody.resourceMode !== accountMode) return failure('admission_unavailable');
     if (!telemetryRead && needsCustody && !custody?.installationId) return failure('content_unavailable');
     if (!telemetryRead && (foreignCustody || params.invocation) && !custody?.installationPublicKey) return failure('content_unavailable');
@@ -521,6 +566,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const input = sessionInput
         ? projectSessionSpawnHome(sessionInput, { serverId: account.serverIdentityId, machineId: params.machineId }) : params.input;
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
+        ...(workflowPlacement ? { workflowPlacement } : {}),
         ...(params.deploymentReview ? { deploymentReview: params.deploymentReview } : {}),
         ...(params.onDeploymentCandidateAuthorized ? { onDeploymentCandidateAuthorized: params.onDeploymentCandidateAuthorized } : {}),
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),

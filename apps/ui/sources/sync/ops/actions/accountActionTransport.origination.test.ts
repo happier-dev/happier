@@ -29,23 +29,96 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 
 installApprovalCommonModuleMocks();
 
-async function captureTransportAccount(signal?: AbortSignal) {
+async function captureTransportAccount(signal?: AbortSignal, mode: 'plain' | 'e2ee' = 'plain') {
     const serverId = 'srv_private_transport';
     const serverUrl = 'https://private-transport.example.test';
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
         provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     await upsertServerProfile({ serverUrl, name: 'Private transport Home' });
     await setServerProfileIdentityForUrl(serverUrl, serverId);
-    expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, { token })).toBe(true);
+    const credentials = mode === 'e2ee' ? { token, secret: encodeBase64(new Uint8Array(32).fill(42), 'base64url') } : { token };
+    expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, credentials)).toBe(true);
     const account = await captureLazyActionAccountContext(serverId, signal);
     onTestFinished(() => account.dispose());
     return account;
 }
 
 describe('private Account Action origination', () => {
+    it.each(['plain', 'e2ee'] as const)('sends the %s prepared Workflow placement to the selected preset controller', async mode => {
+        const account = await captureTransportAccount(undefined, mode);
+        const homeId = account.serverIdentityId!;
+        const actionId = 'workflow.run.start';
+        const originalMachine = createPlainMachineRowFixture({ id: '17780aad-01a1-484e-bb7c-9bbf59ff1cc0', accountId: account.accountId });
+        const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(22));
+        const installationPublicKey = encodeBase64(key.publicKey, 'base64url');
+        const controller = { machineId: 'e10ef316-5987-4f22-b0a0-d50cf9d5fe59', installationId: 'preset-installation' };
+        const preset = createPlainManagedMachinePresetFixture({ id: 'lima-preset', homeId, revision: 4,
+            name: 'Lima preset', owner: { kind: 'account', accountId: account.accountId }, controller,
+            launch: { provider: { pluginId: 'test.compute', localId: 'lima' }, schemaVersion: 1, name: 'Lima', choices: {} } });
+        const project = { machineId: originalMachine.id, directory: '/project', workspaceRefId: 'source-workspace',
+            sessionPlacement: { kind: 'preset' as const, homeId, presetId: preset.id } };
+        const input = { runId: '6aa62f83-8691-4487-be86-b4a6426228bf',
+            source: { kind: 'saved' as const, definitionId: 'placement-workflow', revision: { headerVersion: 1, bodyVersion: 1 } } };
+        const selectedTarget = { kind: 'machine' as const, machineId: controller.machineId,
+            project: { machineId: controller.machineId, directory: project.directory, sessionPlacement: project.sessionPlacement } };
+        const requestId = 'placement-action-request';
+        let admitted: unknown;
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') {
+                return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(account.credentials));
+            }
+            if (path === '/v1/auth/ping' || path === '/health') return Response.json({});
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+                id => id === originalMachine.id ? { ...originalMachine, installationPublicKey } : null);
+            if (path === managedMachineActionEndpointPathV1('machines.managed.get')) {
+                expect(JSON.parse(String(init?.body))).toEqual({ homeId, creationRequestId: input.runId });
+                return Response.json({ code: 'managed_not_found' }, { status: 404 });
+            }
+            if (path === machinePresetActionEndpointPathV1('machines.presets.get')) return Response.json({ kind: 'found', preset });
+            if (path === MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1) return Response.json({ kind: 'resolved', controller,
+                controllerAccess: { installationPublicKey, custodian: { accountId: account.accountId } } });
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+            if (path.endsWith('/execution-authorization')) {
+                expect(request.envelope.v).toBe(mode === 'plain' ? 1 : 2);
+                expect(request.envelope.target).toEqual(selectedTarget);
+                if (request.envelope.v === 1) admitted = request.envelope;
+                else {
+                    expect(request.envelope).not.toHaveProperty('workflowPreparation');
+                    const { encryption } = await account.resolveAccountEncryption();
+                    admitted = openExternalActionRequestV2({ envelope: request.envelope,
+                        binding: { serverIdentityId: homeId, accountId: account.accountId, authentication: { kind: 'account', tokenEpoch: 1 },
+                            actionId, requestId, target: selectedTarget },
+                        material: { type: 'dataKey', machineKey: encryption!.getContentPrivateKey() },
+                        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+                }
+                const refusal = projectExternalActionHttpError('target_unavailable', request.envelope.requestId);
+                return Response.json(refusal.payload, { status: refusal.statusCode });
+            }
+            throw new Error(`Unexpected request ${path}`);
+        });
+        onTestFinished(resetRuntimeFetch);
+        const outcome = await createUiAccountAction({ account })({ actionId, input, context: { serverId: account.serverId,
+            runtimeAccountId: account.accountId, externalActionTarget: { kind: 'machine', machineId: originalMachine.id, project },
+            actionRequestId: requestId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } });
+        expect(outcome).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(admitted).toMatchObject({ input,
+            workflowPreparation: { project, acquisition: { controller,
+                selection: { kind: 'preset', id: preset.id, homeId, revision: preset.revision } } } });
+    });
+
     it.each(['owner', 'unknown', 'other_account', 'other_home'] as const)('preserves only qualified host requester attribution (%s)', async scenario => {
         const account = await captureTransportAccount();
         const cause = { requestRef: 'original-user-input',

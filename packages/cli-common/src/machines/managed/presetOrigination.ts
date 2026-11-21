@@ -1,8 +1,16 @@
-import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1, unwrapManagedMachineReadV1, type ManagedMachineActionOutputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetAcquireRoutingResultV1Schema, type ManagedMachinePresetAcquireRoutingInputV1, type ManagedMachinePresetAcquireOriginV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachinePoolErrorV1Schema, MachinePoolResolveResultV1Schema, type MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+
+import { ExternalActionWorkflowPreparationV1Schema, isExternalActionRequestVersionAllowedForAccountModeV1,
+    type ExternalActionSignedAuthenticationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 export type ManagedPresetAcquireOriginV1 = Readonly<{
     kind: 'bound'; input: ManagedAcquireInputV1; controllerAccess?: ManagedControllerAccessV1;
@@ -52,4 +60,46 @@ export async function bindManagedPresetAcquireOriginV1(params: Readonly<{
     if (!sameStrictJsonValue(resolved.data.controller, preset.controller)) return refused('controller_retired');
     return { kind: 'bound', input: ManagedAcquireInputV1Schema.parse({ ...input, controller: resolved.data.controller }),
         controllerAccess: resolved.data.controllerAccess };
+}
+
+/** Rejoin an existing creation before consulting mutable saved placement. */
+export async function prepareManagedWorkflowPlacementV1(params: Readonly<{
+    start: WorkflowRunStartRequestV1;
+    project: WorkflowProjectTargetV1;
+    accountId: string;
+    authentication: ExternalActionSignedAuthenticationV1;
+    accountEncryptionMode: 'plain' | 'e2ee';
+    material?: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }>;
+    readRetained: (input: { homeId: string; creationRequestId: string }) => Promise<ManagedMachineActionOutputV1<'machines.managed.get'> | null>;
+    bindPreset: (input: { homeId: string; id: string }, requestId: string) => Promise<ManagedPresetAcquireOriginV1 | null>;
+}>) {
+    const placement = params.project.sessionPlacement;
+    if (placement?.kind !== 'preset') return null;
+    const retained = await params.readRetained({ homeId: placement.homeId, creationRequestId: params.start.runId });
+    if (retained) {
+        const root = retained.retainedWorkflowRoot;
+        if (!root || root.binding.accountId !== params.accountId || root.binding.serverIdentityId !== placement.homeId
+            || !('authentication' in root.binding) || !sameStrictJsonValue(root.binding.authentication, params.authentication)
+            || !isExternalActionRequestVersionAllowedForAccountModeV1({ accountEncryptionMode: params.accountEncryptionMode,
+                envelopeVersion: root.envelope.v })) return { kind: 'refused' as const, code: 'currentness_conflict' };
+        const opened = root.envelope.v === 1 ? root.envelope : params.material
+            ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                envelope: root.envelope, binding: root.binding, material: params.material }) : null;
+        const preparation = opened?.workflowPreparation;
+        const machine = unwrapManagedMachineReadV1(retained);
+        if (!preparation || !sameStrictJsonValue(opened?.input, params.start)
+            || !sameStrictJsonValue(preparation.project, params.project)
+            || preparation.acquisition.selection.homeId !== placement.homeId || preparation.acquisition.selection.id !== placement.presetId
+            || root.binding.target.kind !== 'machine' || root.binding.target.machineId !== preparation.acquisition.controller.machineId
+            || !sameStrictJsonValue(machine.controller, preparation.acquisition.controller)) {
+            return { kind: 'refused' as const, code: 'currentness_conflict' };
+        }
+        return { kind: 'bound' as const, input: preparation.acquisition, workflowPreparation: preparation,
+            retainedRoot: root, ...(machine.controllerAccess ? { controllerAccess: machine.controllerAccess } : {}) };
+    }
+    const bound = await params.bindPreset({ homeId: placement.homeId, id: placement.presetId }, params.start.runId);
+    if (!bound || bound.kind === 'refused') return bound;
+    const preparation = ExternalActionWorkflowPreparationV1Schema.safeParse({ project: params.project, acquisition: bound.input });
+    if (!preparation.success) return { kind: 'refused' as const, code: 'managed_response_invalid' };
+    return { ...bound, workflowPreparation: preparation.data, retainedRoot: undefined };
 }
