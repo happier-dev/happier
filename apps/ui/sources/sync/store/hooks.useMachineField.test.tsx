@@ -14,6 +14,20 @@ describe('useMachineField exact demand', () => {
     beforeEach(async () => { await selectActiveTestHomeForTests(); previousState = storage.getState(); });
     afterEach(() => { standardCleanup(); vi.restoreAllMocks(); storage.setState(previousState, true); });
 
+    it('keeps known Machine names when a managed workspace supplies no Machine id', async () => {
+        const serverId = 'workspace-labels-home';
+        const machine = createMachineFixture({
+            id: 'workspace-label-machine',
+            metadata: createMachineMetadataFixture({ displayName: 'Studio' }),
+        });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        const ids = [undefined, ` ${machine.id} `];
+        const hook = await renderHook(() => useMachineDisplayNamesById(ids, { serverId }));
+
+        expect(hook.getCurrent()).toEqual({ [machine.id]: 'Studio' });
+        await hook.unmount();
+    });
+
     it('keeps bounded non-active Home labels quiet on heartbeats, holds while hidden, and follows peer renames', async () => {
         const serverId = 'labels-other-home';
         const machine = createMachineFixture({ id: 'label-controller', metadata: createMachineMetadataFixture({ displayName: 'Studio', host: 'first-host' }) });

@@ -1541,11 +1541,11 @@ export function readMachineDisplayNamesById(
 }
 
 /** Subscribe only to display-name changes for an already-bounded machine set. */
-export function useMachineDisplayNamesById(machineIds: readonly string[],
+export function useMachineDisplayNamesById(machineIds: readonly (string | undefined)[],
   options: Readonly<{ serverId?: string; presented?: boolean }> = {},
 ): Readonly<Record<string, string>> {
   const normalizedIds = React.useMemo(
-    () => [...new Set(machineIds.map((id) => id.trim()).filter(Boolean))].sort(),
+    () => [...new Set(machineIds.map((id) => id?.trim() ?? '').filter(Boolean))].sort(),
     [machineIds],
   );
   const select = React.useCallback((state: StorageState) => readMachineDisplayNamesById(state, normalizedIds, options.serverId),
