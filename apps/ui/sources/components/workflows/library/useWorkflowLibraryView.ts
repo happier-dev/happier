@@ -84,7 +84,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const { summaries } = useWorkflowLibrarySummaries(summaryIds, demand);
     const automationIds = React.useMemo(() => accountWorkflows.sets.map(set => set.automationId), [accountWorkflows.sets]);
     const automationSummaries = useWorkflowAutomationSummaries(automationIds, demand);
-    const savedLibraryIncomplete = library.status === 'loading';
+    const savedLibraryIncomplete = library.status === 'loading' || library.hasMore;
     const previousRecords = React.useRef<readonly WorkflowLibraryRecordRow[]>([]);
     const records = React.useMemo(() => {
         const next = projectWorkflowLibraryRecords({ definitions: split, accountTriggers: accountWorkflows.sets,
