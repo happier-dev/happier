@@ -570,13 +570,18 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     };
     const runsBeforeRefusal = await readRunIds();
     expect(runsBeforeRefusal).toContain(controlRun.runId);
-    const refusal = await fixture!.executeSessionMcpAction(member, nativeSession, 'execution.run.start', { ...child,
-      modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } });
-    expect(refusal).toMatchObject({ ok: false,
-      errorCode: 'execution_run_child_choice_required', details: {
-        executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' },
-      },
-    });
+    const startsWithoutChildChoice = [
+      child,
+      { ...child, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } },
+    ];
+    for (const start of startsWithoutChildChoice) {
+      const refusal = await fixture!.executeSessionMcpAction(member, nativeSession, 'execution.run.start', start);
+      expect(refusal).toMatchObject({ ok: false,
+        errorCode: 'execution_run_child_choice_required', details: {
+          executionRunStart: { runCreation: 'noRunCreated' }, childChoice: { parentRouteCompatibility: 'incompatible' },
+        },
+      });
+    }
     expect(await readRunIds(), 'A custody refusal must create no child Run').toEqual(runsBeforeRefusal);
   }, 0);
 
