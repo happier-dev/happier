@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { createDbMaintenanceClient, db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient, type PrismaClientType } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -36,7 +36,7 @@ function scannedResourceRows(plan: QueryPlanNode): Readonly<Record<string, numbe
 }
 
 /** Explain the actual Prisma query and bound values on the same disposable database. */
-function explainSql(event: Prisma.QueryEvent): string {
+function explainSql(event: DriverStatementEvent): string {
     let sql = event.query;
     const params = JSON.parse(event.params) as unknown[];
     for (let index = params.length; index > 0; index--) {
@@ -49,8 +49,8 @@ function explainSql(event: Prisma.QueryEvent): string {
 }
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Team resource aggregate query cost (PostgreSQL)', () => {
-    const statements: Prisma.QueryEvent[] = [];
-    const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -58,10 +58,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         }
         initDbPostgres();
         await db.$connect();
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL, {
+            onDriverStatement: recordDriverStatements(event => statements.push(event)),
+        });
         await client.$connect();
     });
-    afterAll(async () => { await client.$disconnect(); await shutdownDbClient(); });
+    afterAll(async () => { await client?.$disconnect(); await shutdownDbClient(); });
 
     it('counts each selected resource relation without opening content as unrelated inventory grows', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -102,7 +104,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             }));
             expect(summary.ok).toBe(true);
             const summaryReads = statements.filter(event => /^SELECT\b/i.test(event.query));
-            const primaryTable = (event: Prisma.QueryEvent) => /\bFROM "(?:public"\.")?([^".]+)"/u.exec(event.query)?.[1];
+            const primaryTable = (event: DriverStatementEvent) => /\bFROM "(?:public"\.")?([^".]+)"/u.exec(event.query)?.[1];
             const teamReads = summaryReads.filter(event => primaryTable(event) === 'Team');
             const membershipReads = summaryReads.filter(event => primaryTable(event) === 'TeamMembership');
             console.info('TEAM_SUMMARY_AUTHORITY_SQL', JSON.stringify({ teamReads: teamReads.length,
@@ -142,6 +144,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             await db.session.createMany({ data: Array.from({ length: 1_000 }, () => ({
                 accountId: viewer.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
             })) });
+            // Read plans with statistics for the seeded inventory, as the Session query-plan suite does.
+            await db.$executeRaw`ANALYZE "Machine"`;
+            await db.$executeRaw`ANALYZE "Session"`;
             const large = await measure();
             expect(large).toEqual(small);
             const counts = statements.filter(event => /COUNT\(/u.test(event.query));
