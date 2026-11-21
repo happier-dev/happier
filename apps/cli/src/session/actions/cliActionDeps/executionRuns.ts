@@ -18,6 +18,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { describeExecutionRunProtocolV2 } from './preflight';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
 
@@ -173,10 +174,12 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
     opts?: ExecutionRunActionTransportOptions,
   ): Promise<unknown> => {
     const isStart = method === SESSION_RPC_METHODS.EXECUTION_RUN_START;
-    const failure = (code: string, runCreation: 'noRunCreated' | 'outcomeUnknown', message?: string) => ({
+    const failure = (code: string, runCreation: 'noRunCreated' | 'outcomeUnknown', message?: string,
+      failureCause?: ActionFailureCauseV1) => ({
       ok: false as const,
       code,
       ...(message ? { message } : {}),
+      ...(failureCause ? { failureCause } : {}),
       ...(isStart
         ? { details: withExecutionRunStartFailureDetails(undefined, runCreation) }
         : {}),
@@ -268,7 +271,9 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       if (isExecutionRunActionAbort(error, opts?.signal)) {
         return failure('cancelled', runCreation);
       }
-      return failure('execution_run_target_unavailable', runCreation);
+      // A failed Start keeps its transport's code-only cause (for example ECONNRESET) under the outer disposition.
+      return failure('execution_run_target_unavailable', runCreation, undefined,
+        isStart ? projectActionFailureCauseV1(error, method) : undefined);
     }
     // A received refusal is not a lost acknowledgement. Keep it outside the
     // transport uncertainty handler and ahead of any successful Run schema.

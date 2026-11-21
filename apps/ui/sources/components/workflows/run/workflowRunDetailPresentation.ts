@@ -330,6 +330,8 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         params.progress?.reason?.code, params.progress?.reason?.message]);
     const headline = failed && params.progress?.reason
         ? describeRecordedTransportFailure(params.progress.reason.code)
+            // A classified cause keeps the transport failure under its outer disposition (for example a reset Start).
+            ?? describeRecordedTransportFailure(params.progress.reason.failureCause?.errorCode ?? '')
             ?? startupRecovery?.cause
             ?? issue.summary
             ?? presentSessionStartupFailureCause(params.progress.reason.failureCause?.errorCode)

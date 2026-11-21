@@ -951,6 +951,25 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain(usageLimit ? 'workflows.recovery.usageLimitWait' : 'workflows.recovery.nextStop');
   });
 
+  it.each([1440, 390])('says the classified connection reset of an interrupted detached start at %spx, with its next step', async (width) => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'execution_run_target_unavailable',
+        failureCause: { phase: 'execution.run.start', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } });
+    viewport.window = { width, height: width > 600 ? 900 : 844 };
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' }),
+      invocations: [invocation], invocationProgressById: new Map([[invocation.id, progress]]),
+      selectedInvocationId: null, firstFailedInvocationId: invocation.id, firstFailedInvocationResolution: 'resolved',
+      onCancel: vi.fn(),
+    });
+    expect(String(screen.findByTestId('workflow-run-failure-reason')?.props.children))
+      .toContain('workflows.recovery.agentConnectionLost');
+    expect(screen.findByTestId('workflow-run-failure-next')?.props.children).toBe('workflows.recovery.nextStop');
+    expect(screen.findByTestId('workflow-run-cancel')).toBeTruthy();
+  });
+
   it('does not tell the person to stop and run again beside the recovery choice that keeps completed steps (RUN1109-1)', async () => {
     const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
     const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',

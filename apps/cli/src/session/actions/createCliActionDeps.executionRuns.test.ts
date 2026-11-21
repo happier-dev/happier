@@ -251,6 +251,23 @@ describe('detached exact Run output observation transport', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it.each(['installed', 'public'] as const)('keeps the code-only cause of a %s detached start connection reset', async (transport) => {
+    const reset = Object.assign(new Error('PRIVATE_SOCKET_DETAIL'), { code: 'ECONNRESET' });
+    const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>().mockRejectedValue(reset);
+    callMachineRpc.mockReset().mockRejectedValue(reset);
+    readMachineRpcRequestDisposition.mockReset().mockImplementation(error => (error === reset ? 'notSent' : null));
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
+    const result = await deps.executionRunStart(null, { intent: 'delegate', prompt: 'Start' },
+      { targetMachineId: transport === 'installed' ? 'machine-1' : 'machine-2' });
+    expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
+      details: { executionRunStart: { runCreation: 'noRunCreated' } },
+      failureCause: { phase: 'execution.run.start', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+    expect(transport === 'installed' ? invoke : callMachineRpc).toHaveBeenCalledTimes(1);
+  });
+
   it('ends a local passive observation at its authored deadline despite blocked output', async () => {
     const snapshot = { run: {
       runId: 'run-watch', callId: 'call', sidechainId: 'call', intent: 'delegate',
