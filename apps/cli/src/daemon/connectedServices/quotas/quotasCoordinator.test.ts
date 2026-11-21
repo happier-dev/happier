@@ -3,6 +3,7 @@ import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from './resolveConnected
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import credentialAxios from '@/api/client/credentialAxios';
+import { deriveProviderAccountUsagePace } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { buildProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { ApiClient } from '@/api/api';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -2507,6 +2508,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const serviceKey = `${service.pluginId}/${service.localId}` as ConnectedAccountServiceKey;
     const ingressServiceId = recoveryMode === 'manual_codex_alias' ? 'openai-codex'
       : recoveryMode === 'manual_claude_alias' ? 'claude-subscription' : serviceKey;
+    const backgroundFreshnessCase = recoveryMode.startsWith('persistence_unchanged_');
+    const pollIntervalMs = DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
     const unconfiguredRegistration = recoveryMode.includes('init_unconfigured');
     const inventoryRegistration = recoveryMode === 'inventory_init_unconfigured';
     const completionObservationMode = recoveryMode.startsWith('completion_observation_');
@@ -2717,20 +2720,21 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           ${recoveryMode.startsWith('quota_error') ? "throw Object.assign(new Error('Bearer private-token must not be published'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
           ${recoveryMode === 'manual_reset_after_quota_error' ? "if (!consumed) throw Object.assign(new Error('Provider temporarily unavailable'), { quotaFetchErrorCode: 'network' });" : ''}
           ${recoveryMode === 'manual_reset_after_provider_backoff' ? "if (!consumed) throw Object.assign(new Error('Provider retry required'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
-          ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount++;' : ''}
+          ${backgroundFreshnessCase ? "if (++quotaReadCount >= 7) throw Object.assign(new Error('Provider read failed'), { quotaFetchErrorCode: 'network' });" : ''}
           return {
             ${recoveryMode === 'discovery_no_facet' || recoveryMode === 'discovery_unavailable' ? "recoveryCredits: { availableCount: 99, credits: [] }, recoveryCreditDetails: { injected: { remainingCount: 99, appliesToProviderLimitIds: [] } }," : ''}
-            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : recoveryMode.startsWith('persistence_unchanged_') ? `${now - 70_000} + (quotaReadCount - 1) * 60_000` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
+            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : backgroundFreshnessCase ? `${now} + (quotaReadCount - 1) * ${pollIntervalMs}` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
             ${accountMode === 'e2ee' ? `subscription: ${JSON.stringify(failedSubscription)},` : ''}
             limits: [{
               ${recoveryMode === 'quota_all_unavailable' ? "status: 'unavailable'," : ''}
               id: ${JSON.stringify(recoveryMode === 'quota_family' ? 'codex_spark:primary' : 'monthly')},
               ${recoveryMode === 'quota_family' ? "providerLimitId: 'codex_spark'," : ''}
-              used: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 2 ? 30 : 25' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 40 : 70' : 'consumed ? 0 : 25'},
-              remaining: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 2 ? 70 : 75' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 60 : 30' : 'consumed ? 100 : 75'},
+              ${backgroundFreshnessCase ? 'limit: 100,' : ''}
+              used: ${backgroundFreshnessCase ? 'quotaReadCount >= 6 ? 30 : 25' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 40 : 70' : 'consumed ? 0 : 25'},
+              remaining: ${backgroundFreshnessCase ? 'quotaReadCount >= 6 ? 70 : 75' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 60 : 30' : 'consumed ? 100 : 75'},
               resetsAtMs: ${recoveryMode === 'usage_notice_requester' ? '1000000, windowDurationMs: 1000000'
-                : ['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode)
-                  || recoveryMode.startsWith('persistence_unchanged_') ? now + 3_600_000 : now + 60_000}
+                : backgroundFreshnessCase ? `${now + 3_600_000}, windowDurationMs: 4_000_000`
+                  : ['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode) ? now + 3_600_000 : now + 60_000}
             }]
           };
         },`}
@@ -2905,7 +2909,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length) => new Uint8Array(length).fill(3),
     }) : null;
     let committedSourceWrite: QualifiedProviderAccountUsageWriteArgs['write'] | null = null;
-    let manualRefreshRequested = false;
+    // An explicit Refresh still publishes a typed failure for a retained reading.
+    let manualRefreshRequested = recoveryMode === 'quota_error'
+      || recoveryMode.startsWith('quota_error_deferred_request')
+      || recoveryMode === 'quota_error_native'
+      || recoveryMode === 'manual_reset_after_quota_error';
     const readQuota = vi.fn(async () => {
       if (recoveryMode === 'deadline_no_quota_recovery') {
         if (readQuota.mock.calls.length === 1) throw new Error('Quota source transport unavailable');
@@ -3392,6 +3400,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         return;
       }
       const schedule = await coordinator.tickOnce();
+      manualRefreshRequested = false;
       if (recoveryMode === 'deadline_no_quota_recovery') {
         expect(readQuota).toHaveBeenCalledTimes(1);
         expect(schedule.nextAutomaticRunAfterMs).toBeGreaterThan(0);
@@ -3457,19 +3466,52 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         expect(committedSourceWrite).not.toBeNull();
         return;
       }
-      if (recoveryMode.startsWith('persistence_unchanged_')) {
-        expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-        // A background reread advances only the observation clock. A user
-        // Refresh marker independently requires a server acknowledgement.
-        now += 60_000;
-        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+      if (backgroundFreshnessCase) {
+        const open = (write: QualifiedProviderAccountUsageWriteArgs['write']) => {
+          if (write.snapshot) return write.snapshot;
+          if (!write.sealedPayload || !credentials.encryption) throw new Error('Missing Home quota payload');
+          return openSealedProviderAccountUsageSnapshot({ material: credentials.encryption, sealed: write.sealedPayload });
+        };
+        const first = open(usageWrites()[0]!);
+        if (!first) throw new Error('Expected an accepted initial quota observation');
+        const startedAt = first.observedAtMs;
+        const lifetimeMs = first.staleAfterMs;
+        expect(lifetimeMs).toBe(2 * pollIntervalMs);
+        expect(schedule.nextAutomaticRunAfterMs).toBe(pollIntervalMs);
+        const admittedPace = (readAt = now) => {
+          const accepted = usageWrites().flatMap(write => open(write) ?? []);
+          return deriveProviderAccountUsagePace({ snapshot: accepted.at(-1)!, history: accepted, meterId: 'monthly', nowMs: readAt });
+        };
+        expect(admittedPace()).toMatchObject({ status: 'available' });
+        for (let poll = 1; poll <= 4; poll++) {
+          now = startedAt + poll * pollIntervalMs;
+          expect(admittedPace(now - 1), `comparable pace before poll ${poll}`).toMatchObject({ status: 'available' });
+          await coordinator.tickOnce();
+          expect(admittedPace(), `comparable pace after poll ${poll}`).toMatchObject({ status: 'available' });
+          expect(admittedPace(now + 1), `comparable pace just after poll ${poll}`).toMatchObject({ status: 'available' });
+        }
+        const flatPollTimes = Array.from({ length: 5 }, (_, poll) => startedAt + poll * pollIntervalMs);
+        expect(usageWrites().map(write => write.fetchedAt)).toEqual(flatPollTimes);
+        expect(usageWrites().map(write => open(write)?.observedAtMs)).toEqual(flatPollTimes);
+        expect(usageWrites().map(write => open(write)?.meters[0]?.used)).toEqual([25, 25, 25, 25, 25]);
+
+        now += pollIntervalMs;
         await coordinator.tickOnce();
-        expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-        // A genuinely new provider reading changes the meter once.
-        now += 60_000;
-        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+        const changed = usageWrites().at(-1)!;
+        expect(changed.fetchedAt).toBe(now);
+        expect(open(changed)?.meters[0]?.used).toBe(30);
+
+        now += pollIntervalMs;
         await coordinator.tickOnce();
-        expect(writeProviderAccountUsage).toHaveBeenCalledTimes(2);
+        expect(usageWrites()).toHaveLength(6);
+        expect(admittedPace()).toMatchObject({ status: 'available' });
+        expect(admittedPace(now + pollIntervalMs - 1)).toMatchObject({ status: 'available' });
+
+        now += pollIntervalMs;
+        await coordinator.tickOnce();
+        expect(usageWrites()).toHaveLength(6);
+        expect(open(usageWrites().at(-1)!)?.observedAtMs).toBe(changed.fetchedAt);
+        expect(admittedPace()).toMatchObject({ status: 'unavailable' });
         return;
       }
       if (recoveryMode.startsWith('deadline_')) {
@@ -3548,21 +3590,20 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }
       if (recoveryMode === 'quota_error_network') {
         expect(schedule).toEqual({ nextAutomaticRunAfterMs: 60_000 });
-        expect(usageWrites().at(-1)).toMatchObject({ status: 'error', snapshot: {
-          state: 'error_last_known_good', diagnostics: [{ code: 'network', retryAtMs: now + 60_000 }],
-        } });
-        const first = writeProviderAccountUsage.mock.calls.length;
         expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
-        expect(writeProviderAccountUsage.mock.calls).toHaveLength(first);
         const readsBeforeReplacement = readCredential.mock.calls.length;
         profile.credentialRevision = 'csr_bcdefghijklmnopqrstuvw';
         expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
         expect(readCredential.mock.calls.length).toBeGreaterThan(readsBeforeReplacement);
+        expect(usageWrites()).toHaveLength(0);
         now += 60_000;
+        manualRefreshRequested = true;
+        coordinator.invalidateInventory({ quotaRefreshRecordIds: [previous.recordId] });
         expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
-        expect(usageWrites().at(-1)).toMatchObject({ snapshot: {
-          diagnostics: [{ retryAtMs: now + 60_000 }],
-        } });
+        expect(usageWrites()).toMatchObject([{ status: 'error', snapshot: {
+          state: 'error_last_known_good', observedAtMs: previous.observedAtMs,
+          diagnostics: [{ code: 'network', retryAtMs: now + 60_000 }],
+        } }]);
         return;
       }
       if (recoveryMode.startsWith('quota_error')) {

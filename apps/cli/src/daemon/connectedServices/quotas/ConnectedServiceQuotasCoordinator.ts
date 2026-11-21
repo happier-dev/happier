@@ -16,7 +16,7 @@ import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceUsageSourceV1Schema, isConnectedServiceCredentialHealthStatusUsable, isConnectedServiceQuotaRecoveryCreditAvailable } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
 import { openQualifiedConnectedAccountQuotaResponseV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { isProviderAccountUsageIdentityMatch, projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1, sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
@@ -3763,7 +3763,6 @@ export class ConnectedServiceQuotasCoordinator {
 
   private async persistQualifiedConnectedAccountQuota(input: Readonly<{
     signal?: AbortSignal;
-    backgroundObservation?: boolean;
     accountMode: 'e2ee' | 'plain';
     profile: QualifiedConnectedAccountProfileV4;
     snapshot: ProviderAccountUsageSnapshotV1;
@@ -3823,9 +3822,6 @@ export class ConnectedServiceQuotasCoordinator {
       minFreshnessMs: this.quotaPersistenceMinFreshnessMs,
     });
     if (!decision.persist) return decision.reason === 'unchanged_fresh';
-    // A quiet background reread refreshes switch evaluation locally. Old
-    // observation clocks alone do not change the published allowance.
-    if (input.backgroundObservation && decision.reason === 'freshness_refresh') return true;
     const write = {
       source: {
         ref: input.profile.ref,
@@ -4126,6 +4122,7 @@ export class ConnectedServiceQuotasCoordinator {
   private async invokeQualifiedAccountQuota(input: Readonly<{
     profile: QualifiedConnectedAccountProfileV4;
     accountMode: 'plain' | 'e2ee';
+    backgroundObservation?: boolean;
     previousSnapshot?: ProviderAccountUsageSnapshotV1 | null;
     afterConfirmedReset?: boolean;
     refreshRequestedAt?: number;
@@ -4213,6 +4210,8 @@ export class ConnectedServiceQuotasCoordinator {
       if (!admittedBasis?.isCurrent()) throw error;
       const now = this.now();
       if (!deferred) this.applyFailureBackoff({ now, key, error });
+      // A missed background poll leaves the last Home observation intact.
+      if (input.backgroundObservation && wasConnectedServiceQuotaObserved(lastKnown)) throw error;
       const failure = isRecord(error) ? error : null;
       const previousFailure = lastKnown.diagnostics?.filter(diagnostic => diagnostic.kind === 'provider_http')
         .reduce<(NonNullable<ProviderAccountUsageSnapshotV1['diagnostics']>)[number] | undefined>(
@@ -4666,6 +4665,7 @@ export class ConnectedServiceQuotasCoordinator {
             signal: input.signal,
             cancellationSignal: input.signal,
             fetchTimeoutMs: this.fetchTimeoutMs,
+            backgroundObservation: !pendingRefresh,
             profile, accountMode: input.accountMode,
             ...(pendingRefresh ? { refreshRequestedAt } : {}),
             ...(health?.due ? { scheduledHealth: { work: health, dispatched: () => { healthDispatched = true; } } } : {}),
@@ -4706,7 +4706,6 @@ export class ConnectedServiceQuotasCoordinator {
         if (observedProbeAt > input.now) nextProbeAt = observedProbeAt;
         const written = await this.persistQualifiedConnectedAccountQuota({
           signal: input.signal,
-          backgroundObservation: !pendingRefresh,
           accountMode: input.accountMode,
           profile,
           snapshot,
