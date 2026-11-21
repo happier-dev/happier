@@ -3258,7 +3258,10 @@ Ingest and Resource publication do not request maintenance or arm a timer; the
 existing policy, volume and idle edges discover newly retained data. Stopping a
 recording does not remove its declared database from retention. The native log
 byte budget applies only to native logs. Retention-declared plugin databases opt
-into a Machine allocation resolved once at preparation. The owner adds retained
+into a Machine allocation resolved once at preparation. On daemon cold startup,
+the registry publishes its declarations for Machine registration. These databases
+prepare after the Machine resource policy loads and before plugin background
+services start. The owner adds retained
 plugin database bytes to the measured free bytes on that exact filesystem,
 subtracting any explicit fixed-byte disk threshold from the free bytes and
 clamping the resulting growth allowance to zero. Percentage thresholds govern

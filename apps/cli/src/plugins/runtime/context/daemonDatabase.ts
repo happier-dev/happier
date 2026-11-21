@@ -1682,6 +1682,10 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
     });
 }
 
+export function usesMachineDaemonDatabaseAllocation(declarations: readonly PluginDaemonDatabaseContributionV1[]): boolean {
+    return declarations.some(declaration => declaration.retention?.length);
+}
+
 /** Preparation resolves one plugin-wide allocation and its matching capability ceiling. */
 export type PluginDaemonDatabaseLimitsPolicy = Readonly<{
     protocolMaximumDatabaseBytes: number;
@@ -1994,7 +1998,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
             }
             const declarations = normalizeDaemonDatabaseDeclarations(input.declarations);
             if (declarations.length === 0) return;
-            const context = declarations.some(declaration => declaration.retention?.length) ? {
+            const context = usesMachineDaemonDatabaseAllocation(declarations) ? {
                 declarations,
                 directory: await ensurePluginDatabasesDirectory({ namespace: assertPluginDatabaseNamespace(input.pluginId), paths: params.paths }),
                 retainedBytes: [...(await readPersistedPluginDatabaseFileBytes({ pluginId: input.pluginId, paths: params.paths })).values()].reduce((sum, bytes) => sum + bytes, 0),

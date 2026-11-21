@@ -710,10 +710,10 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       .toBe(resolveSessionResourceAccess);
   });
 
-  it('prepares declared daemon databases before publishing the initial registry', async () => {
+  it('prepares retained daemon databases after Machine binding and before background services start', async () => {
     const events: string[] = [];
-    const prepareDaemonDatabases = vi.fn(async () => {
-      events.push('database-prepared');
+    const prepareDaemonDatabases = vi.fn(async ({ pluginIds }: Readonly<{ pluginIds: readonly string[] }>) => {
+      events.push(`prepared:${pluginIds.join(',')}`);
     });
     const dispose = vi.fn(async () => undefined);
     ownerMocks.resolveRuntimeRegistryOverride = Object.freeze({
@@ -721,13 +721,16 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       contributes: createResolvedContributionRegistry({
         activationTargets: Object.freeze([
           createReadinessActivationTarget('com.acme.indexer', 'external', [{ id: 'index' }]),
+          createReadinessActivationTarget('com.acme.capture', 'first_party', [{
+            id: 'capture', retention: [{ table: 'events', timeColumn: 'at' }],
+          }]),
           createReadinessActivationTarget('com.acme.no-database', 'external', [], { activationEvents: [] }),
           // Declared databases are not enough: a plugin whose activation never
           // succeeded must not have native handles opened on its behalf.
           createReadinessActivationTarget('com.acme.unactivated-indexer', 'external', [{ id: 'index' }], { activationEvents: [] }),
         ]),
       }),
-      activatedPluginIds: new Set(['com.acme.indexer']),
+      activatedPluginIds: new Set(['com.acme.indexer', 'com.acme.capture']),
       // Every activation target proves its readiness before publication, so this
       // fixture must satisfy that proof rather than rely on a swallowed rejection.
       activatePluginsForValidation: vi.fn(async () => Object.freeze([])),
@@ -742,6 +745,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         const registry = await params.resolveRuntimeRegistry?.();
         if (!registry || !params.beforePublish) throw new Error('missing initial registry publication');
         await params.beforePublish(registry, () => events.push('published'));
+        events.push('background-started');
         return Object.freeze({
           registry,
           source: 'active' as const,
@@ -786,14 +790,15 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       connectedAccounts: createUnusedConnectedAccountsOwner(),
       daemonDatabaseLimits,
       onInitialRegistryPublished: () => events.push('published-hook'),
+      awaitInitialRuntimeActivation: async () => { events.push('machine-bound'); },
     });
 
     await owner.initialize();
 
-    expect(prepareDaemonDatabases).toHaveBeenCalledWith({
-      pluginIds: ['com.acme.indexer'],
-    });
-    expect(events).toEqual(['database-prepared', 'published', 'published-hook']);
+    expect(events).toEqual([
+      'prepared:com.acme.indexer', 'published', 'published-hook',
+      'machine-bound', 'prepared:com.acme.capture', 'background-started',
+    ]);
     expect(ownerMocks.resolveRuntimeRegistryParams?.daemonDatabaseLimits).toBe(daemonDatabaseLimits);
     expect(ownerMocks.runtimeLifecycleParams?.daemonDatabaseLimits).toBe(daemonDatabaseLimits);
     expect(dispose).not.toHaveBeenCalled();
@@ -841,7 +846,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   function createReadinessActivationTarget(
     pluginId: string,
     provenance: 'first_party' | 'external',
-    daemonDatabases: readonly Readonly<{ id: string }>[],
+    daemonDatabases: readonly Readonly<{ id: string; retention?: readonly Readonly<{ table: string; timeColumn: string }>[] }>[],
     options: Readonly<{
       activationEvents?: readonly string[];
       contributes?: Readonly<Record<string, unknown>>;

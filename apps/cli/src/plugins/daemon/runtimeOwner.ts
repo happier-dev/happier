@@ -71,7 +71,7 @@ import type {
   ExternalSessionPluginAdmissionOwner,
 } from '@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
-import type { PluginDaemonDatabaseLimitsPolicy } from '@/plugins/runtime/context/daemonDatabase';
+import { usesMachineDaemonDatabaseAllocation, type PluginDaemonDatabaseLimitsPolicy } from '@/plugins/runtime/context/daemonDatabase';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import { subscribePluginAccountAvailabilityChanges } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -262,26 +262,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         });
       }
     : undefined;
-  const initialBeforePublish = (
-    params.onInitialRegistryPublished
-    || params.awaitInitialRuntimeActivation
-    || params.onDurableRegistryApplied
-    || params.signal
-  )
-    ? async (
-        registry: ResolvedExecutablePluginRuntimeRegistry,
-        publish: () => void,
-      ) => {
-        const publishCurrent = () => {
-          params.signal?.throwIfAborted();
-          publish();
-        };
-        if (beforePublish) await beforePublish(registry, publishCurrent);
-        else publishCurrent();
-        params.onInitialRegistryPublished?.();
-        await params.awaitInitialRuntimeActivation?.();
-      }
-    : beforePublish;
   let stableEventsBroker: StablePluginEventsBroker | null = null;
   let worktreePortRemoval: ReturnType<typeof subscribeWorktreePortRemoval> | undefined;
   let developmentRoots: DaemonPluginDevelopmentRootsOwner | null = null;
@@ -899,6 +879,48 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   return Object.freeze({
     changeService,
     initialize() {
+      const machineAllocatedDatabases = new Set<string>();
+      const isolateReadinessParticipant = async (
+        registry: ResolvedExecutablePluginRuntimeRegistry,
+        pluginId: string,
+        stage: keyof typeof COLD_START_READINESS_STAGE_REASONS,
+        run: () => Promise<void>,
+      ): Promise<void> => {
+        try {
+          params.signal?.throwIfAborted();
+          await run();
+        } catch (error) {
+          params.signal?.throwIfAborted();
+          const reason = `${COLD_START_READINESS_STAGE_REASONS[stage]}: ${
+            projectPluginFailureText(error)
+          }`;
+          await registry.recordPluginActivationFailure(pluginId, reason);
+          logger.warn(
+            '[PLUGIN RUNTIME] Cold startup fenced a failed plugin readiness participant',
+            { pluginId, stage, error: projectPluginFailureText(error) },
+          );
+        }
+      };
+      const prepareDaemonDatabase = (registry: ResolvedExecutablePluginRuntimeRegistry, pluginId: string) =>
+        isolateReadinessParticipant(registry, pluginId, 'daemonDatabases', async () => {
+          await registry.prepareDaemonDatabases({ pluginIds: [pluginId] });
+        });
+      const beforeInitialPublish = async (registry: ResolvedExecutablePluginRuntimeRegistry, publish: () => void) => {
+        const publishCurrent = () => {
+          params.signal?.throwIfAborted();
+          publish();
+        };
+        if (beforePublish) await beforePublish(registry, publishCurrent);
+        else publishCurrent();
+        params.onInitialRegistryPublished?.();
+        await params.awaitInitialRuntimeActivation?.();
+        // Registration uses the published registry. The Machine policy is
+        // hydrated by its existing binding step before background activation.
+        for (const pluginId of machineAllocatedDatabases) {
+          if (registry.activatedPluginIds.has(pluginId)) await prepareDaemonDatabase(registry, pluginId);
+        }
+      };
+
       const initialization = (async () => {
       params.signal?.throwIfAborted();
       if (params.staleCandidateCleanup === 'exclusiveHome') {
@@ -1043,26 +1065,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           // fenced exactly like an external one. The reload path deliberately keeps
           // the opposite contract — there the changed candidate is discarded whole
           // because the incumbent is still serving.
-          const isolateReadinessParticipant = async (
-            pluginId: string,
-            stage: keyof typeof COLD_START_READINESS_STAGE_REASONS,
-            run: () => Promise<void>,
-          ): Promise<void> => {
-            try {
-              params.signal?.throwIfAborted();
-              await run();
-            } catch (error) {
-              params.signal?.throwIfAborted();
-              const reason = `${COLD_START_READINESS_STAGE_REASONS[stage]}: ${
-                projectPluginFailureText(error)
-              }`;
-              await registry.recordPluginActivationFailure(pluginId, reason);
-              logger.warn(
-                '[PLUGIN RUNTIME] Cold startup fenced a failed plugin readiness participant',
-                { pluginId, stage, error: projectPluginFailureText(error) },
-              );
-            }
-          };
           try {
             // Same admitted-target contract the lifecycle manager activates from.
             const activationTargets = collectActivationTargets(registry.contributes);
@@ -1080,7 +1082,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             // failures against the affected plugin; this isolates the exceptional
             // rejections it cannot absorb.
             await Promise.all(readinessPluginIds.map(async (pluginId) => {
-              await isolateReadinessParticipant(pluginId, 'activation', async () => {
+              await isolateReadinessParticipant(registry, pluginId, 'activation', async () => {
                 await activatePluginRuntimeForReadiness({
                   registry,
                   pluginIds: [pluginId],
@@ -1088,19 +1090,14 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               });
             }));
             params.signal?.throwIfAborted();
-            {
-              const daemonDatabasePluginIds = [...new Set(
-                coldStartActivationTargets
-                  .filter((target) => (
-                    registry.activatedPluginIds.has(target.pluginId)
-                    && target.manifest.contributes.daemonDatabases.length > 0
-                  ))
-                  .map((target) => target.pluginId),
-              )].sort();
-              for (const pluginId of daemonDatabasePluginIds) {
-                await isolateReadinessParticipant(pluginId, 'daemonDatabases', async () => {
-                  await registry.prepareDaemonDatabases({ pluginIds: [pluginId] });
-                });
+            const databasesByPlugin = new Map(coldStartActivationTargets
+              .filter(target => registry.activatedPluginIds.has(target.pluginId) && target.manifest.contributes.daemonDatabases.length > 0)
+              .map(target => [target.pluginId, target.manifest.contributes.daemonDatabases] as const));
+            for (const [pluginId, declarations] of [...databasesByPlugin].sort(([left], [right]) => left.localeCompare(right))) {
+              if (params.awaitInitialRuntimeActivation && usesMachineDaemonDatabaseAllocation(declarations)) {
+                machineAllocatedDatabases.add(pluginId);
+              } else {
+                await prepareDaemonDatabase(registry, pluginId);
               }
             }
             params.signal?.throwIfAborted();
@@ -1117,7 +1114,10 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             throw error;
           }
         },
-        ...(initialBeforePublish ? { beforePublish: initialBeforePublish } : {}),
+        ...(params.onInitialRegistryPublished || params.awaitInitialRuntimeActivation
+          || params.onDurableRegistryApplied || params.signal
+          ? { beforePublish: beforeInitialPublish }
+          : beforePublish ? { beforePublish } : {}),
       });
       try {
         stableEventsBroker = initialLease.registry
