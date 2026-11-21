@@ -17763,7 +17763,7 @@ settingsSession: {
         footprintNoUsageTitle: "Brak użycia do oszacowania",
         footprintNoUsageReason: "Widok śladu środowiskowego odczytuje to samo użycie co reszta strony.",
         footprintInsufficientTitle: "Za mało danych, aby oszacować energię lub emisje",
-        footprintInsufficientReason: "Dostawcy nie publikują zużycia energii na żądanie, a opublikowane metody wymagają sprzętu obsługującego model, daty i regionu, których nie zawierają dane użycia. Zamiast wymyślać współczynnik, nie pokazujemy liczby.",
+        footprintInsufficientReason: "Opublikowane dane nie obejmują wystarczająco dobrze modeli i warunków ich obsługi w twoim użyciu, by oszacować energię lub emisje.",
         footprintNoEstimate: "Brak szacunku",
         footprintAccounted: "Rozliczone w tym okresie",
         footprintProxy: "Wskaźnik pośredni",

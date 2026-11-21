@@ -18098,7 +18098,7 @@ settingsSession: {
             footprintNoUsageTitle: "推定できる使用量がまだありません",
             footprintNoUsageReason: "フットプリントはこのページの他の部分と同じ使用量を読み取ります。",
             footprintInsufficientTitle: "エネルギーや排出量を推定するには情報が足りません",
-            footprintInsufficientReason: "プロバイダーはリクエストごとのエネルギーを公開しておらず、公開された手法にはモデルの提供ハードウェア、日付、地域が必要ですが、使用量にはそれらが含まれません。係数を推測する代わりに、数値は表示しません。",
+            footprintInsufficientReason: "公開されている数値は、あなたの使用量に含まれるモデルと提供条件を十分にカバーしていないため、エネルギーや排出量を推定できません。",
             footprintNoEstimate: "推定なし",
             footprintAccounted: "この期間の計上量",
             footprintProxy: "代理指標",

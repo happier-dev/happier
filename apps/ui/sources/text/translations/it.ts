@@ -18190,7 +18190,7 @@ settingsSession: {
             footprintNoUsageTitle: "Ancora nessun utilizzo da stimare",
             footprintNoUsageReason: "La vista impronta legge lo stesso utilizzo del resto della pagina.",
             footprintInsufficientTitle: "Dati insufficienti per stimare energia o emissioni",
-            footprintInsufficientReason: "I fornitori non pubblicano l'energia per richiesta e i metodi pubblicati richiedono hardware, data e regione del modello, che il tuo utilizzo non contiene. Invece di inventare un fattore, non viene mostrato alcun numero.",
+            footprintInsufficientReason: "I dati pubblicati non coprono abbastanza bene i modelli e le condizioni di servizio del tuo utilizzo per stimare energia o emissioni.",
             footprintNoEstimate: "Nessuna stima",
             footprintAccounted: "Contabilizzato nel periodo",
             footprintProxy: "Un indicatore",

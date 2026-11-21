@@ -17463,7 +17463,7 @@ settingsSession: {
             footprintNoUsageTitle: "还没有可估算的用量",
             footprintNoUsageReason: "足迹视图读取的用量与本页其他部分相同。",
             footprintInsufficientTitle: "不足以估算能耗或排放",
-            footprintInsufficientReason: "提供方不公布每次请求的能耗，已发布的方法需要模型的服务硬件、日期和地区，而你的用量不包含这些信息。为避免编造系数，不显示数字。",
+            footprintInsufficientReason: "已发布的数据未能充分涵盖你用量中的模型和服务条件，无法估算能耗或排放。",
             footprintNoEstimate: "无估算",
             footprintAccounted: "本期已计入",
             footprintProxy: "仅为代理指标",

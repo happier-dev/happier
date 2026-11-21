@@ -203,7 +203,7 @@ export const PUBLIC_USAGE_ORIGINAL_COPY_EN = {
     footprintNoUsageTitle: "No usage to estimate yet",
     footprintNoUsageReason: "The footprint lens reads the same usage as the rest of this page.",
     footprintInsufficientTitle: "Not enough to estimate energy or emissions",
-    footprintInsufficientReason: "Providers don't publish energy per request, and the published methods need the model's serving hardware, date and region, which your usage doesn't carry. Rather than invent a factor, no number is shown.",
+    footprintInsufficientReason: "Published figures don't cover the models and serving conditions in your usage well enough to estimate energy or emissions.",
     footprintNoEstimate: "No estimate",
     footprintAccounted: "Accounted this period",
     footprintProxy: "A proxy",

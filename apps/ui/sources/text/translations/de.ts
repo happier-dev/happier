@@ -17993,7 +17993,7 @@ settingsSession: {
             footprintNoUsageTitle: "Noch keine Nutzung zum Schätzen",
             footprintNoUsageReason: "Die Fußabdruck-Ansicht liest dieselbe Nutzung wie der Rest dieser Seite.",
             footprintInsufficientTitle: "Nicht genug, um Energie oder Emissionen zu schätzen",
-            footprintInsufficientReason: "Anbieter veröffentlichen keine Energie pro Anfrage, und die veröffentlichten Methoden brauchen Hardware, Datum und Region des Modellbetriebs, die deine Nutzung nicht enthält. Statt einen Faktor zu erfinden, wird keine Zahl gezeigt.",
+            footprintInsufficientReason: "Veröffentlichte Werte decken die Modelle und Betriebsbedingungen deiner Nutzung nicht gut genug ab, um Energie oder Emissionen zu schätzen.",
             footprintNoEstimate: "Keine Schätzung",
             footprintAccounted: "In diesem Zeitraum erfasst",
             footprintProxy: "Ein Näherungswert",

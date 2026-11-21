@@ -17927,7 +17927,7 @@ settingsSession: {
             footprintNoUsageTitle: "Ainda não há uso para estimar",
             footprintNoUsageReason: "A visão de pegada lê o mesmo uso que o resto desta página.",
             footprintInsufficientTitle: "Não há o suficiente para estimar energia ou emissões",
-            footprintInsufficientReason: "Os provedores não publicam a energia por solicitação, e os métodos publicados precisam do hardware, data e região do modelo, que seu uso não contém. Em vez de inventar um fator, nenhum número é exibido.",
+            footprintInsufficientReason: "Os números publicados não cobrem bem o suficiente os modelos e as condições de serviço do seu uso para estimar energia ou emissões.",
             footprintNoEstimate: "Sem estimativa",
             footprintAccounted: "Contabilizado no período",
             footprintProxy: "Uma aproximação",
