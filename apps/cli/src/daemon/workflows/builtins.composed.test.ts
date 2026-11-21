@@ -48,6 +48,7 @@ import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/work
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { DiscussionOpenedMessageV1Schema, DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { DiscussionMessagesQueryV1Schema } from '@happier-dev/protocol/discussions/api';
 import historicalReviewAndConvergeV1 from '../../../../../packages/protocol/src/workflows/fixtures/historicalReviewAndConvergeV1.json';
 import { createReviewRecordPortV1, ReviewMetadataV1Schema, ReviewRoundBindingV1Schema, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { projectReviewNeedsYouV1, type ReviewRequestedReviewerV1, type ReviewVerdictV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
@@ -755,11 +756,13 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       : { kind: 'answer', result: { sessionId, messageId: 'answer' } }, session: id => id.endsWith('digest') ? 'DIGEST' : 'PEER-ANSWER',
       discussionRead: async args => {
         if (args.actionId !== 'discussion.read') throw new Error('unexpected_discussion_action');
-        const before = args.input.beforeSeq;
+        const { discussionId: _discussionId, ...query } = args.input;
+        const selection = DiscussionMessagesQueryV1Schema.safeParse(query);
+        if (!selection.success) return { ok: false, errorCode: 'discussion_invalid_content', error: 'discussion_invalid_content' };
         const initial = reads++ === 0;
-        const seq = before === undefined ? 4 : 3;
+        const seq = (selection.data.afterSeq ?? 2) + 1;
         return DiscussionReadResultV1Schema.parse({ v: 1, serverId: 'home', discussionId: 'discussion', messageSeq: initial ? 2 : 4,
-          hasMoreOlder: !initial && before === undefined, incomplete: false, messages: initial ? [] : [{
+          hasMoreOlder: !initial, incomplete: false, messages: initial ? [] : [{
             id: `human-${seq}`, discussionId: 'discussion', localId: null, seq, authorAccountId: null, accountActor: null, producerV1: null,
             createdAt: seq, mentionedAccountIds: [], content: { v: 1, parts: [{ t: 'text', text: seq === 4 ? 'NEW-HUMAN-CONTEXT' : 'READDRESS-TWO' }] },
             addressingV1: { throughSeq: seq, participantSessionIds: seq === 3 ? ['two'] : [], ...(watcher && seq === 3 ? { watcherSessionIds: ['two'] } : {}) },
