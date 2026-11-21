@@ -46,7 +46,8 @@ import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkf
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
-import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { MachineContentKeyUnavailableError } from '@/api/machine/machineDataEncryptionKey';
 import { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 } from '@happier-dev/deployments/telemetry';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -901,6 +902,20 @@ export function executeOriginalAccountRequesterOperation(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}) });
       await assertCurrent();
       return { status: response.status, value: response.data };
+    },
+    // The reader's own decode of the executor's Machine content; a Machine it cannot open stays Home-vouched.
+    readExecutorKeyPin: async machineId => {
+      const { ApiClient } = await import('@/api/api');
+      try {
+        const machine = await runWithServerHttpBaseUrl(home, async () => await (await ApiClient.create(params.credentials))
+          .getMachine(machineId, params.signal ? { signal: params.signal } : undefined));
+        await assertCurrent();
+        return machine ? readExecutorKeyPinFromMachineContentV1({ machineId, contentMode: machine.encryptionMode === 'e2ee' ? 'e2ee' : 'plain',
+          installationPublicKey: machine.metadata?.installationPublicKey }) : undefined;
+      } catch (error) {
+        if (error instanceof MachineContentKeyUnavailableError) return undefined;
+        throw error;
+      }
     },
   });
 }

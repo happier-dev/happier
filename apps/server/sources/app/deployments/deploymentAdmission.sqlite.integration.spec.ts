@@ -159,7 +159,7 @@ describe('current Source deployment authority', () => {
                             installationPublicKey: nacl.sign.keyPair().publicKey, randomBytes: nacl.randomBytes });
                     } catch (error) { return error; }
                 })();
-                expect(substituted).toMatchObject({ errorCode: 'telemetry_collector_key_mismatch' });
+                expect(substituted).toMatchObject({ errorCode: 'installation_key_mismatch' });
             }
             const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed, material,
                 installationPublicKey: collectorKey, randomBytes: nacl.randomBytes, ...(mode === 'e2ee' ? { collectorKeyPins } : {}) });

@@ -145,24 +145,35 @@ and response, and the collector uses the signed Environment scope without
 receiving the reader's Account credentials. A new presentation of the signed
 root passes through the existing admission boundary.
 
-Home delivers the collector's installation key with the admission, so Home
-alone does not vouch for it. When the telemetry writer installs or moves the
-collector, it pins `telemetryCollector` (collector Machine id and a
-domain-separated SHA-256 fingerprint of the installation key it read at that
-time) in the Environment's private content. Turning telemetry off removes the
-pin. For an E2EE reader, the reader opens each admitted Environment's content
-with its own Artifact opener. The codec sealing owner
-(`sealManagedControllerActionCodecV1`) then compares the delivered key with
-every pin before it seals. A mismatch refuses with
-`telemetry_collector_key_mismatch`. A missing pin refuses with
-`telemetry_collector_key_unbound` (recovery `telemetry_setup`: run telemetry
-setup again, which writes the pin). Neither refusal falls back to the delivered
-key. Plain-mode readers keep the delivered key, because plain content is
-server-readable by contract. The pin is trust-on-first-use: it is only as
-trustworthy as Home was when the writer read the key. A collector reinstall
-changes the key and refuses reads until setup runs again. Requester operation
-reads (`requesterOperationReadInstallationPublicKey`) still use a Home-vouched
-key, because no private content pins their executor.
+Home delivers the executor's installation key with the admission, so Home
+alone does not vouch for it. Before sealing, the codec sealing owner
+(`sealManagedControllerActionCodecV1`) compares the delivered key with a
+fingerprint read from E2EE content that Home cannot forge. It uses the same
+refusals for both read kinds: `installation_key_mismatch` and
+`installation_key_unbound`. Neither falls back to the delivered key.
+
+- **Environment collector reads.** When the telemetry writer installs or moves
+  the collector, it pins `telemetryCollector` (the collector Machine id and a
+  domain-separated SHA-256 fingerprint of the installation key it read at that
+  time) in the Environment's private content. Turning telemetry off removes the
+  pin. An E2EE reader opens each admitted Environment's content with its own
+  Artifact opener. A missing pin refuses with recovery `telemetry_setup`: run
+  telemetry setup again, which writes the pin.
+- **Requester operation reads.** The daemon publishes its own installation
+  public key in its E2EE Machine metadata on every metadata refresh. An E2EE
+  reader that can open that Machine's content verifies against it. Content that
+  publishes no key refuses with recovery `restart_daemon`.
+
+The delivered key stays Home-vouched in two cases. Plain-mode readers and plain
+Machine or Environment content are server-readable by contract. A Machine whose
+content the reader cannot open, such as a foreign custodian's managed
+controller without a content grant, has no unforgeable source. The owner
+accepted that residual (2026-11-20).
+
+The Environment pin is trust-on-first-use: it is only as trustworthy as Home was
+when the writer read the key. A collector reinstall changes the key and refuses
+reads until setup runs again. A Home that hides a Machine row or misreports its
+access also leaves the delivered key Home-vouched.
 
 Environment Duplicate prepares one opaque create-intent commitment at the
 Account crypto owner before allocating new content Artifacts. It binds the exact

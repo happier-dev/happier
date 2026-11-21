@@ -440,10 +440,13 @@ export function isManagedControllerCodecRootV1(binding: ExternalActionExecutionA
     && ('authentication' in binding || isReviewedMachineSetupCodecV1(binding));
 }
 
+/** A Machine installation key fingerprint read from E2EE content that Home cannot forge. */
+export type InstallationKeyPinV1 = Readonly<{ machineId: string; installationKeyFingerprint: string }>;
+
 /** One admitted Environment's private collector pin, read from its content by the reader. */
 export type TelemetryCollectorKeyPinV1 = Readonly<{
   environmentId: string;
-  collector?: Readonly<{ machineId: string; installationKeyFingerprint: string }>;
+  collector?: InstallationKeyPinV1;
 }>;
 
 /**
@@ -456,23 +459,58 @@ export function isTelemetryCollectorKeyPinRequiredV1(binding: Pick<ExternalActio
   return binding.telemetryCollectorCodec === true && binding.accountEncryptionMode === 'e2ee';
 }
 
-function assertTelemetryCollectorKeyPinnedV1(binding: ExternalActionExecutionAuthorizationV1['binding'],
-  installationPublicKey: Uint8Array, pins: readonly TelemetryCollectorKeyPinV1[] | undefined): void {
-  const admission = binding.deploymentReadAdmission;
-  const environmentIds = admission && 'telemetryCollector' in admission ? admission.telemetryCollector.environmentIds : [];
-  const byEnvironment = new Map(pins?.map(pin => [pin.environmentId, pin.collector]));
-  const unbound = environmentIds.filter(environmentId => !byEnvironment.get(environmentId));
-  const refuse = (code: 'telemetry_collector_key_unbound' | 'telemetry_collector_key_mismatch', ids: readonly string[]) => {
-    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false,
-      details: { environmentIds: [...ids], recovery: 'telemetry_setup' } });
-  };
-  if (!environmentIds.length || unbound.length) refuse('telemetry_collector_key_unbound', unbound);
+/**
+ * An E2EE requester operation read verifies the Home-delivered executor key
+ * against the key the executor published in its own E2EE Machine content.
+ */
+export function isExecutorKeyPinReadV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
+  'requesterOperationRead' | 'accountEncryptionMode'>): boolean {
+  return binding.requesterOperationRead === true && binding.accountEncryptionMode === 'e2ee';
+}
+
+/**
+ * The executor pin a reader derives from a Machine whose content it opened: undefined unless that
+ * content is E2EE (plain content is server-readable, so the delivered key stays Home-vouched), null
+ * when the content publishes no key.
+ */
+export function readExecutorKeyPinFromMachineContentV1(machine: Readonly<{ machineId: string;
+  contentMode: 'plain' | 'e2ee'; installationPublicKey?: string | null }>): InstallationKeyPinV1 | null | undefined {
+  if (machine.contentMode !== 'e2ee') return undefined;
+  if (!machine.installationPublicKey) return null;
+  return { machineId: machine.machineId,
+    installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(machine.installationPublicKey, 'base64url')) };
+}
+
+function refuseInstallationKey(code: 'installation_key_unbound' | 'installation_key_mismatch',
+  details: Readonly<Record<string, unknown>>): never {
+  throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false, details: { ...details } });
+}
+
+function isInstallationKeyPinnedV1(pin: InstallationKeyPinV1, machineId: string, fingerprint: string): boolean {
+  return pin.machineId === machineId && pin.installationKeyFingerprint === fingerprint;
+}
+
+function assertInstallationKeyPinnedV1(binding: ExternalActionExecutionAuthorizationV1['binding'], installationPublicKey: Uint8Array,
+  input: Readonly<{ collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[]; executorKeyPin?: InstallationKeyPinV1 | null }>): void {
   const fingerprint = computeMachineInstallationKeyFingerprintV1(installationPublicKey);
-  const mismatched = environmentIds.filter(environmentId => {
-    const collector = byEnvironment.get(environmentId)!;
-    return collector.machineId !== binding.machineId || collector.installationKeyFingerprint !== fingerprint;
-  });
-  if (mismatched.length) refuse('telemetry_collector_key_mismatch', mismatched);
+  if (isTelemetryCollectorKeyPinRequiredV1(binding)) {
+    const admission = binding.deploymentReadAdmission;
+    const environmentIds = admission && 'telemetryCollector' in admission ? admission.telemetryCollector.environmentIds : [];
+    const byEnvironment = new Map(input.collectorKeyPins?.map(pin => [pin.environmentId, pin.collector]));
+    const unbound = environmentIds.filter(environmentId => !byEnvironment.get(environmentId));
+    if (!environmentIds.length || unbound.length)
+      refuseInstallationKey('installation_key_unbound', { environmentIds: unbound, recovery: 'telemetry_setup' });
+    const mismatched = environmentIds.filter(environmentId =>
+      !isInstallationKeyPinnedV1(byEnvironment.get(environmentId)!, binding.machineId, fingerprint));
+    if (mismatched.length) refuseInstallationKey('installation_key_mismatch', { environmentIds: mismatched, recovery: 'telemetry_setup' });
+  }
+  // Undefined: the reader cannot open this executor's content, so the delivered key stays Home-vouched.
+  if (isExecutorKeyPinReadV1(binding) && input.executorKeyPin !== undefined) {
+    const details = { machineId: binding.machineId, recovery: 'restart_daemon' };
+    if (input.executorKeyPin === null) refuseInstallationKey('installation_key_unbound', details);
+    if (!isInstallationKeyPinnedV1(input.executorKeyPin, binding.machineId, fingerprint))
+      refuseInstallationKey('installation_key_mismatch', details);
+  }
 }
 
 export function sealManagedControllerActionCodecV1(input: Readonly<{
@@ -482,14 +520,15 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   installationPublicKey: Uint8Array;
   /** Required for an E2EE Environment collector read; see isTelemetryCollectorKeyPinRequiredV1. */
   collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[];
+  /** An E2EE operation read's executor key from its Machine content; null when that content publishes none. */
+  executorKeyPin?: InstallationKeyPinV1 | null;
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
   if (!isManagedControllerCodecRootV1(authorization.binding)
     || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== authorization.binding.machineId)
     throw new Error('managed_controller_codec_root_mismatch');
-  if (isTelemetryCollectorKeyPinRequiredV1(authorization.binding))
-    assertTelemetryCollectorKeyPinnedV1(authorization.binding, input.installationPublicKey, input.collectorKeyPins);
+  assertInstallationKeyPinnedV1(authorization.binding, input.installationPublicKey, input);
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
     authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
     purpose: { kind: 'managed_controller_codec' }, codec: { machineKey: encodeBase64(input.material.machineKey) },

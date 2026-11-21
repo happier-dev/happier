@@ -13,7 +13,7 @@ import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSch
     type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1,
     type ExternalActionRequestEnvelopeV2, type ExternalActionWorkflowPreparationV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope, encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, isTelemetryCollectorKeyPinRequiredV1, ExternalActionRequesterInvocationV1Schema,
+import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, ExternalActionRequesterInvocationV1Schema,
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2,
     type ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -109,6 +109,14 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
             const value: unknown = await response.json().catch(() => undefined);
             account.assertCurrent();
             return { status: response.status, value };
+        },
+        // The reader's opened Machine content; a Machine it cannot open stays Home-vouched.
+        readExecutorKeyPin: async machineId => {
+            if (!areServerAccountScopesEqual(storage.getState().profileScope, account.accountLifetime.scope)) return undefined;
+            const machine = storage.getState().machines[machineId];
+            if (!machine?.metadata || machine.availability?.kind === 'locked' || !machine.storageMode) return undefined;
+            return readExecutorKeyPinFromMachineContentV1({ machineId, contentMode: machine.storageMode,
+                installationPublicKey: machine.metadata.installationPublicKey });
         },
     }));
 }

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../../actions/externalActionApi.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '../../actions/operations/actionIdsV1.js';
 import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 } from '../../actions/actionIdsDatabaseV1.js';
 import { parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { parseActionExecuteFailure } from '../../actions/actionExecutionResult.js';
 import { computeMachineInstallationKeyFingerprintV1 } from '../../machines/identity/installationKeySchemas.js';
 import {
   openManagedControllerActionCodecV1,
+  readExecutorKeyPinFromMachineContentV1,
   sealManagedControllerActionCodecV1,
 } from './sessionRequesterBootstrapV1.js';
 
@@ -104,7 +106,7 @@ describe('Environment-pinned collector key at the codec sealing owner', () => {
         }),
       ),
     ).toMatchObject({
-      errorCode: 'telemetry_collector_key_mismatch',
+      errorCode: 'installation_key_mismatch',
       details: { environmentIds },
     });
     // A pin for another Machine is not this collector's pin.
@@ -118,7 +120,7 @@ describe('Environment-pinned collector key at the codec sealing owner', () => {
           randomBytes: tweetnacl.randomBytes,
         }),
       ),
-    ).toMatchObject({ errorCode: 'telemetry_collector_key_mismatch' });
+    ).toMatchObject({ errorCode: 'installation_key_mismatch' });
   });
 
   it('refuses an E2EE read whose Environment has no bound key, naming the setup recovery', () => {
@@ -139,7 +141,7 @@ describe('Environment-pinned collector key at the codec sealing owner', () => {
           }),
         ),
       ).toMatchObject({
-        errorCode: 'telemetry_collector_key_unbound',
+        errorCode: 'installation_key_unbound',
         details: {
           environmentIds: collectorKeyPins
             ? [environmentIds[1]]
@@ -167,5 +169,56 @@ describe('Environment-pinned collector key at the codec sealing owner', () => {
         installationPrivateKey: collector.secretKey,
       }),
     ).toEqual(material);
+  });
+});
+
+function operationRoot(accountEncryptionMode: 'plain' | 'e2ee') {
+  const target = { kind: 'machine' as const, machineId: 'executor' };
+  return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'operation-read', binding: {
+    accountId: 'reader', custodianAccountId: 'reader', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'home', machineId: target.machineId, installationId: 'installation', accountEncryptionMode,
+    actionId: ACTION_OPERATION_GET_ACTION_ID_V1, requestId: 'read-operation', requestEnvelopeDigest: 'a'.repeat(43), target,
+    requesterOperationRead: true,
+  } });
+}
+const executorPin = (publicKey: Uint8Array, machineId = 'executor') => ({ machineId,
+  installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(publicKey) });
+
+describe('executor key read from E2EE Machine content at the codec sealing owner', () => {
+  it('seals an operation read to the key the executor published in its own content', () => {
+    const authorization = operationRoot('e2ee');
+    const sealed = sealManagedControllerActionCodecV1({ authorization, material, installationPublicKey: collector.publicKey,
+      executorKeyPin: executorPin(collector.publicKey), randomBytes: tweetnacl.randomBytes });
+    expect(openManagedControllerActionCodecV1({ authorization: sealed, machineId: 'executor', installationId: 'installation',
+      serverIdentityId: 'home', installationPrivateKey: collector.secretKey })).toEqual(material);
+  });
+
+  it('refuses a substituted key, or readable content that publishes no key, with the same refusals', () => {
+    const authorization = operationRoot('e2ee');
+    expect(refusal(() => sealManagedControllerActionCodecV1({ authorization, material, installationPublicKey: substitute.publicKey,
+      executorKeyPin: executorPin(collector.publicKey), randomBytes: tweetnacl.randomBytes })))
+      .toMatchObject({ errorCode: 'installation_key_mismatch', details: { machineId: 'executor' } });
+    expect(refusal(() => sealManagedControllerActionCodecV1({ authorization, material, installationPublicKey: collector.publicKey,
+      executorKeyPin: null, randomBytes: tweetnacl.randomBytes })))
+      .toMatchObject({ errorCode: 'installation_key_unbound', details: { machineId: 'executor', recovery: 'restart_daemon' } });
+  });
+
+  it('keeps the Home-delivered key when the reader cannot open the executor content, and for plain readers', () => {
+    for (const authorization of [operationRoot('e2ee'), operationRoot('plain')]) {
+      const sealed = sealManagedControllerActionCodecV1({ authorization, material, installationPublicKey: collector.publicKey,
+        randomBytes: tweetnacl.randomBytes });
+      expect(openManagedControllerActionCodecV1({ authorization: sealed, machineId: 'executor', installationId: 'installation',
+        serverIdentityId: 'home', installationPrivateKey: collector.secretKey })).toEqual(material);
+    }
+  });
+});
+
+describe('executor pin from opened Machine content', () => {
+  it('pins only E2EE content and reports E2EE content without a key as unbound', () => {
+    const key = Buffer.from(collector.publicKey).toString('base64url');
+    expect(readExecutorKeyPinFromMachineContentV1({ machineId: 'executor', contentMode: 'e2ee', installationPublicKey: key }))
+      .toEqual(executorPin(collector.publicKey));
+    expect(readExecutorKeyPinFromMachineContentV1({ machineId: 'executor', contentMode: 'e2ee' })).toBeNull();
+    expect(readExecutorKeyPinFromMachineContentV1({ machineId: 'executor', contentMode: 'plain', installationPublicKey: key })).toBeUndefined();
   });
 });

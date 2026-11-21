@@ -9,7 +9,8 @@ import {
 } from '../externalActionApi.js';
 import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionExecutionAuthorization.js';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
-import { sealManagedControllerActionCodecV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
+import { isExecutorKeyPinReadV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
+import { parseActionExecuteFailure } from '../actionExecutionResult.js';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from './actionIdsV1.js';
 import { ActionOperationAddressV1Schema } from './addressV1.js';
 import { ActionOperationGetActionInputV1Schema } from '../specs/actionOperations.js';
@@ -88,8 +89,17 @@ export async function executeRequesterActionOperationV1(params: RequesterOperati
   // The installation public key is needed only by the caller. The receiver
   // opens this message with its private key and verifies the signed binding.
   const { requesterOperationReadInstallationPublicKey: _key, ...signed } = authorization.data;
-  const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed,
-    material, installationPublicKey: decodeBase64(key, 'base64url'), randomBytes: params.randomBytes });
+  let executionAuthorization: typeof signed;
+  try {
+    const executorKeyPin = isExecutorKeyPinReadV1(root) ? await params.readExecutorKeyPin?.(target.machineId) : undefined;
+    executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed, material,
+      installationPublicKey: decodeBase64(key, 'base64url'), randomBytes: params.randomBytes,
+      ...(executorKeyPin !== undefined ? { executorKeyPin } : {}) });
+  } catch (error) {
+    const refused = parseActionExecuteFailure(error);
+    if (refused) return refused;
+    throw error;
+  }
   const result = await params.request(`/v1/actions/${actionId}`, { ...body, executionAuthorization });
   if (result.status !== 200) return refusal(result.value) ?? unavailable;
   return openExternalActionResponseV2({ envelope: result.value, request: envelope, binding, material })
