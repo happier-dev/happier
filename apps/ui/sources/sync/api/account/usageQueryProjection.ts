@@ -347,10 +347,10 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         return { ...slice, sources: slice.sources.map(source => {
             if (source.status !== 'pending') return source;
             const prior = priorSources.find(candidate => candidate.source === source.source);
-            // Keep the admitted observation's date and any settled failure
-            // while its replacement is in flight. Slice/Resource pending
-            // still reports the actual work; it does not erase that result.
-            if (prior?.status === 'error' || prior?.errorCode) return prior;
+            // Keep the admitted observation's date and failure metadata while
+            // reporting this source's admitted replacement as pending. Consumers
+            // can retain its facts without mistaking them for the current read.
+            if (prior?.status === 'error' || prior?.errorCode) return { ...prior, status: 'pending' as const };
             return source.asOfMs === undefined && prior?.asOfMs !== undefined
                 ? { ...source, asOfMs: prior.asOfMs } : source;
         }) };

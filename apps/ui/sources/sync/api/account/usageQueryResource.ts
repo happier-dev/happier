@@ -11,7 +11,7 @@ import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginU
 import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
-import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
+import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
 import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -76,7 +76,7 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
 import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
@@ -1358,6 +1358,10 @@ function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?
     };
 }
 
+function readWorkSessionIds(accounting: UsageAccountingSourceSnapshot['value']): readonly string[] {
+    return [...new Set(readUsageWorkSessionTurns(accounting)?.map(turn => turn.sessionId) ?? [])];
+}
+
 async function readSessionWorkEvidence(context: UsageQueryAccountContext, queries: readonly UsageQuery[],
     accounting: readonly UsageAccountingSourceSnapshot[], sessionReads: Map<string, Promise<SessionWorkSourceResult>>,
     readMachine: Parameters<typeof collectUsageWorkSources>[0]['readMachine'], signal?: AbortSignal): Promise<readonly UsageWorkSourceSnapshot[]> {
@@ -1429,6 +1433,8 @@ export async function readUiUsageQueryBatch(
     options?: Readonly<{
         /** Async consumers return their existing progress drain so settlement can reuse its projection. */
         onProgress?: (reproject: UsageQueryReprojection) => void | Promise<void>;
+        /** The Resource retains the Machine facts consumed at this Work admission. */
+        onWorkAdmission?: (accounting: UsageAccountingSourceSnapshot['value']) => void;
         /** Only the shared explicit Read now Action may open unconverted wide-window Sessions. */
         readUnconvertedHistory?: boolean;
         /** A wake of another Usage input does not demand replacement allowance acquisition. */
@@ -1479,6 +1485,7 @@ export async function readUiUsageQueryBatch(
             return reproject(signal);
         } finally {
             readOptions.onProgress = undefined;
+            readOptions.onWorkAdmission = undefined;
         }
     }
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
@@ -1655,6 +1662,7 @@ export async function readUiUsageQueryBatch(
             // are still shared across slices within this one Action admission.
             await accountingTasks.get(getUsageQueryKey(query));
             requireCurrent(context, signal);
+            readOptions?.onWorkAdmission?.(accounting.get(getUsageQueryKey(query))?.value);
             const sources = await readSessionWorkEvidence(context, [query], [...accounting.values()], sessionWorkReads, readWorkMachine, signal);
             work = work.map((source, sourceIndex) => sourceIndex === index
                 ? { ...sources[0]!, ...(sources[0]!.status === 'error' ? {} : { asOfMs: accountingNowMs }) } : source);
@@ -1748,7 +1756,10 @@ export async function readUiUsageQueryBatch(
         if (admittedPrevious) settleUsageQueryProjection(accounting, admittedPrevious);
         // Native optional-chain lowering can retain aliases of readOptions.
         // Clear the observer on its private cell, including on cancellation.
-        if (readOptions) readOptions.onProgress = undefined;
+        if (readOptions) {
+            readOptions.onProgress = undefined;
+            readOptions.onWorkAdmission = undefined;
+        }
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
         // Construction is only a module import and local observation capture;
@@ -2124,11 +2135,34 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // subscribe/refresh synchronously starts readResource. Only that start
     // captures this operation's caller; joining admitted work leaves no origin.
     let acquisitionCaller: Readonly<{ context: ActionExecutorContext; admitted: boolean }> | undefined;
+    const readWorkSessionMachineIds = (sessionIds: Iterable<string>, opened: NonNullable<ReturnType<typeof readOpenedQuotaScope>>,
+        machines = opened.state.machines) => {
+        const ids = new Set<string>();
+        const state = { ...opened.state, machines };
+        for (const sessionId of sessionIds) {
+            const target = resolveMachineControlTargetForSessionFromState(state, { ...lifetime.scope, sessionId });
+            if (target) ids.add(target.machineId);
+        }
+        return [...ids];
+    };
+    const readWorkMachineInput = (sessionIds: readonly string[]) => {
+        const opened = readOpenedQuotaScope(sharedContext);
+        const ids = opened ? readWorkSessionMachineIds(sessionIds, opened) : [];
+        const machines = Object.fromEntries(ids.flatMap(id => opened?.state.machines[id] ? [[id, opened.state.machines[id]!] as const] : []));
+        return { sessionIds, key: getUsageQueryMachineInvalidationKey(machines, Date.now(), lifetime.scope,
+            { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ids }) };
+    };
     // Read and watch consume the same Account admission. The watch can name
     // its retained identity so establishment converges after its mandatory read,
     // without scheduling a second read of those same admitted inputs.
     const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
         unwatchState?.reconcile();
+        const privateQueries = queries.filter(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence);
+        if (privateQueries.length) {
+            const ids = privateQueries.some(query => query.session === null) ? undefined
+                : privateQueries.flatMap(query => typeof query.session === 'string' ? [query.session] : query.session ?? []);
+            if (sessionInputs.reconcile(ids, undefined, new Set(privateQueries.map(getUsageQueryKey)))) owner.invalidate('session-evidence');
+        }
         if (!retainedCurrentness.isCurrent()) replaceAccountInputs();
         // Watching can name the first input before the initial cursor is ready.
         // Only an admitted read anchors its window. Established windows still
@@ -2151,9 +2185,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const derivationCurrent = !!admission && nowMs >= admission.derivationInterval.fromMs && nowMs < admission.derivationInterval.untilMs;
         const inputsCurrent = !!admission && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]);
-        const current = !snapshot.error && inputsCurrent;
+        const workMachinesCurrent = admission?.workMachineInputs.every(input => readWorkMachineInput(input.sessionIds).key === input.key) ?? true;
+        const current = !snapshot.error && inputsCurrent && workMachinesCurrent;
         const admitted = current && admission?.settled === true && quotaClockCurrent;
-        const sourcesCurrent = admission?.settled === true && admission.inputs.length === readInputs.length
+        const sourcesCurrent = admission?.settled === true && workMachinesCurrent && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
         return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, error: !!snapshot.error,
             currentSnapshot: current || snapshot.error ? snapshot : undefined,
@@ -2339,18 +2374,23 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     });
                 };
                 let settledRead = false;
+                let workMachineInputs = retained.admission?.workMachineInputs ?? [];
                 const keepContent = (content: ResourceContent, value: UsageQueryBatchResult): ResourceContent => {
                     // Keep the read's initial clock basis: a held read that
                     // crosses a quota boundary cannot renew its old derivation.
                     // Lasting coverage refusals settle this input basis too.
                     // Its existing invalidation still observes changed access,
                     // keys and Session facts; retryable failures recover on reopen.
-                    const reusable = settledRead && value.results.every(slice => !slice.pending
+                    // The final requested sources can publish before a private
+                    // Action releases its consumer and the producer tears down.
+                    const settled = settledRead || value.results.every(slice => !slice.pending
+                        && !slice.sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)));
+                    const reusable = settled && value.results.every(slice => !slice.pending
                         && slice.sources.every(source => source.status !== 'pending'
                             && (source.status === 'unsupported' || (source.errorCode
                                 ? !readUsageHistoryFailure({ errorCode: source.errorCode }).retryable
                                 : source.status !== 'error' && !source.updateRequired))));
-                    const intervals = settledRead ? [...new Set(value.results.flatMap(slice => slice.quota ?? []))]
+                    const intervals = settled ? [...new Set(value.results.flatMap(slice => slice.quota ?? []))]
                         .map(read => readQuotaInterval(read, nowMs)) : [];
                     const intersect = (pick: (interval: NonNullable<ReturnType<typeof readQuotaInterval>>) => Readonly<{ fromMs: number; untilMs: number }>) => ({
                         fromMs: Math.max(0, ...intervals.map(interval => interval ? pick(interval).fromMs : Infinity)),
@@ -2361,7 +2401,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // reader's physical-issuance barrier. Keep that same
                     // admission identity available to newly mounted bodies.
                     decodedValues.set(content, { value, ...(reproject ? { reproject } : {}),
-                        admission: { inputs: readInputs, quotaInterval, derivationInterval, reusable, settled: settledRead } });
+                        admission: { inputs: readInputs, quotaInterval, derivationInterval, reusable, settled, workMachineInputs } });
                     return content;
                 };
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
@@ -2478,8 +2518,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Keep the progressive typed producer. A direct command
                     // enters Action admission once and consumes these same facts.
                     const allowanceDemands = readDemand.filter(demand => demand.allowance !== false);
-                    const read = async () => await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
+                    const read = async () => {
+                        if (!retainedProjection) workMachineInputs = [];
+                        return await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
+                            onWorkAdmission: accounting => {
+                                workMachineInputs = [...workMachineInputs, readWorkMachineInput(readWorkSessionIds(accounting))];
+                            },
                             retainedProjection,
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
                             allowanceRecordIds: allowanceDemands.length > 0 && allowanceDemands.every(demand => demand.allowanceRecordIds !== undefined)
@@ -2494,6 +2539,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                 return progressContent ?? undefined;
                             },
                         });
+                    };
                     if (caller && !caller.admitted) {
                         let admittedResult: UsageQueryBatchResult | undefined;
                         const execute = createFrontDoorActionExecute(undefined, { usageQueryRead: async () => {
@@ -2574,15 +2620,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 let activeReadDemand: UsageQueryReadDemand | undefined;
                 let projectionOnly: boolean | undefined;
                 let allowanceOnlyDemand: boolean | undefined;
-                // Closed private demand checks its consumed bases on admission.
-                // Other live Usage watches do not keep this private read active.
-                if (privateEvidence) {
-                    const privateQueries = queries.filter(query => query.includeSessionEvidence
-                        || query.includeTranscriptEvidence || query.includeWorkEvidence);
-                    const ids = privateQueries.some(query => query.session === null) ? undefined
-                        : privateQueries.flatMap(query => typeof query.session === 'string' ? [query.session] : query.session ?? []);
-                    if (sessionInputs.reconcile(ids)) owner.invalidate('session-evidence');
-                }
                 let woken = false;
                 let accountingWakeScheduled = false;
                 // Disclosure withdrawals also cover socket churn. The canonical
@@ -2970,19 +3007,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             if (watched.machineId) sessionMachineIds.add(watched.machineId);
             for (const slice of watched.previous()?.results ?? []) {
                 if (!slice.requestedQuery.includeAccounting || !slice.requestedQuery.includeWorkEvidence) continue;
-                for (const turn of readUsageAccountingSessionMembership(slice.accounting)?.turns ?? []) sessionIds.add(turn.sessionId);
-                for (const row of slice.accounting?.contributions ?? []) {
-                    if (!row.sessionId || !row.turnId) continue;
-                    sessionIds.add(row.sessionId);
-                }
+                for (const sessionId of readWorkSessionIds(slice.accounting)) sessionIds.add(sessionId);
             }
         }
         if (!opened) return { includeMachineNames, poolMachineFilters, sessionMachineIds: [] };
+        for (const id of readWorkSessionMachineIds(sessionIds, opened, machines)) sessionMachineIds.add(id);
         const state = { ...opened.state, machines };
         for (const sessionId of sessionIds) {
-            const target = resolveMachineControlTargetForSessionFromState(state, { ...lifetime.scope, sessionId });
             const displayId = resolveDisplayMachineIdForSessionFromState({ state, serverId: lifetime.scope.serverId, sessionId });
-            if (target) sessionMachineIds.add(target.machineId);
             if (displayId) sessionMachineIds.add(displayId);
         }
         return { includeMachineNames, poolMachineFilters, sessionMachineIds: [...sessionMachineIds] };
@@ -3081,7 +3113,8 @@ const decodedValues = new WeakMap<ResourceContent, Readonly<{
     value: UsageQueryBatchResult;
     reproject?: UsageQueryReprojection;
     admission?: Readonly<{ inputs: readonly object[]; quotaInterval: Readonly<{ fromMs: number; untilMs: number }>;
-        derivationInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean; settled: boolean }>;
+        derivationInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean; settled: boolean;
+        workMachineInputs: readonly Readonly<{ sessionIds: readonly string[]; key: string }>[] }>;
 }>>();
 
 export function decodeUsageQueryResource(value: ResourceContent): UsageQueryBatchResult {

@@ -3406,6 +3406,76 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
+  it('reconciles consumed Machine recovery before a closed Action reuses offline Work', async () => {
+    let daemonReachable = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value,
+        contributions: [workContribution, { ...workContribution, id: 'sibling-cost', sessionId: 'work-sibling' }] });
+      return createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { active: daemonReachable, activeAt: daemonReachable ? Date.now() : 1, presenceProtocolVersion: 1 }) ?? undefined;
+    });
+    const scope = captured.accountLifetime.scope;
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
+    const unrelated = createHydratedPlainMachineFixture({ id: 'unconsumed-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
+    await publishMachineInventoryForTest(scope, [machine, unrelated]);
+    storage.getState().applySessions(['work-session', 'work-sibling'].map(id => createSessionFixture({ id, active: true, serverId: scope.serverId,
+      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    const witness: UsageWorkEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
+        url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
+    scmTransport.mockImplementation(async request => ScmWorkEvidenceReadResponseSchema.parse({
+      sessions: request.payload.sessions.map(({ sessionId }: { sessionId: string }) => ({
+        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [],
+      })),
+    }));
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const accountingOnly = normalizeUsageQuery({ ...query, includeWorkEvidence: false, includeCoach: false });
+    const read = async (selected = query) => {
+      const response = await executor.execute('usage.query', { queries: [selected] }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile' });
+      expect(response).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.errorCode);
+      return UsageQueryBatchResultSchema.parse(response.result).results[0]!;
+    };
+    const accountingReads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+    let release = entry.subscribe(() => {}, true);
+    try {
+      await entry.refresh({ supersede: false });
+      await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'work', errorCode: 'machine_offline' }));
+      expect(scmTransport).not.toHaveBeenCalled();
+      release(); release = () => {};
+      await read(accountingOnly);
+      const beforeAccounting = accountingReads();
+      await publishMachineInventoryForTest(scope, [machine, createHydratedPlainMachineFixture({ id: unrelated.id, accountId: 'account-a',
+        machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
+      clearMachineRequestReachabilityForMachine(scope, unrelated.id);
+      expect((await read()).workSummary?.mergedPrCount ?? 0).toBe(0);
+      expect(scmTransport, 'unconsumed Machine recovery does not acquire Work').not.toHaveBeenCalled();
+      daemonReachable = true;
+      await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machine.id, accountId: 'account-a',
+        machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } }), storage.getState().machines[unrelated.id]!]);
+      clearMachineRequestReachabilityForMachine(scope, machine.id);
+      // Another closed query can reconcile global state first; this Work admission owns its consumed basis.
+      await read(accountingOnly);
+      const recovered = await read();
+      expect(recovered.workSummary?.mergedPrCount, 'closed static admission consumes the authenticated Machine recovery').toBe(1);
+      expect(scmTransport, 'one recovered Machine batches its two admitted Session selectors').toHaveBeenCalledTimes(1);
+      expect(scmTransport.mock.calls[0]?.[0].payload.sessions.map((session: { sessionId: string }) => session.sessionId).sort())
+        .toEqual(['work-session', 'work-sibling']);
+      expect(accountingReads(), 'Machine recovery reuses the admitted accounting answer').toBe(beforeAccounting);
+      expect((await read()).workSummary?.mergedPrCount).toBe(1);
+      expect(scmTransport, 'unchanged closed return acquires no additional Work').toHaveBeenCalledTimes(1);
+      expect(accountingReads(), 'unchanged closed return posts no accounting query').toBe(beforeAccounting);
+    } finally { release(); account.dispose(); }
+  });
+
   it('refreshes quota-free Work after an authenticated Machine reconnect', async () => {
     let daemonReachable = false;
     const captured = await context(request => {
@@ -8669,6 +8739,55 @@ describe('usage query captured Resource adapter', () => {
       releaseBroad();
       releasePinned();
     }
+  });
+
+  it('reconciles consumed Session revisions before a closed Action reuses its admitted Usage answer', async () => {
+    let seq = 1;
+    const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === '/v2/sessions/finite') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'finite', seq }) });
+      if (request.path === '/v1/sessions/finite/turns') return Response.json({ v: 1, sessionId: 'finite', updatedAt: seq,
+        turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: seq === 1 ? 400 : 700, updatedAt: seq }] });
+      if (request.path === '/v1/sessions/finite/messages') return Response.json({ messages: [], hasMore: false });
+      return undefined;
+    });
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions([createSessionFixture({ id: 'finite', seq, serverId: scope.serverId }),
+      createSessionFixture({ id: 'unconsumed', seq: 1, serverId: scope.serverId })]);
+    const query = normalizeUsageQuery({ session: 'finite', period: { startMs: 0, endMs: 1000 }, includeQuota: false,
+      includeQuotaHistory: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const read = async () => {
+      const response = await executor.execute('usage.query', { queries: [query] }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile' });
+      expect(response).toMatchObject({ ok: true });
+      if (!response.ok) throw new Error(response.errorCode);
+      return UsageQueryBatchResultSchema.parse(response.result).results[0]!;
+    };
+    const evidenceReads = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length;
+    const accountingReads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+    let release = entry.subscribe(() => {}, true);
+    try {
+      await entry.refresh({ supersede: false });
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+      release(); release = () => {};
+      const beforeEvidence = evidenceReads(), beforeAccounting = accountingReads();
+      storage.getState().applySessions([{ ...storage.getState().sessions.unconsumed!, seq: 2 }]);
+      expect((await read()).howYouWork?.intervals?.agentTimeMs).toBe(300);
+      expect(evidenceReads(), 'an unconsumed Session does not reacquire private evidence').toBe(beforeEvidence);
+      seq = 2;
+      storage.getState().applySessions([{ ...storage.getState().sessions.finite!, seq }]);
+      expect((await read()).howYouWork?.intervals?.agentTimeMs, 'closed static admission consumes the selected Session advance').toBe(600);
+      expect(evidenceReads()).toBe(beforeEvidence + 1);
+      expect(accountingReads(), 'private changes reuse the admitted accounting answer').toBe(beforeAccounting);
+      const afterEvidence = evidenceReads();
+      expect((await read()).howYouWork?.intervals?.agentTimeMs).toBe(600);
+      expect(evidenceReads(), 'the unchanged closed return reads no private evidence').toBe(afterEvidence);
+      expect(accountingReads(), 'the unchanged closed return posts no accounting query').toBe(beforeAccounting);
+    } finally { release(); account.dispose(); }
   });
 
   it('retains admitted Session intervals through transport withdrawal and reads a real Session advance', async () => {

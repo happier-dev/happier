@@ -48,6 +48,13 @@ function readWorkFailureCode(error: unknown): string | undefined {
     return isMachineRequestReachabilityFailureV1(error) ? 'target_unavailable' : code;
 }
 
+/** Work admission and its observers consume this exact witnessed turn population. */
+export function readUsageWorkSessionTurns(accounting: UsageAccountingSourceSnapshot['value']):
+    readonly Readonly<{ sessionId: string; turnId: string }>[] | undefined {
+    return readUsageAccountingSessionMembership(accounting)?.turns ?? accounting?.contributions
+        ?.flatMap(row => row.sessionId && row.turnId ? [{ sessionId: row.sessionId, turnId: row.turnId }] : []);
+}
+
 export async function collectUsageWorkSources(input: Readonly<{
     queries: readonly UsageQuery[];
     accounting: readonly UsageAccountingSourceSnapshot[];
@@ -61,8 +68,7 @@ export async function collectUsageWorkSources(input: Readonly<{
     const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
     const turnsByQuery = new Map(queries.map(query => {
         const key = getUsageQueryKey(query);
-        return [key, readUsageAccountingSessionMembership(byQuery.get(key))?.turns ?? byQuery.get(key)?.contributions
-            ?.flatMap(row => row.sessionId && row.turnId ? [{ sessionId: row.sessionId, turnId: row.turnId }] : [])] as const;
+        return [key, readUsageWorkSessionTurns(byQuery.get(key))] as const;
     }));
     const sessionIds = new Set([...turnsByQuery.values()].flatMap(turns => turns?.map(turn => turn.sessionId) ?? []));
     const turnsBySession = new Map<string, Set<string>>();

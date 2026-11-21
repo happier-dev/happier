@@ -111,7 +111,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     invalidateForHomeChange(event: HomeAccountChangeEvent): boolean;
     reconcile(sessionIds?: Iterable<string>, publication?: Readonly<{
         scopeChanged: boolean; membershipChangedSessionIds: readonly string[];
-    }>): boolean;
+    }>, sourceReferenceKeys?: ReadonlySet<string>): boolean;
     dispose(): void;
 }> {
     type InputEntry = { sessionId: string; readTranscript: boolean; demandKey?: SessionInputDemand; sourceReferenceKeys: Set<string>;
@@ -460,12 +460,13 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             }
             return true;
         },
-        reconcile(sessionIds, publication) {
+        reconcile(sessionIds, publication, sourceReferenceKeys) {
             let changed = renewCurrentness() || publication?.scopeChanged === true;
             if (publication?.scopeChanged) invalidateSelections();
             const contentChangedIds: string[] = [];
             const selected = sessionIds === undefined ? allEntries() : entriesForSessions(sessionIds);
             for (const entry of selected) {
+                if (sourceReferenceKeys && ![...entry.sourceReferenceKeys].some(key => sourceReferenceKeys.has(key))) continue;
                 const storage = readBasis(entry.sessionId);
                 if (areSnapshotProjectionsEquivalent(storage, entry.basis.storage)) continue;
                 // Cold list/detail hydration can arrive after Usage opened
@@ -474,6 +475,9 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                     entry.basis = { ...entry.basis, storage };
                     continue;
                 }
+                // Remember the observed revision while keeping its facts dirty.
+                // Repeated admission of this same change must not invalidate an ongoing replacement.
+                entry.basis = { ...entry.basis, storage };
                 entry.needsAdmission = true;
                 changed = true;
                 contentChangedIds.push(entry.sessionId);
