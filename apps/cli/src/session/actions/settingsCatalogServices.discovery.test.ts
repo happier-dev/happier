@@ -25,6 +25,8 @@ import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions
 import { NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1, TeamsPageV1Schema } from '@happier-dev/protocol/teams';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { ProviderBrokerApplicationBindingV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 
 // This fixture activates the real native plugins. Load their source modules
 // during collection so Vite's cold compilation is outside runtime admission.
@@ -32,6 +34,12 @@ import '@happier-dev/plugins-codex';
 import '@happier-dev/plugins-claude';
 import '@happier-dev/plugins-custom-acp';
 import '@happier-dev/plugins-cliproxyapi';
+
+const contributorModelId = 'meta/muse-spark-1.3-contributor';
+const codexTargetKey = 'agent:happier.agent.codex/codex';
+const contributorBinding = { v: 2 as const, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+    source: 'connected' as const, selection: 'profile' as const, profileId: 'contributor-profile',
+} } };
 
 async function createNativeCatalog() {
         const home = createTempDirSync('summary-native-discovery-');
@@ -81,6 +89,8 @@ async function createNativeCatalog() {
         let teamMember = false;
         let teamModelSupportsStructuredOutput = true;
         let personalAvailable = true;
+        let contributorAvailable = false;
+        let boundModelReads = 0;
         let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
         const dispose = async () => {
             await admitted?.dispose();
@@ -126,8 +136,13 @@ async function createNativeCatalog() {
                 if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
                     settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
                 if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'native-summary-account',
-                    connectedAccountsV4: (personalAvailable ? ['claude-one', 'claude-two'] : []).map(accountId => ({
-                        ref: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId },
+                    connectedAccountsV4: [
+                        ...(personalAvailable ? ['claude-one', 'claude-two'].map(accountId => ({
+                            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId,
+                        })) : []),
+                        ...(contributorAvailable ? [{ service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'contributor-profile' }] : []),
+                    ].map(ref => ({
+                        ref,
                         status: 'connected', authenticationModeId: 'oauth', configurationReady: true,
                         configurationRevision: null, kind: 'oauth', revisionSemantics: 'revisioned', credentialRevision: 'csr_' + 'a'.repeat(22),
                     })),
@@ -183,7 +198,28 @@ async function createNativeCatalog() {
             });
             const executor = createCliActionExecutorFromCredentials({ credentials,
                 pluginActionExecutionOwner: 'current_process',
-                machineActionDirectTargetTransport: { machineId: 'native-model-machine', invoke: async () => { throw new Error('Unexpected recursion'); } } });
+                machineActionDirectTargetTransport: { machineId: 'native-model-machine', invoke: async (method, raw) => {
+                    if (method !== RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) throw new Error('Unexpected fixture Machine request');
+                    const request = DaemonProviderModelProjectionRequestV1Schema.parse(raw);
+                    expect(request).toMatchObject({ machineId: 'native-model-machine', agentTargetKey: codexTargetKey, connectedServices: contributorBinding });
+                    boundModelReads++;
+                    return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: codexTargetKey,
+                        groups: [{ connectionId: 'contributor-profile', catalogObserved: true, providerName: 'Fixture', connectionName: 'Contributor',
+                            connectionRole: 'named', connectionDisplayNameMode: 'automatic', connectionRevision: 1, modelLoadAction: 'descriptor_absent',
+                            authorization: { authorized: true }, manualModelPolicy: 'catalog-only', supportsFreeformModelIds: false,
+                            suppressedConnectedServiceIds: [], rows: [{
+                                ref: { agentTargetKey: codexTargetKey, providerConnectionId: null, modelId: contributorModelId },
+                                descriptor: { id: contributorModelId, name: 'Contributor', capabilities: { structuredOutput: 'supported' } },
+                                sources: { manual: false, static: false, probe: true }, confidence: 'probe', endpointHealth: 'not_checked',
+                                compatibility: { confirmed: true, compatibilityFingerprint: `compatibility:v1:${'a'.repeat(64)}`,
+                                    result: { status: 'verified', selectedProtocol: 'openai-responses', evidence: {
+                                        sourceUrls: ['https://example.test'], verifiedAt: '2026-10-20',
+                                    } } },
+                                catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
+                            }],
+                        }],
+                    });
+                } } });
             const observe = async (discoveryTargetKey?: string, modelSelector?: { backendTargetKey: string; modelId: string }) => {
                 const result = await executor.execute('agents.models.list', { purpose: 'scm_diff_summary', machineId: 'native-model-machine',
                     ...(discoveryTargetKey ? { discoveryTargetKey } : {}), ...(modelSelector ? { modelSelector } : {}) }, { surface: 'cli', authority: 'present_user' });
@@ -196,8 +232,11 @@ async function createNativeCatalog() {
                 setTeamMember: (member: boolean) => { teamMember = member; },
                 setTeamModelStructuredOutput: (supported: boolean) => { teamModelSupportsStructuredOutput = supported; },
                 setPersonalAvailable: (available: boolean) => { personalAvailable = available; },
+                setContributorAvailable: (available: boolean) => { contributorAvailable = available; },
+                boundModelReads: () => boundModelReads,
                 modelReads: () => Number(readFileSync(modelReadsFile, 'utf8')),
-                writeModels: (modelId: string) => writeTextFileSync(modelFile, JSON.stringify([{ id: modelId, displayName: modelId, isDefault: true }])),
+                writeModels: (modelId: string | null) => writeTextFileSync(modelFile,
+                    JSON.stringify(modelId === null ? [] : [{ id: modelId, displayName: modelId, isDefault: true }])),
                 disablePurposeMetadata: () => { purposeAvailable = false; }, dispose };
         } catch (error) {
             await dispose();
@@ -264,6 +303,37 @@ describe('Summary native model discovery', () => {
                 : await observe(undefined, { backendTargetKey: targetKey, modelId: explicit!.modelSelector!.modelId! });
             expect(result.profiles).toContainEqual(explicit);
             expect(result.automaticProfiles).toEqual(initial.automaticProfiles);
+    });
+
+    it('chooses the Contributor model through one probe with the automatically selected personal profile', async () => {
+        const { executor } = catalog;
+        const machineId = 'native-model-machine';
+        const context = { surface: 'cli', authority: 'present_user' } as const;
+        catalog.setNativeSignIn(false);
+        catalog.setPersonalAvailable(false);
+        catalog.setContributorAvailable(true);
+        catalog.writeModels(null);
+        resetAgentModelsProbeCacheForTests();
+        try {
+            const explicit = await executor.execute('agents.models.list', { machineId, agentId: 'codex', backendTargetKey: codexTargetKey,
+                probe: { connectedServices: contributorBinding } }, context);
+            expect(explicit).toMatchObject({ ok: true, result: { items: [expect.objectContaining({ id: contributorModelId })] } });
+            const boundReads = catalog.boundModelReads();
+            const nativeReads = catalog.modelReads();
+            const automatic = await executor.execute('agents.models.list', { machineId, purpose: 'llm_task_runner', task: 'deploy_suggestion' }, context);
+            expect(automatic).toMatchObject({ ok: true, result: { llmTaskRunner: { ok: true, source: 'auto', runner: {
+                modelSelection: { providerConnectionId: null, agentTargetKey: codexTargetKey, modelId: contributorModelId },
+                connectedServices: contributorBinding,
+            } } } });
+            expect(catalog.boundModelReads() - boundReads).toBe(1);
+            expect(catalog.modelReads()).toBe(nativeReads);
+        } finally {
+            catalog.setNativeSignIn(true);
+            catalog.setPersonalAvailable(true);
+            catalog.setContributorAvailable(false);
+            catalog.writeModels('initial-model');
+            resetAgentModelsProbeCacheForTests();
+        }
     });
 
     it('returns a brokered runner only while the requesting Account is entitled to the Team model', async () => {

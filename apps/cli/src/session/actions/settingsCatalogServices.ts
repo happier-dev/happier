@@ -9,7 +9,10 @@ import { readSettings, type StoredCredentials } from '@/persistence';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { projectNativeModelStructuredOutputCapabilities } from '@/capabilities/probes/nativeCatalogModels';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { probeAgentModelsBestEffort } from './cliActionDeps/resolveAgentProbeInventoryDeps';
+import { createMachineInventoryProbe } from './cliActionDeps/probeMachineInventory';
+import type { CliMachineActionCall } from './cliActionDeps/machineTransport';
 import { probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { refreshActiveAcpCatalog, readActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
@@ -99,6 +102,7 @@ export function createCliVoiceSettingsBindingContext(): PortableVoiceSettingsBin
 export function createCliSettingsCatalogServices(params: Readonly<{
     credentials?: StoredCredentials;
     machineId?: string;
+    callMachineAction?: CliMachineActionCall;
     homeDomainAction?: ActionExecutorDeps['homeDomainAction'];
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     serverHttpBaseUrl?: string;
@@ -323,6 +327,13 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const executionMachineId = params.machineId ?? (credentials && !params.authorizeConnectedAccountRequest
                     ? resolveMachineIdForServerFromSettings(await readSettings(), serverId, readAccountIdFromToken(credentials.token)) ?? undefined
                     : undefined);
+                const callMachineAction: CliMachineActionCall | undefined = params.callMachineAction
+                    ?? (credentials && !params.authorizeConnectedAccountRequest ? async request => {
+                        const { createCliMachineActionTransport } = await import('./cliActionDeps/machineTransport');
+                        return createCliMachineActionTransport({ credentials, serverId, serverHttpBaseUrl }).callMachineAction(request);
+                    } : undefined);
+                const probePersonalModels = createMachineInventoryProbe({ serverId, callMachineAction: callMachineAction
+                    ? request => callMachineAction({ ...request, exactMachine: true }) : undefined });
                 const homeDomainAction = params.homeDomainAction ?? (credentials && executionMachineId && !params.authorizeConnectedAccountRequest
                     ? (await import('@/api/accountServerActionDeps')).createAccountServerActionDeps({
                         token: credentials.token, credentials, machineId: executionMachineId,
@@ -365,12 +376,18 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                                         });
                                 });
                             }
-                            const observation = staticModels.length ? null : await probeSummaryModels({
-                                agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
-                                catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target),
-                                ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
-                            });
+                            const observation = staticModels.length ? null : route.kind === 'personal'
+                                ? await probePersonalModels({ agentId, backendTarget: target, method: 'probeModels', schema: AgentModelsProbeObservationSchema,
+                                    args: { machineId: executionMachineId, backendTargetKey, signal: params.signal,
+                                        probe: { cwd: sessionWorkingDirectory(), connectedServices: route.connectedServices } } })
+                                : await probeSummaryModels({
+                                    agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
+                                    catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target),
+                                    ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
+                                });
+                            if (observation && 'ok' in observation) return [];
                             if (observation?.spawnFailure) probeFailures.push({ backendTargetKey, spawnFailure: observation.spawnFailure });
+                            if (route.kind === 'personal' && observation?.source === 'unavailable') return [];
                             const models = observation?.availableModels ?? projectNativeModelStructuredOutputCapabilities(staticModels,
                                 readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats);
                             const modelProfiles = buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models });

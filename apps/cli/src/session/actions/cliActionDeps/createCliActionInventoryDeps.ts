@@ -761,10 +761,13 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)?.savedSecretOperationContext;
       const readCatalogSettings = () => readAccountSettings(requester);
       const catalogInput = () => {
+        const callMachineAction = params.callMachineAction;
+        const callCatalogMachineAction: Parameters<typeof createCliSettingsCatalogServices>[0]['callMachineAction'] =
+          callMachineAction ? request => callMachineAction({ ...request, context }) : undefined;
         if (requester) {
           return { credentials: requester.credentials, savedSecretOperationContext: requester,
             serverHttpBaseUrl: requester.serverHttpBaseUrl, machineId: args.machineId,
-            serverId: args.serverId ?? params.serverId, signal: args.signal };
+            serverId: args.serverId ?? params.serverId, signal: args.signal, callMachineAction: callCatalogMachineAction };
         }
         const homeDomainAction = params.readHomeDomainAction?.();
         return {
@@ -775,6 +778,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
             ? (request: Parameters<NonNullable<typeof params.authorizeConnectedAccountRequest>>[1]) =>
                 params.authorizeConnectedAccountRequest!(context, request) : undefined,
           machineId: args.machineId,
+          callMachineAction: callCatalogMachineAction,
           ...(homeDomainAction ? { homeDomainAction: ((request) => homeDomainAction({ ...request, context: {
             ...request.context, ...context,
           } })) satisfies NonNullable<ActionExecutorDeps['homeDomainAction']> } : {}),
