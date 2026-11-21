@@ -1,3 +1,4 @@
+import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -768,6 +769,7 @@ export type SessionTranscriptPublicationRealtimeProjection = Readonly<{
     latestTurnId?: string | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     latestTurnStatusObservedAt?: number | null;
+    lifecycleStateReason?: MachineDeletedSessionLifecycleReason;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
     rollbackEligibleTurnStarts?: readonly number[];
     runtimeActivityState?: "active" | "idle" | "unknown";

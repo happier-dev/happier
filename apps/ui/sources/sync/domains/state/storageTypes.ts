@@ -1,3 +1,4 @@
+import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { TranscriptAccountActorMetadata } from "@happier-dev/session-core/messages";
 import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { z } from "zod/mini";
@@ -92,6 +93,7 @@ export interface Session {
     latestTurnId?: string | null,
     latestTurnStatus?: PrimaryTurnStatusV1 | null,
     latestTurnStatusObservedAt?: number | null,
+    lifecycleStateReason?: MachineDeletedSessionLifecycleReason,
     rollbackEligibleTurnStarts?: readonly number[] | null,
     sessionTurns?: SessionTurnsProjectionV1 | null,
     latestReadyEventSeq?: number | null,

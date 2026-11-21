@@ -385,6 +385,7 @@ function buildHydratedSessionFromRowState(params: {
         canApprovePermissions: access?.capabilities.approveRuntimePermissions,
         ...(latestTurnStatus !== undefined ? { latestTurnStatus } : {}),
         ...(latestTurnStatusObservedAt !== undefined ? { latestTurnStatusObservedAt } : {}),
+        lifecycleStateReason: row.lifecycleStateReason,
         ...readCompleteRuntimeActivityProjection(row),
         latestReadyEventSeq: normalizeLastViewedSessionSeq(row.latestReadyEventSeq),
         latestReadyEventAt: normalizeSessionListTimestamp(row.latestReadyEventAt),

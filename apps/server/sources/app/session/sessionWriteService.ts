@@ -3593,24 +3593,29 @@ export async function applyLatestSessionTurnEndInTx(params: Readonly<{
     sessionId: string;
     mutationId: string;
     observedAt: number;
+    machineDeleted?: true;
 }>): Promise<ApplySessionTurnMutationResult | null> {
     const session = await params.tx.session.findUnique({
         where: { id: params.sessionId },
-        select: { latestTurnId: true },
+        select: { latestTurnId: true, latestTurnStatus: true, latestTurnStatusObservedAt: true },
     });
     if (!session?.latestTurnId) return null;
 
+    const end = {
+        v: 1,
+        sessionId: params.sessionId,
+        mutationId: params.mutationId,
+        turnId: session.latestTurnId,
+        observedAt: params.machineDeleted
+            ? Math.max(params.observedAt, Number(session.latestTurnStatusObservedAt ?? 0))
+            : params.observedAt,
+    };
     const result = await applySessionTurnMutationWithOwnerAccessInTx({
         tx: params.tx,
         actorUserId: params.actorUserId,
-        turnMutation: ExactSessionTurnEndMutationV1Schema.parse({
-            v: 1,
-            sessionId: params.sessionId,
-            mutationId: params.mutationId,
-            action: "end_session",
-            turnId: session.latestTurnId,
-            observedAt: params.observedAt,
-        }),
+        turnMutation: params.machineDeleted && session.latestTurnStatus === "waiting"
+            ? SessionTurnMutationV1Schema.parse({ ...end, action: "cancel", reason: "explicit_stop" })
+            : ExactSessionTurnEndMutationV1Schema.parse({ ...end, action: "end_session" }),
         markParticipants: false,
         principal: { kind: "session_owner_runtime" },
     });

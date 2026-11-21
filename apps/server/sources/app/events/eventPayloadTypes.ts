@@ -1,3 +1,4 @@
+import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { Socket } from "socket.io";
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { EphemeralUpdate, SessionPersonalEventEphemeralV1 } from "@happier-dev/protocol/updates";
@@ -148,6 +149,7 @@ export type UpdateEvent = {
     latestTurnStatus?: PrimaryTurnStatusV1 | null | undefined;
     latestTurnStatusObservedAt?: number | null | undefined;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null | undefined;
+    lifecycleStateReason?: MachineDeletedSessionLifecycleReason;
     rollbackEligibleTurnStarts?: readonly number[] | undefined;
     archivedAt?: number | null | undefined;
 } | {

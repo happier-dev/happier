@@ -110,7 +110,8 @@ export function createUiSessionAwarenessInput(
     });
     const lifecycle = { ...components.lifecycle,
         latestReadyEventAtMs: source?.lifecycle.latestReadyEventAt ?? session.latestReadyEventAt,
-        processTerminalState: metadata?.lifecycleState === 'stopped' ? 'stopped' as const : null };
+        processTerminalState: (source ? source.lifecycle.lifecycleStateReason : session.lifecycleStateReason)
+            || metadata?.lifecycleState === 'stopped' ? 'stopped' as const : null };
     return {
         sessionId: session.id,
         origin: session.origin,

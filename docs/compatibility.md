@@ -14463,3 +14463,17 @@ person who can view the Session can understand the end. A new runner clears it.
 It does not authorize or refuse Resume; existing Machine selection remains the
 authority. Existing records without the reason remain valid. Matching development
 CLI and UI sources load together; no 0.3 mixed-version shim or migration is added.
+
+## Session end after managed Machine deletion (unreleased 0.3)
+
+Once the managed intent owner confirms native absence for Delete, the Session
+lifecycle owner closes Sessions with the exact committed Home, Machine and
+installation placement, including disconnected or archived Sessions whose turns
+were still working or waiting. It preserves the archive state. The next
+publisher registration replaces that placement.
+
+The Home stores the content-free `machine_deleted` reason alongside the retained
+placement. It projects the optional `lifecycleStateReason` through the existing
+Session record and live update audiences, including when the metadata is E2EE.
+Older placement records and readers remain compatible. No migration or new
+audience is needed.

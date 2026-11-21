@@ -1,3 +1,4 @@
+import { createV2SessionOwnerRowSelect, mapV2SessionOwnerRow } from '@/app/session/listing/rows';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io';
@@ -121,6 +122,56 @@ describe('Account-owned managed control without a controller', () => {
         expect(await activeGuestPublishers()).toBe(0);
         expect(await db.session.findUniqueOrThrow({ where: { id: controllerSessionId }, select: { active: true } }))
             .toEqual({ active: true });
+    });
+
+    it('ends retained turns, including disconnected and archived Sessions placed on a deleted guest', async () => {
+        const test = await createRetainedGuestFixture(true);
+        const controller = test.controller!;
+        const requestId = randomUUID();
+        const now = Date.now();
+        async function createWorkingSession(accountId: string, active: boolean, target = test.guest,
+            status: 'in_progress' | 'waiting' = 'in_progress', archivedAt?: Date) {
+            const sessionId = randomUUID();
+            const turnId = randomUUID();
+            await db.session.create({ data: { id: sessionId, accountId, tag: sessionId, metadata: '{}',
+                encryptionMode: 'plain', active, archivedAt, latestTurnId: turnId, latestTurnStatus: status,
+                latestTurnStatusObservedAt: BigInt(now),
+                runtimeMachineTarget: { homeId, accountId, sessionId, machineId: target.id, installationId: target.installationId },
+                turns: { create: { turnId, status, startedAt: BigInt(now), updatedAt: BigInt(now) } },
+            } });
+            return sessionId;
+        }
+        const active = await createWorkingSession(test.owner.id, true);
+        const disconnected = await createWorkingSession(test.other.id, false);
+        const waiting = await createWorkingSession(test.other.id, true, test.guest, 'waiting');
+        const archived = await createWorkingSession(test.other.id, false, test.guest, 'in_progress', new Date(now));
+        const elsewhere = await createWorkingSession(test.other.id, true, { ...test.guest,
+            id: controller.machineId, installationId: controller.installationId });
+        await db.managedMachine.update({ where: { id: test.row.id }, data: {
+            enrolledMachineId: test.guest.id, desired: 'delete', desiredWhen: 'now',
+            admittedInput: { enrollmentAccountId: test.owner.id, submittedEffect: {
+                homeId, managedId: test.row.id, expectedIntentRevision: test.row.intentRevision,
+                requestId, intent: 'delete', controller,
+            } },
+        } });
+        const report = { homeId, managedId: test.row.id, expectedIntentRevision: test.row.intentRevision, requestId, controller,
+            result: { kind: 'confirmed' }, observation: { observedAt: now + 1, availability: 'absent' } } as const;
+        const reported = await reportManagedIntent(report);
+        expect(reported.machine.allocation).toBe('confirmed-absent');
+        for (const id of [active, disconnected, waiting, archived]) {
+            expect(await db.session.findUniqueOrThrow({ where: { id }, include: { turns: true } }))
+                .toMatchObject({ active: false, latestTurnStatus: 'cancelled',
+                    runtimeMachineTarget: { lifecycleStateReason: 'machine_deleted' },
+                    turns: [{ status: 'cancelled' }] });
+        }
+        expect(await db.session.findUniqueOrThrow({ where: { id: elsewhere } }))
+            .toMatchObject({ active: true, latestTurnStatus: 'in_progress' });
+        const ownerRow = await db.session.findUniqueOrThrow({ where: { id: active },
+            select: createV2SessionOwnerRowSelect(test.owner.id) });
+        expect(mapV2SessionOwnerRow(ownerRow, "plain")).toMatchObject({
+            active: false, latestTurnStatus: 'cancelled', lifecycleStateReason: 'machine_deleted',
+        });
+        await expect(reportManagedIntent(report)).rejects.toMatchObject({ code: 'request_conflict' });
     });
 
     it.each([false, true])('keeps a container workspace on the admitted guest without a host-root alias (controller present=%s)', async withController => {

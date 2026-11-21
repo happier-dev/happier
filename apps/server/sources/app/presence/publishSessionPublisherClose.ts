@@ -29,6 +29,7 @@ export async function publishSessionPublisherClose(params: Readonly<{
             {
                 active: false,
                 activeAt: params.closed.activeAt.getTime(),
+                ...(params.closed.lifecycleStateReason ? { lifecycleStateReason: params.closed.lifecycleStateReason } : {}),
                 ...(params.closed.projection ?? {}),
                 ...(params.closed.turnProjection ?? {}),
             },

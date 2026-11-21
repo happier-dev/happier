@@ -731,6 +731,27 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     expect(nextSession.archivedAt).toBe(1_700_000_000_000);
   });
 
+  it('stops an open Session and its list row when the Home retires its Machine', async () => {
+    const session = { ...createSession({ sessionId: 's1', encryptionMode: 'plain' }),
+      active: true, thinking: true, latestTurnStatus: 'in_progress' as const };
+    const closure = { updateBody: { active: false, activeAt: 1_100, latestTurnStatus: 'cancelled',
+      lifecycleStateReason: 'machine_deleted' }, updateSeq: 10, updateCreatedAt: 1_100, sessionEncryption: null };
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({ session, ...closure });
+    expect(nextSession).toMatchObject({ active: false, thinking: false, latestTurnStatus: 'cancelled',
+      lifecycleStateReason: 'machine_deleted' });
+    const listPatch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: { ...session, presence: 'online', metadata: null }, ...closure,
+    });
+    expect(listPatch).toMatchObject({ active: false, thinking: false, latestTurnStatus: 'cancelled',
+      lifecycleStateReason: 'machine_deleted' });
+
+    const resumed = await buildUpdatedSessionFromSocketUpdate({
+      session: nextSession, updateBody: { active: true, activeAt: 1_200 },
+      updateSeq: 11, updateCreatedAt: 1_200, sessionEncryption: null,
+    });
+    expect(resumed.nextSession.lifecycleStateReason).toBeUndefined();
+  });
+
   it('applies primary runtime issue projection from update-session payloads', async () => {
     const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
     const issue = {

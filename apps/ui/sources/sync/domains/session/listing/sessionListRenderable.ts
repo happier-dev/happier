@@ -1,3 +1,4 @@
+import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { classifySessionTupleApplyCurrentness, reconcileSessionRequestProjection, reconcileSessionTupleProjection, sessionTupleProjectionFields } from '../sessionTupleApplyCurrentness';
 import { reconcileSessionLifecycleProjection, sessionLifecycleProjectionFields } from '../sessionLifecycleProjection';
@@ -203,6 +204,7 @@ export interface SessionListRenderableSession {
     latestTurnId?: string | null;
     latestTurnStatus?: PrimaryTurnStatusV1 | null;
     latestTurnStatusObservedAt?: number | null;
+    lifecycleStateReason?: MachineDeletedSessionLifecycleReason;
     rollbackEligibleTurnStarts?: readonly number[] | null;
     latestReadyEventSeq?: number | null;
     latestReadyEventAt?: number | null;
@@ -781,6 +783,7 @@ export function buildSessionListRenderableFromSession(
         latestTurnId: readSessionLatestTurnId(session),
         latestTurnStatus,
         latestTurnStatusObservedAt,
+        lifecycleStateReason: session.lifecycleStateReason,
         rollbackEligibleTurnStarts: normalizeRollbackEligibleTurnStarts(session.rollbackEligibleTurnStarts),
         latestReadyEventSeq,
         latestReadyEventAt,
@@ -1144,6 +1147,7 @@ export function areSessionListRenderablesEqual(
         && (previous.latestTurnId ?? null) === (next.latestTurnId ?? null)
         && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
         && (previous.latestTurnStatusObservedAt ?? null) === (next.latestTurnStatusObservedAt ?? null)
+        && previous.lifecycleStateReason === next.lifecycleStateReason
         && areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)
         && (previous.latestReadyEventSeq ?? null) === (next.latestReadyEventSeq ?? null)
         && (previous.latestReadyEventAt ?? null) === (next.latestReadyEventAt ?? null)
@@ -1398,6 +1402,7 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if ((previous.latestTurnId ?? null) !== (next.latestTurnId ?? null)) return false;
     if ((previous.latestTurnStatus ?? null) !== (next.latestTurnStatus ?? null)) return false;
     if ((previous.latestTurnStatusObservedAt ?? null) !== (next.latestTurnStatusObservedAt ?? null)) return false;
+    if (previous.lifecycleStateReason !== next.lifecycleStateReason) return false;
     if ((previous.lastRuntimeIssue ?? null) !== (next.lastRuntimeIssue ?? null)) return false;
     if ((previous.runtimeActivityState ?? null) !== (next.runtimeActivityState ?? null)) return false;
     if ((previous.runtimeActivityActiveCount ?? null) !== (next.runtimeActivityActiveCount ?? null)) return false;

@@ -58,6 +58,12 @@ describe('resolveSessionViewRuntimeDisplayState not-resumable notice', () => {
             .not.toEqual(expect.objectContaining({ title: t('session.accessWithdrawn') }));
     });
 
+    it('uses the Home lifecycle reason when a deleted Machine can no longer publish', () => {
+        const session = createSessionFixture({ active: false, lifecycleStateReason: 'machine_deleted' });
+        expect(resolveNotice({ session, isMachineReachable: false, machineReachability: 'unreachable' }))
+            .toEqual(expect.objectContaining({ title: 'Machine deleted' }));
+    });
+
     it('yields to the external control row whenever that row speaks the way forward', () => {
         expect(importingFooter).not.toBeNull();
         expect(resolveNotice({ externalControlFooter: importingFooter })).toBeNull();

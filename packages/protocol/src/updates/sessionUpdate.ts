@@ -1,3 +1,4 @@
+import { MachineDeletedSessionLifecycleReasonSchema } from '../sessions/metadata/sessionDisplaySchemasV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionViewerProjectionV1Schema } from '../sessions/personal/viewer.js';
@@ -33,6 +34,7 @@ export const SessionUpdateBodySchema = lazyZodSchema(() => {
     latestTurnId: z.optional(z.nullable(TurnIdSchema)),
     latestTurnStatus: z.optional(z.nullable(PrimaryTurnStatusV1Schema)),
     latestTurnStatusObservedAt: z.optional(z.nullable(timestamp())),
+    lifecycleStateReason: z.optional(MachineDeletedSessionLifecycleReasonSchema),
     lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
     runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
     runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.nonnegative())),

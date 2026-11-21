@@ -1,3 +1,4 @@
+import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { ExternalSessionStorageStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { projectAccountNameToLegacyFieldsV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
@@ -266,6 +267,7 @@ export function buildUpdateSessionUpdate(
         latestTurnId?: string | null;
         latestTurnStatus?: PrimaryTurnStatusV1 | null;
         latestTurnStatusObservedAt?: number | null;
+        lifecycleStateReason?: MachineDeletedSessionLifecycleReason;
         lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
         rollbackEligibleTurnStarts?: readonly number[];
         runtimeActivityState?: 'active' | 'idle' | 'unknown';
@@ -325,6 +327,7 @@ export function buildUpdateSessionUpdate(
             ...(projection && 'latestTurnStatusObservedAt' in projection
                 ? { latestTurnStatusObservedAt: projection.latestTurnStatusObservedAt ?? null }
                 : {}),
+            ...(projection?.lifecycleStateReason ? { lifecycleStateReason: projection.lifecycleStateReason } : {}),
             ...(projection && 'lastRuntimeIssue' in projection ? { lastRuntimeIssue: projection.lastRuntimeIssue ?? null } : {}),
             ...(Array.isArray(projection?.rollbackEligibleTurnStarts)
                 ? { rollbackEligibleTurnStarts: projection.rollbackEligibleTurnStarts }

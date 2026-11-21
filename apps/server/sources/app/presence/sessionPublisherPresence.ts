@@ -1,7 +1,9 @@
+import type { Prisma } from '@prisma/client';
+import { MACHINE_DELETED_SESSION_LIFECYCLE_REASON, type MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { SessionRuntimeActivitySnapshotSchema, type SessionRuntimeActivitySnapshot } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionPublisherGenerationV1Schema } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
-import { SessionInputMachineTargetV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputMachineTargetV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { type SessionMetadataPublisherPreconditionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -11,7 +13,7 @@ import {
     type SessionActivityBadgeInputs,
 } from "@/app/activity/accountActivityBadge";
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
-import { readCurrentSessionInputMachineTargetInTx, readStoredCommittedSessionInputMachineTarget } from "@/app/session/messages/sessionInputAdmission";
+import { readCurrentSessionInputMachineTargetInTx, readRetainedCommittedSessionInputMachineTarget, readSessionPlacementLifecycleReason, readStoredCommittedSessionInputMachineTarget } from "@/app/session/messages/sessionInputAdmission";
 import { readMachineAccessKeySessionBindingsInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -46,6 +48,7 @@ import { schedulePresenceDeadline } from './timeout';
 import { publishPresenceDeadline } from './presenceRedisQueue';
 import { publishSessionPublisherClose } from './publishSessionPublisherClose';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import {
     mapPendingActivationAuthorization,
     type PendingActivationTarget,
@@ -135,6 +138,7 @@ export type CloseSessionPublisherResult =
         activeAt: Date;
         recipientCursors: readonly SessionRecipientCursor[];
         badgeAttentionChanged: boolean;
+        lifecycleStateReason?: MachineDeletedSessionLifecycleReason;
         projection?: SessionRuntimeActivityProjectionUpdate;
         turnProjection?: Readonly<{
             latestTurnId: string | null;
@@ -396,6 +400,7 @@ type CloseSessionPublisherParams = Readonly<{
     authority: PublisherCloseAuthority;
     mutationId: string;
     settleLatestTurn?: boolean;
+    deletedPlacement?: SessionInputMachineTargetV1;
     installedMachineCustody?: InstalledMachineTerminalCustody;
 }>;
 
@@ -425,7 +430,7 @@ async function closeSessionPublisherBindingInTx(
     // Registration or stop capture already admitted this exact publisher.
     // Closing its lifetime must also work after the Machine grant ends.
     const runnerBindingState = await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
-    if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
+    if (session.archivedAt !== null && !params.deletedPlacement) return { status: "rejected", reason: "archived" };
     if (
         params.authority.kind !== "legacy-heartbeat"
         && session.publisherGeneration !== params.authority.publisherGeneration
@@ -445,7 +450,19 @@ async function closeSessionPublisherBindingInTx(
     ) {
         return { status: "superseded" };
     }
-    if (!session.active) {
+    const retiredPlacement = params.deletedPlacement && {
+        ...params.deletedPlacement,
+        lifecycleStateReason: MACHINE_DELETED_SESSION_LIFECYCLE_REASON,
+    };
+    if (retiredPlacement) {
+        const target = readRetainedCommittedSessionInputMachineTarget({ ...session, id: params.binding.sessionId });
+        if (target?.machineId !== retiredPlacement.machineId || target.homeId !== retiredPlacement.homeId
+            || target.installationId !== retiredPlacement.installationId) return { status: "superseded" };
+        if (!session.active && readSessionPlacementLifecycleReason({ ...session, id: params.binding.sessionId })) {
+            return { status: "already_inactive" };
+        }
+    }
+    if (!session.active && !retiredPlacement) {
         if (
             params.authority.kind !== "legacy-heartbeat"
             && session.publisherGenerationLastActiveAt !== null
@@ -471,20 +488,21 @@ async function closeSessionPublisherBindingInTx(
     const updated = await tx.session.updateMany({
         where: {
             id: params.binding.sessionId,
-            active: true,
-            archivedAt: null,
+            active: session.active,
+            archivedAt: session.archivedAt,
             lastActiveAt: params.authority.kind === "generation"
                 ? session.lastActiveAt
                 : params.authority.committedFence,
             ...(params.authority.kind !== "legacy-heartbeat"
                 ? {
                     publisherGeneration: params.authority.publisherGeneration,
-                    publisherGenerationLastActiveAt: session.lastActiveAt,
+                    publisherGenerationLastActiveAt: retiredPlacement ? session.publisherGenerationLastActiveAt : session.lastActiveAt,
                 }
                 : {}),
         },
         data: {
             active: false,
+            ...(retiredPlacement ? { runtimeMachineTarget: retiredPlacement } : {}),
             ...(params.authority.kind !== "legacy-heartbeat"
                 ? { publisherGenerationLastActiveAt: null }
                 : {}),
@@ -503,6 +521,7 @@ async function closeSessionPublisherBindingInTx(
             sessionId: params.binding.sessionId,
             mutationId: params.mutationId,
             observedAt: now().getTime(),
+            ...(retiredPlacement ? { machineDeleted: true } : {}),
         });
     if (turnResult && !turnResult.ok) {
         throw new Error(`Failed to settle publisher-close turn: ${turnResult.error}`);
@@ -529,6 +548,7 @@ async function closeSessionPublisherBindingInTx(
                 session satisfies SessionActivityBadgeInputs,
                 { ...session, active: false },
             ),
+        ...(retiredPlacement ? { lifecycleStateReason: retiredPlacement.lifecycleStateReason } : {}),
         ...(activity.status === "applied" ? { projection: activity.projection } : {}),
         ...(turnResult?.ok && turnResult.didApply
             ? {
@@ -543,54 +563,65 @@ async function closeSessionPublisherBindingInTx(
     });
 }
 
-type InstalledMachinePublisherScope = Readonly<{ homeId: string; machineId: string }>;
+type InstalledMachinePublisherScope = Readonly<{ homeId: string; machineId: string; deleted?: true }>;
 
-async function readActiveInstalledMachinePublishersInTx(tx: Tx, scope: InstalledMachinePublisherScope) {
+async function readInstalledMachinePublishersInTx(tx: Tx, scope: InstalledMachinePublisherScope) {
     const machine = await tx.machine.findUnique({ where: { id: scope.machineId },
         select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true } });
-    if (!machine?.installationId || machine.revokedAt || machine.replacedByMachineId) return [];
-    const bindings = await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId,
-        machineId: scope.machineId }, { activeSessionsOnly: true });
-    const publishers: { binding: SessionPublisherBinding; publisherGeneration: bigint }[] = [];
-    for (const ids of portableQueryChunks({ values: [...new Set(bindings.map(binding => binding.sessionId))],
-        bindingsPerValue: 1, fixedBindings: 2 })) {
-        const sessions = await tx.session.findMany({ where: { id: { in: [...ids] }, active: true, archivedAt: null },
-            select: { id: true, accountId: true, archivedAt: true, runtimeMachineTarget: true, publisherGeneration: true } });
+    if (!machine?.installationId || (!scope.deleted && (machine.revokedAt || machine.replacedByMachineId))) return [];
+    const select = { id: true, accountId: true, archivedAt: true, runtimeMachineTarget: true, publisherGeneration: true } as const;
+    const publishers: { binding: SessionInputMachineTargetV1; publisherGeneration: bigint }[] = [];
+    const collect = (sessions: Awaited<ReturnType<typeof read>>): void => {
         for (const session of sessions) {
-            const target = readStoredCommittedSessionInputMachineTarget(session);
+            const target = scope.deleted ? readRetainedCommittedSessionInputMachineTarget(session)
+                : readStoredCommittedSessionInputMachineTarget(session);
             if (target?.homeId === scope.homeId && target.machineId === scope.machineId
                 && target.installationId === machine.installationId) {
                 publishers.push({ binding: target, publisherGeneration: session.publisherGeneration });
             }
         }
+    };
+    const read = (where: Prisma.SessionWhereInput) => tx.session.findMany({ where, select });
+    if (scope.deleted) {
+        collect(await read({ runtimeMachineTarget: jsonPathEquals(['machineId'], scope.machineId) }));
+    } else {
+        const bindings = await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId,
+            machineId: scope.machineId }, { activeSessionsOnly: true });
+        for (const ids of portableQueryChunks({ values: [...new Set(bindings.map(binding => binding.sessionId))],
+            bindingsPerValue: 1, fixedBindings: 2 })) {
+            collect(await read({ id: { in: [...ids] }, active: true, archivedAt: null }));
+        }
     }
     return publishers;
 }
 
-function machineTerminalPublicationAudience(sessionIds: readonly string[]) {
-    return { readAdditionalAccountIdsInTx: (tx: Tx) => readSessionProviderBrokerCustodianAccountIdsInTx(tx, sessionIds) };
+function machineTerminalPublicationAudience(sessionIds: readonly string[], deleted?: true) {
+    return deleted
+        ? { includeLifecyclePublications: true }
+        : { readAdditionalAccountIdsInTx: (tx: Tx) => readSessionProviderBrokerCustodianAccountIdsInTx(tx, sessionIds) };
 }
 
 /** Include the stopped guest's Session audience in the containing publication admission. */
 export async function readInstalledMachinePublisherAccountIdsInTx(tx: Tx, scope: InstalledMachinePublisherScope): Promise<readonly string[]> {
-    const publishers = await readActiveInstalledMachinePublishersInTx(tx, scope);
+    const publishers = await readInstalledMachinePublishersInTx(tx, scope);
     const sessionIds = publishers.map(({ binding }) => binding.sessionId);
     return sessionIds.length === 0 ? [] : (await readSessionAccountCursorAudienceInTx(tx, sessionIds, [],
-        machineTerminalPublicationAudience(sessionIds))).accountIds;
+        machineTerminalPublicationAudience(sessionIds, scope.deleted))).accountIds;
 }
 
 /** Native power confirmation retires the exact installed publishers in the same commit. */
 export async function closeInstalledMachinePublishersInTx(tx: Tx, scope: InstalledMachinePublisherScope & Readonly<{
     requestId: string;
 }>): Promise<void> {
-    const publishers = await readActiveInstalledMachinePublishersInTx(tx, scope);
+    const publishers = await readInstalledMachinePublishersInTx(tx, scope);
     if (publishers.length === 0) return;
     const sessionIds = publishers.map(({ binding }) => binding.sessionId);
-    await acquireSessionAccountCursorLocksInTx(tx, sessionIds, [], machineTerminalPublicationAudience(sessionIds));
+    await acquireSessionAccountCursorLocksInTx(tx, sessionIds, [], machineTerminalPublicationAudience(sessionIds, scope.deleted));
     for (const { binding, publisherGeneration } of publishers) {
         const result = await closeSessionPublisherBindingInTx(tx, { binding,
             authority: { kind: 'generation', publisherGeneration }, mutationId: scope.requestId,
-            settleLatestTurn: false }, () => new Date());
+            ...(scope.deleted ? { deletedPlacement: binding } : { settleLatestTurn: false }),
+        }, () => new Date());
         if (result.status === 'closed') afterTx(tx, () => {
             void publishSessionPublisherClose({ sessionId: binding.sessionId, publisherAccountId: binding.accountId,
                 closed: result.resolveResult() });

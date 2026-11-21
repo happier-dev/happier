@@ -252,6 +252,7 @@ export function createSessionListPresentationSource(
         thinking: row.thinking, thinkingAt: row.thinkingAt,
         latestTurnId: row.latestTurnId, latestTurnStatus: row.latestTurnStatus,
         latestTurnStatusObservedAt: row.latestTurnStatusObservedAt,
+        lifecycleStateReason: row.lifecycleStateReason,
         latestReadyEventSeq: options.readyEvent ? options.readyEvent.latestReadyEventSeq
             : row.hasUnreadMessages === true ? Math.max(1, seq) : row.latestReadyEventSeq,
         latestReadyEventAt: row.latestReadyEventAt,
@@ -435,6 +436,7 @@ export function buildSessionFromListRenderable(
         latestTurnId: renderable.latestTurnId ?? null,
         latestTurnStatus: renderable.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: renderable.latestTurnStatusObservedAt ?? null,
+        lifecycleStateReason: renderable.lifecycleStateReason,
         runtimeActivityState: renderable.runtimeActivityState ?? 'unknown',
         runtimeActivityActiveCount: renderable.runtimeActivityActiveCount ?? null,
         runtimeActivityObservedAt: renderable.runtimeActivityObservedAt ?? null,

@@ -1,3 +1,4 @@
+import { MachineDeletedSessionLifecycleReasonSchema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { SESSION_ACCESS_SESSION_BATCH_SIZE, type EffectiveSessionAccess } from "@/app/session/access/sessionAccess";
 import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -115,6 +116,15 @@ export function readRetainedCommittedSessionInputMachineTarget(session: Readonly
     const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
     return stored.success && stored.data.sessionId === session.id && stored.data.accountId === session.accountId
         ? stored.data : undefined;
+}
+
+export function readSessionPlacementLifecycleReason(session: Readonly<{
+    id: string; accountId: string; runtimeMachineTarget: unknown;
+}>) {
+    const stored = session.runtimeMachineTarget;
+    if (!stored || typeof stored !== 'object' || !('lifecycleStateReason' in stored)) return undefined;
+    const reason = MachineDeletedSessionLifecycleReasonSchema.safeParse(stored.lifecycleStateReason);
+    return reason.success && readRetainedCommittedSessionInputMachineTarget(session) ? reason.data : undefined;
 }
 
 export function readStoredCommittedSessionInputMachineTarget(session: Readonly<{

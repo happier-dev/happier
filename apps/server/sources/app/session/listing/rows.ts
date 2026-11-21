@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { readSessionPlacementLifecycleReason } from "@/app/session/messages/sessionInputAdmission";
 import { PrimaryTurnStatusV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionAwarenessOriginV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
@@ -103,6 +104,7 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     latestTurnId: true,
     latestTurnStatus: true,
     latestTurnStatusObservedAt: true,
+    runtimeMachineTarget: true,
     lastRuntimeIssue: true,
     runtimeActivityState: true,
     runtimeActivityActiveCount: true,
@@ -141,6 +143,7 @@ const {
 
 const {
     turns: _legacySelectTurns,
+    runtimeMachineTarget: _legacySelectRuntimeMachineTarget,
     responsibleAccountId: _legacySelectResponsibleAccountId,
     responsibleAccount: _legacySelectResponsibleAccount,
     pendingActivationRequestId: _legacySelectPendingActivationRequestId,
@@ -399,6 +402,9 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
         lastActiveAt: row.lastActiveAt,
     }, row);
     const hasLiveFacts = publicationProjection.hasLiveFacts;
+    const lifecycleStateReason = hasLiveFacts && !row.active && "runtimeMachineTarget" in row
+        ? readSessionPlacementLifecycleReason(row)
+        : undefined;
     const pendingRequestObservedAt = hasLiveFacts
         ? readNullableDateField(row, "pendingRequestObservedAt")
         : null;
@@ -511,6 +517,7 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
                 latestTurnId: readNullableStringField(row, "latestTurnId"),
                 latestTurnStatus,
                 latestTurnStatusObservedAt,
+                ...(lifecycleStateReason ? { lifecycleStateReason } : {}),
                 lastRuntimeIssue: parseStoredSessionRuntimeIssue(row.lastRuntimeIssue),
                 ...runtimeActivityProjection,
                 thinking,

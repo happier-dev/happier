@@ -1,15 +1,16 @@
+import { MACHINE_DELETED_SESSION_LIFECYCLE_REASON, type MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 export type InactiveSessionNoticeKind = 'none' | 'not-resumable' | 'machine-offline';
 
 export type InactiveSessionUiState = Readonly<{
     shouldShowInput: boolean;
-    inactiveStatusTextKey: 'session.inactiveResumable' | 'session.inactiveArchived' | 'session.inactiveMachineOffline' | 'session.inactiveNotResumable' | 'session.accessWithdrawn' | null;
+    inactiveStatusTextKey: 'session.inactiveResumable' | 'session.inactiveArchived' | 'session.inactiveMachineOffline' | 'session.inactiveNotResumable' | 'session.accessWithdrawn' | 'session.machineDeleted' | null;
     noticeKind: InactiveSessionNoticeKind;
 }>;
 
 export function getInactiveSessionUiState(opts: {
     isSessionActive: boolean;
-    lifecycleStateReason?: SessionLifecycleStateReason;
+    lifecycleStateReason?: SessionLifecycleStateReason | MachineDeletedSessionLifecycleReason;
     /** Null means the viewer has no owner facts; it is not an unsupported-context verdict. */
     isResumable: boolean | null;
     isMachineOnline: boolean | null;
@@ -25,6 +26,11 @@ export function getInactiveSessionUiState(opts: {
 }): InactiveSessionUiState {
     if (opts.isSessionActive) {
         return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
+    }
+
+    if (opts.lifecycleStateReason === MACHINE_DELETED_SESSION_LIFECYCLE_REASON) {
+        return { shouldShowInput: opts.allowInputWhileInactive === true || opts.isResumable === true,
+            inactiveStatusTextKey: 'session.machineDeleted', noticeKind: 'none' };
     }
 
     if (opts.lifecycleStateReason === 'machine_access_withdrawn') {

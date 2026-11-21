@@ -6,7 +6,7 @@ import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles'
 export const sessionLifecycleProjectionFields = [
     'serverId', 'seq', 'updatedAt', 'meaningfulActivityAt', 'lastTurnCompletedAt',
     'active', 'activeAt', 'thinking', 'thinkingAt',
-    'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt',
+    'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt', 'lifecycleStateReason',
     'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization', 'pendingActivationFailureDetails',
     'latestReadyEventSeq', 'latestReadyEventAt',
     'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
@@ -103,6 +103,9 @@ export function reconcileSessionLifecycleProjection<T extends SessionLifecyclePr
     }
     if (isOlder(incoming.activeAt, previous.activeAt)) {
         applyPatch({ active: previous.active, activeAt: previous.activeAt });
+    }
+    if (isOlder(incoming.updatedAt, previous.updatedAt)) {
+        applyPatch({ lifecycleStateReason: previous.lifecycleStateReason });
     }
     if (isOlder(incoming.thinkingAt, previous.thinkingAt)) {
         applyPatch({ thinking: previous.thinking, thinkingAt: previous.thinkingAt });

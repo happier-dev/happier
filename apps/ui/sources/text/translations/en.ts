@@ -10323,6 +10323,8 @@ const enSession = {
   accessWithdrawn: "Access withdrawn",
   accessWithdrawnBody: ({ machine }: { machine: string }) => `Access to ${machine} was withdrawn.`,
   accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `Your access to ${machine} was withdrawn. Its owner can grant it again.`,
+  machineDeleted: "Machine deleted",
+  machineDeletedBody: "This session stopped when its machine was deleted.",
   inactiveResumable: 'Inactive (resumable)',
   inactiveArchived: 'Archived',
   inactiveMachineOffline: 'Inactive (machine offline)',

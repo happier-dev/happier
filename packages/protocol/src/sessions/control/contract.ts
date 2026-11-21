@@ -1,3 +1,4 @@
+import { MachineDeletedSessionLifecycleReasonSchema } from '../metadata/sessionDisplaySchemasV1.js';
 import { createSessionSystemSessionV1Schema } from '../metadata/systemSessionV1.js';
 export { createSessionSystemSessionV1Schema, SessionSystemSessionV1Schema, readSystemSessionMetadataFromMetadata, isHiddenSystemSession, buildSystemSessionMetadataV1, type SessionSystemSessionV1 } from '../metadata/systemSessionV1.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
@@ -479,6 +480,7 @@ export const V2SessionRecordSchema = lazyZodSchema(() => z.looseObject({
     latestTurnStatusObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
     runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
+    lifecycleStateReason: z.optional(MachineDeletedSessionLifecycleReasonSchema),
     runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     runtimeActivityObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     runtimeActivityRevision: z.optional(z.number().check(z.int(), z.nonnegative())),

@@ -48,7 +48,7 @@ function buildCacheKey(input: Input): string {
         input.session.access ?? null,
         input.session.active ? 1 : 0,
         input.session.archivedAt != null ? 1 : 0,
-        input.session.metadata?.lifecycleStateReason ?? null,
+        input.session.lifecycleStateReason ?? input.session.metadata?.lifecycleStateReason ?? null,
         input.session.presence ?? '',
         input.session.agentState?.controlledByUser === true ? 1 : 0,
         input.session.agentState?.localControl ?? null,
@@ -77,7 +77,7 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         presence: input.session.presence,
     });
     const inactiveUi = getInactiveSessionUiState({
-        lifecycleStateReason: input.session.metadata?.lifecycleStateReason,
+        lifecycleStateReason: input.session.lifecycleStateReason ?? input.session.metadata?.lifecycleStateReason,
         isSessionActive: input.isSessionActive,
         isResumable: input.isResumable,
         isMachineOnline: input.machineReachability === 'unknown' ? null : input.isMachineReachable,
@@ -86,7 +86,9 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         externalWayForward: hasExternalWayForward(input),
     });
 
-    const bottomNotice = inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn'
+    const bottomNotice = inactiveUi.inactiveStatusTextKey === 'session.machineDeleted'
+        ? { title: t('session.machineDeleted'), body: t('session.machineDeletedBody') }
+        : inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn'
         ? { title: t('session.accessWithdrawn'), body: t('session.accessWithdrawnBody', { machine: input.machineName }) }
         : inactiveUi.noticeKind === 'not-resumable'
         ? {

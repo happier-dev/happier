@@ -517,16 +517,19 @@ export async function submitManagedIntent(input: ManagedControllerCurrentnessV1)
 /** Native facts reconcile the exact submitted or still-current admitted command, never a newer intent. */
 export async function reportManagedIntent(input: ManagedControllerIntentReportV1) {
     const canonical = ManagedControllerIntentReportV1Schema.parse(input);
-    const stoppedGuest = (row: StoredManagedMachine, intent: string | undefined, observation: Readonly<{ power?: unknown }> | undefined) =>
-        intent === 'stop' && observation?.power === 'stopped' && row.enrolledMachineId
-            ? { homeId: row.homeId, machineId: row.enrolledMachineId } : null;
+    const endedGuest = (row: StoredManagedMachine, intent: string | undefined, observation: ManagedControllerIntentReportV1['observation']) => {
+        if (!row.enrolledMachineId) return null;
+        const scope = { homeId: row.homeId, machineId: row.enrolledMachineId };
+        if (intent === 'delete' && observation?.availability === 'absent') return { ...scope, deleted: true as const };
+        return intent === 'stop' && observation?.power === 'stopped' ? scope : null;
+    };
     return await inManagedMachinePublicationTx(canonical, async tx => {
         const row = await readManagedMachineInTx(tx, canonical);
         const admitted = readManagedAdmissionState(row.admittedInput);
         const pending = readManagedIntentReportAuthority(row, canonical);
         if (!pending) throw new ManagedMachineError("request_conflict");
-        const publishManagedStopPresence = async (observation: Readonly<{ power?: unknown }> | undefined): Promise<void> => {
-            const scope = stoppedGuest(row, pending.intent, observation);
+        const publishManagedTerminalPresence = async (observation: ManagedControllerIntentReportV1['observation']): Promise<void> => {
+            const scope = endedGuest(row, pending.intent, observation);
             if (!scope) return;
             await closeInstalledMachinePublishersInTx(tx, { ...scope, requestId: canonical.requestId });
             const offline = await markManagedMachineOfflineInTx(tx, scope.machineId);
@@ -593,7 +596,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
                 const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
                 await invalidateManagedMachineInTx(tx, row);
-                await publishManagedStopPresence(currentObservation);
+                await publishManagedTerminalPresence(currentObservation);
                 return { machine: projectManagedMachine(current) };
             }
             const currentControl = admitted.currentAdmission?.kind === 'control' ? admitted.currentAdmission.request : undefined;
@@ -626,7 +629,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
-            await publishManagedStopPresence(currentObservation);
+            await publishManagedTerminalPresence(currentObservation);
             return { machine: projectManagedMachine(current) };
         }
         if ('presetContent' in canonical) throw new ManagedMachineError('invalid_request');
@@ -651,7 +654,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
-            await publishManagedStopPresence(currentObservation);
+            await publishManagedTerminalPresence(currentObservation);
             return { machine: projectManagedMachine(current) };
         };
         if (!admitted.submittedEffect) {
@@ -752,10 +755,10 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 : retryDelete ? { disposition: 'pending', reason: 'delete_requested' } : getActivePrismaRuntime().DbNull;
         }
         return await publish();
-    }, canonical.observation?.power === 'stopped' ? {
+    }, canonical.observation?.power === 'stopped' || canonical.observation?.availability === 'absent' ? {
         intent: 'content',
         async readAdditionalAccountIdsInTx(tx, row) {
-            const scope = stoppedGuest(row, readManagedIntentReportAuthority(row, canonical)?.intent, canonical.observation);
+            const scope = endedGuest(row, readManagedIntentReportAuthority(row, canonical)?.intent, canonical.observation);
             return scope ? readInstalledMachinePublisherAccountIdsInTx(tx, scope) : [];
         },
     } : undefined);

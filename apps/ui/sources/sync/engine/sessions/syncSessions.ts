@@ -569,6 +569,7 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
                     ? null
                     : session.latestTurnId,
         latestTurnStatus: nextLatestTurnStatus,
+        lifecycleStateReason: projectedActive ? undefined : updateBody.lifecycleStateReason ?? session.lifecycleStateReason,
         latestTurnStatusObservedAt: readNullableTimestamp(
             updateBody.latestTurnStatusObservedAt,
             session.latestTurnStatusObservedAt,
@@ -1097,6 +1098,7 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
         latestTurnId: nextLatestTurnId,
         latestTurnStatus: nextLatestTurnStatus,
         latestTurnStatusObservedAt: nextLatestTurnStatusObservedAt,
+        lifecycleStateReason: nextActive ? undefined : updateBody.lifecycleStateReason ?? renderable.lifecycleStateReason,
         latestReadyEventSeq: nextLatestReadyEventSeq,
         latestReadyEventAt: nextLatestReadyEventAt,
         ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),

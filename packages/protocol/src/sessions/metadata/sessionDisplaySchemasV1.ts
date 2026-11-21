@@ -41,6 +41,10 @@ export function readSessionAuthoredDisplayV1(work: unknown) {
 }
 
 /** Content-free explanation attached to the existing Session lifecycle. */
+export const MACHINE_DELETED_SESSION_LIFECYCLE_REASON = 'machine_deleted' as const;
+export const MachineDeletedSessionLifecycleReasonSchema = z.literal(MACHINE_DELETED_SESSION_LIFECYCLE_REASON);
+export type MachineDeletedSessionLifecycleReason = z.infer<typeof MachineDeletedSessionLifecycleReasonSchema>;
+
 export const SessionLifecycleStateReasonSchema = z.literal('machine_access_withdrawn');
 export type SessionLifecycleStateReason = z.infer<typeof SessionLifecycleStateReasonSchema>;
 
