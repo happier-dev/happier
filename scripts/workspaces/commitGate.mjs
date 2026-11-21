@@ -228,12 +228,17 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
   let accepted;
   let commit;
   let losses = 0;
+  let countedLossFor;
   let finalPrepared = false;
   const incomplete = () => ({
     verdict: 'incomplete', check: 'final scoped recheck',
     reason: { code: 'final-recheck-incomplete' }, findings: [], notes: [],
   });
-  let recheckedAfterRelease = false;
+  const recordLoss = () => {
+    if (!accepted || countedLossFor === accepted) return;
+    losses++;
+    countedLossFor = accepted;
+  };
   const check = async (cheapOnly, compareAdmittedEntryLoads) => {
     const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree,
       priorBase: accepted?.base, cheapOnly, compareAdmittedEntryLoads, label, env: accepted ? recheckEnv : process.env });
@@ -255,8 +260,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
       for (;;) {
         const head = headAt();
         if (head !== packet.base) {
-          if (recheckedAfterRelease) losses++;
-          recheckedAfterRelease = false;
+          recordLoss();
           if (losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
           packet = replay(head);
           if (!packet) return {};
@@ -279,8 +283,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
         } catch (error) {
           if (headAt() === head) throw error;
           // A writer outside the lock (or a host without flock) can still win CAS.
-          recheckedAfterRelease = false;
-          losses++;
+          recordLoss();
           if (losses >= 2 && !entryPhaseAttempted) return { admitEntry: true };
         }
       }
@@ -312,7 +315,6 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
       return { gate: incomplete() };
     }
     if (gate.verdict !== 'pass') return { gate };
-    recheckedAfterRelease = true;
   }
 }
 

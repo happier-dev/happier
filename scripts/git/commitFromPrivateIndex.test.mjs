@@ -526,38 +526,34 @@ test('releases the lock and reruns only entry graphs whose inputs changed since 
   assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
 });
 
-function twiceStaleEntryFixture(t, refuseFinalAdmission) {
+function staleVerdictAndCasLossFixture(t, refuseFinalAdmission) {
   const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
-  const additionalWinners = [];
-  for (const value of [3, 4]) {
-    f.write('apps/cli/src/index.mjs', `export const value = ${value};\n`);
-    f.git('add', '--', 'apps/cli/src/index.mjs');
-    additionalWinners.push(f.git('commit-tree', f.git('write-tree').trim(), '-p',
-      additionalWinners.at(-1) ?? winner, '-m', 'test: another qualifying writer').trim());
-  }
+  f.write('apps/cli/src/index.mjs', 'export const value = 3;\n');
+  f.git('add', '--', 'apps/cli/src/index.mjs');
+  const casWinner = f.git('commit-tree', f.git('write-tree').trim(), '-p', winner, '-m', 'test: wins compare-and-swap').trim();
   f.git('read-tree', base);
 
-  return { f, additionalWinners, ...runWithCommitLockContender(f, winner, packet,
-    { additionalWinners, refuseFinalAdmission }) };
+  return { f, casWinner, ...runWithCommitLockContender(f, winner, packet,
+    { additionalWinners: [casWinner], refuseFinalAdmission }) };
 }
 
-test('after two CAS losses obtains entry admission before locking and reloads only the affected graph', { skip: !hasFlock }, t => {
-  const { f, additionalWinners, result, treeGateLocks, finalGrants, flock, lock } = twiceStaleEntryFixture(t, false);
+test('after one stale verdict and one CAS loss obtains entry admission before locking and reloads only the affected graph', { skip: !hasFlock }, t => {
+  const { f, casWinner, result, treeGateLocks, finalGrants, flock, lock } = staleVerdictAndCasLossFixture(t, false);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(finalGrants, [additionalWinners.at(-1)]);
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0', 'cli:1']);
-  assert.equal(f.git('rev-parse', 'HEAD^').trim(), additionalWinners.at(-1));
+  assert.deepEqual(finalGrants, [casWinner]);
+  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:1']);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), casWinner);
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });
 
-test('after two CAS losses an entry admission refusal leaves HEAD and the final lock untouched', { skip: !hasFlock }, t => {
-  const { f, additionalWinners, result, acquisitions, treeGateLocks, finalGrants, flock, lock } = twiceStaleEntryFixture(t, true);
+test('after one stale verdict and one CAS loss an entry admission refusal leaves HEAD and the final lock untouched', { skip: !hasFlock }, t => {
+  const { f, casWinner, result, acquisitions, treeGateLocks, finalGrants, flock, lock } = staleVerdictAndCasLossFixture(t, true);
   assert.equal(result.status, 11, result.stderr);
   assert.match(result.stderr, /entry-load-admission-unavailable/);
   assert.deepEqual(finalGrants, []);
-  assert(!acquisitions.includes(additionalWinners.at(-1)));
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0']);
-  assert.equal(f.git('rev-parse', 'HEAD').trim(), additionalWinners.at(-1));
+  assert(!acquisitions.includes(casWinner));
+  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0']);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), casWinner);
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });
 
