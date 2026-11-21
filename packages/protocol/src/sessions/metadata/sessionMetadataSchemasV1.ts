@@ -18,6 +18,7 @@ import { SessionUserActionRequiredOccurrenceV1Schema } from '../userActionRequir
 import { SessionCapabilityNoticeV1Schema } from '../messages/sessionCapabilityNoticeV1.js';
 import { SessionDisplayProjectionV1Schema } from './sessionDisplaySchemasV1.js';
 export { SessionDisplayProjectionV1Schema, validateSessionDisplayProjectionV1 } from './sessionDisplaySchemasV1.js';
+import { readSessionTitleInMetadata } from './sessionTitle.js';
 export { hasSessionTitleInMetadata } from './sessionTitle.js';
 export type { SessionDisplayProjectionV1 } from './sessionDisplaySchemasV1.js';
 
@@ -1736,9 +1737,16 @@ export function projectSessionMetadataAgentVocabularyWriteCompatibilityV1<T>(
   return (next ?? metadata) as T;
 }
 
-function projectSummary(metadata: UnknownRecord): SessionSharedSummaryV1 | null {
-  const parsed = createStoredReadSchema(SessionSharedSummaryV1Schema).safeParse(metadata.summary);
-  return parsed.success ? parsed.data : null;
+/** Callers supply a name only when it is readable as a title in their projection. */
+export function projectSessionSummaryV1(summary: unknown, legacyName?: unknown): SessionSharedSummaryV1 | null {
+  if (summary !== undefined) {
+    const parsed = createStoredReadSchema(SessionSharedSummaryV1Schema).safeParse(summary);
+    if (parsed.success) return parsed.data;
+  }
+  if (legacyName === undefined) return null;
+  const text = readSessionTitleInMetadata({ name: legacyName });
+  // A layout-0 name has no title revision.
+  return text === null ? null : { text, updatedAt: 0 };
 }
 
 function projectAgentPresentation(
@@ -1821,11 +1829,15 @@ function projectPublicAgentState(
 export function projectSessionSharedMetadataV1(params: Readonly<{
   metadata: unknown;
   agentState?: unknown;
+  sourceMetadataLayoutVersion?: 0;
 }>): SessionSharedMetadataV1 {
   const metadata = readRecord(params.metadata) ?? {};
   const bot = readSessionBotV1(metadata.bot);
   const botFace = readSessionBotFaceV1(metadata.botFace);
-  const summary = projectSummary(metadata);
+  const summary = projectSessionSummaryV1(
+    metadata.summary,
+    params.sourceMetadataLayoutVersion === 0 ? metadata.name : undefined,
+  );
   const agentPresentation = projectAgentPresentation(metadata);
   const externalSessionOperationPresentationV1 =
     projectOperationPresentation(metadata);

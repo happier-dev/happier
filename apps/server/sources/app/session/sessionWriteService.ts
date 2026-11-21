@@ -4240,6 +4240,7 @@ function validatePlainOwnerMigrationProjection(
     const canonicalSharedMetadata = projectSessionSharedMetadataV1({
         metadata: legacyMetadata,
         agentState: legacyAgentState ?? undefined,
+        sourceMetadataLayoutVersion: 0,
     });
     const targetSharedMetadata = parseJsonValue(
         params.target.sharedMetadata.ciphertext,

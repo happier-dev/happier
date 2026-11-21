@@ -8,6 +8,7 @@ import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessi
 import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { readSessionAwarenessWorkStatusV1, type SessionAwarenessPresentationFactsV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { readSessionBotV1, readSessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
@@ -623,10 +624,8 @@ export function getSessionName(
     if (summaryText) {
         return summaryText;
     }
-    if (ownerMetadata?.name) {
-        const name = ownerMetadata.name.trim();
-        if (name.length > 0) return name;
-    }
+    const ownerTitle = projectSessionSummaryV1(ownerMetadata?.summary, ownerMetadata?.name)?.text;
+    if (ownerTitle) return ownerTitle;
     // The held row already owns the transcript projection. Full Sessions (headers and notices)
     // reuse its Home-qualified title instead of scanning the transcript or deriving another name.
     if (!options?.snapshotOnly && session.metadata != null && ('agentState' in session || 'ownerMetadataView' in session)) {

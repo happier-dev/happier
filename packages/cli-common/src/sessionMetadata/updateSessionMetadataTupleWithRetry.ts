@@ -422,6 +422,7 @@ async function prepareLegacyOwnerMigration<M, A>(params: Readonly<{
   const sharedMetadata = projectSessionSharedMetadataV1({
     metadata,
     agentState,
+    sourceMetadataLayoutVersion: 0,
   });
   const displayProjectionV1 = await prepareDisplayProjection({
     sharedMetadata, ownerMetadata: createdOwnerMetadata.ownerMetadata,

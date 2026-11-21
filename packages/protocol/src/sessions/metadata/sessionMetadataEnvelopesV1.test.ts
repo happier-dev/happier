@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { describe, expect, it, vi } from 'vitest';
 import { projectSessionMetadataForWire } from './terminalMetadata.js';
+import { readSessionTitleInMetadata } from './sessionTitle.js';
 import { readSessionRoleIdV1, readSessionRolesV1, writeSessionRoleIdV1ToMetadata } from '../../prompts/roles/sessionRolesSnapshot.js';
 import { z } from 'zod/mini';
 import { writeSessionWorkStateV1ToMetadata } from '../work/state/sessionWorkStateV1.js';
@@ -65,6 +66,16 @@ import {
 } from './sessionMetadataEnvelopesV1.js';
 
 describe('metadata schema consumer contracts', () => {
+  it('projects the same title for recipients of a 0.2 name-only Session', () => {
+    const metadata = { name: 'Retained Session title' };
+    expect(projectSessionSharedMetadataV1({ metadata, sourceMetadataLayoutVersion: 0 }).summary?.text)
+      .toBe(readSessionTitleInMetadata(metadata));
+    const summary = { text: 'Current title', updatedAt: 12 };
+    expect(projectSessionSharedMetadataV1({
+      metadata: { ...metadata, summary }, sourceMetadataLayoutVersion: 0,
+    }).summary).toEqual(summary);
+  });
+
   it('keeps the template draft reference solely in the owner metadata projection', () => {
     const templateDraftRef = { serverId: 'home', artifactId: '7e23f798-230a-42f3-931f-e38b20736333' };
     const metadata = { work: { templateDraftRef } };

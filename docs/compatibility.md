@@ -7967,7 +7967,9 @@ typed `metadata_privacy_upgrade_required`, never the raw flat metadata. On the
 owner's initial 0.3 visit, authenticated owner-only discovery includes pending
 shared Sessions outside the active list, and the existing currentness-checked
 metadata tuple writer upgrades them. The same link then reads the recipient-safe
-projection. The pending viewer asks the owner to open Happier; it does not treat
+projection. During that upgrade, the shared summary keeps an existing summary
+or carries the released layout-0 name when there is no valid summary. The
+pending viewer asks the owner to open Happier; it does not treat
 the privacy refusal as revocation or silently weaken the projection. This is a
 retained-data upgrade direction, not a new old-server fallback or rollback claim.
 
