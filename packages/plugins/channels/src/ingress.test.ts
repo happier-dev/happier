@@ -98,6 +98,7 @@ import { createDiscordIngressScheduler } from '../../channel-discord/src/discord
 import { mapSlackEventToIngress } from '../../channel-slack/src/slackObservation.js';
 import { createConversationPairingManager } from './pairing.js';
 import { createConversationPairingResourceRuntime } from './pairingResource.js';
+import { notifyInboundConversation } from './inboundConversationNotice.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { CHANNELS_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 import { classifySupervisorFailure } from './supervisorFailure.js';
@@ -3605,6 +3606,18 @@ describe('Conversation provider observation ingress', () => {
     expect(harness.notify.mock.calls[2]![0].itemId).not.toBe(request.itemId);
     expect(harness.notify.mock.calls[2]![0].title).toBe('External conversation');
     expect(harness.send).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['', ' \t\n '])('sends the Inbox fallback title for a blank conversation label %j', async (displayName) => {
+    const harness = createIngressHarness();
+
+    await notifyInboundConversation({ conversationId: 'inbound-thread', displayName }, harness.context);
+
+    expect(harness.notify).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 'inbound-thread',
+      title: 'External conversation',
+      channelIds: [],
+    }), { signal: harness.context.signal });
   });
 
   it('refuses a socket worker without its captured connection generation', async () => {
