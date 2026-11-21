@@ -2743,6 +2743,122 @@ describe("pendingMessageService (shared sessions)", () => {
         } finally { await runtime?.close(); await fixture.dispose(); }
     });
 
+    it.each(['everything', 'important'] as const)('checks in after five native starts in a mutual %s Follow exchange', async preset => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' });
+        const owner = await createAccount('follow-exchange');
+        const a = await createSession(owner.id);
+        const b = await createSession(owner.id);
+        const actor = { actorUserId: owner.id, authentication };
+        const defaultCheckIn = { afterTurns: 5 };
+        const register = async (session: typeof a) => {
+            await db.session.update({ where: { id: session.id }, data: { metadata: '{}' } });
+            const publisherAuthority = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
+            await db.machine.update({ where: { id: publisherAuthority.machineId }, data: {
+                installationId: `install-${publisherAuthority.machineId}`,
+                operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+                operationProtocolCapabilitiesRevision: 1,
+            } });
+            return { sessionId: session.id, publisherAuthority };
+        };
+        const first = await register(a);
+        const second = await register(b);
+        const follow = async (source: typeof first, receiver: typeof first) => {
+            expect(await setSessionFollowSource({ accountId: owner.id, authentication,
+                sourceSessionId: source.sessionId, destinationSessionId: receiver.sessionId, policy: { preset } }))
+                .toMatchObject({ ok: true });
+        };
+        await follow(first, second);
+        const accept = async (receiver: typeof first, localId: string, kind: 'newTurn' | 'followUp') => {
+            const turnId = randomUUID();
+            const observedAt = Date.now();
+            expect(await applySessionTurnMutation({ ...actor, mutation: { v: 1, action: 'begin', turnId,
+                sessionId: receiver.sessionId, mutationId: randomUUID(), observedAt, startingInputId: localId } }))
+                .toMatchObject({ ok: true, didApply: true });
+            expect(await resolveAcceptedPendingDelivery({ ...actor, ...receiver, localId,
+                acceptedTurn: { kind, turnId } })).toMatchObject({ ok: true, didResolve: true });
+            if (preset === 'everything') {
+                // Persist the provider terminal boundary used by ordinary Follow.
+                await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: receiver.sessionId, turnId } },
+                    data: { status: 'completed', terminalAt: BigInt(observedAt + 1) } });
+                await db.session.update({ where: { id: receiver.sessionId }, data: { latestTurnStatus: 'completed' } });
+            }
+            return turnId;
+        };
+        const settle = async (receiver: typeof first, localId: string) => {
+            expect(await materializeNextPendingMessage({ ...actor, ...receiver, deliveryState: 'provider',
+                deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }))
+                .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+            return settlePendingInputAdmission({ ...actor, ...receiver, localId,
+                decision: { kind: 'admit', finalContent: { t: 'encrypted', c: 'admitted-input' },
+                    // Actual Follow requests send a protected Follow receipt, without direct-send sourceSession validation.
+                    validation: { autonomousCheckIn: defaultCheckIn } } });
+        };
+        const person = async (receiver: typeof first) => {
+            const localId = randomUUID();
+            expect(await enqueuePendingMessage({ actorUserId: owner.id, ...receiver, localId,
+                content: { t: 'encrypted', c: 'person-input' }, targetMachineId: receiver.publisherAuthority.machineId }))
+                .toMatchObject({ ok: true });
+            expect(await settle(receiver, localId)).toMatchObject({ ok: true, result: { status: 'accepted' } });
+            return { localId, turnId: await accept(receiver, localId, 'newTurn') };
+        };
+        const delivery = async (source: typeof first, receiver: typeof first, turnId: string) => {
+            const sourceSessionId = source.sessionId;
+            const requestId = randomUUID();
+            const agentStateVersion = preset === 'important' ? (await db.session.update({ where: { id: sourceSessionId },
+                data: { agentStateVersion: { increment: 1 } }, select: { agentStateVersion: true } })).agentStateVersion : 0;
+            const followDeliveryV1 = preset === 'everything'
+                ? { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId, sourceTurn: { id: turnId, status: 'completed' as const } },
+                    event: { kind: 'finished' as const } }
+                : { v: 1 as const, delivery: 'wake' as const, original: { sourceSessionId, sourceRequests: {
+                    agentStateVersion, requests: [{ requestId, createdAt: 1, turnId }] } },
+                    requestEvents: [{ requestId, event: { kind: 'needs_you' as const, type: 'decision' as const } }] };
+            const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: receiver.sessionId, original: followDeliveryV1.original });
+            expect(await enqueuePendingMessage({ actorUserId: owner.id, ...receiver, localId,
+                targetMachineId: receiver.publisherAuthority.machineId, content: { t: 'encrypted', c: 'follow-input' },
+                requestedAction: { v: 1, kind: 'enqueue' }, followDeliveryV1, followRelations: [{ relation: 'follower' }] })).toMatchObject({ ok: true });
+            return { localId, result: await settle(receiver, localId) };
+        };
+        const count = (root: typeof first, originInputLocalId: string) =>
+            readAutonomousExchangeControl({ actorUserId: owner.id, sessionId: root.sessionId, originInputLocalId });
+
+        // A one-way route admits independent person-started updates even after five deliveries.
+        for (let i = 0; i < 6; i++) {
+            const start = await person(first);
+            const sent = await delivery(first, second, start.turnId);
+            expect(sent.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+            await accept(second, sent.localId, 'newTurn');
+        }
+        await follow(second, first);
+        const prior = await person(first);
+        const priorFollow = await delivery(first, second, prior.turnId);
+        expect(priorFollow.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+        await accept(second, priorFollow.localId, 'newTurn');
+
+        const intervention = await person(second);
+        let source = second;
+        let receiver = first;
+        let turnId = intervention.turnId;
+        const observed: unknown[] = [];
+        for (let i = 0; i < 5; i++) {
+            const sent = await delivery(source, receiver, turnId);
+            expect(sent.result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+            turnId = await accept(receiver, sent.localId, i === 1 ? 'followUp' : 'newTurn');
+            const progress = await count(second, intervention.localId);
+            observed.push(progress.ok ? progress.state.observedStarts : progress.error);
+            [source, receiver] = [receiver, source];
+        }
+        const paused = await delivery(source, receiver, turnId);
+        expect({ observed, pause: paused.result }).toMatchObject({ observed: [1, 2, 3, 4, 5],
+            pause: { ok: true, result: { status: 'held', code: 'autonomous_check_in' } } });
+        expect(await listPendingMessages({ actorUserId: owner.id, sessionId: receiver.sessionId })).toMatchObject({
+            pending: [expect.objectContaining({ localId: paused.localId, autonomousExchangeRoot: {
+                sessionId: second.sessionId, localId: intervention.localId } })],
+        });
+
+        expect(await db.sessionMessage.count({ where: { sessionId: receiver.sessionId, localId: paused.localId } })).toBe(0);
+        expect(await count(first, prior.localId)).toMatchObject({ ok: true, state: { observedStarts: 1 } });
+    });
+
     it.each(['authenticatedAccount', 'authenticatedMachine'] as const)("binds an admitted agent input to the original protected input across native starts, fanout and controls (%s)", async issuer => {
         harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional" });
         const owner = await db.account.create({ data: createSignedAccountContentBinding(), select: { id: true } });

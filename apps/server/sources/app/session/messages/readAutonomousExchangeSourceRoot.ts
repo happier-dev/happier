@@ -92,8 +92,8 @@ export async function readAutonomousExchangeSourceRoot(input: Readonly<{
         // Protected CLI originals use Machine admission too. Their accepted,
         // exact Account/Session receipt is already an owned root; this does not
         // turn a Follow or Discussion carrier into a new person input.
-        const directOriginal = receipt && (receipt.issuer === 'authenticatedAccount'
-            || !receipt.followDeliveryV1 && !receipt.followSources && !receipt.followRelations && !receipt.discussionAddressing);
+        const directOriginal = receipt && !receipt.followDeliveryV1 && !receipt.followSources && !receipt.followRelations
+            && (receipt.issuer === 'authenticatedAccount' || !receipt.discussionAddressing);
         let candidate = inheritedSessionId && inheritedLocalId
             ? { sessionId: inheritedSessionId, localId: inheritedLocalId }
             : directOriginal && sourceInput.localId

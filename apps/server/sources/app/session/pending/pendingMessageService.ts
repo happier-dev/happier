@@ -2073,7 +2073,20 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     }
     const runDelivery = originalReceipt.success && originalReceipt.data.followDeliveryV1
         && isRunFollowOriginalV1(originalReceipt.data.followDeliveryV1.original) ? originalReceipt.data.followDeliveryV1 : undefined;
-    const sourceSession = runDelivery ? undefined : params.validation?.sourceSession;
+    // The protected receipt supplies Follow's source; direct sends supply
+    // their own source assertion through validation.
+    const followWake = followDelivery?.delivery === 'wake' && 'sourceSessionId' in followDelivery.original
+        ? followDelivery.original : undefined;
+    const unstartedFollowWake = followWake && original?.turnStartWitnessId === null ? followWake : undefined;
+    const followOriginal = retainedRoot ? undefined : unstartedFollowWake;
+    const requests = followOriginal && 'sourceRequests' in followOriginal ? followOriginal.sourceRequests.requests : [];
+    const requestTurnId = requests[0]?.turnId;
+    const followTurnId = followOriginal && 'sourceTurn' in followOriginal ? followOriginal.sourceTurn.id
+        : requestTurnId && requests.every(request => request.turnId === requestTurnId) ? requestTurnId : undefined;
+    const sourceSession = followDelivery
+        ? followOriginal && followTurnId ? { sourceSessionId: followOriginal.sourceSessionId, sourceTurnId: followTurnId,
+            sourceInputId: undefined } : undefined
+        : params.validation?.sourceSession;
     let exchangeRoot: { sessionId: string; localId: string } | undefined;
     const runWake = runDelivery?.delivery === 'wake';
     if (runWake && params.targetExecutionRunId === null) {
@@ -2253,7 +2266,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
             if (exchangeAdmission === 'stopped') {
                 return { ok: false, rejectionCode: 'session_input_cancelled' };
             }
-            if (exchangeAdmission === 'check_in' && (!params.settledOriginal || choice)) {
+            if (exchangeAdmission === 'check_in' && (!params.settledOriginal || choice || unstartedFollowWake)) {
                 return { ok: false, holdReason: 'autonomous_check_in', exchangeRoot };
             }
         }
@@ -2269,6 +2282,7 @@ async function bindAutonomousExchangeInputRootInTx(tx: Tx, input: Readonly<{
     sessionId: string; localId: string; receipt: SessionInputAdmissionReceiptV1;
     root: { sessionId: string; localId: string };
     state?: ReturnType<typeof createAutonomousExchangeStateV1>;
+    cause?: 'agent_session' | 'returned_answer';
 }>): Promise<boolean> {
     const materialized = await tx.sessionMessage.findUnique({
         where: { sessionId_localId: { sessionId: input.sessionId, localId: input.localId } },
@@ -2280,7 +2294,8 @@ async function bindAutonomousExchangeInputRootInTx(tx: Tx, input: Readonly<{
         && (materialized.autonomousExchangeRootSessionId !== input.root.sessionId
             || materialized.autonomousExchangeRootLocalId !== input.root.localId) && !canReanchor) return false;
     const data = { autonomousExchangeRootSessionId: input.root.sessionId, autonomousExchangeRootLocalId: input.root.localId,
-        ...(input.state ? { autonomousExchangeState: input.state } : {}) };
+        ...(input.state ? { autonomousExchangeState: input.state } : {}),
+        ...(input.cause ? { autonomousExchangeCause: input.cause } : {}) };
     await tx.sessionMessage.update({ where: { sessionId_localId: { sessionId: input.sessionId, localId: input.localId } }, data });
     await tx.sessionPendingMessage.updateMany({ where: { sessionId: input.sessionId, localId: input.localId }, data });
     return true;
@@ -2521,10 +2536,12 @@ export async function settlePendingInputAdmission(params: Readonly<{
                             recipientCursorsMessage: [],
                         } as const;
                     }
-                    if (unstartedRunWake && validation.exchangeRoot && !await bindAutonomousExchangeInputRootInTx(tx, {
-                        sessionId, localId, receipt: receipt.data, root: validation.exchangeRoot,
-                        ...(validation.exchangeRootState ? { state: validation.exchangeRootState } : {}),
-                    })) return { ok: false, error: 'conflict' } as const;
+                    if ((unstartedRunWake || unstartedSessionFollow) && validation.exchangeRoot
+                        && !await bindAutonomousExchangeInputRootInTx(tx, {
+                            sessionId, localId, receipt: receipt.data, root: validation.exchangeRoot,
+                            cause: validation.exchangeCause,
+                            ...(validation.exchangeRootState ? { state: validation.exchangeRootState } : {}),
+                        })) return { ok: false, error: 'conflict' } as const;
                 }
                 const { targetExecutionRunId: _targetExecutionRunId, replyProgress: _replyProgress,
                     turnStartWitnessId: _turnStartWitnessId, ...committedMessage } = committed;
@@ -2677,9 +2694,12 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 // Admission may have committed while its ACK was lost. Only the
                 // exact committed admission can rejoin without admitting again.
                 if (settledOriginal) {
-                    if (receipt.data.followDeliveryV1?.delivery === 'wake' && isRunFollowOriginalV1(receipt.data.followDeliveryV1.original)
+                    if (receipt.data.followDeliveryV1?.delivery === 'wake'
+                        && (isRunFollowOriginalV1(receipt.data.followDeliveryV1.original)
+                            || existing.turnStartWitnessId === null && existing.autonomousExchangeRootLocalId === null)
                         && domainValidation.ok && domainValidation.exchangeRoot && !await bindAutonomousExchangeInputRootInTx(tx, {
                             sessionId, localId, receipt: receipt.data, root: domainValidation.exchangeRoot,
+                            cause: domainValidation.exchangeCause,
                             ...(domainValidation.exchangeRootState ? { state: domainValidation.exchangeRootState } : {}),
                         })) return { ok: false, error: 'conflict' } as const;
                     const state = await readCurrentPendingMutationState(tx, sessionId);
@@ -2753,7 +2773,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 ...(retainedEquality ? { requestEqualityEvidenceV1: retainedEquality } : {}),
             });
             if (!committed.ok) return { ok: false, error: "conflict" } as const;
-            if (domainValidation.ok && domainValidation.exchangeCause) {
+            if (domainValidation.ok && domainValidation.exchangeCause && !domainValidation.exchangeRoot) {
                 await tx.sessionMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
                     data: { autonomousExchangeCause: domainValidation.exchangeCause },
@@ -2764,7 +2784,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 });
             }
             if (domainValidation.ok && !domainValidation.exchangeRoot
-                && !domainValidation.exchangeCause && !params.decision.validation?.automation
+                && !domainValidation.exchangeCause && !params.decision.validation?.automation && !receipt.data.followDeliveryV1
                 && params.decision.validation?.autonomousCheckIn
                 && receipt.data.issuer === 'authenticatedAccount'
                 && receipt.data.actorAccountId === actorUserId) {
@@ -2778,6 +2798,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
             if (domainValidation.ok && domainValidation.exchangeRoot) {
                 if (!await bindAutonomousExchangeInputRootInTx(tx, { sessionId, localId, receipt: receipt.data,
                     root: domainValidation.exchangeRoot,
+                    cause: domainValidation.exchangeCause,
                     ...(domainValidation.exchangeRootState ? { state: domainValidation.exchangeRootState } : {}),
                 })) return { ok: false, error: 'conflict' } as const;
             }
