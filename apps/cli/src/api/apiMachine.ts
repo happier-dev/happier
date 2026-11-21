@@ -303,6 +303,8 @@ import { changesRequireSavedSecretCatalogRefresh } from '@/settings/secrets/save
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { refreshDemandedActiveProfileCatalog, refreshDemandedActiveApprovalProfileCatalog, readApprovalProfileCatalogInvalidation } from '@/settings/profiles/hydrateProfileCatalog';
 import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '@happier-dev/protocol/changes';
+import { SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { refreshDemandedSessionApprovalConsents } from '@/settings/profiles/sessionApprovalConsentsCatalog';
 import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { prepareActivePromptLibraryRecord, readActiveMachineSkillInstallArtifactIds, refreshDemandedActivePromptLibraryCatalog,
@@ -7200,6 +7202,14 @@ export class ApiMachineClient {
                 if (reason !== 'live' || approvalProfileChange) {
                     await refreshDemandedActiveApprovalProfileCatalog({ token: this.token, signal,
                         ...(reason === 'live' ? approvalProfileChange : {}) });
+                    signal.throwIfAborted();
+                }
+                // Session Actions forwarded to this daemon admit the calling Session's held
+                // "allow for this Session" rows here; this feed is their change wake.
+                if (reason !== 'live' || changes.some(change => change.kind === 'artifact' && artifactKindsMayIncludeKindV1(
+                    readArtifactKindsChangeHintV1(change.hint), [SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1]))) {
+                    const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId).catch(() => null);
+                    if (credentials?.token === this.token) await refreshDemandedSessionApprovalConsents({ credentials });
                     signal.throwIfAborted();
                 }
                 const sourceSnapshotBeforeSettings = getActiveAccountSettingsSnapshot();

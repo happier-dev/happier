@@ -1195,12 +1195,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
       return bindApprovalProfileV1(catalog ?? [], id);
     },
     readSessionApprovalConsents: async context => {
-      // F-2: only the host-stamped Session caller that is this host's own bound Session, read with
-      // that Session's Account credential. A selector, origin or input Session never chooses rows.
-      const boundSessionId = readCliActionBoundSessionId(params.sessionId);
+      // F-2: the rows of the Session the host stamped as this call's caller, read with that Session's
+      // Account credential. A Session host answers only its own bound Session. An Account host (the
+      // daemon executing a Session's forwarded Action) stamps the caller only after matching the
+      // turn witness to the Session its runtime capability is bound to. A selector, a default, an
+      // origin or an input Session never chooses rows.
+      const hostSessionId = readCliActionBoundSessionId(params.sessionId);
+      const boundSessionId = context.actionCaller?.kind === 'session' ? context.actionCaller.sessionId : null;
       const credentials = params.credentials;
-      if (!credentials || !boundSessionId || context.actionCaller?.kind !== 'session'
-        || context.actionCaller.sessionId !== boundSessionId) return null;
+      if (!credentials || !boundSessionId || hostSessionId !== null && boundSessionId !== hostSessionId) return null;
       const accountId = readAccountIdFromToken(credentials.token);
       if (!accountId || context.runtimeAccountId !== undefined && context.runtimeAccountId !== accountId) return null;
       const store = () => createCredentialedAccountArtifactStore(credentials);
