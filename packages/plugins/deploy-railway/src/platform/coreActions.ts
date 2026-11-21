@@ -13,7 +13,7 @@ import {
   type DeploymentTargetRoleResultV1,
   type JsonValue,
 } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { ScmHostingRepositoryIdentityV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { createRailwayProjectOperations, RailwayNativeError } from '@happier-dev/railway-api';
@@ -254,7 +254,11 @@ async function cancel(input: DeploymentTargetCancelInputV1, context: PluginAccou
   }
 }
 
-export const coreActions = {
+/** Annotated with the public declaration type so declaration emit names only SDK exports. */
+export const coreActions: Readonly<Record<
+  'service-create' | 'targets-inspect-v1' | 'service-link' | 'deploy' | 'observe' | 'cancel' | 'teardown',
+  PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>
+>> = {
   'service-create': { ...railwayAccountAction, title: 'Create a Railway service', surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'],
     dangerLevel: 'writesRemote', readOnly: false, confirmation: {
       title: 'Create this Git-connected Railway service?',
@@ -290,4 +294,4 @@ export const coreActions = {
     confirmation: { title: 'Remove this Railway service from the selected environment?' },
     inputSchema: railwayRoleInput(inputs.teardown.jsonSchema), resultSchema: output.jsonSchema,
     run: (value: JsonValue, context: PluginAccountActionContext) => removeServiceInstance(value as unknown as DeploymentTargetObserveInputV1, context, false) },
-} as const;
+};
