@@ -282,6 +282,35 @@ it.each(['plain', 'e2ee'] as const)(
       genericRpc.mockRestore();
     }
   });
+it.each(['plain', 'e2ee'] as const)('dispatches an initial terminal read with an explicitly absent control cursor (%s)', async mode => {
+  const actionId = 'machines.terminal.read';
+  const requestId = 'request-1';
+  const machineId = 'alice-machine';
+  const machineTarget = { kind: 'machine' as const, machineId };
+  const expectedInput = { serverId: homeIdentityId, machineId, terminalId: 'terminal',
+    byteOffset: 0, holdForOutput: true };
+  const execution = { ok: true as const, result: { ok: true, terminalId: 'terminal',
+    frames: [], nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0,
+    nextControlCursor: 0, holdForOutput: true, done: false } };
+  const secret = new Uint8Array(32).fill(23);
+  const target = await home(mode, [], { custodianAccountId: 'bob', originalOwnAction: actionId,
+    machineRole: 'manage', authenticationKind: 'terminal', ownExecution: execution });
+
+  await expect(dispatchOriginalAccountAction({ actionId, input: { ...expectedInput, controlCursor: undefined },
+    requestId, target: machineTarget, credentials: { token: token('terminal'), credentialProvenance: 'stored_session',
+      encryption: mode === 'plain' ? null : { type: 'legacy', secret } },
+    serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId })).resolves.toEqual(execution);
+  const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+  expect(envelope.v).toBe(mode === 'plain' ? 1 : 2);
+  const deliveredInput = envelope.v === 1 ? envelope.input : openExternalActionRequestV2({
+    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope,
+    binding: { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: 'terminal', tokenEpoch: 7 },
+      actionId, requestId, target: machineTarget },
+    material: { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) },
+  })?.input;
+  expect(deliveredInput).toEqual(expectedInput);
+});
+
 it.each(['accepted', 'declined', 'missing'] as const)(
   'retains requester credential consent for shared service logs (%s)', async consent => {
     const events: string[] = [];

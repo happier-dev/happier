@@ -1231,19 +1231,23 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
     actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
-  // Requester execution retains private authored input locally. Home receives
-  // the Action owner's existing admission projection.
-  const envelopeInput = input.executeOnRequester?.input ?? input.input;
   const workflowPreparation = workflowPlacement?.kind === 'bound' ? workflowPlacement.workflowPreparation : undefined;
-  const originalEnvelope = (workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined) ?? (binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
-    ...(workflowPreparation ? { workflowPreparation } : {}),
-    ...(sessionSpawnAdmission && (sessionSpawnAdmission.machineSetupRequested || sessionPresetAcquisition)
-      ? { sessionSpawnAdmission } : {}),
-  })
-    : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: envelopeInput,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-        ...(workflowPreparation ? { workflowPreparation } : {}),
-        ...(sessionPresetAcquisition ? { sessionSpawnAdmission } : {}) }));
+  let originalEnvelope = workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined;
+  if (!originalEnvelope) {
+    // Requester execution keeps private input locally. Project the admission input
+    // to JSON before either envelope codec so native optional fields can be absent.
+    const envelopeInput = projectNativeJsonValueForTransport(input.executeOnRequester?.input ?? input.input);
+    originalEnvelope = binding && material
+      ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+          binding, material, input: envelopeInput, randomBytes,
+          ...(workflowPreparation ? { workflowPreparation } : {}),
+          ...(sessionSpawnAdmission && (sessionSpawnAdmission.machineSetupRequested || sessionPresetAcquisition)
+            ? { sessionSpawnAdmission } : {}) })
+      : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: envelopeInput,
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+          ...(workflowPreparation ? { workflowPreparation } : {}),
+          ...(sessionPresetAcquisition ? { sessionSpawnAdmission } : {}) });
+  }
   const envelope = telemetryRead && originalEnvelope.v === 2
     ? { ...originalEnvelope, telemetryCollectorCodec: true as const } : originalEnvelope;
   if (input.executeOnRequester) {
