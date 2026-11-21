@@ -21,6 +21,7 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
+import { CaptureConfiguration } from './CaptureConfiguration.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -162,7 +163,7 @@ function DatabaseRows(
 
 /**
  * Databases on the Dev servers page: the checkout's databases, each one press from its workbench.
- * Request capture (P5) and Connect a database mount here when their producers land.
+ * Local capture belongs to the selected checkout's project.
  */
 function DatabasesPanel(context: RenderContext) {
   const translate = usePluginTranslation();
@@ -184,6 +185,9 @@ function DatabasesPanel(context: RenderContext) {
       {instance && launch ? (
         <WorkbenchProvider instance={instance}>
           <DatabaseRows context={context} launch={launch} />
+          {launch.scope.kind === 'worktree' ? <CaptureConfiguration
+            key={JSON.stringify([launch.scope.accountId, launch.scope.workspace.serverId, launch.scope.workspace.machineId,
+              launch.scope.projectKey, launch.scope.workspace.workspaceId])} scope={launch.scope} /> : null}
         </WorkbenchProvider>
       ) : (
         // The same line state as "No databases found": it sits inside the sheet with the row inset.

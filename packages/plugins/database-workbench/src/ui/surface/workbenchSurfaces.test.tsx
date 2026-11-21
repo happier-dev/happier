@@ -3,6 +3,9 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+    DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+    DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
+    DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
     DATABASE_RELATIONS_LIST_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
@@ -19,6 +22,7 @@ import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protoco
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
@@ -681,7 +685,13 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
-    const executeAction = daemonAnswers([descriptor]);
+    const daemon = daemonAnswers([descriptor]);
+    const executeAction = (request: PluginUiTestkitExecuteActionInput) => {
+      if (typeof request.action !== 'string' && request.action.localId === databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1)) {
+        return Promise.resolve({ ok: true, source: { kind: 'worktree', serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey, workspaceId: scope.workspace.workspaceId }, enabled: false, coverage: { lostObservations: 0, reason: null } });
+      }
+      return daemon(request);
+    };
     const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'panel', mountNonce: 'panel' },
@@ -704,11 +714,10 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle();
-      expect(await fixture.queryByText('billing_dev')).toBeTruthy();
-      // The database row is the panel's only control while one database is found.
-      const [row, ...others] = await fixture.getAllByRole('button');
-      expect(others).toHaveLength(0);
+      expect(await fixture.getByText('Capture is off')).toBeTruthy();
       await act(async () => {
+        const row = (await fixture.getAllByRole('button')).find(button => button.name?.includes('billing_dev'));
+        expect(row).toBeDefined();
         await fixture.press(row!);
       });
       expect(openSurface).toHaveBeenCalledWith(
@@ -722,6 +731,64 @@ describe('Database workbench surfaces', () => {
     } finally {
       await fixture.dispose();
     }
+  });
+
+  it('uses the checkout’s project for capture configuration and its worktree for reviewed clear', async () => {
+    const project = { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId, projectId: scope.projectKey };
+    const source = { kind: 'worktree', ...project, workspaceId: scope.workspace.workspaceId };
+    const status = databaseActionLocalIdV1(DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
+    const configure = databaseActionLocalIdV1(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1);
+    const clear = databaseActionLocalIdV1(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1);
+    const daemon = daemonAnswers([descriptor]);
+    let enabled = true;
+    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
+      if (typeof request.action !== 'string' && request.action.localId === status) {
+        expect(request.action.pluginId).toBe('happier.telemetry');
+        expect(request.input).toEqual({ source });
+        return { ok: true, source, enabled, coverage: { lostObservations: 0, reason: 'receiver_unavailable' } };
+      }
+      return daemon(request);
+    });
+    const captureWrite = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
+      if (typeof request.action !== 'string' && request.action.localId === clear) {
+        return { ok: true as const, result: { ok: true } };
+      }
+      enabled = (request.input as { enabled: boolean }).enabled;
+      return { ok: true as const, result: { ok: true, enabled } };
+    });
+    const actionControl = createPluginUiActionControlTestHost(captureWrite);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'capture', mountNonce: 'capture' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPanel,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'databases-panel' }, container: 'servicesPanel' },
+        target: { kind: 'services' },
+      }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction, actionControl: actionControl.handler },
+    });
+    try {
+      await settle();
+      const statusCalls = executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status);
+      expect(statusCalls).toHaveLength(1);
+      expect(captureWrite).not.toHaveBeenCalled();
+      await act(async () => actionControl.press('Turn off capture'));
+      expect(await fixture.getByText('Capture is off')).toBeTruthy();
+      await act(async () => actionControl.press('Turn on capture'));
+      expect(await fixture.getByText('Capture is on')).toBeTruthy();
+      await act(async () => actionControl.press('Retry capture'));
+      await act(async () => actionControl.press('Clear capture'));
+      expect(await fixture.getByText('Capture cleared for this worktree.')).toBeTruthy();
+      expect(captureWrite.mock.calls).toEqual([
+        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: false } })],
+        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true } })],
+        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true, retry: true } })],
+        [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: clear }, input: { source } })],
+      ]);
+      expect(executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status)).toHaveLength(5);
+    } finally { await fixture.dispose(); }
   });
 
   it('says plainly when the checkout’s services name no database', async () => {

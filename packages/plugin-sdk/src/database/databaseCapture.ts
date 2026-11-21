@@ -55,7 +55,10 @@ const summaryPage = z.strictObject({
 const status = z.strictObject({ ...sourceInput, coverage: DatabaseCaptureCoverageV1Schema });
 
 export const DatabaseCaptureStatusInputV1Schema = z.strictObject(sourceInput);
-export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Schema, z.extend(status, { ok: z.literal(true) })]);
+export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Schema, z.extend(status, {
+    ok: z.literal(true),
+    enabled: z.optional(z.boolean()),
+})]);
 export const DatabaseCaptureQueriesListInputV1Schema = z.strictObject({ ...selectedPage, traceId: z.optional(id) });
 export const DatabaseCaptureQueriesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);
 export const DatabaseCaptureQueryGetInputV1Schema = z.strictObject({ ...sourceInput, id });

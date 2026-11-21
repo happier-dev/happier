@@ -221,10 +221,14 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         machineId: 'machine',
         projectId: 'project',
       };
+      const status = local(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1);
+      await expect(f.host.invokeAction(status, { source }, owner)).resolves.toMatchObject({ enabled: false });
       expect(
         await f.host.invokeAction(configure, { project, enabled: true }, owner),
       ).toEqual({ ok: true, enabled: true });
       expect([...f.account.values.values()]).toEqual([true]);
+      await expect(f.host.invokeAction(status, { source }, owner)).resolves.toMatchObject({ enabled: true });
+      await expect(f.host.invokeAction(status, { source: environment }, owner)).resolves.not.toHaveProperty('enabled');
       await expect(
         f.host.invokeAction(
           configure,

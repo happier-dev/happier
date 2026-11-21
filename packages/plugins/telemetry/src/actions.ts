@@ -4,7 +4,7 @@ import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import * as database from '@happier-dev/database-protocol';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
-import { configureCapturePreference, type CaptureProjectScope } from './configuration.js';
+import { configureCapturePreference, readCapturePreference, type CaptureProjectScope } from './configuration.js';
 import { createCaptureReader } from './read.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureListInput } from './store/capture.js';
@@ -275,7 +275,13 @@ export function createCapturePublicActionProducers(options: Readonly<{
             return withSource(input, context, database.TELEMETRY_COSTS_READ_ACTION_ID_V1, readers => readers.readCapturedCosts(input));
         },
         async captureStatus(input, context) {
-            return withSource(input, context, database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, readers => readers.captureStatus(input));
+            return withSource(input, context, database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, async readers => {
+                const status = await readers.captureStatus(input);
+                const storage = context.services.storage.account;
+                return status.source.kind === 'worktree' && storage
+                    ? { ...status, enabled: await readCapturePreference(storage, status.source) }
+                    : status;
+            });
         },
         async listCapturedQueries(input, context) {
             return withSource(input, context, database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, readers => readers.listCapturedQueries(input));

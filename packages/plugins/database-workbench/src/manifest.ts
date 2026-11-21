@@ -17,6 +17,9 @@ import {
     WORKBENCH_RAIL_ARTIFACT_ID, WORKBENCH_RAIL_RENDERER_ID,
 } from './ui/surface/views.js';
 
+const translationLocales = ['ca', 'de', 'en', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant'] as const;
+const translations = translationLocales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` }));
+
 function manualTargets(context: PluginInvocationContext) {
     return createManualDatabaseTargets({ storage: context.services.storage.daemon, identity: context,
         databaseEngines: context.services.databaseEngines });
@@ -68,6 +71,7 @@ export const plugin = definePlugin({
         declaration: { environmentNames: [] }, runtime: worktreeTargets.launch,
     } },
     ui: {
+        translations,
         views: [{
             // Databases on Dev servers, beside the services that use them.
             id: WORKBENCH_PANEL_VIEW_ID, container: 'servicesPanel', target: { kind: 'services' }, renderer: WORKBENCH_PANEL_RENDERER_ID,
@@ -124,6 +128,11 @@ export const plugin = definePlugin({
         },
     }), ...openWorkbenchActions, [DATABASE_FINDING_SETUP_LOCAL_ID]: databaseFindingEventSetupAction },
     resources: {
+        ...Object.fromEntries(translations.map(({ locale, resourceId }) => [resourceId, {
+            kind: 'asset' as const,
+            path: `src/i18n/${locale}.json`,
+            contentType: 'application/json',
+        }])),
         [DATABASE_CONNECTION_RESOURCE_ID_V1]: {
             source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
             runtime: createDatabaseConnectionResourceRuntime({
